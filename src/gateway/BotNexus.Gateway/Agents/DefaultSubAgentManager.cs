@@ -132,6 +132,22 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
+        // Eager conversation pinning (Phase 4 / F-6): pin the child session to the
+        // parent conversation BEFORE returning, so concurrent lookups (e.g.
+        // ISessionStore.ListByConversationAsync, /api/conversations/{id}/history,
+        // canvas resolvers) never see the child as an orphan. Prior to this, the pin
+        // ran inside the fire-and-forget Task.Run below, opening an orphan window
+        // between SpawnAsync returning and the background task being scheduled.
+        if (_sessionStore is not null)
+        {
+            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
+            if (childSession is not null)
+            {
+                childSession.Session.ConversationId = request.InheritedConversationId;
+                await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+            }
+        }
+
         var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
             ? null
             : _options.CurrentValue.SubAgents.DefaultModel;
@@ -175,7 +191,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         _timeouts[subAgentId] = timeoutCts;
 
-        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds, request.InheritedConversationId), CancellationToken.None);
+        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds), CancellationToken.None);
 
         _logger.LogInformation(
             "Spawned sub-agent '{SubAgentId}' for parent session '{ParentSessionId}' in child session '{ChildSessionId}'.",
@@ -402,24 +418,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
         }
     }
-    private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds, string? inheritedConversationId = null)
+    private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds)
     {
         if (!_timeouts.TryGetValue(subAgentId, out var timeoutCts))
             return;
 
         try
         {
-            // Pin the sub-agent session to the parent conversation before running (#468).
-            if (!string.IsNullOrWhiteSpace(inheritedConversationId) && _sessionStore is not null)
-            {
-                var session = await _sessionStore.GetAsync(handle.SessionId, timeoutCts.Token).ConfigureAwait(false);
-                if (session is not null)
-                {
-                    session.Session.ConversationId = ConversationId.From(inheritedConversationId);
-                    await _sessionStore.SaveAsync(session, timeoutCts.Token).ConfigureAwait(false);
-                }
-            }
-
             var response = await handle.PromptAsync(task, timeoutCts.Token);
             await OnCompletedAsync(subAgentId, response.Content);
         }

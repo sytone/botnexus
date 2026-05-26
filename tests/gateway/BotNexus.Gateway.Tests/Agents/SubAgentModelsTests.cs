@@ -16,7 +16,7 @@ public sealed class SubAgentModelsTests
             .Select(property => property.Name)
             .ToArray();
 
-        requiredProperties.ShouldBe(new[] { "ParentAgentId", "ParentSessionId", "Task" });
+        requiredProperties.ShouldBe(new[] { "ParentAgentId", "ParentSessionId", "Task", "InheritedConversationId" }, ignoreOrder: true);
     }
 
     [Fact]
@@ -26,7 +26,8 @@ public sealed class SubAgentModelsTests
         {
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
-            Task = "Analyze issue"
+            Task = "Analyze issue",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         request.MaxTurns.ShouldBe(30);
@@ -47,7 +48,8 @@ public sealed class SubAgentModelsTests
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Analyze issue",
-            Name = "researcher"
+            Name = "researcher",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         var equalCopy = baseline with { };

@@ -65,7 +65,8 @@ public sealed class SubAgentArchetypeIdentityTests
             ParentAgentId = parentAgentId,
             ParentSessionId = parentSessionId,
             Task = "Investigate issue",
-            Archetype = SubAgentArchetype.Reviewer
+            Archetype = SubAgentArchetype.Reviewer,
+            InheritedConversationId = ConversationId.From("inherited-conv")
         });
 
         capturedChildAgentId.ShouldNotBeNull();
@@ -123,7 +124,8 @@ public sealed class SubAgentArchetypeIdentityTests
         {
             ParentAgentId = parentAgentId,
             ParentSessionId = parentSessionId,
-            Task = "Investigate issue"
+            Task = "Investigate issue",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         });
 
         info.Archetype.ShouldBe(SubAgentArchetype.General);

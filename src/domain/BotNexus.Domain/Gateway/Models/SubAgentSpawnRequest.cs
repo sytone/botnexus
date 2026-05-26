@@ -82,9 +82,11 @@ public sealed record SubAgentSpawnRequest
     public IReadOnlyList<string>? ParentToolDenyList { get; init; }
 
     /// <summary>
-    /// Gets the optional conversation ID inherited from the parent session.
-    /// When set, the sub-agent will route its task into this existing conversation
-    /// instead of creating a new one — keeping all output visible in the same portal thread.
+    /// The parent's conversation that this sub-agent's child session must be bound to.
+    /// Required because sub-agent output must always remain visible in the parent's
+    /// conversation thread — orphan sub-agent sessions are not a supported state.
+    /// Enforced by Vogen so the wrapper is non-empty; enforced by <c>required</c> so
+    /// callers cannot forget to supply it.
     /// </summary>
-    public string? InheritedConversationId { get; init; }
+    public required ConversationId InheritedConversationId { get; init; }
 }

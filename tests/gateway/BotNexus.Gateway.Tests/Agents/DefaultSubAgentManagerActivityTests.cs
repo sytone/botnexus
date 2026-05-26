@@ -116,7 +116,8 @@ public sealed class DefaultSubAgentManagerActivityTests
         {
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
-            Task = "Do background work"
+            Task = "Do background work",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentHandle> CreateSuccessfulHandle()

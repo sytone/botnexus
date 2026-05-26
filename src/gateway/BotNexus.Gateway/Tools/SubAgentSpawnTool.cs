@@ -12,7 +12,7 @@ public sealed class SubAgentSpawnTool(
     ISubAgentManager subAgentManager,
     AgentId agentId,
     SessionId sessionId,
-    ConversationId? conversationId = null) : IAgentTool
+    ConversationId conversationId) : IAgentTool
 {
     public string Name => "spawn_subagent";
     public string Label => "Spawn Sub-Agent";
@@ -83,7 +83,7 @@ public sealed class SubAgentSpawnTool(
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             Archetype = ReadArchetype(arguments),
             TargetAgentId = ReadString(arguments, "targetAgentId"),
-            InheritedConversationId = conversationId?.Value
+            InheritedConversationId = conversationId
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
