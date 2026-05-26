@@ -43,6 +43,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private const string ControlSteer = "steer";
     private const string ControlCompact = "compact";
 
+    // Cached to avoid per-dispatch allocation in ResolveSessionType's hot path.
+    private static readonly ChannelKey CronChannelKey = ChannelKey.From("cron");
+
     private readonly IAgentSupervisor _supervisor;
     private readonly IMessageRouter _router;
     private readonly ISessionStore _sessions;
@@ -51,6 +54,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly ISessionCompactor _compactor;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
+    private readonly IAgentRegistry? _registry;
     private readonly IMediaPipeline? _mediaPipeline;
     private readonly IConversationDispatcher? _conversationDispatcher;
     private readonly IConversationRouter? _conversationRouter;
@@ -74,7 +78,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IConversationDispatcher? conversationDispatcher = null,
         IConversationRouter? conversationRouter = null,
         PendingAskUserInterceptor? pendingAskUserInterceptor = null,
-        IPreCompactionMemoryFlusher? memoryFlusher = null)
+        IPreCompactionMemoryFlusher? memoryFlusher = null,
+        IAgentRegistry? registry = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -90,6 +95,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _sessionLifecycleEvents = sessionLifecycleEvents;
         _pendingAskUserInterceptor = pendingAskUserInterceptor;
         _memoryFlusher = memoryFlusher;
+        _registry = registry;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -360,7 +366,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             if (resolution is not null && session.Session.ConversationId != resolution.ConversationId)
                 session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
-            session.SessionType = ResolveSessionType(session, message);
+            session.SessionType = ResolveSessionType(session, message, isNewSession: createdSession);
             EnsureCallerParticipant(session, message.Sender);
             if (ShouldInitializeSystemPrompt(session))
             {
@@ -1082,15 +1088,33 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         });
     }
 
-    private static SessionType ResolveSessionType(GatewaySession session, InboundMessage message)
+    private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)
     {
-        if (session.SessionId.IsSubAgent)
+        // Phase 5 / F-6 step 2 (#554): sub-agent classification is driven by the
+        // typed AgentDescriptor.Kind signal sourced from IAgentRegistry rather than
+        // the legacy SessionId.IsSubAgent substring check. The substring path is
+        // deleted from this method — pinned by AgentKindArchitectureTests.
+        var descriptor = _registry?.Get(session.AgentId);
+        if (descriptor is { Kind: AgentKind.SubAgent })
+            return SessionType.AgentSubAgent;
+
+        // Fail-closed preservation: an EXISTING session previously stamped as
+        // AgentSubAgent stays AgentSubAgent when no typed signal contradicts it.
+        // This guards the gateway-restart and post-Unregister windows where the
+        // sub-agent descriptor is transiently absent from the in-memory registry
+        // (DefaultSubAgentManager.OnChildCompleteAsync calls _registry.Unregister
+        // when a sub-agent finishes). Silently downgrading to UserAgent would
+        // flip Session.IsInteractive and warmup/memory-flush gating downstream.
+        // Note: we explicitly require isNewSession=false so this does NOT re-open
+        // a substring back door for fresh dispatches — first-classification of a
+        // sub-agent-shaped SessionId still depends on the typed registry signal.
+        if (!isNewSession && descriptor is null && session.SessionType == SessionType.AgentSubAgent)
             return SessionType.AgentSubAgent;
 
         if (session.SessionId.IsSoul)
             return SessionType.Soul;
 
-        if (message.ChannelType.Equals(ChannelKey.From("cron")))
+        if (message.ChannelType.Equals(CronChannelKey))
             return SessionType.Cron;
 
         return SessionType.UserAgent;

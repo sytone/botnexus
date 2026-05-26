@@ -28,12 +28,14 @@ namespace BotNexus.Architecture.Tests;
 /// (d) synthetic-clean self-test (proves the regex doesn't fire on legitimate code).
 /// </para>
 /// <para>
-/// Deferred to follow-up PRs (in <c>plan.md</c> Phase 5 follow-ups):
-/// migrating <c>GatewayHost.ResolveSessionType</c> and <c>SessionsController.GetHistory</c>
-/// off the substring predicate (those need broader session-creation / read-path changes)
-/// and removing the <c>"::subagent::"</c> literal depth calculation in
-/// <c>DefaultSubAgentManager</c> (needs a typed <c>ParentSessionId</c> chain on
-/// <c>Session</c>). All three callsites are explicitly allowlisted here with a comment.
+/// Migration history: <c>GatewayHost.ResolveSessionType</c> was migrated to the
+/// typed signal in PR #554 (sub-agent classification now reads
+/// <c>IAgentRegistry.Get(agentId)?.Kind</c>). Remaining DEFERRED entry —
+/// <c>SessionsController</c> read-side filter (#555) — requires a persisted
+/// <see cref="SessionType"/> discriminator on the session row before its substring
+/// check can be cut. The <c>"::subagent::"</c> literal depth calculation in
+/// <c>DefaultSubAgentManager</c> is tracked for a typed <c>ParentSessionId</c> chain
+/// on <c>Session</c>.
 /// </para>
 /// </remarks>
 public sealed class AgentKindArchitectureTests
@@ -57,11 +59,6 @@ public sealed class AgentKindArchitectureTests
             "Defense-in-depth OR-gate combined with descriptor.Kind == AgentKind.SubAgent. " +
             "Ensures the spawn-tool gate fails CLOSED if a future path registers a sub-agent " +
             "descriptor without going through DefaultSubAgentManager.SpawnAsync."),
-
-        ("gateway/BotNexus.Gateway/GatewayHost.cs",
-            "DEFERRED (sytone/botnexus#554): ResolveSessionType still infers SessionType from the " +
-            "SessionId substring during session creation. Tracked for migration to descriptor.Kind + " +
-            "explicit SessionType on the InboundMessage handler path."),
 
         ("gateway/BotNexus.Gateway.Api/Controllers/SessionsController.cs",
             "DEFERRED (sytone/botnexus#555): Read-side filter switches to session.SessionType == AgentSubAgent " +
