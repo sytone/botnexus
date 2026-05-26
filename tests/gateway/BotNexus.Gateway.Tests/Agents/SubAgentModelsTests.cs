@@ -16,7 +16,7 @@ public sealed class SubAgentModelsTests
             .Select(property => property.Name)
             .ToArray();
 
-        requiredProperties.ShouldBe(new[] { "ParentAgentId", "ParentSessionId", "Task", "InheritedConversationId" }, ignoreOrder: true);
+        requiredProperties.ShouldBe(new[] { "ParentAgentId", "ParentSessionId", "Task", "InheritedConversationId", "Mode" }, ignoreOrder: true);
     }
 
     [Fact]
@@ -27,17 +27,15 @@ public sealed class SubAgentModelsTests
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Analyze issue",
-            InheritedConversationId = ConversationId.From("inherited-conv")
+            InheritedConversationId = ConversationId.From("inherited-conv"),
+            Mode = new Embody(SubAgentArchetype.General)
         };
 
         request.MaxTurns.ShouldBe(30);
         request.TimeoutSeconds.ShouldBe(600);
-        request.Name.ShouldBeNull();
-        request.ModelOverride.ShouldBeNull();
-        request.ApiProviderOverride.ShouldBeNull();
-        request.ToolIds.ShouldBeNull();
-        request.SystemPromptOverride.ShouldBeNull();
-        request.Archetype.ShouldBe(SubAgentArchetype.General);
+        request.SpawnDepth.ShouldBe(0);
+        request.ParentToolDenyList.ShouldBeNull();
+        request.Mode.ShouldBeOfType<Embody>();
     }
 
     [Fact]
@@ -48,8 +46,8 @@ public sealed class SubAgentModelsTests
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Analyze issue",
-            Name = "researcher",
-            InheritedConversationId = ConversationId.From("inherited-conv")
+            InheritedConversationId = ConversationId.From("inherited-conv"),
+            Mode = new Embody(SubAgentArchetype.Researcher)
         };
 
         var equalCopy = baseline with { };

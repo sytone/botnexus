@@ -96,15 +96,8 @@ public sealed class SubAgentSpawnTool(
             ParentAgentId = agentId,
             ParentSessionId = sessionId,
             Task = task,
-            Name = name,
-            ModelOverride = modelOverride,
-            ApiProviderOverride = apiProviderOverride,
-            ToolIds = toolIds,
-            SystemPromptOverride = systemPromptOverride,
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
-            Archetype = ResolveArchetype(archetypeRaw),
-            TargetAgentId = targetAgentId,
             InheritedConversationId = conversationId,
             Mode = mode
         };

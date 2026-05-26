@@ -47,13 +47,14 @@ public sealed class SubAgentToolTests
         captured!.ParentAgentId.Value.ShouldBe("parent-agent");
         captured.ParentSessionId.Value.ShouldBe("parent-session");
         captured.Task.ShouldBe("Investigate issue");
-        captured.ModelOverride.ShouldBeNull();
-        captured.ToolIds.ShouldBeNull();
-        captured.SystemPromptOverride.ShouldBeNull();
         captured.MaxTurns.ShouldBe(30);
         captured.TimeoutSeconds.ShouldBe(600);
-        captured.Archetype.ShouldBe(SubAgentArchetype.General);
         captured.InheritedConversationId.Value.ShouldBe("conv-parent");
+        var embody = captured.Mode.ShouldBeOfType<Embody>();
+        embody.Role.ShouldBe(SubAgentArchetype.General);
+        embody.Customizations.ModelOverride.ShouldBeNull();
+        embody.Customizations.ToolIds.ShouldBeNull();
+        embody.Customizations.SystemPromptOverride.ShouldBeNull();
     }
 
     [Fact]
@@ -78,12 +79,13 @@ public sealed class SubAgentToolTests
         });
 
         captured.ShouldNotBeNull();
-        captured!.ModelOverride.ShouldBe("gpt-5-mini");
-        captured.ToolIds.ShouldBe(new[] { "read", "write" });
-        captured.SystemPromptOverride.ShouldBe("Focus on failures");
-        captured.MaxTurns.ShouldBe(12);
+        captured!.MaxTurns.ShouldBe(12);
         captured.TimeoutSeconds.ShouldBe(45);
-        captured.Archetype.ShouldBe(SubAgentArchetype.Reviewer);
+        var embody = captured.Mode.ShouldBeOfType<Embody>();
+        embody.Role.ShouldBe(SubAgentArchetype.Reviewer);
+        embody.Customizations.ModelOverride.ShouldBe("gpt-5-mini");
+        embody.Customizations.ToolIds.ShouldBe(new[] { "read", "write" });
+        embody.Customizations.SystemPromptOverride.ShouldBe("Focus on failures");
     }
 
     [Fact]

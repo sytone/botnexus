@@ -199,6 +199,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
             ParentAgentId = AgentId.From("parent-agent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "Do background work",
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 

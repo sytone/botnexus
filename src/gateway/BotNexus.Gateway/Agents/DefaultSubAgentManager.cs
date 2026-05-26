@@ -76,21 +76,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
         }
 
-        // Validate tool grants against parent's deny-list (privilege escalation prevention)
-        if (_policyProvider is not null && request.ToolIds is { Count: > 0 })
-        {
-            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
-            if (parentDenyList.Count > 0)
-            {
-                var denied = request.ToolIds
-                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
-                    .ToList();
-                if (denied.Count > 0)
-                    throw new InvalidOperationException(
-                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
-            }
-        }
-
         var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
         if (maxConcurrent > 0)
         {
@@ -107,10 +92,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var subAgentId = uniqueId;
         var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
 
-        // Phase 5 / F-6 step 3 (#562): pattern-match on Mode when present (set by
-        // SubAgentSpawnTool as of step 2). Legacy callers (tests not yet migrated)
-        // still pass the old top-level fields and hit the `case null:` fallback;
-        // both shapes are removed in step 5.
+        // Phase 5 / F-6 (#562): pattern-match on the required Mode discriminated
+        // union. Mode is `required` on SubAgentSpawnRequest as of step 5, so the
+        // null case is structurally unreachable — the default arm exists only to
+        // catch a future third subclass of SubAgentSpawnMode being added without
+        // updating this switch.
         SubAgentArchetype archetype;
         AgentDescriptor baseDescriptor;
         AgentId childAgentId;
@@ -149,32 +135,27 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 systemPromptOverride = null;
                 break;
 
-            case null:
-                // Legacy path — read from the old top-level fields. Removed in
-                // #562 step 5 once all callsites are migrated to Mode.
-                archetype = request.Archetype ?? SubAgentArchetype.General;
-                if (!string.IsNullOrWhiteSpace(request.TargetAgentId))
-                {
-                    var targetId = AgentId.From(request.TargetAgentId);
-                    baseDescriptor = _registry.Get(targetId)
-                        ?? throw new KeyNotFoundException($"Target agent '{request.TargetAgentId}' is not registered.");
-                }
-                else
-                {
-                    baseDescriptor = parentDescriptor;
-                }
-                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
-                name = request.Name;
-                modelOverride = request.ModelOverride;
-                apiProviderOverride = request.ApiProviderOverride;
-                toolIds = request.ToolIds;
-                systemPromptOverride = request.SystemPromptOverride;
-                break;
-
             default:
                 throw new InvalidOperationException(
                     $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
                     + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
+        }
+
+        // Validate tool grants against parent's deny-list (privilege escalation
+        // prevention). Runs AFTER the switch so it reads the typed `toolIds`
+        // local resolved from Mode, not a deleted top-level request field.
+        if (_policyProvider is not null && toolIds is { Count: > 0 })
+        {
+            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
+            if (parentDenyList.Count > 0)
+            {
+                var denied = toolIds
+                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (denied.Count > 0)
+                    throw new InvalidOperationException(
+                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
+            }
         }
 
         if (!_registry.Contains(childAgentId))

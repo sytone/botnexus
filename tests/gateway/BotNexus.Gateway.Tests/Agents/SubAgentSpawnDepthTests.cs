@@ -127,6 +127,7 @@ public sealed class SubAgentSpawnDepthTests
             ParentSessionId = parentSessionId ?? SessionId.From("root-session"),
             Task = "Do something",
             TimeoutSeconds = 600,
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
