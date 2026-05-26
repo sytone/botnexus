@@ -200,6 +200,11 @@ public sealed class FileSessionStore : SessionStoreBase
         {
             CallerId = meta.CallerId
         };
+        if (meta.Metadata is not null)
+        {
+            foreach (var pair in meta.Metadata)
+                session.Metadata[pair.Key] = pair.Value;
+        }
         session.SetStreamReplayState(meta.NextSequenceId, meta.StreamEvents);
 
         var historyPath = GetHistoryPath(sessionId);
@@ -245,7 +250,8 @@ public sealed class FileSessionStore : SessionStoreBase
             session.ExpiresAt,
             session.NextSequenceId,
             [.. session.GetStreamEventSnapshot()],
-            session.Session.ConversationId);
+            session.Session.ConversationId,
+            session.Metadata.Count == 0 ? null : new Dictionary<string, object?>(session.Metadata));
         await SessionMetadataSidecar.WriteAsync(
             _fileSystem,
             metaPath,
@@ -269,5 +275,10 @@ public sealed class FileSessionStore : SessionStoreBase
         DateTimeOffset? ExpiresAt = null,
         long NextSequenceId = 1,
         List<GatewaySessionStreamEvent>? StreamEvents = null,
-        ConversationId? ConversationId = null);
+        ConversationId? ConversationId = null,
+        // PR #549: cross-world federation receiver requires Session.Metadata to round-trip on disk
+        // (OwnedByRequester validates RemoteSessionId via sourceWorldId/sourceAgentId stashed
+        // here). Historically this record dropped Metadata entirely, silently breaking the receiver
+        // after any gateway restart on a FileSessionStore-backed deployment.
+        Dictionary<string, object?>? Metadata = null);
 }
