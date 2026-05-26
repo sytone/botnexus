@@ -321,11 +321,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.created_at,
                     c.updated_at,
                     COUNT(b.binding_id),
-                    c.instructions
+                    c.instructions,
+                    c.kind
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
                 ORDER BY c.updated_at DESC
                 """
             : """
@@ -340,11 +341,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.created_at,
                     c.updated_at,
                     COUNT(b.binding_id),
-                    c.instructions
+                    c.instructions,
+                    c.kind
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.agent_id = $agentId AND c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
                 ORDER BY c.updated_at DESC
                 """;
         if (agentId is not null)
@@ -364,7 +366,10 @@ public sealed class SqliteConversationStore : IConversationStore
                 checked((int)reader.GetInt64(9)),
                 ParseTimestamp(reader.GetString(7)),
                 ParseTimestamp(reader.GetString(8)),
-                reader.IsDBNull(3) ? null : reader.GetString(3)));
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.FieldCount > 11 && !reader.IsDBNull(11)
+                    ? reader.GetString(11)
+                    : ConversationKind.HumanAgent.ToString()));
         }
 
         return summaries;

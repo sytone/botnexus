@@ -13,6 +13,11 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// <param name="CreatedAt">When the conversation was created.</param>
 /// <param name="UpdatedAt">When the conversation was last modified.</param>
 /// <param name="Purpose">The persisted description of the conversation's intent.</param>
+/// <param name="Kind">
+/// Discriminator (<c>HumanAgent</c>, <c>AgentAgent</c>, or <c>AgentSubAgent</c>) so consumers
+/// like the portal can hide internal agent-to-agent transcripts from the user-facing conversation
+/// list. Defaults to <c>HumanAgent</c> for back-compat with pre-Phase-4 stores.
+/// </param>
 public sealed record ConversationSummary(
     string ConversationId,
     string AgentId,
@@ -23,4 +28,5 @@ public sealed record ConversationSummary(
     int BindingCount,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? Purpose = null);
+    string? Purpose = null,
+    string Kind = "HumanAgent");
