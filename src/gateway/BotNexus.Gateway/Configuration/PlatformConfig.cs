@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain;
+using BotNexus.Domain.World;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -455,6 +456,15 @@ public sealed class AgentDefinitionConfig
 
     /// <summary>Tool policy overrides for this agent.</summary>
     public ToolPolicyConfig? ToolPolicy { get; set; }
+
+    /// <summary>
+    /// Optional. Kind of agent — currently only <c>Named</c> is accepted from config.
+    /// <c>SubAgent</c> is rejected by <c>AgentDescriptorValidator.ValidateForConfig</c>;
+    /// sub-agents are runtime-only and produced exclusively by
+    /// <c>DefaultSubAgentManager.SpawnAsync</c>. Omit the field entirely on existing
+    /// configs; the default is <c>Named</c>.
+    /// </summary>
+    public AgentKind? Kind { get; set; }
 }
 
 /// <summary>Per-agent file access policy configuration.</summary>
