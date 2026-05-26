@@ -17,6 +17,22 @@ public sealed record AgentDescriptor : ICitizen
     public required string DisplayName { get; init; }
 
     /// <summary>
+    /// Discriminates a named (configuration / REST-registered) agent from a runtime-spawned
+    /// sub-agent. Defaults to <see cref="AgentKind.Named"/> so existing JSON payloads round-trip
+    /// unchanged. <see cref="AgentKind.SubAgent"/> is set exclusively by
+    /// <c>DefaultSubAgentManager.SpawnAsync</c>; configuration sources that attempt to declare
+    /// <see cref="AgentKind.SubAgent"/> are rejected by
+    /// <c>AgentDescriptorValidator.ValidateForConfig</c>.
+    /// </summary>
+    /// <remarks>
+    /// Used by <c>InProcessIsolationStrategy</c> as the primary signal for blocking recursive
+    /// spawn-tool registration. The SessionId-substring fallback (<c>SessionId.IsSubAgent</c>)
+    /// is retained as defense-in-depth for sessions created before this property existed or by
+    /// future paths that bypass <c>DefaultSubAgentManager</c>.
+    /// </remarks>
+    public AgentKind Kind { get; init; } = AgentKind.Named;
+
+    /// <summary>
     /// Discriminated citizen identity. Always <see cref="CitizenId.Of(AgentId)"/> for an agent —
     /// satisfies <see cref="ICitizen"/> so the descriptor can flow through cross-cutting code
     /// that addresses users and agents uniformly without losing the typed <see cref="AgentId"/>.

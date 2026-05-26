@@ -126,7 +126,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             _registry.Register(baseDescriptor with
             {
                 AgentId = childAgentId,
-                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})"
+                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
+                Kind = AgentKind.SubAgent
             });
         }
 

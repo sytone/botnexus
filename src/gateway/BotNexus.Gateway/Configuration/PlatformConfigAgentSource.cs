@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -114,10 +115,11 @@ public sealed class PlatformConfigAgentSource(
                 FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
                 ExtensionConfig = ExtensionConfigMerger.Merge(
                     platformConfig.Gateway?.Extensions?.Defaults,
-                    effectiveConfig.Extensions)
+                    effectiveConfig.Extensions),
+                Kind = effectiveConfig.Kind ?? AgentKind.Named
             };
 
-            var validationErrors = AgentDescriptorValidator.Validate(descriptor);
+            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);
             if (validationErrors.Count > 0)
             {
                 _logger.LogWarning(

@@ -20,6 +20,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
@@ -205,7 +206,43 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
-        var isSubAgentSession = context.SessionId.IsSubAgent;
+        // Phase 5 / F-6 part 1: primary signal is the typed descriptor.Kind (AgentKind.SubAgent
+        // is set exactly once by DefaultSubAgentManager.SpawnAsync). The SessionId.IsSubAgent
+        // substring check is retained as defense-in-depth so the gate fails CLOSED if a future
+        // path registers a sub-agent descriptor without going through SpawnAsync (or if a
+        // legacy ::subagent:: session is replayed against a Kind-defaulted descriptor). The
+        // architecture fence in AgentKindArchitectureTests deliberately allowlists this file
+        // as the one production callsite of SessionId.IsSubAgent outside the legacy
+        // SessionStoreBase read-path bucketing.
+        var isSubAgentSession =
+            descriptor.Kind == AgentKind.SubAgent
+            || context.SessionId.IsSubAgent;
+
+        // Defense-in-depth observability: if the typed and substring signals disagree,
+        // an invariant has drifted (a sub-agent descriptor was registered without
+        // Kind = SubAgent, or a sub-agent SessionId was attached to a Named descriptor).
+        // Either case means a future migration removed the OR fallback would break this
+        // call. Log at Warning so operators can alert on it.
+        if (descriptor.Kind == AgentKind.SubAgent && !context.SessionId.IsSubAgent)
+        {
+            _logger.LogWarning(
+                "Isolation gate: descriptor.Kind=SubAgent but SessionId '{SessionId}' is not a sub-agent shape " +
+                "for agent '{AgentId}'. Spawn tools will be blocked (correct), but this indicates an invariant " +
+                "drift — typed and substring signals must agree.",
+                context.SessionId,
+                descriptor.AgentId);
+        }
+        else if (descriptor.Kind != AgentKind.SubAgent && context.SessionId.IsSubAgent)
+        {
+            _logger.LogWarning(
+                "Isolation gate: SessionId '{SessionId}' is a sub-agent shape but descriptor.Kind={Kind} for " +
+                "agent '{AgentId}'. The substring fallback is correctly blocking spawn tools, but the typed " +
+                "signal should also be SubAgent — this indicates the descriptor was registered outside of " +
+                "DefaultSubAgentManager.SpawnAsync.",
+                context.SessionId,
+                descriptor.Kind,
+                descriptor.AgentId);
+        }
         if (subAgentManager is not null &&
             subAgentOptions is { MaxDepth: > 0 } &&
             !isSubAgentSession)

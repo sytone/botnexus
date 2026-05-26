@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO.Abstractions;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -67,7 +68,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             }
 
             var descriptor = BuildDescriptor(jsonConfig);
-            var validationErrors = AgentDescriptorValidator.Validate(descriptor);
+            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);
             if (validationErrors.Count > 0)
             {
                 _logger.LogWarning(
@@ -160,7 +161,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             IsolationOptions = ConvertObject(config.IsolationOptions),
             Soul = CloneSoulConfig(config.Soul),
             Heartbeat = CloneHeartbeatConfig(config.Heartbeat),
-            FileAccess = MapFileAccessPolicy(config.FileAccess)
+            FileAccess = MapFileAccessPolicy(config.FileAccess),
+            Kind = config.Kind ?? AgentKind.Named
         };
     }
 
@@ -383,5 +385,14 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public IReadOnlyList<string>? SubAgentRoles { get; init; }
 
         public FileAccessPolicyConfig? FileAccess { get; init; }
+
+        /// <summary>
+        /// Optional. Kind of agent — currently only <c>"Named"</c> is accepted from config.
+        /// <c>"SubAgent"</c> is rejected by <see cref="AgentDescriptorValidator.ValidateForConfig"/>;
+        /// sub-agents are runtime-only and produced exclusively by
+        /// <c>DefaultSubAgentManager.SpawnAsync</c>. Omit the field entirely on existing
+        /// configs; the default is <c>Named</c>.
+        /// </summary>
+        public AgentKind? Kind { get; init; }
     }
 }

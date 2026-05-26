@@ -141,6 +141,121 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithoutKindField_DefaultsToNamed_BackCompat()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["legacy"] = new() { Provider = "copilot", Model = "gpt-4.1" }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Kind.ShouldBe(AgentKind.Named,
+            "Platform-config entries omitting 'kind' must default to Named so existing fleet " +
+            "configurations don't shift semantics on upgrade.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithExplicitKindSubAgent_RejectsDescriptorAndLogsWarning()
+    {
+        // PRIMARY rejection invariant for the platform-config path: Kind = SubAgent must
+        // never come from configuration. If an operator (or attacker who can edit
+        // botnexus.json) supplies "kind": "SubAgent" the descriptor MUST be dropped at
+        // load time so it never reaches the registry — otherwise the sub-agent-internal
+        // tool surface would attach to what is, semantically, a named agent.
+        var logger = new ListLogger<PlatformConfigAgentSource>();
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["smuggled"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Kind = AgentKind.SubAgent
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, logger);
+
+        var descriptors = await source.LoadAsync();
+
+        descriptors.ShouldBeEmpty(
+            "Platform-config 'kind: SubAgent' MUST be rejected. If this fails, the platform " +
+            "config path is now a vector to bypass the runtime-only sub-agent invariant.");
+        logger.Entries.ShouldContain(e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("validation", StringComparison.OrdinalIgnoreCase),
+            "Rejection must surface as a Warning log so operators can detect misconfiguration.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithExplicitKindNamed_AcceptsDescriptor()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["named"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Kind = AgentKind.Named
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Kind.ShouldBe(AgentKind.Named);
+    }
+
+    [Fact]
+    public void LoadAsync_WithKindAsIntegerOneInJson_RejectsDescriptor()
+    {
+        // End-to-end strict-converter check through JSON deserialization into PlatformConfig.
+        // A JSON config supplying "kind": 1 (which would resolve to SubAgent under the
+        // default System.Text.Json behaviour) must fail to bind to the strict
+        // AgentKindJsonConverter — otherwise integer smuggling could bypass the
+        // string-form rejection guard.
+        var configDirectory = Path.Combine(Path.GetTempPath(), "botnexus-platform-int-kind", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(configDirectory);
+        try
+        {
+            const string rawJson = """
+                {
+                  "agents": {
+                    "smuggle": {
+                      "provider": "copilot",
+                      "model": "gpt-4.1",
+                      "kind": 1
+                    }
+                  }
+                }
+                """;
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var bind = () => JsonSerializer.Deserialize<PlatformConfig>(rawJson, options);
+
+            var ex = Should.Throw<JsonException>(bind);
+            ex.Message.ShouldContain("AgentKind");
+        }
+        finally
+        {
+            if (Directory.Exists(configDirectory))
+                Directory.Delete(configDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LoadAsync_WithWorldDefaults_MergesIntoAgentExtensionConfig()
     {
         var config = JsonSerializer.Deserialize<PlatformConfig>(

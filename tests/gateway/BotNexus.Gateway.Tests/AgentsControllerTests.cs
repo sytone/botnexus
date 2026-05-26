@@ -574,4 +574,62 @@ public sealed class AgentsControllerTests
             ApiProvider = "test-provider",
             Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 30 }
         };
+
+    // ── AgentKind REST guard tests (Phase 5 / F-6 part 1) ──────────────────────
+
+    [Fact]
+    public async Task Register_WithKindSubAgent_ReturnsBadRequest()
+    {
+        // SECURITY GUARD: a REST POST that attempts to register an agent with Kind = SubAgent
+        // must be rejected at the controller. Sub-agents are runtime-only — only
+        // DefaultSubAgentManager.SpawnAsync may stamp Kind = SubAgent on a descriptor.
+        // If we accepted this, an attacker with REST access could either bypass the
+        // spawn-tool deny gate or silently deprive a named agent of spawn_subagent.
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            [CreateNotifier().Object]);
+        var descriptor = CreateDescriptor("attacker") with { Kind = BotNexus.Domain.World.AgentKind.SubAgent };
+
+        var result = await controller.Register(descriptor, CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>(
+            "Register must reject Kind = SubAgent with 400 BadRequest. If this fails, the " +
+            "REST-side sub-agent privilege guard is missing.");
+        registry.Get(BotNexus.Domain.Primitives.AgentId.From("attacker")).ShouldBeNull(
+            "Rejected descriptor must NOT have been written to the registry.");
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never,
+            "Rejected descriptor must NOT have been persisted to config.");
+    }
+
+    [Fact]
+    public async Task Update_WithKindSubAgent_ReturnsBadRequest()
+    {
+        // Symmetric guard on the PUT path: a previously-Named agent must not be silently
+        // converted to Kind = SubAgent through an Update payload. Same threat model as Register.
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            [CreateNotifier().Object]);
+        var updated = CreateDescriptor("agent-a") with { Kind = BotNexus.Domain.World.AgentKind.SubAgent };
+
+        var result = await controller.Update("agent-a", updated, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>(
+            "Update must reject Kind = SubAgent with 400 BadRequest. If this fails, an " +
+            "attacker could convert a Named agent to SubAgent through PUT and deprive it " +
+            "of spawn_subagent permanently.");
+        registry.Get(BotNexus.Domain.Primitives.AgentId.From("agent-a"))!
+            .Kind.ShouldBe(BotNexus.Domain.World.AgentKind.Named,
+                "Rejected update must NOT have mutated the registered descriptor.");
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never,
+            "Rejected descriptor must NOT have been persisted to config.");
+    }
 }

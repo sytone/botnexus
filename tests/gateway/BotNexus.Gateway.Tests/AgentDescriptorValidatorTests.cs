@@ -97,6 +97,55 @@ public sealed class AgentDescriptorValidatorTests
         errors.ShouldBeEmpty();
     }
 
+    // ---- ValidateForConfig (Phase 5 / F-6 — config & REST guard for AgentKind.SubAgent) ----
+
+    [Fact]
+    public void ValidateForConfig_WithKindNamed_DefaultKind_ReturnsNoKindError()
+    {
+        // Baseline: default Kind (Named) on a valid descriptor must produce no Kind-related error.
+        var descriptor = CreateValidDescriptor();
+
+        var errors = AgentDescriptorValidator.ValidateForConfig(descriptor);
+
+        errors.ShouldNotContain(error => error.Contains("Kind", StringComparison.Ordinal),
+            "ValidateForConfig must allow Kind = Named (the default). Errors received: " +
+            string.Join("; ", errors));
+    }
+
+    [Fact]
+    public void ValidateForConfig_WithKindSubAgent_ReturnsKindError()
+    {
+        // Security guard: a sub-agent must NEVER be declared from config / REST. Only
+        // DefaultSubAgentManager.SpawnAsync is allowed to stamp Kind = SubAgent on a descriptor.
+        // If we allowed this from config, an attacker who could write to the agent config could
+        // either (a) bypass the spawn-tool deny gate (Named privilege under the guise of a
+        // SubAgent registration) or (b) silently deprive a legitimate named agent of
+        // spawn_subagent on every session.
+        var descriptor = CreateValidDescriptor() with { Kind = BotNexus.Domain.World.AgentKind.SubAgent };
+
+        var errors = AgentDescriptorValidator.ValidateForConfig(descriptor);
+
+        errors.ShouldContain(error => error.Contains("Kind = SubAgent is reserved", StringComparison.Ordinal),
+            "ValidateForConfig must reject Kind = SubAgent. Errors received: " +
+            string.Join("; ", errors));
+    }
+
+    [Fact]
+    public void Validate_WithKindSubAgent_DoesNotReturnKindError()
+    {
+        // Runtime path contract: the spawn-time supervisor lookup uses Validate (not
+        // ValidateForConfig), so Validate MUST accept Kind = SubAgent. If this assertion
+        // regresses, every sub-agent spawn would fail at supervisor.GetOrCreateAsync time,
+        // breaking all sub-agent functionality across the platform.
+        var descriptor = CreateValidDescriptor() with { Kind = BotNexus.Domain.World.AgentKind.SubAgent };
+
+        var errors = AgentDescriptorValidator.Validate(descriptor);
+
+        errors.ShouldNotContain(error => error.Contains("Kind", StringComparison.Ordinal),
+            "Validate (runtime path) must allow Kind = SubAgent — used by DefaultSubAgentManager " +
+            "via DefaultAgentSupervisor.GetOrCreateAsync. Errors received: " + string.Join("; ", errors));
+    }
+
     private static AgentDescriptor CreateValidDescriptor()
         => new()
         {

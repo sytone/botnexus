@@ -308,6 +308,124 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithoutKindField_DefaultsToNamed_BackCompat()
+    {
+        // Critical back-compat pin: every config file written before Phase 5 omits the
+        // 'kind' field. Loading those configs must result in Kind = Named so the
+        // pre-existing fleet doesn't lose spawn_subagent permissions on the next reload.
+        _fileSystem.File.WriteAllText(
+            Path.Combine(_directoryPath, "agent.json"),
+            """
+            {
+              "agentId": "legacy-agent",
+              "displayName": "Legacy Agent",
+              "modelId": "model",
+              "apiProvider": "provider"
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, new ListLogger<FileAgentConfigurationSource>(), _fileSystem);
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Kind.ShouldBe(BotNexus.Domain.World.AgentKind.Named,
+            "Missing 'kind' field MUST default to Named. Pre-Phase-5 configs that don't " +
+            "specify kind silently being treated as SubAgent would break every existing " +
+            "agent's tool surface on the next gateway restart.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithExplicitKindNamed_AcceptsDescriptor()
+    {
+        _fileSystem.File.WriteAllText(
+            Path.Combine(_directoryPath, "agent.json"),
+            """
+            {
+              "agentId": "named-agent",
+              "displayName": "Named Agent",
+              "modelId": "model",
+              "apiProvider": "provider",
+              "kind": "Named"
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, new ListLogger<FileAgentConfigurationSource>(), _fileSystem);
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Kind.ShouldBe(BotNexus.Domain.World.AgentKind.Named);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithExplicitKindSubAgent_RejectsDescriptorAndLogsWarning()
+    {
+        // The PRIMARY rejection invariant for the config path: Kind = SubAgent must NEVER
+        // come from a config file. Sub-agents are runtime-only — produced exclusively by
+        // DefaultSubAgentManager.SpawnAsync. If an operator (or attacker who can edit
+        // config) writes "kind": "SubAgent" to escalate a normal agent's tool surface (or
+        // restrict it — the privilege boundary cuts both ways), the gateway MUST refuse
+        // to load that descriptor and log a warning so the misconfiguration is visible.
+        var logger = new ListLogger<FileAgentConfigurationSource>();
+        _fileSystem.File.WriteAllText(
+            Path.Combine(_directoryPath, "agent.json"),
+            """
+            {
+              "agentId": "smuggled-subagent",
+              "displayName": "Smuggled Sub-Agent",
+              "modelId": "model",
+              "apiProvider": "provider",
+              "kind": "SubAgent"
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, logger, _fileSystem);
+
+        var descriptors = await source.LoadAsync();
+
+        descriptors.ShouldBeEmpty(
+            "A config file declaring 'kind': 'SubAgent' MUST be rejected. If this fails, " +
+            "the configuration path is now a vector to bypass the runtime-only sub-agent " +
+            "invariant — an attacker with edit access to agents.json could attach the " +
+            "sub-agent-internal tool surface to a Named agent.");
+        logger.Entries.ShouldContain(e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("validation", StringComparison.OrdinalIgnoreCase),
+            "The rejection must be logged at Warning so operators see misconfiguration " +
+            "alerts — a silent drop would hide the problem.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithKindAsIntegerOne_RejectsDescriptor()
+    {
+        // The strict JSON converter for AgentKind refuses integer payloads outright, so
+        // a try at "kind": 1 (which would resolve to SubAgent if integer values were
+        // allowed) must fail to deserialize — and the file should be skipped as malformed
+        // rather than silently loaded with a default Kind. This pins the converter's
+        // string-only contract end-to-end through the config loader.
+        var logger = new ListLogger<FileAgentConfigurationSource>();
+        _fileSystem.File.WriteAllText(
+            Path.Combine(_directoryPath, "integer-kind.json"),
+            """
+            {
+              "agentId": "integer-attempt",
+              "displayName": "Integer Kind",
+              "modelId": "model",
+              "apiProvider": "provider",
+              "kind": 1
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, logger, _fileSystem);
+
+        var descriptors = await source.LoadAsync();
+
+        descriptors.ShouldBeEmpty(
+            "Integer 'kind' value must NOT round-trip to SubAgent. The strict converter " +
+            "rejects integers so future enum reordering and out-of-range smuggling " +
+            "(e.g. 'kind': 99) cannot bypass the equality-based rejection guards.");
+    }
+
+    [Fact]
     public void Watch_WithExistingDirectory_ReturnsDisposableWatcher()
     {
         var watchDirectory = Path.Combine(Path.GetTempPath(), "botnexus-file-config-watch-tests", Guid.NewGuid().ToString("N"));
