@@ -20,6 +20,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
@@ -205,7 +206,17 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
-        var isSubAgentSession = context.SessionId.IsSubAgent;
+        // Phase 5 / F-6 part 1: primary signal is the typed descriptor.Kind (AgentKind.SubAgent
+        // is set exactly once by DefaultSubAgentManager.SpawnAsync). The SessionId.IsSubAgent
+        // substring check is retained as defense-in-depth so the gate fails CLOSED if a future
+        // path registers a sub-agent descriptor without going through SpawnAsync (or if a
+        // legacy ::subagent:: session is replayed against a Kind-defaulted descriptor). The
+        // architecture fence in AgentKindArchitectureTests deliberately allowlists this file
+        // as the one production callsite of SessionId.IsSubAgent outside the legacy
+        // SessionStoreBase read-path bucketing.
+        var isSubAgentSession =
+            descriptor.Kind == AgentKind.SubAgent
+            || context.SessionId.IsSubAgent;
         if (subAgentManager is not null &&
             subAgentOptions is { MaxDepth: > 0 } &&
             !isSubAgentSession)
