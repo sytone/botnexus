@@ -57,6 +57,7 @@ public sealed class SubAgentEagerConversationPinTests
             ParentAgentId = AgentId.From("parent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "x",
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("conv-1")
         };
 
@@ -117,6 +118,7 @@ public sealed class SubAgentEagerConversationPinTests
             ParentAgentId = AgentId.From("parent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "x",
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("conv-99")
         };
 
@@ -167,6 +169,7 @@ public sealed class SubAgentEagerConversationPinTests
             ParentAgentId = AgentId.From("parent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "go",
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("conv-order")
         };
 

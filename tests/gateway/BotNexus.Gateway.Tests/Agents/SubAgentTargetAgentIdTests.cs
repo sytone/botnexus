@@ -58,7 +58,7 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Write some code",
             TimeoutSeconds = 600,
-            TargetAgentId = "farnsworth",
+            Mode = new Mirror(AgentId.From("farnsworth")),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
@@ -99,7 +99,7 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do something",
             TimeoutSeconds = 600,
-            TargetAgentId = "ghost-agent",
+            Mode = new Mirror(AgentId.From("ghost-agent")),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
@@ -144,7 +144,7 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do work",
             TimeoutSeconds = 600,
-            // no TargetAgentId
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
@@ -215,7 +215,7 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do work",
             TimeoutSeconds = 600,
-            TargetAgentId = "farnsworth",
+            Mode = new Mirror(AgentId.From("farnsworth")),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 

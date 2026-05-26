@@ -65,7 +65,7 @@ public sealed class SubAgentArchetypeIdentityTests
             ParentAgentId = parentAgentId,
             ParentSessionId = parentSessionId,
             Task = "Investigate issue",
-            Archetype = SubAgentArchetype.Reviewer,
+            Mode = new Embody(SubAgentArchetype.Reviewer),
             InheritedConversationId = ConversationId.From("inherited-conv")
         });
 
@@ -125,6 +125,7 @@ public sealed class SubAgentArchetypeIdentityTests
             ParentAgentId = parentAgentId,
             ParentSessionId = parentSessionId,
             Task = "Investigate issue",
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         });
 
