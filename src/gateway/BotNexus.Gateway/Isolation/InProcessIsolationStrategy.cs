@@ -217,6 +217,32 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var isSubAgentSession =
             descriptor.Kind == AgentKind.SubAgent
             || context.SessionId.IsSubAgent;
+
+        // Defense-in-depth observability: if the typed and substring signals disagree,
+        // an invariant has drifted (a sub-agent descriptor was registered without
+        // Kind = SubAgent, or a sub-agent SessionId was attached to a Named descriptor).
+        // Either case means a future migration removed the OR fallback would break this
+        // call. Log at Warning so operators can alert on it.
+        if (descriptor.Kind == AgentKind.SubAgent && !context.SessionId.IsSubAgent)
+        {
+            _logger.LogWarning(
+                "Isolation gate: descriptor.Kind=SubAgent but SessionId '{SessionId}' is not a sub-agent shape " +
+                "for agent '{AgentId}'. Spawn tools will be blocked (correct), but this indicates an invariant " +
+                "drift — typed and substring signals must agree.",
+                context.SessionId,
+                descriptor.AgentId);
+        }
+        else if (descriptor.Kind != AgentKind.SubAgent && context.SessionId.IsSubAgent)
+        {
+            _logger.LogWarning(
+                "Isolation gate: SessionId '{SessionId}' is a sub-agent shape but descriptor.Kind={Kind} for " +
+                "agent '{AgentId}'. The substring fallback is correctly blocking spawn tools, but the typed " +
+                "signal should also be SubAgent — this indicates the descriptor was registered outside of " +
+                "DefaultSubAgentManager.SpawnAsync.",
+                context.SessionId,
+                descriptor.Kind,
+                descriptor.AgentId);
+        }
         if (subAgentManager is not null &&
             subAgentOptions is { MaxDepth: > 0 } &&
             !isSubAgentSession)

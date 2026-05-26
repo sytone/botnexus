@@ -236,6 +236,51 @@ public sealed class SubAgentKindTests
         toolNames.ShouldContain("manage_subagent");
     }
 
+    [Fact]
+    public async Task IsolationStrategy_DescriptorKindSubAgent_SubAgentSubstringSessionId_BlocksSpawnTools()
+    {
+        // 4TH ROW OF THE OR-GATE TRUTH TABLE: both signals are TRUE (Kind = SubAgent AND
+        // the SessionId carries the ::subagent:: substring). This is the normal-operation
+        // shape — DefaultSubAgentManager.SpawnAsync sets BOTH signals together. Logically
+        // redundant for an OR-gate, but the row exists as a regression-pin: if a future
+        // refactor changes the gate to AND (which would fail OPEN under the previous three
+        // rows for various single-signal cases), this row plus the prior two would still
+        // block — but the prior two would START PASSING (i.e. NOT blocking). The full
+        // 4-row matrix is the only configuration that lets a polarity-flip regression
+        // surface in CI.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        await SeedBoundSessionAsync(conversationStore, sessionStore,
+            AgentId.From("sub-agent"),
+            SessionId.From("parent::subagent::child"),
+            ConversationId.From("inherited-conv"));
+
+        var strategy = CreateStrategy(conversationStore, sessionStore);
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = AgentId.From("sub-agent"),
+            DisplayName = "Sub Agent (normal operation — both signals agree)",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            ToolIds = ["spawn_subagent", "list_subagents", "manage_subagent"],
+            Kind = AgentKind.SubAgent
+        };
+
+        var handle = await strategy.CreateAsync(descriptor, new AgentExecutionContext
+        {
+            SessionId = SessionId.From("parent::subagent::child")
+        });
+        var toolNames = GetToolNames(handle);
+
+        toolNames.ShouldNotContain("spawn_subagent",
+            "NORMAL OPERATION: both Kind and SessionId signals say SubAgent — gate must block. " +
+            "This row plus the three single-signal rows form the complete 4-row OR-gate truth " +
+            "table; a polarity flip from OR to AND would invert the three single-signal rows " +
+            "but leave this row unchanged.");
+        toolNames.ShouldNotContain("list_subagents");
+        toolNames.ShouldNotContain("manage_subagent");
+    }
+
     // ---------------------------------------------------------------------------
     // Test infrastructure (kept local to this file to avoid cross-test coupling).
     // ---------------------------------------------------------------------------
