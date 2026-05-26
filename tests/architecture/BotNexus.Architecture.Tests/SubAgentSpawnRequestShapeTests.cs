@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Models;
 using Shouldly;
 
@@ -100,6 +101,18 @@ public sealed class SubAgentSpawnRequestShapeTests
             "defeats the discriminated-union contract.");
     }
 
+    private static readonly Regex s_modeSwitchPattern = new(
+        @"switch\s*\(\s*request\.Mode\s*\)",
+        RegexOptions.Compiled);
+
+    private static readonly Regex s_embodyPattern = new(
+        @"\b(is|case)\s+Embody\b",
+        RegexOptions.Compiled);
+
+    private static readonly Regex s_mirrorPattern = new(
+        @"\b(is|case)\s+Mirror\b",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// Source-scan on <c>DefaultSubAgentManager.cs</c>: the spawn path must
     /// pattern-match on <c>request.Mode</c> and must not read any of the
@@ -113,15 +126,16 @@ public sealed class SubAgentSpawnRequestShapeTests
         var managerPath = LocateManagerFile();
         var source = File.ReadAllText(managerPath);
 
-        var hasModeSwitch = source.Contains("switch (request.Mode)", StringComparison.Ordinal);
-        var hasEmbodyPattern = source.Contains("Embody embody", StringComparison.Ordinal);
-        var hasMirrorPattern = source.Contains("Mirror mirror", StringComparison.Ordinal);
+        var hasModeSwitch = s_modeSwitchPattern.IsMatch(source);
+        var hasEmbodyPattern = s_embodyPattern.IsMatch(source);
+        var hasMirrorPattern = s_mirrorPattern.IsMatch(source);
 
         (hasModeSwitch || (hasEmbodyPattern && hasMirrorPattern)).ShouldBeTrue(
             "DefaultSubAgentManager.cs must drive spawn behaviour by " +
             "pattern-matching on request.Mode (either `switch (request.Mode)` " +
-            "or `is Embody` plus `is Mirror`). The discriminated-union contract " +
-            "from #562 step 5 requires Mode to be the single source of truth.\n" +
+            "or `is Embody` / `case Embody` plus `is Mirror` / `case Mirror`). " +
+            "The discriminated-union contract from #562 step 5 requires Mode " +
+            "to be the single source of truth.\n" +
             "File: " + managerPath);
 
         var leakedReads = s_deletedLegacyProperties
@@ -138,10 +152,10 @@ public sealed class SubAgentSpawnRequestShapeTests
     }
 
     /// <summary>
-    /// Vacuity guard: the legacy-property scan in
-    /// <see cref="DefaultSubAgentManager_PatternMatchesOnMode_NotLegacyFields"/>
-    /// must actually catch a violation when one is present. This synthetic
-    /// shape would slip through silently if the fence regex were ever broken.
+    /// Vacuity guard for the legacy-field scan in
+    /// <see cref="DefaultSubAgentManager_PatternMatchesOnMode_NotLegacyFields"/>:
+    /// the synthetic shape must be caught. Without this test, a broken regex
+    /// would silently pass on real violations.
     /// </summary>
     [Fact]
     public void Fence_DetectsSyntheticLegacyFieldRead()
@@ -165,6 +179,53 @@ public sealed class SubAgentSpawnRequestShapeTests
             "The legacy-field scan failed to detect a synthetic `request.TargetAgentId` " +
             "read. The fence in DefaultSubAgentManager_PatternMatchesOnMode_NotLegacyFields " +
             "would also silently miss real violations.");
+    }
+
+    /// <summary>
+    /// Vacuity guard for the switch / pattern detection clause in
+    /// <see cref="DefaultSubAgentManager_PatternMatchesOnMode_NotLegacyFields"/>.
+    /// Three synthetic shapes must be matched by their respective regexes
+    /// (`switch (request.Mode)`, `is Embody`, `case Mirror`); a clean shape
+    /// that contains none of them must be rejected. Without this guard a
+    /// regex regression could silently downgrade the fence to a no-op while
+    /// the legacy-field scan continues to pass on its own.
+    /// </summary>
+    [Fact]
+    public void Fence_DetectsSyntheticModeSwitchShapes()
+    {
+        // Realistic mutations: missing space after `switch`, padded parens —
+        // shapes an IDE or human might produce. `request . Mode` with spaces
+        // inside the dotted access is not a realistic mutation (no formatter
+        // emits it) and is deliberately not pinned.
+        const string syntheticSwitchNoSpace = "var x = switch(request.Mode) { _ => 0 };";
+        s_modeSwitchPattern.IsMatch(syntheticSwitchNoSpace).ShouldBeTrue(
+            "The mode-switch regex failed to match `switch(request.Mode)` " +
+            "(missing space after switch). Real code in this shape would " +
+            "slip past the fence.");
+
+        const string syntheticSwitchPadded = "var x = switch ( request.Mode ) { _ => 0 };";
+        s_modeSwitchPattern.IsMatch(syntheticSwitchPadded).ShouldBeTrue(
+            "The mode-switch regex failed to match `switch ( request.Mode )` " +
+            "(padded parens). Real code in this shape would slip past the fence.");
+
+        const string syntheticIsEmbody = "if (request.Mode is Embody e) { return; }";
+        s_embodyPattern.IsMatch(syntheticIsEmbody).ShouldBeTrue(
+            "The Embody-pattern regex failed to match `is Embody e`. " +
+            "Pattern-match regressions would slip past the fence.");
+
+        const string syntheticCaseMirror = "switch (m) { case Mirror x: break; }";
+        s_mirrorPattern.IsMatch(syntheticCaseMirror).ShouldBeTrue(
+            "The Mirror-pattern regex failed to match `case Mirror x`. " +
+            "Pattern-match regressions would slip past the fence.");
+
+        const string cleanShape = "var p = parentDescriptor.ModelId;";
+        s_modeSwitchPattern.IsMatch(cleanShape).ShouldBeFalse(
+            "The mode-switch regex falsely matched clean source. The fence " +
+            "would emit spurious failures on unrelated edits.");
+        s_embodyPattern.IsMatch(cleanShape).ShouldBeFalse(
+            "The Embody-pattern regex falsely matched clean source.");
+        s_mirrorPattern.IsMatch(cleanShape).ShouldBeFalse(
+            "The Mirror-pattern regex falsely matched clean source.");
     }
 
     private static string LocateManagerFile()

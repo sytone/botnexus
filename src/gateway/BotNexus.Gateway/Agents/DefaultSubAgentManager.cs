@@ -62,6 +62,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     public async Task<SubAgentInfo> SpawnAsync(SubAgentSpawnRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // Defence in depth: `required` is a compile-time guarantee only —
+        // callers using `null!` (or producing a null Mode via reflection / JSON
+        // deserialization quirks) would otherwise reach the default arm and
+        // hit a NullReferenceException dereferencing request.Mode.GetType().
+        ArgumentNullException.ThrowIfNull(request.Mode);
 
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
@@ -197,7 +202,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             ChildSessionId = childSessionId,
             Name = name,
             Task = request.Task,
-            Model = modelOverride ?? configuredDefaultModel ?? parentDescriptor.ModelId,
+            Model = modelOverride ?? configuredDefaultModel ?? baseDescriptor.ModelId,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,

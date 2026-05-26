@@ -125,6 +125,13 @@ public sealed class SubAgentSpawnModeRoutingTests
 
         result.ShouldNotBeNull();
         result.Status.ShouldBe(SubAgentStatus.Running);
+        // Bug-hunt MEDIUM (#562): Mirror's model fallback must derive from the
+        // mirrored target's descriptor, not the parent's. A regression to
+        // `parentDescriptor.ModelId` would report "gpt-4o" here instead of
+        // the target's "claude-sonnet-4" — silent metadata corruption that
+        // downstream telemetry / cost accounting would compute against the
+        // wrong model.
+        result.Model.ShouldBe("claude-sonnet-4");
         registeredDescriptor.Value.ShouldNotBeNull();
         registeredDescriptor.Value!.ModelId.ShouldBe("claude-sonnet-4");
         registeredDescriptor.Value.SystemPrompt.ShouldBe("You are Farnsworth, a coding assistant.");
@@ -161,6 +168,40 @@ public sealed class SubAgentSpawnModeRoutingTests
         var ex = await Should.ThrowAsync<KeyNotFoundException>(
             () => manager.SpawnAsync(request));
         ex.Message.ShouldContain("ghost-agent");
+    }
+
+    /// <summary>
+    /// Bug-hunt HIGH (#562): <c>required</c> is a compile-time guarantee
+    /// only. Callers using <c>null!</c> or JSON deserialization quirks can
+    /// surface a runtime null Mode. The manager must reject this with a
+    /// clean <see cref="ArgumentNullException"/> rather than hitting the
+    /// default switch arm and dereferencing <c>request.Mode.GetType()</c>
+    /// (NullReferenceException would propagate as an HTTP 500 to callers).
+    /// </summary>
+    [Fact]
+    public async Task SpawnAsync_WithNullMode_ThrowsArgumentNullException()
+    {
+        var (manager, _, _, _) = BuildHarness(
+            parentDescriptor: new AgentDescriptor
+            {
+                AgentId = AgentId.From("nova"),
+                DisplayName = "Nova",
+                ModelId = "gpt-4o",
+                ApiProvider = "openai"
+            });
+
+        var request = new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("nova"),
+            ParentSessionId = SessionId.From("nova-session"),
+            Task = "Do something",
+            TimeoutSeconds = 600,
+            InheritedConversationId = ConversationId.From("inherited-conv"),
+            Mode = null!
+        };
+
+        await Should.ThrowAsync<ArgumentNullException>(
+            () => manager.SpawnAsync(request));
     }
 
     private static (

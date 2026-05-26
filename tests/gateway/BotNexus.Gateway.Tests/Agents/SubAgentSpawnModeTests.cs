@@ -165,6 +165,22 @@ public sealed class SubAgentSpawnModeTests
             JsonSerializer.Deserialize<SubAgentSpawnMode>(noDiscriminator, s_jsonOptions));
     }
 
+    /// <summary>
+    /// Plan-vs-impl MEDIUM (#562 critique sweep): pin the behaviour for an
+    /// explicit-null discriminator. STJ surfaces this as JsonException
+    /// (different from the missing-discriminator NotSupportedException pin
+    /// above). A test gap here would let a future STJ behaviour change
+    /// silently widen the contract for malformed payloads.
+    /// </summary>
+    [Fact]
+    public void Mode_JsonDeserialize_NullDiscriminator_Throws()
+    {
+        var nullDiscriminator = "{\"mode\":null,\"TargetAgentId\":\"x\"}";
+
+        Should.Throw<JsonException>(() =>
+            JsonSerializer.Deserialize<SubAgentSpawnMode>(nullDiscriminator, s_jsonOptions));
+    }
+
     [Fact]
     public void Mode_JsonRoundTrip_EmbodyWithCustomizations_PreservesAllFields()
     {
