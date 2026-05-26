@@ -754,6 +754,147 @@ public sealed class SessionsControllerTests
         session.UpdatedAt.ShouldBeGreaterThan(pastTimestamp);
     }
 
+    // ── Phase 5 / F-6 step 2b (#555): typed-signal critical pins ──────────
+    // These pins prove the Seal endpoint reads SessionType (the typed signal)
+    // and not SessionId.IsSubAgent (the legacy substring). The migration
+    // changes the semantics in two observable ways pinned below.
+
+    [Fact]
+    public async Task Seal_WhenSessionTypeIsAgentSubAgentButSessionIdHasNoSubAgentInfix_AllowsSealing()
+    {
+        // CRITICAL PIN: typed signal is the source of truth. A session whose
+        // SessionType discriminator is AgentSubAgent must be sealable even when
+        // the SessionId has no "::subagent::" infix — this is the scenario the
+        // substring check incorrectly rejected.
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("plain-session-id"), AgentId.From("agent-a"));
+        session.SessionType = SessionType.AgentSubAgent;
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("plain-session-id", CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task Seal_WhenSessionTypeIsUserAgentButSessionIdHasSubAgentInfix_Returns400()
+    {
+        // CRITICAL PIN: typed signal trumps the substring. A session whose
+        // SessionType discriminator is UserAgent must NOT be sealable even
+        // when the SessionId contains "::subagent::" — this is the scenario
+        // the substring check incorrectly accepted.
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::misclassified"), AgentId.From("agent-a"));
+        session.SessionType = SessionType.UserAgent;
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::misclassified", CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Expired, "non-AgentSubAgent sessions must not be sealed");
+    }
+
+    [Fact]
+    public async Task Seal_WhenSessionTypeIsSoul_Returns400()
+    {
+        // Regression pin: Soul sessions are not sealable. Pre-migration this was
+        // enforced by !IsSubAgent (Soul sessionIds don't contain "::subagent::").
+        // Post-migration this is enforced by SessionType != AgentSubAgent.
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("soul-session"), AgentId.From("agent-a"));
+        session.SessionType = SessionType.Soul;
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("soul-session", CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Expired);
+    }
+
+    // ----- Seal: per-session caller authorization (closes the gap flagged by
+    // the #555 bug-hunt critique). Seal is a state-mutating control-plane
+    // operation; without this check, any authenticated caller that knows a
+    // sub-agent session id could seal someone else's session — a DoS / control-
+    // plane integrity risk. The check mirrors the established AuthorizeSessionCaller
+    // pattern already enforced on GetMetadata / PatchMetadata in this controller.
+
+    [Fact]
+    public async Task Seal_WhenCallerIdentityDoesNotMatchSessionCaller_Returns403()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(
+            SessionId.From("parent::subagent::s1"),
+            AgentId.From("agent-a"));
+        session.SessionType = SessionType.AgentSubAgent;
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-b")
+        };
+
+        var result = await controller.Seal("parent::subagent::s1", CancellationToken.None);
+
+        result.ShouldBeOfType<ObjectResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        session.Status.ShouldBe(
+            SessionStatus.Expired,
+            "Seal must not mutate state when authorization fails");
+    }
+
+    [Fact]
+    public async Task Seal_WhenCallerIdentityMatchesSessionCaller_Seals()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(
+            SessionId.From("parent::subagent::s1"),
+            AgentId.From("agent-a"));
+        session.SessionType = SessionType.AgentSubAgent;
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.Seal("parent::subagent::s1", CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task Seal_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        // Mirrors GetMetadata_WithMissingCallerIdentity_SkipsAuthorizationCheck:
+        // when the middleware did not stamp a caller identity (e.g., test harness
+        // or auth-skip path), the per-controller check is a no-op and the
+        // existing eligibility / status guards still apply.
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(
+            SessionId.From("parent::subagent::s1"),
+            AgentId.From("agent-a"));
+        session.SessionType = SessionType.AgentSubAgent;
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Expired;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::s1", CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Sealed);
+    }
+
 
     [Fact]
     public async Task GetSessions_ReturnsConversationId_WhenSet()

@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Api;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -333,7 +334,21 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
-        if (!sid.IsSubAgent)
+        // Per-session caller authorization (mirrors GetMetadata / PatchMetadata).
+        // Without this guard, any authenticated caller that knows a sub-agent
+        // sessionId could seal someone else's session — a control-plane integrity
+        // and DoS risk surfaced by the #555 bug-hunt critique.
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
+        // Phase 5 / F-6 step 2b (#555): sub-agent eligibility is driven by the
+        // typed SessionType discriminator (persisted on the session row by
+        // SqliteSessionStore / FileSessionStore; back-filled for legacy rows by
+        // SessionStoreBase.InferSessionType) rather than the legacy
+        // SessionId.IsSubAgent substring check. This is the last runtime call
+        // site to migrate — pinned by AgentKindArchitectureTests.
+        if (!session.SessionType.Equals(SessionType.AgentSubAgent))
             return BadRequest(new { error = "Only sub-agent sessions can be sealed" });
 
         if (session.Status == SessionStatus.Active || session.Status == SessionStatus.Suspended)

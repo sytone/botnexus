@@ -29,13 +29,16 @@ namespace BotNexus.Architecture.Tests;
 /// </para>
 /// <para>
 /// Migration history: <c>GatewayHost.ResolveSessionType</c> was migrated to the
-/// typed signal in PR #554 (sub-agent classification now reads
-/// <c>IAgentRegistry.Get(agentId)?.Kind</c>). Remaining DEFERRED entry —
-/// <c>SessionsController</c> read-side filter (#555) — requires a persisted
-/// <see cref="SessionType"/> discriminator on the session row before its substring
-/// check can be cut. The <c>"::subagent::"</c> literal depth calculation in
-/// <c>DefaultSubAgentManager</c> is tracked for a typed <c>ParentSessionId</c> chain
-/// on <c>Session</c>.
+/// typed signal in PR #557 (sub-agent classification now reads
+/// <c>IAgentRegistry.Get(agentId)?.Kind</c>, with fail-closed preservation of
+/// persisted <c>AgentSubAgent</c> across registry deregister / restart windows).
+/// <c>SessionsController.Seal</c> was migrated in this PR (#555) to read
+/// <c>session.SessionType == AgentSubAgent</c>. All production runtime call
+/// sites have now been migrated off the substring predicate. The two remaining
+/// allowlist entries below are legacy back-compat readers / defense-in-depth
+/// gates and are kept deliberately. The <c>"::subagent::"</c> literal depth
+/// calculation in <c>DefaultSubAgentManager</c> is tracked separately for a
+/// typed <c>ParentSessionId</c> chain on <c>Session</c>.
 /// </para>
 /// </remarks>
 public sealed class AgentKindArchitectureTests
@@ -59,10 +62,6 @@ public sealed class AgentKindArchitectureTests
             "Defense-in-depth OR-gate combined with descriptor.Kind == AgentKind.SubAgent. " +
             "Ensures the spawn-tool gate fails CLOSED if a future path registers a sub-agent " +
             "descriptor without going through DefaultSubAgentManager.SpawnAsync."),
-
-        ("gateway/BotNexus.Gateway.Api/Controllers/SessionsController.cs",
-            "DEFERRED (sytone/botnexus#555): Read-side filter switches to session.SessionType == AgentSubAgent " +
-            "in a follow-up PR — this PR scopes the production write-side gate only."),
     };
 
     [Fact]
