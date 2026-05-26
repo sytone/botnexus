@@ -31,9 +31,12 @@ namespace BotNexus.Gateway.Tests;
 /// session is bucketed as <see cref="SessionType.UserAgent"/>, not
 /// <see cref="SessionType.AgentSubAgent"/>;
 /// (3) when the descriptor is missing from the registry the host defaults to
-/// <see cref="SessionType.UserAgent"/> and does NOT fall back to the substring
-/// — proving the legacy code path has been cut;
-/// (4) <see cref="SessionType.Soul"/> and <see cref="SessionType.Cron"/>
+/// <see cref="SessionType.UserAgent"/> for FRESH sessions and does NOT fall
+/// back to the substring — proving the legacy code path has been cut;
+/// (4) a PERSISTED <see cref="SessionType.AgentSubAgent"/> session survives a
+/// transient registry-deregister / gateway restart and is not silently
+/// downgraded (defense against the bug-hunt HIGH finding);
+/// (5) <see cref="SessionType.Soul"/> and <see cref="SessionType.Cron"/>
 /// classifications remain intact (regression-pin for the other branches).
 /// </para>
 /// </remarks>
@@ -45,7 +48,10 @@ public sealed class GatewayHostResolveSessionTypeTests
     public async Task DispatchAsync_WhenRegistryReturnsSubAgentDescriptor_StampsSessionTypeAsAgentSubAgent()
     {
         // Registry-backed typed signal: descriptor.Kind = SubAgent -> SessionType.AgentSubAgent.
-        const string sessionIdValue = "session-with-subagent-descriptor";
+        // SessionId literal deliberately avoids the word "subagent" so the SubAgent
+        // classification can only come from the typed descriptor, not from any
+        // accidental substring match.
+        const string sessionIdValue = "plain-session-id-1";
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(AgentId.From(AgentIdValue)))
             .Returns(CreateDescriptor(AgentKind.SubAgent));
@@ -174,6 +180,59 @@ public sealed class GatewayHostResolveSessionTypeTests
         var reloaded = await sessions.GetAsync(SessionId.From(sessionIdValue));
         reloaded.ShouldNotBeNull();
         reloaded!.SessionType.ShouldBe(SessionType.AgentSubAgent);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenSessionAlreadyPersistedAsAgentSubAgent_AndRegistryHasNoDescriptor_PreservesAgentSubAgent()
+    {
+        // REGRESSION PIN (bug-hunt finding HIGH): a sub-agent session previously
+        // classified AgentSubAgent (via SessionStoreBase.InferSessionType at
+        // creation time, while the descriptor was still in the registry) must NOT
+        // be silently downgraded to UserAgent on a later dispatch when the
+        // descriptor has since been Unregister()'d (sub-agent completed) or is
+        // transiently absent (gateway restart before re-registration).
+        //
+        // Without this preservation: Session.IsInteractive would flip,
+        // SessionWarmupService visibility and PreCompactionMemoryFlusher gating
+        // would change behaviour mid-session — a real production regression.
+        var subAgentShapedId = SessionId.ForSubAgent("parent-session", "child-persisted");
+        var sessions = new InMemorySessionStore();
+
+        // Seed an existing session in the store — mimics a sub-agent session
+        // that was created earlier (descriptor was present then) and is now
+        // being re-dispatched after the descriptor has been unregistered.
+        var seeded = await sessions.GetOrCreateAsync(subAgentShapedId, AgentId.From(AgentIdValue));
+        seeded.SessionType.ShouldBe(SessionType.AgentSubAgent, "InferSessionType should have stamped the sub-agent-shaped id at creation");
+
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(It.IsAny<AgentId>())).Returns((AgentDescriptor?)null);
+        await using var host = CreateHost(sessions, registry.Object, subAgentShapedId.Value);
+
+        await host.DispatchAsync(CreateMessage(subAgentShapedId.Value, "follow-up message"));
+
+        var reloaded = await sessions.GetAsync(subAgentShapedId);
+        reloaded.ShouldNotBeNull();
+        reloaded!.SessionType.ShouldBe(SessionType.AgentSubAgent, "persisted AgentSubAgent must survive registry deregistration / restart");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenRegistryReturnsNamedDescriptor_AndSessionIdIsPlain_StampsAsUserAgent()
+    {
+        // Baseline truth-table row (plan-vs-impl finding): Named descriptor +
+        // plain SessionId + web channel -> UserAgent. This is the default
+        // human-conversation case and must always classify as UserAgent.
+        const string sessionIdValue = "plain-session-id-2";
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(AgentId.From(AgentIdValue)))
+            .Returns(CreateDescriptor(AgentKind.Named));
+        var sessions = new InMemorySessionStore();
+        await using var host = CreateHost(sessions, registry.Object, sessionIdValue);
+
+        await host.DispatchAsync(CreateMessage(sessionIdValue, "hello"));
+
+        var reloaded = await sessions.GetAsync(SessionId.From(sessionIdValue));
+        reloaded.ShouldNotBeNull();
+        reloaded!.SessionType.ShouldBe(SessionType.UserAgent);
     }
 
     private static AgentDescriptor CreateDescriptor(AgentKind kind)
