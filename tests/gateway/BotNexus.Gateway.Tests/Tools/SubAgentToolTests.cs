@@ -106,6 +106,165 @@ public sealed class SubAgentToolTests
         document.RootElement.GetProperty("name").GetString().ShouldBe("Research Task");
     }
 
+    // ---------------------------------------------------------------------
+    // Phase 5 / F-6 step 3 (#562): Mode = Embody | Mirror.
+    // The tool translates the flat JSON shape (preserved for the agent-facing
+    // contract) into the closed Mode union, and rejects mode-mixing.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task SpawnTool_BuildsMode_AsEmbodyGeneral_WhenNoCustomisations()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?> { ["task"] = "T" });
+
+        var embody = captured.Mode.ShouldBeOfType<Embody>();
+        embody.Role.ShouldBe(SubAgentArchetype.General);
+        embody.Customizations.ShouldBeSameAs(EmbodyCustomizations.Default);
+    }
+
+    [Fact]
+    public async Task SpawnTool_BuildsMode_AsEmbodyWithArchetype_WhenArchetypeOnlySupplied()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["archetype"] = "reviewer"
+        });
+
+        var embody = captured.Mode.ShouldBeOfType<Embody>();
+        embody.Role.ShouldBe(SubAgentArchetype.Reviewer);
+        embody.Customizations.ShouldBeSameAs(EmbodyCustomizations.Default);
+    }
+
+    [Fact]
+    public async Task SpawnTool_BuildsMode_AsEmbodyWithCustomisations_WhenAnyOverrideSupplied()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["archetype"] = "coder",
+            ["name"] = "my-coder",
+            ["model"] = "gpt-5-mini",
+            ["apiProvider"] = "openai",
+            ["tools"] = new[] { "read", "write" },
+            ["systemPrompt"] = "Focus on tests"
+        });
+
+        var embody = captured.Mode.ShouldBeOfType<Embody>();
+        embody.Role.ShouldBe(SubAgentArchetype.Coder);
+        embody.Customizations.Name.ShouldBe("my-coder");
+        embody.Customizations.ModelOverride.ShouldBe("gpt-5-mini");
+        embody.Customizations.ApiProviderOverride.ShouldBe("openai");
+        embody.Customizations.ToolIds.ShouldBe(new[] { "read", "write" });
+        embody.Customizations.SystemPromptOverride.ShouldBe("Focus on tests");
+    }
+
+    [Fact]
+    public async Task SpawnTool_BuildsMode_AsMirror_WhenTargetAgentIdOnlySupplied()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex"
+        });
+
+        var mirror = captured.Mode.ShouldBeOfType<Mirror>();
+        mirror.TargetAgentId.Value.ShouldBe("alex");
+    }
+
+    [Theory]
+    [InlineData("name", "my-mirror")]
+    [InlineData("model", "gpt-5-mini")]
+    [InlineData("apiProvider", "openai")]
+    [InlineData("systemPrompt", "Custom")]
+    [InlineData("archetype", "coder")]
+    public async Task SpawnTool_RejectsMixing_TargetAgentId_WithSingleEmbodyField(string conflictKey, object conflictValue)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            [conflictKey] = conflictValue
+        };
+        var tool = CreateSpawnTool(out _);
+
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => tool.ExecuteAsync("call-1", args));
+
+        ex.Message.ShouldContain("targetAgentId");
+        ex.Message.ShouldContain(conflictKey);
+    }
+
+    [Fact]
+    public async Task SpawnTool_RejectsMixing_TargetAgentId_WithToolsArray()
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            ["tools"] = new[] { "read" }
+        };
+        var tool = CreateSpawnTool(out _);
+
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => tool.ExecuteAsync("call-1", args));
+
+        ex.Message.ShouldContain("tools");
+    }
+
+    [Fact]
+    public async Task SpawnTool_RejectsMixing_ReportsAllConflictingFields_InOneMessage()
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            ["name"] = "x",
+            ["model"] = "y",
+            ["systemPrompt"] = "z"
+        };
+        var tool = CreateSpawnTool(out _);
+
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => tool.ExecuteAsync("call-1", args));
+
+        ex.Message.ShouldContain("name");
+        ex.Message.ShouldContain("model");
+        ex.Message.ShouldContain("systemPrompt");
+    }
+
+    private static SubAgentSpawnTool CreateSpawnTool(out Mock<ISubAgentManager> manager)
+    {
+        manager = new Mock<ISubAgentManager>();
+        manager.Setup(m => m.SpawnAsync(It.IsAny<SubAgentSpawnRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSubAgentInfo());
+        return new SubAgentSpawnTool(
+            manager.Object,
+            AgentId.From("parent-agent"),
+            SessionId.From("parent-session"),
+            ConversationId.From("conv-1"));
+    }
+
+    private static async Task<SubAgentSpawnRequest> CaptureSpawnRequest(IReadOnlyDictionary<string, object?> args)
+    {
+        SubAgentSpawnRequest? captured = null;
+        var manager = new Mock<ISubAgentManager>();
+        manager.Setup(m => m.SpawnAsync(It.IsAny<SubAgentSpawnRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<SubAgentSpawnRequest, CancellationToken>((request, _) => captured = request)
+            .ReturnsAsync(CreateSubAgentInfo());
+        var tool = new SubAgentSpawnTool(
+            manager.Object,
+            AgentId.From("parent-agent"),
+            SessionId.From("parent-session"),
+            ConversationId.From("conv-1"));
+
+        await tool.ExecuteAsync("call-1", args);
+
+        captured.ShouldNotBeNull();
+        captured!.Mode.ShouldNotBeNull();
+        return captured;
+    }
+
     [Fact]
     public void ListTool_HasCorrectNameAndLabel()
     {

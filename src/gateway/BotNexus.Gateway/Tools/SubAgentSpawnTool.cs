@@ -69,21 +69,44 @@ public sealed class SubAgentSpawnTool(
         var task = ReadString(arguments, "task")
             ?? throw new ArgumentException("Missing required argument: task.");
 
+        var name = ReadString(arguments, "name");
+        var modelOverride = ReadString(arguments, "model");
+        var apiProviderOverride = ReadString(arguments, "apiProvider");
+        var toolIds = ReadStringArray(arguments, "tools");
+        var systemPromptOverride = ReadString(arguments, "systemPrompt");
+        var archetypeRaw = ReadString(arguments, "archetype");
+        var targetAgentId = ReadString(arguments, "targetAgentId");
+
+        // Phase 5 / F-6 step 3 (#562): Mode rejects mode-mixing.
+        // When the caller asks to mirror an existing named agent, none of the
+        // embody-only customisation fields may be supplied — Mirror is strict
+        // pass-through of the target's full descriptor. Build the Mode union
+        // here so DefaultSubAgentManager can prefer it over the legacy bag.
+        var mode = BuildSpawnMode(
+            targetAgentId: targetAgentId,
+            name: name,
+            modelOverride: modelOverride,
+            apiProviderOverride: apiProviderOverride,
+            toolIds: toolIds,
+            systemPromptOverride: systemPromptOverride,
+            archetypeRaw: archetypeRaw);
+
         var request = new SubAgentSpawnRequest
         {
             ParentAgentId = agentId,
             ParentSessionId = sessionId,
             Task = task,
-            Name = ReadString(arguments, "name"),
-            ModelOverride = ReadString(arguments, "model"),
-            ApiProviderOverride = ReadString(arguments, "apiProvider"),
-            ToolIds = ReadStringArray(arguments, "tools"),
-            SystemPromptOverride = ReadString(arguments, "systemPrompt"),
+            Name = name,
+            ModelOverride = modelOverride,
+            ApiProviderOverride = apiProviderOverride,
+            ToolIds = toolIds,
+            SystemPromptOverride = systemPromptOverride,
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
-            Archetype = ReadArchetype(arguments),
-            TargetAgentId = ReadString(arguments, "targetAgentId"),
-            InheritedConversationId = conversationId
+            Archetype = ResolveArchetype(archetypeRaw),
+            TargetAgentId = targetAgentId,
+            InheritedConversationId = conversationId,
+            Mode = mode
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
@@ -97,6 +120,68 @@ public sealed class SubAgentSpawnTool(
 
         return TextResult(result);
     }
+
+    private static SubAgentSpawnMode BuildSpawnMode(
+        string? targetAgentId,
+        string? name,
+        string? modelOverride,
+        string? apiProviderOverride,
+        IReadOnlyList<string>? toolIds,
+        string? systemPromptOverride,
+        string? archetypeRaw)
+    {
+        if (!string.IsNullOrWhiteSpace(targetAgentId))
+        {
+            var conflicts = new List<string>(6);
+            if (!string.IsNullOrWhiteSpace(name)) conflicts.Add("name");
+            if (!string.IsNullOrWhiteSpace(modelOverride)) conflicts.Add("model");
+            if (!string.IsNullOrWhiteSpace(apiProviderOverride)) conflicts.Add("apiProvider");
+            if (toolIds is { Count: > 0 }) conflicts.Add("tools");
+            if (!string.IsNullOrWhiteSpace(systemPromptOverride)) conflicts.Add("systemPrompt");
+            if (!string.IsNullOrWhiteSpace(archetypeRaw)) conflicts.Add("archetype");
+
+            if (conflicts.Count > 0)
+            {
+                throw new ArgumentException(
+                    $"targetAgentId is incompatible with embody-only fields: {string.Join(", ", conflicts)}. "
+                    + "Mirror mode runs the target agent's full descriptor verbatim — supply targetAgentId alone, "
+                    + "or omit it and customise via embody fields.");
+            }
+
+            return new Mirror(AgentId.From(targetAgentId));
+        }
+
+        var archetype = ResolveArchetype(archetypeRaw);
+        var customizations = HasAnyEmbodyCustomization(name, modelOverride, apiProviderOverride, toolIds, systemPromptOverride)
+            ? new EmbodyCustomizations
+            {
+                Name = name,
+                ModelOverride = modelOverride,
+                ApiProviderOverride = apiProviderOverride,
+                ToolIds = toolIds,
+                SystemPromptOverride = systemPromptOverride
+            }
+            : EmbodyCustomizations.Default;
+
+        return new Embody(archetype, customizations);
+    }
+
+    private static bool HasAnyEmbodyCustomization(
+        string? name,
+        string? modelOverride,
+        string? apiProviderOverride,
+        IReadOnlyList<string>? toolIds,
+        string? systemPromptOverride)
+        => !string.IsNullOrWhiteSpace(name)
+        || !string.IsNullOrWhiteSpace(modelOverride)
+        || !string.IsNullOrWhiteSpace(apiProviderOverride)
+        || toolIds is { Count: > 0 }
+        || !string.IsNullOrWhiteSpace(systemPromptOverride);
+
+    private static SubAgentArchetype ResolveArchetype(string? archetypeRaw)
+        => string.IsNullOrWhiteSpace(archetypeRaw)
+            ? SubAgentArchetype.General
+            : SubAgentArchetype.FromString(archetypeRaw);
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)
     {
@@ -153,14 +238,6 @@ public sealed class SubAgentSpawnTool(
         }
 
         return null;
-    }
-
-    private static SubAgentArchetype ReadArchetype(IReadOnlyDictionary<string, object?> args)
-    {
-        var archetype = ReadString(args, "archetype");
-        return string.IsNullOrWhiteSpace(archetype)
-            ? SubAgentArchetype.General
-            : SubAgentArchetype.FromString(archetype);
     }
 
     private static AgentToolResult TextResult(string text)
