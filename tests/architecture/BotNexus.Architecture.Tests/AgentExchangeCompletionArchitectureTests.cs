@@ -23,12 +23,27 @@ public sealed class AgentExchangeCompletionArchitectureTests
     [Fact]
     public void AgentExchangeService_HasNoSubstringMatchInCompletionDecision()
     {
-        var path = LocateAgentExchangeServiceFile();
+        AssertNoSubstringHeuristic(LocateAgentExchangeServiceFile());
+    }
+
+    [Fact]
+    public void CrossWorldFederationController_HasNoSubstringMatchInCompletionDecision()
+    {
+        // The cross-world receiver is the second site that makes completion decisions for an
+        // agent-to-agent exchange. If a future change reintroduces a substring/regex heuristic
+        // here, the F-11 XPIA vector reopens on the receiver side (an attacker who controls
+        // remote content in a cross-world relay could terminate exchanges prematurely on the
+        // local gateway). Per plan-vs-impl critique NB-3 on PR #553, scan both files.
+        AssertNoSubstringHeuristic(LocateCrossWorldFederationControllerFile());
+    }
+
+    private static void AssertNoSubstringHeuristic(string path)
+    {
         var source = File.ReadAllText(path);
         var violations = FindBannedShapes(source);
 
         violations.ShouldBeEmpty(
-            "AgentExchangeService.cs contains substring-style heuristics on agent response " +
+            $"{Path.GetFileName(path)} contains substring-style heuristics on agent response " +
             "Content in what looks like a completion-decision context. The F-11 contract " +
             "requires authoritative completion via a structured finish_agent_exchange tool " +
             "call (validated by the active-exchange-id metadata gate) — never substring " +
@@ -121,6 +136,14 @@ public sealed class AgentExchangeCompletionArchitectureTests
         var srcRoot = FindSourceRoot();
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway", "Agents", "AgentExchangeService.cs");
         File.Exists(path).ShouldBeTrue("Expected AgentExchangeService.cs at " + path);
+        return path;
+    }
+
+    private static string LocateCrossWorldFederationControllerFile()
+    {
+        var srcRoot = FindSourceRoot();
+        var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway.Api", "Controllers", "CrossWorldFederationController.cs");
+        File.Exists(path).ShouldBeTrue("Expected CrossWorldFederationController.cs at " + path);
         return path;
     }
 
