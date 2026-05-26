@@ -59,13 +59,13 @@ public sealed class AgentKindArchitectureTests
             "descriptor without going through DefaultSubAgentManager.SpawnAsync."),
 
         ("gateway/BotNexus.Gateway/GatewayHost.cs",
-            "DEFERRED: ResolveSessionType still infers SessionType from the SessionId substring " +
-            "during session creation. Follow-up issue tracks migration to descriptor.Kind + " +
+            "DEFERRED (sytone/botnexus#554): ResolveSessionType still infers SessionType from the " +
+            "SessionId substring during session creation. Tracked for migration to descriptor.Kind + " +
             "explicit SessionType on the InboundMessage handler path."),
 
         ("gateway/BotNexus.Gateway.Api/Controllers/SessionsController.cs",
-            "DEFERRED: Read-side filter switches to session.SessionType == AgentSubAgent in a " +
-            "follow-up PR — this PR scopes the production write-side gate only."),
+            "DEFERRED (sytone/botnexus#555): Read-side filter switches to session.SessionType == AgentSubAgent " +
+            "in a follow-up PR — this PR scopes the production write-side gate only."),
     };
 
     [Fact]
