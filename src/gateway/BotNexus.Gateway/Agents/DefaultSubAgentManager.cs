@@ -104,21 +104,77 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         var uniqueId = Guid.NewGuid().ToString("N");
-        var archetype = request.Archetype ?? SubAgentArchetype.General;
-        var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
         var subAgentId = uniqueId;
-        var childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
+        var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
 
+        // Phase 5 / F-6 step 3 (#562): pattern-match on Mode when present (set by
+        // SubAgentSpawnTool as of step 2). Legacy callers (tests not yet migrated)
+        // still pass the old top-level fields and hit the `case null:` fallback;
+        // both shapes are removed in step 5.
+        SubAgentArchetype archetype;
         AgentDescriptor baseDescriptor;
-        if (!string.IsNullOrWhiteSpace(request.TargetAgentId))
+        AgentId childAgentId;
+        string? name;
+        string? modelOverride;
+        string? apiProviderOverride;
+        IReadOnlyList<string>? toolIds;
+        string? systemPromptOverride;
+
+        switch (request.Mode)
         {
-            var targetId = AgentId.From(request.TargetAgentId);
-            baseDescriptor = _registry.Get(targetId)
-                ?? throw new KeyNotFoundException($"Target agent '{request.TargetAgentId}' is not registered.");
-        }
-        else
-        {
-            baseDescriptor = parentDescriptor;
+            case Embody embody:
+                archetype = embody.Role;
+                baseDescriptor = parentDescriptor;
+                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
+                name = embody.Customizations.Name;
+                modelOverride = embody.Customizations.ModelOverride;
+                apiProviderOverride = embody.Customizations.ApiProviderOverride;
+                toolIds = embody.Customizations.ToolIds;
+                systemPromptOverride = embody.Customizations.SystemPromptOverride;
+                break;
+
+            case Mirror mirror:
+                // Mirror is strict pass-through of the target's descriptor. The
+                // archetype slot in the child agent id is filled with the target
+                // id (locked design #562) so the child surfaces the mirrored
+                // identity rather than a generic role label.
+                archetype = SubAgentArchetype.General;
+                baseDescriptor = _registry.Get(mirror.TargetAgentId)
+                    ?? throw new KeyNotFoundException($"Target agent '{mirror.TargetAgentId}' is not registered.");
+                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{mirror.TargetAgentId.Value}--{uniqueId}");
+                name = null;
+                modelOverride = null;
+                apiProviderOverride = null;
+                toolIds = null;
+                systemPromptOverride = null;
+                break;
+
+            case null:
+                // Legacy path — read from the old top-level fields. Removed in
+                // #562 step 5 once all callsites are migrated to Mode.
+                archetype = request.Archetype ?? SubAgentArchetype.General;
+                if (!string.IsNullOrWhiteSpace(request.TargetAgentId))
+                {
+                    var targetId = AgentId.From(request.TargetAgentId);
+                    baseDescriptor = _registry.Get(targetId)
+                        ?? throw new KeyNotFoundException($"Target agent '{request.TargetAgentId}' is not registered.");
+                }
+                else
+                {
+                    baseDescriptor = parentDescriptor;
+                }
+                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
+                name = request.Name;
+                modelOverride = request.ModelOverride;
+                apiProviderOverride = request.ApiProviderOverride;
+                toolIds = request.ToolIds;
+                systemPromptOverride = request.SystemPromptOverride;
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
+                    + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
         }
 
         if (!_registry.Contains(childAgentId))
@@ -158,9 +214,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentId = subAgentId,
             ParentSessionId = request.ParentSessionId,
             ChildSessionId = childSessionId,
-            Name = request.Name,
+            Name = name,
             Task = request.Task,
-            Model = request.ModelOverride ?? configuredDefaultModel ?? parentDescriptor.ModelId,
+            Model = modelOverride ?? configuredDefaultModel ?? parentDescriptor.ModelId,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
