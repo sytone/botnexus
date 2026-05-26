@@ -138,12 +138,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // canvas resolvers) never see the child as an orphan. Prior to this, the pin
         // ran inside the fire-and-forget Task.Run below, opening an orphan window
         // between SpawnAsync returning and the background task being scheduled.
-        if (!string.IsNullOrWhiteSpace(request.InheritedConversationId) && _sessionStore is not null)
+        if (_sessionStore is not null)
         {
             var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
             if (childSession is not null)
             {
-                childSession.Session.ConversationId = ConversationId.From(request.InheritedConversationId);
+                childSession.Session.ConversationId = request.InheritedConversationId;
                 await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
             }
         }

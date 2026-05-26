@@ -218,8 +218,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
             if (includeSpawn)
             {
-                ConversationId? spawnConversationId = conversationStore is not null ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false) : null;
-                tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId, spawnConversationId));
+                var spawnConversationId = conversationStore is not null
+                    ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false)
+                    : null;
+                if (spawnConversationId is { } resolvedSpawnConversationId)
+                {
+                    tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId, resolvedSpawnConversationId));
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Skipping spawn_subagent tool for session '{SessionId}' (agent '{AgentId}'): no conversation is bound to this session. " +
+                        "Sub-agent sessions must inherit a parent conversation to remain visible in the portal thread.",
+                        context.SessionId,
+                        descriptor.AgentId);
+                }
             }
             if (includeList)
                 tools.Add(new SubAgentListTool(subAgentManager, context.SessionId));
