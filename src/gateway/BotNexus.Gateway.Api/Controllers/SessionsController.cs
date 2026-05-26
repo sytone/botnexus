@@ -334,6 +334,14 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
+        // Per-session caller authorization (mirrors GetMetadata / PatchMetadata).
+        // Without this guard, any authenticated caller that knows a sub-agent
+        // sessionId could seal someone else's session — a control-plane integrity
+        // and DoS risk surfaced by the #555 bug-hunt critique.
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
         // Phase 5 / F-6 step 2b (#555): sub-agent eligibility is driven by the
         // typed SessionType discriminator (persisted on the session row by
         // SqliteSessionStore / FileSessionStore; back-filled for legacy rows by
