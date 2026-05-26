@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Shouldly;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -280,6 +281,45 @@ public sealed class ClientStateStoreTests
         return store;
     }
 
+    [Fact]
+    public void SeedConversations_filters_AgentAgent_and_AgentSubAgent_from_user_facing_list()
+    {
+        // Phase 4 / F-3 regression guard: agent-to-agent exchanges (AgentExchangeService.ConverseAsync)
+        // and sub-agent supervision sessions (DefaultSubAgentManager) now create real Conversations
+        // via IConversationStore. Without filtering, every agent_converse tool call would pollute the
+        // user's conversation drawer and (worse) could auto-hijack the active tab via the
+        // OrderByDescending(c => c.UpdatedAt) auto-select logic below. The portal must only seed
+        // HumanAgent conversations.
+        var store = new ClientStateStore();
+        store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+
+        store.SeedConversations("a-1", [
+            CreateConversation("user-1", "a-1", "User chat", isDefault: true,
+                updatedAt: DateTimeOffset.UtcNow.AddMinutes(-10), kind: "HumanAgent"),
+            CreateConversation("aa-1", "a-1", "alpha ↔ beta",
+                updatedAt: DateTimeOffset.UtcNow, kind: "AgentAgent"),
+            CreateConversation("sa-1", "a-1", "alpha ↦ researcher",
+                updatedAt: DateTimeOffset.UtcNow.AddMinutes(-1), kind: "AgentSubAgent"),
+        ]);
+
+        var agent = store.GetAgent("a-1");
+        agent.ShouldNotBeNull();
+        agent!.Conversations.Count.ShouldBe(1,
+            customMessage: "AgentAgent + AgentSubAgent conversations must be filtered out of the " +
+                "user-facing list. Got: " +
+                string.Join(", ", agent.Conversations.Keys));
+        agent.Conversations.ShouldContainKey("user-1");
+        agent.Conversations.ShouldNotContainKey("aa-1",
+            customMessage: "AgentAgent conversations are internal traffic and must not appear in " +
+                "the portal's conversation drawer.");
+        agent.Conversations.ShouldNotContainKey("sa-1",
+            customMessage: "AgentSubAgent supervision sessions are internal and must not appear in " +
+                "the portal's conversation drawer.");
+        agent.ActiveConversationId.ShouldBe("user-1",
+            customMessage: "Active tab must be the HumanAgent conversation -- not the more-recently " +
+                "updated AgentAgent conversation. Auto-hijack guard.");
+    }
+
     private static ClientStateStore CreateConversationStore()
     {
         var store = CreateSeededStore();
@@ -292,7 +332,8 @@ public sealed class ClientStateStoreTests
         string agentId,
         string title,
         bool isDefault = false,
-        DateTimeOffset? updatedAt = null) =>
+        DateTimeOffset? updatedAt = null,
+        string kind = "HumanAgent") =>
         new(
             conversationId,
             agentId,
@@ -302,5 +343,6 @@ public sealed class ClientStateStoreTests
             null,
             0,
             DateTimeOffset.UtcNow.AddHours(-1),
-            updatedAt ?? DateTimeOffset.UtcNow);
+            updatedAt ?? DateTimeOffset.UtcNow,
+            kind);
 }

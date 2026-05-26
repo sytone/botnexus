@@ -74,7 +74,14 @@ public sealed class ClientStateStore : IClientStateStore
         if (!_agents.TryGetValue(agentId, out var agent))
             return;
 
-        var incoming = conversations.ToList();
+        // Skip non-user-facing conversations (AgentAgent exchanges, AgentSubAgent supervision)
+        // from the portal's conversation list. The user did not initiate these directly and they
+        // would clutter the agent's conversation drawer, potentially auto-hijacking the active
+        // tab if their UpdatedAt is the most recent. They are still queryable through the REST
+        // API for debugging/admin views.
+        var incoming = conversations
+            .Where(c => string.IsNullOrEmpty(c.Kind) || string.Equals(c.Kind, "HumanAgent", StringComparison.Ordinal))
+            .ToList();
 
         foreach (var dto in incoming)
         {
