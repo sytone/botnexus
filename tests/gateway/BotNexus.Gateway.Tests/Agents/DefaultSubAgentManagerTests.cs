@@ -222,7 +222,8 @@ public sealed class DefaultSubAgentManagerTests
             ParentAgentId = parentAgentId ?? BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = parentSessionId ?? BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Investigate timeout",
-            TimeoutSeconds = timeoutSeconds
+            TimeoutSeconds = timeoutSeconds,
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentHandle> CreateHandle()

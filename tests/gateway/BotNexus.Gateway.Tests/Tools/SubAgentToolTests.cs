@@ -14,7 +14,7 @@ public sealed class SubAgentToolTests
     [Fact]
     public void SpawnTool_HasCorrectNameAndLabel()
     {
-        var tool = new SubAgentSpawnTool(new Mock<ISubAgentManager>().Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
+        var tool = new SubAgentSpawnTool(new Mock<ISubAgentManager>().Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
         tool.Name.ShouldBe("spawn_subagent");
         tool.Label.ShouldBe("Spawn Sub-Agent");
@@ -23,7 +23,7 @@ public sealed class SubAgentToolTests
     [Fact]
     public async Task SpawnTool_RequiresTask()
     {
-        var tool = new SubAgentSpawnTool(new Mock<ISubAgentManager>().Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
+        var tool = new SubAgentSpawnTool(new Mock<ISubAgentManager>().Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
         Func<Task> act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>());
 
@@ -39,7 +39,7 @@ public sealed class SubAgentToolTests
         manager.Setup(m => m.SpawnAsync(It.IsAny<SubAgentSpawnRequest>(), It.IsAny<CancellationToken>()))
             .Callback<SubAgentSpawnRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(CreateSubAgentInfo());
-        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
+        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-parent"));
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["task"] = "Investigate issue" });
 
@@ -53,6 +53,7 @@ public sealed class SubAgentToolTests
         captured.MaxTurns.ShouldBe(30);
         captured.TimeoutSeconds.ShouldBe(600);
         captured.Archetype.ShouldBe(SubAgentArchetype.General);
+        captured.InheritedConversationId.Value.ShouldBe("conv-parent");
     }
 
     [Fact]
@@ -63,7 +64,7 @@ public sealed class SubAgentToolTests
         manager.Setup(m => m.SpawnAsync(It.IsAny<SubAgentSpawnRequest>(), It.IsAny<CancellationToken>()))
             .Callback<SubAgentSpawnRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(CreateSubAgentInfo());
-        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
+        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -94,7 +95,7 @@ public sealed class SubAgentToolTests
                 subAgentId: "sub-123",
                 childSessionId: SessionId.From("parent-session::subagent::sub-123"),
                 name: "Research Task"));
-        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
+        var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["task"] = "Investigate issue" });
         using var document = JsonDocument.Parse(ReadText(result));

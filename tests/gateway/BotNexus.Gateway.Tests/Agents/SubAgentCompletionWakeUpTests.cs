@@ -143,7 +143,8 @@ public sealed class SubAgentCompletionWakeUpTests
         {
             ParentAgentId = AgentId.From("parent-agent"),
             ParentSessionId = SessionId.From("parent-session"),
-            Task = "Do background work"
+            Task = "Do background work",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentHandle> CreateParentHandle(bool isRunning)

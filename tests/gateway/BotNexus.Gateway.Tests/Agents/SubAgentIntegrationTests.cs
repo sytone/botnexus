@@ -6,11 +6,15 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Isolation;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
@@ -94,7 +98,19 @@ public sealed class SubAgentIntegrationTests
     [Fact]
     public async Task SubAgentSession_DoesNotGetSpawnTools()
     {
-        var strategy = CreateStrategy();
+        // Parent session is bound to a conversation → spawn tool registered.
+        // Sub-agent session has no spawn/list/manage tools regardless of binding
+        // (security: prevents recursive spawning).
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        await SeedBoundSessionAsync(
+            conversationStore,
+            sessionStore,
+            agentId: AgentId.From("parent-agent"),
+            sessionId: SessionId.From("parent-session"),
+            conversationId: ConversationId.From("parent-conv"));
+
+        var strategy = CreateStrategy(conversationStore: conversationStore, sessionStore: sessionStore);
         var descriptor = CreateDescriptor();
 
         var parentHandle = await strategy.CreateAsync(descriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session") });
@@ -109,6 +125,30 @@ public sealed class SubAgentIntegrationTests
         subAgentToolNames.ShouldNotContain("spawn_subagent");
         subAgentToolNames.ShouldNotContain("list_subagents");
         subAgentToolNames.ShouldNotContain("manage_subagent");
+    }
+
+    [Fact]
+    public async Task Parent_WithoutBoundConversation_DoesNotGetSpawnTool()
+    {
+        // F-6 contract: spawn_subagent must NEVER be registered for a session that
+        // is not bound to a conversation. The sub-agent would otherwise inherit no
+        // ConversationId and become orphaned in the portal thread.
+        // list/manage still register — they only operate on already-spawned sub-agents.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        // Deliberately do NOT seed a conversation binding.
+
+        var strategy = CreateStrategy(conversationStore: conversationStore, sessionStore: sessionStore);
+        var descriptor = CreateDescriptor();
+
+        var handle = await strategy.CreateAsync(descriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("unbound-session") });
+        var toolNames = GetToolNames(handle);
+
+        toolNames.ShouldNotContain("spawn_subagent",
+            "spawn_subagent must not register for sessions without a bound conversation — " +
+            "the child session would otherwise become orphaned with ConversationId == null.");
+        toolNames.ShouldContain("list_subagents");
+        toolNames.ShouldContain("manage_subagent");
     }
 
     [Fact]
@@ -235,7 +275,8 @@ public sealed class SubAgentIntegrationTests
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Investigate flaky test",
-            TimeoutSeconds = timeoutSeconds
+            TimeoutSeconds = timeoutSeconds,
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentRegistry> CreateRegistry()
@@ -305,7 +346,9 @@ public sealed class SubAgentIntegrationTests
         throw new TimeoutException("Condition was not met before timeout.");
     }
 
-    private static InProcessIsolationStrategy CreateStrategy()
+    private static InProcessIsolationStrategy CreateStrategy(
+        IConversationStore? conversationStore = null,
+        ISessionStore? sessionStore = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -329,6 +372,10 @@ public sealed class SubAgentIntegrationTests
                 MaxDepth = 1
             }
         }));
+        if (conversationStore is not null)
+            services.AddSingleton<IConversationStore>(conversationStore);
+        if (sessionStore is not null)
+            services.AddSingleton<ISessionStore>(sessionStore);
 
         return new InProcessIsolationStrategy(
             new LlmClient(new ApiProviderRegistry(), modelRegistry),
@@ -341,6 +388,24 @@ public sealed class SubAgentIntegrationTests
             new StubMemoryStoreFactory(),
             services.BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
+    }
+
+    private static async Task SeedBoundSessionAsync(
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        AgentId agentId,
+        SessionId sessionId,
+        ConversationId conversationId)
+    {
+        await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = agentId,
+            ActiveSessionId = sessionId
+        });
+        var session = await sessionStore.GetOrCreateAsync(sessionId, agentId);
+        session.Session.ConversationId = conversationId;
+        await sessionStore.SaveAsync(session);
     }
 
     private static IReadOnlyList<string> GetToolNames(IAgentHandle handle)

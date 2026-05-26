@@ -58,7 +58,8 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Write some code",
             TimeoutSeconds = 600,
-            TargetAgentId = "farnsworth"
+            TargetAgentId = "farnsworth",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         var result = await manager.SpawnAsync(request);
@@ -98,7 +99,8 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do something",
             TimeoutSeconds = 600,
-            TargetAgentId = "ghost-agent"
+            TargetAgentId = "ghost-agent",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         Func<Task> act = () => manager.SpawnAsync(request);
@@ -141,8 +143,9 @@ public sealed class SubAgentTargetAgentIdTests
             ParentAgentId = AgentId.From("nova"),
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do work",
-            TimeoutSeconds = 600
+            TimeoutSeconds = 600,
             // no TargetAgentId
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         await manager.SpawnAsync(request);
@@ -212,7 +215,8 @@ public sealed class SubAgentTargetAgentIdTests
             ParentSessionId = SessionId.From("nova-session"),
             Task = "Do work",
             TimeoutSeconds = 600,
-            TargetAgentId = "farnsworth"
+            TargetAgentId = "farnsworth",
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
         await manager.SpawnAsync(request);

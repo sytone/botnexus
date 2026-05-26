@@ -126,7 +126,8 @@ public sealed class SubAgentSpawnDepthTests
             ParentAgentId = AgentId.From("parent-agent"),
             ParentSessionId = parentSessionId ?? SessionId.From("root-session"),
             Task = "Do something",
-            TimeoutSeconds = 600
+            TimeoutSeconds = 600,
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentHandle> CreateHandle()

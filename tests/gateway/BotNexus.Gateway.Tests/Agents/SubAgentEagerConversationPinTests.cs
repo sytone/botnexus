@@ -57,7 +57,7 @@ public sealed class SubAgentEagerConversationPinTests
             ParentAgentId = AgentId.From("parent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "x",
-            InheritedConversationId = ConversationId.From("conv-1").Value
+            InheritedConversationId = ConversationId.From("conv-1")
         };
 
         // Act
@@ -117,7 +117,7 @@ public sealed class SubAgentEagerConversationPinTests
             ParentAgentId = AgentId.From("parent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "x",
-            InheritedConversationId = ConversationId.From("conv-99").Value
+            InheritedConversationId = ConversationId.From("conv-99")
         };
 
         // Act
@@ -129,6 +129,58 @@ public sealed class SubAgentEagerConversationPinTests
             "After SpawnAsync returns, the child session must already be bound to the parent conversation. " +
             "If you needed Task.Delay(...) here, pinning is still lazy and the orphan-window bug remains.");
         pinnedSession.Session.ConversationId!.Value.Value.ShouldBe("conv-99");
+    }
+
+    [Fact]
+    public async Task SpawnAsync_PinsConversation_BEFORE_PromptIsInvoked()
+    {
+        // Arrange: prompt records the order of events. Pinning must come first.
+        var events = new List<string>();
+        var pinnedSession = new GatewaySession();
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore
+            .Setup(s => s.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pinnedSession);
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((sess, _) =>
+                events.Add($"pin:{sess.Session.ConversationId?.Value ?? "<null>"}"))
+            .Returns(Task.CompletedTask);
+
+        var promptInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.AgentId).Returns(AgentId.From("child-agent"));
+        handle.Setup(h => h.SessionId).Returns(SessionId.From("child-session"));
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, CancellationToken _) =>
+            {
+                events.Add("prompt");
+                promptInvoked.TrySetResult(true);
+                return new AgentResponse { Content = "done" };
+            });
+
+        var manager = BuildManager(handle, sessionStore: sessionStore.Object);
+
+        var request = new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "go",
+            InheritedConversationId = ConversationId.From("conv-order")
+        };
+
+        // Act
+        await manager.SpawnAsync(request);
+        await promptInvoked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert: the recorded order MUST start with the pin and only then prompt.
+        events.ShouldNotBeEmpty();
+        events[0].ShouldBe("pin:conv-order",
+            "Conversation pinning must complete strictly before PromptAsync runs. " +
+            "Recorded order: " + string.Join(" -> ", events));
+        events.ShouldContain("prompt");
+        events.IndexOf("pin:conv-order").ShouldBeLessThan(events.IndexOf("prompt"));
     }
 
     private static Mock<IAgentHandle> BuildHandle()

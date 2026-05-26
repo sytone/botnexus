@@ -160,7 +160,8 @@ public sealed class SubAgentToolInheritanceTests
             ParentSessionId = SessionId.From("root-session"),
             Task = "Do something",
             TimeoutSeconds = 600,
-            ToolIds = toolIds
+            ToolIds = toolIds,
+            InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
     private static Mock<IAgentHandle> CreateHandle()
