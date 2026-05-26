@@ -451,6 +451,248 @@ public sealed class CrossWorldFederationControllerTests
         convs[0].ActiveSessionId.ShouldBeNull();
     }
 
+    // ---- Critique-sweep additions (PR #549) ----
+
+    [Fact]
+    public async Task RelayAsync_WhenRemoteSessionIdSupplied_ButSessionIsSealed_Returns409()
+    {
+        // PR #549 critique sweep — bug-hunt BLOCKING #5: reuse path silently set Status = Active
+        // without checking prior state. A failed/sealed session would be re-activated and new turns
+        // would be appended to a terminated transcript, masking the original failure.
+        var (controller, sessions, conversations, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var conv = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = target,
+            Kind = ConversationKind.AgentAgent,
+            Title = "Cross-world agent exchange"
+        });
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = conv.ConversationId;
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        seeded.Status = GatewaySessionStatus.Sealed;
+        seeded.Metadata["sourceWorldId"] = SourceWorldId;
+        seeded.Metadata["sourceAgentId"] = SourceAgentId;
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        response.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "Sealed session must not be silently re-activated. Mixing new turns into " +
+                "a terminated transcript hides the original failure and can change the agent's " +
+                "behaviour because the sealed turn is still in history. Required: 409 Conflict.");
+
+        // Confirm we did NOT mutate the sealed session.
+        var reloaded = await sessions.GetAsync(seededId);
+        reloaded.ShouldNotBeNull();
+        reloaded.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            customMessage: "Sealed-session reuse rejection must not flip the session back to Active " +
+                "as a side effect.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenRemoteSessionIdSupplied_ButSessionHasNoConversationId_Returns409()
+    {
+        // PR #549 critique sweep — plan-vs-impl MEDIUM: the "no bound conversation" 409 branch in
+        // ResolveSessionAsync had zero test coverage. Guards against pre-Phase-4 sessions (or
+        // corrupted data) that have ConversationId == null. Without the guard, the controller would
+        // fall through to `conversationStore.GetAsync(null)` and produce a worse error.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        // Deliberately do NOT set Session.ConversationId.
+        seeded.Metadata["sourceWorldId"] = SourceWorldId;
+        seeded.Metadata["sourceAgentId"] = SourceAgentId;
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        var conflict = response.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "Session with null ConversationId cannot be reused — there is no " +
+                "conversation row to bind new turns to. Required: 409 Conflict (explicit refusal).");
+        conflict.Value!.ToString()!.ShouldContain("no bound conversation");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenRemoteSessionIdSupplied_ButConversationIsMissing_Returns409()
+    {
+        // PR #549 critique sweep — plan-vs-impl MEDIUM: the "missing conversation" 409 branch in
+        // ResolveSessionAsync had zero test coverage. Guards against split-brain data where a
+        // session points at a conversation id that has been deleted/never written.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = ConversationId.Create(); // points at non-existent conv
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        seeded.Metadata["sourceWorldId"] = SourceWorldId;
+        seeded.Metadata["sourceAgentId"] = SourceAgentId;
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        var conflict = response.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "Session references a ConversationId that doesn't exist in the " +
+                "conversation store — reuse is impossible. Required: 409 Conflict.");
+        conflict.Value!.ToString()!.ShouldContain("missing conversation");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenRemoteSessionIdSupplied_ButSessionTypeMismatch_Returns409_InIsolation()
+    {
+        // PR #549 critique sweep — plan-vs-impl MEDIUM: the SessionType guard in OwnedByRequester is
+        // shadowed in existing tests by the earlier ChannelType guard. Seed a session that passes
+        // every earlier guard but has SessionType != AgentAgent, so this test fails specifically
+        // when the SessionType guard is removed.
+        var (controller, sessions, conversations, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var conv = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = target,
+            Kind = ConversationKind.AgentAgent,
+            Title = "Cross-world agent exchange"
+        });
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = conv.ConversationId;
+        seeded.ChannelType = ChannelKey.From("cross-world"); // passes the channel check
+        seeded.SessionType = SessionType.UserAgent; // FAILS only on SessionType check
+        seeded.Metadata["sourceWorldId"] = SourceWorldId;
+        seeded.Metadata["sourceAgentId"] = SourceAgentId;
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        var conflict = response.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "Session has cross-world channel but UserAgent SessionType — must reject " +
+                "as not-an-agent-agent session. Removing the SessionType guard would silently " +
+                "accept this and allow a user-agent transcript to be hijacked by a cross-world peer.");
+        conflict.Value!.ToString()!.ShouldContain("agent-agent");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenRemoteSessionIdSupplied_ButSourceAgentMismatch_Returns409_InIsolation()
+    {
+        // PR #549 critique sweep — plan-vs-impl MEDIUM: the sourceAgentId guard in OwnedByRequester
+        // has no isolated test. Seed a session that passes target-agent, channel, session-type, and
+        // sourceWorldId checks but fails ONLY on sourceAgentId mismatch.
+        var (controller, sessions, conversations, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var conv = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = target,
+            Kind = ConversationKind.AgentAgent,
+            Title = "Cross-world agent exchange"
+        });
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = conv.ConversationId;
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        seeded.Metadata["sourceWorldId"] = SourceWorldId; // matches request
+        seeded.Metadata["sourceAgentId"] = "agent-other"; // FAILS only on sourceAgentId
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        var conflict = response.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "Same source world but different source agent must be rejected — " +
+                "otherwise World A's agent-X can hijack World A's agent-Y cross-world session.");
+        conflict.Value!.ToString()!.ShouldContain("sourceAgentId");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WithInvalidApiKey_AndUnknownTargetAgent_Returns401_NotEnumerable404()
+    {
+        // PR #549 critique sweep — security LOW: registry.Contains used to run BEFORE auth, leaking
+        // which target agent ids exist on this gateway. An unauthenticated caller could probe with
+        // wrong-key+candidate-agent and distinguish "401 → agent exists" from "404 → agent doesn't".
+        // After the fix, auth runs first and both cases return 401.
+        var (controller, _, _, _) = BuildController();
+        SetApiKeyHeader(controller, "wrong-key");
+
+        var response = await controller.RelayAsync(
+            BuildRequest()  with { TargetAgentId = "agent-definitely-does-not-exist-here" },
+            CancellationToken.None);
+
+        response.Result.ShouldBeOfType<UnauthorizedObjectResult>(
+            customMessage: "Unauthenticated probe against an unknown target agent must return 401, " +
+                "not 404. Returning 404 here lets a remote attacker enumerate local agent ids " +
+                "without ever presenting a valid X-Cross-World-Key.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenSessionMetadataIsJsonElement_StillReusesSession()
+    {
+        // PR #549 critique sweep — bug-hunt BLOCKING #1: after disk round-trip,
+        // SqliteSessionStore deserializes session metadata as JsonElement. The previous
+        // MetadataString helper used `value as string` which silently returned null, so every
+        // legitimate reuse call after a gateway restart returned 409. Simulate the post-reload
+        // state by stuffing JsonElement values directly into a fresh in-memory session.
+        var (controller, sessions, conversations, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var conv = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = target,
+            Kind = ConversationKind.AgentAgent,
+            Title = "Cross-world agent exchange"
+        });
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = conv.ConversationId;
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        // Simulate the post-disk-reload shape: values come back as JsonElement, not string.
+        seeded.Metadata["sourceWorldId"] = JsonElementString(SourceWorldId);
+        seeded.Metadata["sourceAgentId"] = JsonElementString(SourceAgentId);
+        await sessions.SaveAsync(seeded);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: seededId.Value),
+            CancellationToken.None);
+
+        response.Result.ShouldBeOfType<OkObjectResult>(
+            customMessage: "Receiver rejected a legitimate reuse because Session.Metadata held " +
+                "JsonElement string values (the shape SqliteSessionStore produces after restart). " +
+                "MetadataString must handle JsonElement, matching the pattern already used in " +
+                "AgentConverseTool.ResolveCallChainAsync and PreCompactionMemoryFlusher.");
+    }
+
+    private static System.Text.Json.JsonElement JsonElementString(string value)
+        => System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(value)).RootElement.Clone();
+
     // ---- helpers ----
 
     private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,

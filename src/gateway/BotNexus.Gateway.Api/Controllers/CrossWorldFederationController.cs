@@ -75,14 +75,19 @@ public sealed class CrossWorldFederationController(
             return BadRequest(new { error = "message is required." });
 
         var targetAgentId = AgentId.From(request.TargetAgentId);
-        if (!registry.Contains(targetAgentId))
-            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered." });
 
+        // Auth BEFORE agent-existence lookup — without this ordering, an unauthenticated caller can
+        // probe `registry.Contains(targetAgentId)` and distinguish "registered → 401" from
+        // "unregistered → 404", enumerating local agent ids without ever presenting a valid
+        // X-Cross-World-Key (PR #549 critique sweep — security LOW finding).
         var presentedApiKey = Request.Headers.TryGetValue("X-Cross-World-Key", out var keyHeader)
             ? keyHeader.ToString()
             : null;
         if (!inboundAuthService.TryAuthorize(request.SourceWorldId, targetAgentId, presentedApiKey, out var authError))
             return Unauthorized(new { error = authError });
+
+        if (!registry.Contains(targetAgentId))
+            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered." });
 
         // Phase 4 / F-3 (receiver branch): resolve or create the local conversation+session pair.
         var resolveResult = await ResolveSessionAsync(request, targetAgentId, cancellationToken).ConfigureAwait(false);
@@ -163,6 +168,12 @@ public sealed class CrossWorldFederationController(
 
             if (!OwnedByRequester(existing, targetAgentId, request, out var mismatchReason))
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' rejected: {mismatchReason}" }));
+
+            // Refuse to reactivate a sealed session — the previous turn failed and was sealed
+            // deliberately. Reopening would mix new turns into a terminated transcript and might
+            // mask the original failure (PR #549 critique sweep — bug-hunt BLOCKING #5).
+            if (existing.Status == GatewaySessionStatus.Sealed)
+                return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' is sealed and cannot be reused — start a new cross-world exchange." }));
 
             if (existing.Session.ConversationId is not { } existingConversationId)
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' has no bound conversation — refuse to reuse." }));
@@ -274,8 +285,28 @@ public sealed class CrossWorldFederationController(
         return true;
     }
 
+    /// <summary>
+    /// Extracts a string-typed metadata value. After a disk round-trip via
+    /// <c>SqliteSessionStore</c>, string values are boxed as
+    /// <see cref="System.Text.Json.JsonElement"/> rather than <see cref="string"/>; a naive
+    /// <c>as string</c> cast silently returns <c>null</c> and the <see cref="OwnedByRequester"/>
+    /// checks then 409 every legitimate reuse call. Matches the pattern in
+    /// <c>AgentConverseTool.ResolveCallChainAsync</c> and <c>PreCompactionMemoryFlusher.
+    /// GetLastFlushCycle</c> (PR #549 critique sweep — bug-hunt BLOCKING #1).
+    /// </summary>
     private static string? MetadataString(IDictionary<string, object?> metadata, string key)
-        => metadata.TryGetValue(key, out var value) ? value as string : null;
+    {
+        if (!metadata.TryGetValue(key, out var value) || value is null)
+            return null;
+
+        return value switch
+        {
+            string s => s,
+            System.Text.Json.JsonElement element when element.ValueKind == System.Text.Json.JsonValueKind.String
+                => element.GetString(),
+            _ => null
+        };
+    }
 
     private static bool StringEquals(string? left, string? right)
         => string.Equals(left, right, StringComparison.Ordinal);
