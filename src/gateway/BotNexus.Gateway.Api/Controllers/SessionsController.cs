@@ -269,7 +269,22 @@ public sealed class SessionsController : ControllerBase
     [HttpDelete("{sessionId}")]
     public async Task<ActionResult> Delete(string sessionId, CancellationToken cancellationToken)
     {
-        await _sessions.DeleteAsync(SessionId.From(sessionId), cancellationToken);
+        var sid = SessionId.From(sessionId);
+
+        // Per-session caller authorization (#558). Load before deleting so we can
+        // verify the caller owns this session. If the session is already gone,
+        // preserve the idempotent NoContent semantic the wire has always
+        // returned — surfacing 404 here would create an existence-disclosure
+        // oracle to authenticated probes and break DELETE retry idempotency.
+        var session = await _sessions.GetAsync(sid, cancellationToken);
+        if (session is null)
+            return NoContent();
+
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
+        await _sessions.DeleteAsync(sid, cancellationToken);
         return NoContent();
     }
 
@@ -286,6 +301,11 @@ public sealed class SessionsController : ControllerBase
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
+
+        // Per-session caller authorization (#558).
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
 
         if (session.Status != SessionStatus.Active)
             return Conflict(new { error = $"Cannot suspend session in '{session.Status}' state." });
@@ -309,6 +329,11 @@ public sealed class SessionsController : ControllerBase
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
+
+        // Per-session caller authorization (#558).
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
 
         if (session.Status != SessionStatus.Suspended)
             return Conflict(new { error = $"Cannot resume session in '{session.Status}' state." });

@@ -53,6 +53,91 @@ public sealed class SessionsControllerTests
         result.ShouldBeOfType<NoContentResult>();
     }
 
+    // ----- Delete: per-session caller authorization (#558).
+    // Mirrors the AuthorizeSessionCaller pattern enforced on Seal in #555;
+    // closes the same DoS / control-plane integrity gap on Delete.
+    // Idempotent-NoContent semantic for missing sessions is preserved
+    // (no information leak about session existence to unauthorized callers).
+
+    [Fact]
+    public async Task Delete_WhenCallerIdentityDoesNotMatchSessionCaller_Returns403_AndDoesNotDelete()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-b")
+        };
+
+        var result = await controller.Delete("s1", CancellationToken.None);
+
+        result.ShouldBeOfType<ObjectResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        var stillThere = await store.GetAsync(SessionId.From("s1"), CancellationToken.None);
+        stillThere.ShouldNotBeNull("Delete must not remove the session when authorization fails");
+    }
+
+    [Fact]
+    public async Task Delete_WhenCallerIdentityMatchesSessionCaller_DeletesAndReturnsNoContent()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.Delete("s1", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        var afterDelete = await store.GetAsync(SessionId.From("s1"), CancellationToken.None);
+        afterDelete.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Delete_WhenSessionMissing_ReturnsNoContent_PreservingIdempotency()
+    {
+        // Pin: missing-session DELETE remains idempotent NoContent (the
+        // pre-existing wire semantic). Returning 404 here would create an
+        // existence-disclosure oracle to authenticated probes and break
+        // idempotent retry semantics on the CLI / portal.
+        var store = new InMemorySessionStore();
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.Delete("missing", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task Delete_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        // Mirrors Suspend/Resume/Seal/GetMetadata/PatchMetadata equivalents.
+        // Pins the contract that AuthorizeSessionCaller is a no-op when no
+        // CallerIdentity is stamped in HttpContext.Items (background workers,
+        // tests, anonymous internal flows). A future refactor that makes the
+        // missing-identity branch a hard 403 would silently break Delete's
+        // anonymous path; this test ensures it cannot regress unobserved.
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Delete("s1", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        var afterDelete = await store.GetAsync(SessionId.From("s1"), CancellationToken.None);
+        afterDelete.ShouldBeNull("Delete must proceed when no caller identity is present");
+    }
+
     [Fact]
     public async Task ListSubAgents_WithMissingSession_ReturnsNotFound()
     {
@@ -312,6 +397,126 @@ public sealed class SessionsControllerTests
         var result = await controller.Resume("missing", CancellationToken.None);
 
         result.Result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    // ----- Suspend / Resume: per-session caller authorization (#558).
+    // Closes the same DoS / control-plane integrity gap on the two remaining
+    // PATCH state-mutating endpoints. Mirrors the AuthorizeSessionCaller
+    // pattern established on Seal in PR #555 and on GetMetadata / PatchMetadata
+    // pre-existing.
+
+    [Fact]
+    public async Task Suspend_WhenCallerIdentityDoesNotMatchSessionCaller_Returns403_AndDoesNotChangeState()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Active;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-b")
+        };
+
+        var result = await controller.Suspend("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<ObjectResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        session.Status.ShouldBe(
+            SessionStatus.Active,
+            "Suspend must not change state when authorization fails");
+    }
+
+    [Fact]
+    public async Task Suspend_WhenCallerIdentityMatchesSessionCaller_Suspends()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Active;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.Suspend("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Suspended);
+    }
+
+    [Fact]
+    public async Task Suspend_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Active;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Suspend("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Suspended);
+    }
+
+    [Fact]
+    public async Task Resume_WhenCallerIdentityDoesNotMatchSessionCaller_Returns403_AndDoesNotChangeState()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Suspended;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-b")
+        };
+
+        var result = await controller.Resume("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<ObjectResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        session.Status.ShouldBe(
+            SessionStatus.Suspended,
+            "Resume must not change state when authorization fails");
+    }
+
+    [Fact]
+    public async Task Resume_WhenCallerIdentityMatchesSessionCaller_Resumes()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Suspended;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.Resume("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Active);
+    }
+
+    [Fact]
+    public async Task Resume_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        session.Status = SessionStatus.Suspended;
+        await store.SaveAsync(session);
+        var controller = new SessionsController(store);
+
+        var result = await controller.Resume("s1", CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        session.Status.ShouldBe(SessionStatus.Active);
     }
 
     [Fact]
