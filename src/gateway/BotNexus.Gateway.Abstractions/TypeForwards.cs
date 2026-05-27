@@ -100,6 +100,7 @@
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionLifecycleEvents))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionStore))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionWarmupService))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionWriteLock))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.SessionLifecycleEventType))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.SessionLifecycleEvent))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.SessionSummary))]

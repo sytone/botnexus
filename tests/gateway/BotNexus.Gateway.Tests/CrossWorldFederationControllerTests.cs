@@ -898,6 +898,164 @@ public sealed class CrossWorldFederationControllerTests
         conflict.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
     }
 
+    [Fact]
+    public async Task RelayAsync_WhenSecondCallerUsesSameRemoteSessionId_BlocksOnLock_AndRunsSequentially()
+    {
+        // #551 regression pin: the lock acquired in RelayAsync for the supplied RemoteSessionId
+        // MUST serialize concurrent relays that target the same session. Without the lock, both
+        // callers race through the write → prompt → reload → consume-gate sequence, their per-turn
+        // active-exchange-id writes interleave, and the freshness gate can credit caller B's
+        // finish payload to caller A or vice versa (the original PR #550 bug-hunt HIGH-1 / MEDIUM-2
+        // findings that motivated this PR). We pin the lock's existence end-to-end by:
+        //  (1) issuing two concurrent relays for the same seeded RemoteSessionId,
+        //  (2) parking caller A inside PromptAsync via a barrier in the supervisor mock,
+        //  (3) asserting caller B has NOT entered PromptAsync while A is parked
+        //      (the lock prevents B from even reaching PromptAsync — without the lock, B's
+        //       PromptAsync would also be invoked and the barrier would catch it),
+        //  (4) releasing A and verifying B then runs to completion with the history showing
+        //      both turns in strict order (no interleaving).
+        //
+        // A no-op lock regression (returning a Releaser that never blocked) would let both
+        // callers progress to PromptAsync simultaneously — step (3) would observe a second
+        // PromptCallCount tick before A is released.
+
+        var (controller, sessions, conversations, _, barrier) = BuildControllerWithBarrier();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // Seed a reusable cross-world session so the RemoteSessionId branch (which acquires the
+        // lock BEFORE ResolveSessionAsync) is exercised. This mirrors lines 296-311 of the
+        // existing ownership-validation tests.
+        var seededId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        var conv = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = target,
+            Kind = ConversationKind.AgentAgent,
+            Title = "Cross-world agent exchange"
+        });
+        var seeded = await sessions.GetOrCreateAsync(seededId, target);
+        seeded.Session.ConversationId = conv.ConversationId;
+        seeded.SessionType = SessionType.AgentAgent;
+        seeded.ChannelType = ChannelKey.From("cross-world");
+        seeded.Metadata["sourceWorldId"] = SourceWorldId;
+        seeded.Metadata["sourceAgentId"] = SourceAgentId;
+        await sessions.SaveAsync(seeded);
+
+        var callerATask = Task.Run(() => controller.RelayAsync(
+            BuildRequest(message: "turn-A", remoteSessionId: seededId.Value),
+            CancellationToken.None));
+
+        // Wait until caller A is parked inside PromptAsync — this proves A has the lock.
+        await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Volatile.Read(ref barrier.PromptCallCount).ShouldBe(1,
+            "Pre-condition: caller A's PromptAsync must have been invoked and parked.");
+
+        var callerBTask = Task.Run(() => controller.RelayAsync(
+            BuildRequest(message: "turn-B", remoteSessionId: seededId.Value),
+            CancellationToken.None));
+
+        // Give caller B plenty of time to reach AcquireAsync. With the lock in place B parks in
+        // SemaphoreSlim.WaitAsync. Without the lock B would proceed to PromptAsync and the
+        // barrier would tick the counter to 2.
+        await Task.Delay(150);
+        callerBTask.IsCompleted.ShouldBeFalse(
+            "Caller B must be blocked on SessionWriteLock.AcquireAsync while caller A holds the " +
+            "lease. A no-op lock would let B race A through PromptAsync and complete here.");
+        Volatile.Read(ref barrier.PromptCallCount).ShouldBe(1,
+            "Lock regression: caller B's PromptAsync was invoked while caller A's lease was still " +
+            "held — SessionWriteLock failed to serialize concurrent relays on the same session id, " +
+            "re-opening the #551 race window.");
+
+        // Release caller A — caller B should now acquire the lock, run, and complete.
+        barrier.Release.SetResult();
+        var aResponse = await callerATask.WaitAsync(TimeSpan.FromSeconds(5));
+        var bResponse = await callerBTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        aResponse.Result.ShouldBeOfType<OkObjectResult>();
+        bResponse.Result.ShouldBeOfType<OkObjectResult>();
+        Volatile.Read(ref barrier.PromptCallCount).ShouldBe(2,
+            "Both callers' PromptAsync must have run exactly once.");
+
+        // History should reflect strict serialization: A's user + assistant entries appear
+        // before B's. Interleaving would manifest as [user-A, user-B, assistant-A, assistant-B]
+        // or similar; sequential execution yields the deterministic [A.user, A.asst, B.user, B.asst].
+        var finalSession = (await sessions.GetAsync(seededId, CancellationToken.None))!;
+        finalSession.History.Count.ShouldBe(4,
+            "Two relays × two entries each (user + assistant) = 4 entries in the persisted session.");
+        finalSession.History[0].Role.ShouldBe(MessageRole.User);
+        finalSession.History[0].Content.ShouldBe("turn-A");
+        finalSession.History[1].Role.ShouldBe(MessageRole.Assistant);
+        finalSession.History[1].Content.ShouldBe("reply-A");
+        finalSession.History[2].Role.ShouldBe(MessageRole.User);
+        finalSession.History[2].Content.ShouldBe("turn-B");
+        finalSession.History[3].Role.ShouldBe(MessageRole.Assistant);
+        finalSession.History[3].Content.ShouldBe("reply-B");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenSecondCallerUsesDifferentRemoteSessionId_DoesNotBlock()
+    {
+        // Per-session keying: a relay against session X must NOT block a relay against session Y.
+        // Defends against a regression that uses a single global mutex instead of per-session
+        // keying — that would silently serialize unrelated cross-world traffic and make the
+        // gateway a global bottleneck.
+
+        var (controller, sessions, conversations, _, barrier) = BuildControllerWithBarrier();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // Two independently seeded cross-world sessions belonging to the same target agent.
+        var sessionXId = SessionId.Create();
+        var sessionYId = SessionId.Create();
+        var target = AgentId.From(TargetAgentId);
+        foreach (var sid in new[] { sessionXId, sessionYId })
+        {
+            var conv = await conversations.CreateAsync(new Conversation
+            {
+                ConversationId = ConversationId.Create(),
+                AgentId = target,
+                Kind = ConversationKind.AgentAgent,
+                Title = "Cross-world agent exchange"
+            });
+            var seeded = await sessions.GetOrCreateAsync(sid, target);
+            seeded.Session.ConversationId = conv.ConversationId;
+            seeded.SessionType = SessionType.AgentAgent;
+            seeded.ChannelType = ChannelKey.From("cross-world");
+            seeded.Metadata["sourceWorldId"] = SourceWorldId;
+            seeded.Metadata["sourceAgentId"] = SourceAgentId;
+            await sessions.SaveAsync(seeded);
+        }
+
+        var taskX = Task.Run(() => controller.RelayAsync(
+            BuildRequest(message: "X", remoteSessionId: sessionXId.Value), CancellationToken.None));
+
+        // Wait for X's PromptAsync to park.
+        await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var taskY = Task.Run(() => controller.RelayAsync(
+            BuildRequest(message: "Y", remoteSessionId: sessionYId.Value), CancellationToken.None));
+
+        // Y targets a DIFFERENT session id — its PromptAsync should be invoked despite X being
+        // parked. Because the barrier counter only blocks the FIRST call, Y's call returns
+        // immediately on entry (no barrier wait). We assert PromptCallCount reaches 2 BEFORE
+        // releasing X. A global lock regression would keep PromptCallCount at 1 here.
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < pollDeadline && Volatile.Read(ref barrier.PromptCallCount) < 2)
+            await Task.Delay(25);
+
+        Volatile.Read(ref barrier.PromptCallCount).ShouldBe(2,
+            "Caller Y's PromptAsync must have run while caller X is parked — per-session keying " +
+            "requires unrelated sessions to NOT block each other. A regression to a global lock " +
+            "would prevent Y from progressing until X is released.");
+        taskY.IsCompleted.ShouldBeTrue(
+            "Y should have completed independently of X because the lock is keyed per session id.");
+
+        // Release X and verify it completes cleanly.
+        barrier.Release.SetResult();
+        var xResponse = await taskX.WaitAsync(TimeSpan.FromSeconds(5));
+        xResponse.Result.ShouldBeOfType<OkObjectResult>();
+    }
+
     // ---- helpers ----
 
     private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
@@ -1047,6 +1205,15 @@ public sealed class CrossWorldFederationControllerTests
         IConversationStore conversations,
         IAgentSupervisor supervisor)
     {
+        return BuildControllerCore(sessions, conversations, supervisor, new SessionWriteLock());
+    }
+
+    private static CrossWorldFederationController BuildControllerCore(
+        ISessionStore sessions,
+        IConversationStore conversations,
+        IAgentSupervisor supervisor,
+        ISessionWriteLock sessionWriteLock)
+    {
         var platformConfig = new PlatformConfig
         {
             Gateway = new GatewaySettingsConfig
@@ -1082,6 +1249,7 @@ public sealed class CrossWorldFederationControllerTests
             supervisor,
             sessions,
             conversations,
+            sessionWriteLock,
             new CrossWorldInboundAuthService(monitor),
             monitor,
             NullLogger<CrossWorldFederationController>.Instance)
@@ -1091,6 +1259,56 @@ public sealed class CrossWorldFederationControllerTests
                 HttpContext = new DefaultHttpContext()
             }
         };
+    }
+
+    /// <summary>
+    /// Builds a controller whose agent handle parks the FIRST <c>PromptAsync</c> invocation on a
+    /// barrier (signals <see cref="BarrierState.Entered"/>; awaits <see cref="BarrierState.Release"/>)
+    /// and returns immediately for subsequent invocations. Used by the #551 concurrency pin to
+    /// prove the per-session lock serialises concurrent relays on the same RemoteSessionId.
+    /// </summary>
+    private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
+        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor, BarrierState Barrier)
+        BuildControllerWithBarrier()
+    {
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+        var barrier = new BarrierState();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string msg, CancellationToken ct) =>
+            {
+                var callNumber = Interlocked.Increment(ref barrier.PromptCallCount);
+                if (callNumber == 1)
+                {
+                    barrier.Entered.SetResult();
+                    await barrier.Release.Task.WaitAsync(ct);
+                    return new AgentResponse { Content = "reply-A" };
+                }
+                return new AgentResponse { Content = $"reply-{msg.Substring(msg.Length - 1)}" };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        // Share one SessionWriteLock across both concurrent callers — the production singleton
+        // shape. A fresh-per-controller lock would make the test vacuous (each caller would have
+        // its own lock and never serialise).
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object, new SessionWriteLock());
+        return (controller, sessions, conversations, supervisor, barrier);
+    }
+
+    /// <summary>
+    /// Shared barrier state for the #551 concurrency pin. Public mutable field for
+    /// <see cref="Interlocked.Increment(ref int)"/>; tasks signal via the <see cref="TaskCompletionSource"/>s.
+    /// </summary>
+    private sealed class BarrierState
+    {
+        public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int PromptCallCount;
     }
 
     private static void SetApiKeyHeader(CrossWorldFederationController controller, string key)

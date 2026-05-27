@@ -890,6 +890,115 @@ public sealed class AgentExchangeServiceTests
         result.Status.ShouldBe("sealed");
     }
 
+    [Fact]
+    public async Task ConcurrentConverseAsync_OnSameSourceTarget_ProducesDistinctSessionIds_AndIsolatedTranscripts()
+    {
+        // #551 AC #2: AgentExchangeService.ConverseAsync mints a fresh SessionId.Create() per call
+        // (see AgentExchangeService.cs:96), so two concurrent calls on the same initiator/target
+        // pair produce DIFFERENT session ids by construction and cannot interleave. This makes
+        // the per-session write lock that protects CrossWorldFederationController.RelayAsync
+        // intentionally absent here — the per-call sessionId freshness IS the isolation guarantee.
+        //
+        // This test pins that invariant. A regression that introduced a shared session for
+        // concurrent calls (e.g. "reuse the active session for this pair") would cause:
+        //   (1) overlapping session ids — caught by the distinct-ids assertion below, OR
+        //   (2) interleaved transcripts — caught by the per-session content assertions.
+        //
+        // Either symptom would invalidate the "no lock needed" reasoning and require either
+        // adding the lock here OR reverting the regression. The barrier in the handle ensures
+        // both calls are genuinely in flight simultaneously rather than serialised by chance.
+
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var sessionStore = new InMemorySessionStore();
+
+        var bothEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBoth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string msg, CancellationToken ct) =>
+            {
+                if (Interlocked.Increment(ref entered) == 2)
+                    bothEntered.SetResult();
+                // Both callers must reach this point before either proceeds, proving they
+                // were ACTUALLY concurrent (not sequenced by Task.Run scheduling order).
+                await releaseBoth.Task.WaitAsync(ct);
+                return new AgentResponse { Content = $"reply:{msg}" };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            new InMemoryConversationStore(),
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var taskA = Task.Run(() => service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "msg-A",
+            MaxTurns = 1
+        }));
+        var taskB = Task.Run(() => service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "msg-B",
+            MaxTurns = 1
+        }));
+
+        // Wait until both are genuinely parked inside PromptAsync — proves they're concurrent.
+        await bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        releaseBoth.SetResult();
+        var resultA = await taskA.WaitAsync(TimeSpan.FromSeconds(5));
+        var resultB = await taskB.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Primary invariant: per-call sessionId freshness. If this fails, ConverseAsync has
+        // started reusing sessions across concurrent calls and the no-lock assumption breaks.
+        resultA.SessionId.ShouldNotBe(resultB.SessionId,
+            "Concurrent ConverseAsync calls must produce distinct SessionIds — that's the " +
+            "per-call freshness guarantee that justifies skipping the per-session write lock in " +
+            "this service. A regression here would re-open the #551 race class in AgentExchangeService.");
+
+        // Secondary invariant: each session's transcript contains ONLY its own turns. Interleaving
+        // would manifest as msg-A appearing in session B's transcript or vice versa.
+        var sessionA = await sessionStore.GetAsync(resultA.SessionId);
+        var sessionB = await sessionStore.GetAsync(resultB.SessionId);
+        sessionA.ShouldNotBeNull();
+        sessionB.ShouldNotBeNull();
+
+        sessionA!.History
+            .Where(e => e.Role == MessageRole.User)
+            .Select(e => e.Content)
+            .ShouldContain("msg-A");
+        sessionA.History
+            .Where(e => e.Role == MessageRole.User)
+            .Select(e => e.Content)
+            .ShouldNotContain("msg-B",
+                "Caller B's message leaked into caller A's session — concurrent ConverseAsync " +
+                "calls cross-contaminated state. Either ConverseAsync regressed to shared-session " +
+                "shape, or its sessions aren't actually isolated.");
+        sessionB!.History
+            .Where(e => e.Role == MessageRole.User)
+            .Select(e => e.Content)
+            .ShouldContain("msg-B");
+        sessionB.History
+            .Where(e => e.Role == MessageRole.User)
+            .Select(e => e.Content)
+            .ShouldNotContain("msg-A",
+                "Caller A's message leaked into caller B's session — same regression class as above.");
+    }
+
         private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
     {
         var registry = new Mock<IAgentRegistry>();
