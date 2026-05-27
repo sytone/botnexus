@@ -16,4 +16,8 @@
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+  </ItemGroup>
+
 </Project>

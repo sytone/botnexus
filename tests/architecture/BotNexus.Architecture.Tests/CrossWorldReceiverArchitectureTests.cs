@@ -110,25 +110,55 @@ public sealed class CrossWorldReceiverArchitectureTests
             "Method splitter could not find RelayAsync — fence is vacuous. Method splitter found: " +
             string.Join(", ", methods.Select(m => m.Name)));
 
-        var inlineFailures = FindInlineLateAssignments(relay.Body);
-        var firstPromptInRelay = FindFirstPromptIndex(relay.Body);
-        firstPromptInRelay.ShouldBeGreaterThanOrEqualTo(0,
-            "RelayAsync has no .PromptAsync( call — fence is vacuous. Either the controller " +
-            "stopped invoking the supervisor or the API was renamed.");
+        // #551 refactor: RelayAsync now delegates the actual write→prompt→reload pipeline to an
+        // extracted helper (ExecuteRelayAsync) that runs inside the per-session write lock. The
+        // helper holds the .PromptAsync( call. Without the inlining step below, the vacuity
+        // guard would (incorrectly) declare the fence dead the moment anyone extracts a method.
+        // We treat any helper called from RelayAsync whose body contains .PromptAsync( as a
+        // logical continuation of RelayAsync and concatenate its body in.
+        var inlinedHelperNames = new HashSet<string>(StringComparer.Ordinal);
+        var logicalRelayBody = relay.Body;
+        foreach (var helper in methods.Where(m => m.Name != "RelayAsync"))
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(helper.Body, @"\.PromptAsync\s*\("))
+                continue;
+            // The helper must actually be called from RelayAsync — don't inline unrelated
+            // methods just because they happen to call PromptAsync (e.g. a sibling endpoint).
+            var calledFromRelay = System.Text.RegularExpressions.Regex.IsMatch(
+                relay.Body,
+                $@"\b{System.Text.RegularExpressions.Regex.Escape(helper.Name)}\s*\(");
+            if (!calledFromRelay)
+                continue;
+            inlinedHelperNames.Add(helper.Name);
+            logicalRelayBody += "\n" + helper.Body;
+        }
 
+        var firstPromptInRelay = FindFirstPromptIndex(logicalRelayBody);
+        firstPromptInRelay.ShouldBeGreaterThanOrEqualTo(0,
+            "Neither RelayAsync nor any helper it invokes has a .PromptAsync( call — fence is " +
+            "vacuous. Either the controller stopped invoking the supervisor or the API was " +
+            "renamed. (Searched RelayAsync + inlined helpers: " +
+            string.Join(", ", inlinedHelperNames) + ")");
+
+        var inlineFailures = FindInlineLateAssignments(logicalRelayBody);
+
+        // Helpers that mutate .ConversationId AND are NOT already inlined into the logical
+        // relay flow. The inlined helpers are scanned directly by the inline check above —
+        // double-counting them would produce duplicate failures.
         var helpersWithAssignments = methods
             .Where(m => m.Name != "RelayAsync")
+            .Where(m => !inlinedHelperNames.Contains(m.Name))
             .Where(m => System.Text.RegularExpressions.Regex.IsMatch(m.Body, @"\.ConversationId\s*="))
             .Select(m => m.Name)
             .ToHashSet(StringComparer.Ordinal);
 
-        var postPromptHelperCalls = FindHelperInvocationsAfter(relay.Body, firstPromptInRelay, helpersWithAssignments);
+        var postPromptHelperCalls = FindHelperInvocationsAfter(logicalRelayBody, firstPromptInRelay, helpersWithAssignments);
 
         var failureMessage = new List<string>();
         foreach (var (line, name) in inlineFailures)
-            failureMessage.Add($"  inline assignment at line {LineNumberAt(source, relay.StartIndex + line)} (first PromptAsync at line {LineNumberAt(source, relay.StartIndex + firstPromptInRelay)})");
+            failureMessage.Add($"  inline assignment at logical-body offset {line} (first PromptAsync at logical-body offset {firstPromptInRelay})");
         foreach (var (line, name) in postPromptHelperCalls)
-            failureMessage.Add($"  RelayAsync calls helper '{name}()' at line {LineNumberAt(source, relay.StartIndex + line)} AFTER first .PromptAsync — and {name}() mutates .ConversationId");
+            failureMessage.Add($"  logical RelayAsync flow calls helper '{name}()' at offset {line} AFTER first .PromptAsync — and {name}() mutates .ConversationId");
 
         failureMessage.ShouldBeEmpty(
             "CrossWorldFederationController.RelayAsync has a .ConversationId mutation path that " +
@@ -138,6 +168,7 @@ public sealed class CrossWorldReceiverArchitectureTests
             "visible in the store with ConversationId == null and is invisible to " +
             "ISessionStore.ListByConversationAsync, the portal, and any fan-out that filters by " +
             "conversation.\n" +
+            "Inlined prompt-host helpers: " + string.Join(", ", inlinedHelperNames) + "\n" +
             string.Join("\n", failureMessage));
     }
 

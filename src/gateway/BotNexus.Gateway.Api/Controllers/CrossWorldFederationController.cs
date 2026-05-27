@@ -48,6 +48,7 @@ public sealed class CrossWorldFederationController(
     IAgentSupervisor supervisor,
     ISessionStore sessionStore,
     IConversationStore conversationStore,
+    ISessionWriteLock sessionWriteLock,
     CrossWorldInboundAuthService inboundAuthService,
     IOptionsMonitor<PlatformConfig> platformConfig,
     ILogger<CrossWorldFederationController> logger) : ControllerBase
@@ -91,13 +92,59 @@ public sealed class CrossWorldFederationController(
         if (!registry.Contains(targetAgentId))
             return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered." });
 
-        // Phase 4 / F-3 (receiver branch): resolve or create the local conversation+session pair.
-        var resolveResult = await ResolveSessionAsync(request, targetAgentId, cancellationToken).ConfigureAwait(false);
-        if (resolveResult.Error is { } error)
-            return error;
+        // Per-session lock holds across resolve → write → prompt → reload → save → (seal-on-error).
+        // The single critical race that motivated #551 is two concurrent senders supplying the
+        // SAME RemoteSessionId: without the lock they can interleave their per-turn
+        // active-exchange-id writes and satisfy each other's freshness gate with the wrong
+        // payload. For supplied RemoteSessionId we acquire the lock BEFORE ResolveSessionAsync
+        // so a concurrent caller can never observe the session as Active in resolve and then
+        // sneak past after the first caller seals it (rubber-duck critique #3). For fresh
+        // sessions we resolve first to mint the new sessionId, then acquire for uniformity —
+        // the lock is functionally a no-op in that branch because no other caller can possibly
+        // hold the same just-minted id. The whole try/catch including the error-seal SaveAsync
+        // is INSIDE the lock scope so a second caller cannot sneak in between the failure and
+        // the seal persist (rubber-duck critique #4).
+        if (!string.IsNullOrWhiteSpace(request.RemoteSessionId))
+        {
+            var suppliedSessionId = SessionId.From(request.RemoteSessionId);
+            await using var lease = await sessionWriteLock
+                .AcquireAsync(suppliedSessionId, cancellationToken)
+                .ConfigureAwait(false);
 
-        var session = resolveResult.Session!;
-        var conversation = resolveResult.Conversation!;
+            var resolved = await ResolveSessionAsync(request, targetAgentId, cancellationToken).ConfigureAwait(false);
+            if (resolved.Error is { } resolveError)
+                return resolveError;
+
+            return await ExecuteRelayAsync(request, resolved.Session!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var resolved = await ResolveSessionAsync(request, targetAgentId, cancellationToken).ConfigureAwait(false);
+            if (resolved.Error is { } resolveError)
+                return resolveError;
+
+            await using var lease = await sessionWriteLock
+                .AcquireAsync(resolved.Session!.SessionId, cancellationToken)
+                .ConfigureAwait(false);
+
+            return await ExecuteRelayAsync(request, resolved.Session!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Runs the actual relay turn — append user entry, persist, prompt the target, reload,
+    /// consume the completion gate, persist the outcome. Invoked under the per-session lock
+    /// acquired by <see cref="RelayAsync"/>. The lock holds across <c>PromptAsync</c> by
+    /// design — the freshness gate in <see cref="AgentExchangeCompletionGate"/> requires that
+    /// the tool's persisted finish payload be readable in the same logical turn that wrote
+    /// the active id, and any concurrent caller would race the freshness invariant.
+    /// </summary>
+    private async Task<ActionResult<CrossWorldRelayResponse>> ExecuteRelayAsync(
+        CrossWorldRelayRequest request,
+        GatewaySession session,
+        Conversation conversation,
+        CancellationToken cancellationToken)
+    {
         var sessionId = session.SessionId;
 
         session.AddEntry(new SessionEntry
@@ -125,7 +172,7 @@ public sealed class CrossWorldFederationController(
             AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
-            var handle = await supervisor.GetOrCreateAsync(targetAgentId, sessionId, cancellationToken).ConfigureAwait(false);
+            var handle = await supervisor.GetOrCreateAsync(session.AgentId, sessionId, cancellationToken).ConfigureAwait(false);
             var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
             session.AddEntry(new SessionEntry
             {
@@ -194,7 +241,7 @@ public sealed class CrossWorldFederationController(
         {
             logger.LogWarning(ex,
                 "Cross-world relay failed for session '{SessionId}' on agent '{TargetAgentId}'.",
-                sessionId, targetAgentId);
+                sessionId, session.AgentId);
             session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
