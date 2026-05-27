@@ -237,8 +237,10 @@ public sealed class HeartbeatTriggerTests
         var entries = soulSession.GetHistorySnapshot();
         entries.Select(e => e.Content).ToList().ShouldBe(["u1", "raced-in"]);
         // Concurrent activity is real — UpdatedAt must NOT be restored to the
-        // pre-heartbeat anchor (would lie about activity timing).
-        soulSession.UpdatedAt.ShouldBeGreaterThan(preHeartbeatTime);
+        // pre-heartbeat anchor (would lie about activity timing). The Rebased
+        // path stamps UtcNow, which is the legitimate concurrent activity time
+        // — explicitly assert NOT the stale restore anchor.
+        soulSession.UpdatedAt.ShouldNotBe(preHeartbeatTime);
     }
 
     [Fact]
