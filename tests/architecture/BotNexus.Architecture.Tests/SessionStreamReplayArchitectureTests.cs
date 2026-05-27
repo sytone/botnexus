@@ -212,12 +212,61 @@ public sealed class SessionStreamReplayArchitectureTests
             "the fence will block PRs that legitimately document the rename.");
     }
 
+    [Fact]
+    public void Fence_IsNotVacuous_AgainstRawStringBypassShape()
+    {
+        // C# 11+ raw string literals (3+ consecutive `"`) could otherwise create a
+        // bypass: without raw-string-aware lexing, the contrived shape
+        //
+        //   var s = """a"//x"""; session.AddStreamEvent(...);
+        //
+        // is misparsed by a 1/2-quote-only lexer as `""` + `"a"` + `/` + `/x"""...`
+        // — the `//` after the inner `"` is treated as a real line comment that
+        // strips the trailing legacy-member call through to end-of-line, hiding the
+        // violation. Surfaced by the #575 bug-hunt critique. After raw-string-aware
+        // stripping the full call survives in the residue and the fence catches it.
+        const string bypassShape =
+            "var s = \"\"\"a\"//x\"\"\"; session.AddStreamEvent(1, \"{}\", 10);";
+        s_legacyMemberAccess.IsMatch(StripComments(bypassShape)).ShouldBeTrue(
+            "Raw-string-bypass guard: a trailing legacy-member call after a raw " +
+            "string literal containing `\"//` must remain visible to the fence " +
+            "regex after comment stripping. If this fails, the raw-string branch " +
+            "of `StripComments` has regressed and contrived strings could mask " +
+            "real legacy-member calls on the same line.");
+    }
+
+    [Fact]
+    public void Fence_DoesNotFalsePositive_OnRawStringContent()
+    {
+        // Canonical clean shape: a raw string literal whose content happens to
+        // contain a `//` or `/* */` sequence must not have that sequence
+        // mis-stripped as a comment, AND the literal itself (which has no
+        // banned-member call after it) must not trip the fence. This pins the
+        // realistic production case — tool-description JSON schemas in
+        // `BotNexus.Tools/*Tool.cs` use multi-line raw strings with embedded
+        // URLs (`https://`) and comment-like fragments.
+        const string cleanShape = "var schema = \"\"\"\nhello // world\n/* block */\n\"\"\";\n";
+        s_legacyMemberAccess.IsMatch(StripComments(cleanShape)).ShouldBeFalse(
+            "Raw-string false-positive guard: content inside a raw string literal " +
+            "must not be parsed as code, and embedded `//` / `/* */` sequences must " +
+            "not be stripped. If this fails, raw-string JSON schemas in tool " +
+            "implementations would either false-positive or mask real violations.");
+    }
+
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments
-    /// while preserving the contents of string and char literals. Reused (verbatim shape)
-    /// from <see cref="SingleShotWireValueArchitectureTests"/>; see that file for the full
-    /// rationale on why a naive regex would miss the `var u = "https://x"; session.X(...)`
-    /// realistic regression shape.
+    /// while preserving the contents of string and char literals — including C# 11+
+    /// raw string literals (<c>"""…"""</c>). Reused (verbatim shape) from
+    /// <see cref="SingleShotWireValueArchitectureTests"/> with one additional branch:
+    /// see that file for the rationale on why a naive regex would miss the realistic
+    /// regression shape <c>var u = "https://x"; session.X(...)</c>. The raw-string
+    /// branch closes a further bypass surfaced in the #575 bug-hunt critique sweep:
+    /// without raw-string-aware lexing, the contrived shape
+    /// <c>var s = """a"//x"""; session.X(...)</c> is misparsed as two regular
+    /// strings followed by a line comment that strips the trailing call. Other
+    /// architecture fences in this folder share this lexer pattern and have the
+    /// same pre-#575 limitation; lifting the raw-string branch to them is tracked
+    /// as a separate follow-up.
     /// </summary>
     private static string StripComments(string source)
     {
@@ -254,6 +303,33 @@ public sealed class SessionStreamReplayArchitectureTests
 
             if (c == '"')
             {
+                // Detect raw string literal: 3+ consecutive double quotes open a raw
+                // string whose closer is any run of >= openCount consecutive `"`
+                // characters. Content of any length (including embedded `"`, `//`,
+                // and `/* */` sequences) is preserved verbatim into the residue so
+                // the regex sees the same shape as the original source.
+                var openCount = 1;
+                while (i + openCount < n && source[i + openCount] == '"') openCount++;
+                if (openCount >= 3)
+                {
+                    sb.Append(source, i, openCount);
+                    i += openCount;
+                    while (i < n)
+                    {
+                        if (source[i] == '"')
+                        {
+                            var closeCount = 0;
+                            while (i + closeCount < n && source[i + closeCount] == '"') closeCount++;
+                            sb.Append(source, i, closeCount);
+                            i += closeCount;
+                            if (closeCount >= openCount) break;
+                            continue;
+                        }
+                        sb.Append(source[i++]);
+                    }
+                    continue;
+                }
+
                 sb.Append('"');
                 i++;
                 while (i < n)
