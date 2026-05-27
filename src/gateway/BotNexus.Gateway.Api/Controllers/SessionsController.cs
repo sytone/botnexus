@@ -69,7 +69,7 @@ public sealed class SessionsController : ControllerBase
             sessionId = s.SessionId.Value,
             agentId = s.AgentId.Value,
             channelType = s.ChannelType?.Value,
-            conversationId = s.Session.ConversationId?.Value,
+            conversationId = s.ConversationId?.Value,
             status = s.Status.ToString(),
             sessionType = s.SessionType.Value,
             isInteractive = s.IsInteractive,

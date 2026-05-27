@@ -363,8 +363,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             // Update session ConversationId from dispatch resolution.
             // Always update (not just when null) so that switching conversations on the same
             // session correctly routes messages to the new conversation (#314).
-            if (resolution is not null && session.Session.ConversationId != resolution.ConversationId)
-                session.Session.ConversationId = resolution.ConversationId;
+            if (resolution is not null && session.ConversationId != resolution.ConversationId)
+                session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message, isNewSession: createdSession);
             EnsureCallerParticipant(session, message.Sender);
@@ -407,7 +407,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             }
 
             if (_pendingAskUserInterceptor is not null &&
-                session.Session.ConversationId is { } activeConversationId &&
+                session.ConversationId is { } activeConversationId &&
                 _pendingAskUserInterceptor.TryIntercept(message, activeConversationId))
             {
                 _logger.LogInformation(
@@ -451,7 +451,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     {
                         try
                         {
-                            await _memoryFlusher.FlushAsync(session.Session.AgentId, session.Session, _compactionOptions.CurrentValue, cancellationToken).ConfigureAwait(false);
+                            await _memoryFlusher.FlushAsync(session.AgentId, session.Session, _compactionOptions.CurrentValue, cancellationToken).ConfigureAwait(false);
                         }
                         catch (Exception flushEx)
                         {
@@ -465,10 +465,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         switch (outcome)
                         {
                             case HistoryReplaceOutcome.Applied:
-                                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                                session.UpdatedAt = DateTimeOffset.UtcNow;
                                 break;
                             case HistoryReplaceOutcome.Rebased:
-                                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                                session.UpdatedAt = DateTimeOffset.UtcNow;
                                 _logger.LogInformation(
                                     "Session {SessionId} auto-compaction rebased over concurrent additions; " +
                                     "TokensAfter is approximate.", sessionId);
@@ -849,7 +849,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             outcome = session.TryApplyCompactionResult(result);
             if (outcome != HistoryReplaceOutcome.Aborted)
             {
-                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                session.UpdatedAt = DateTimeOffset.UtcNow;
             }
         }
         await _sessions.SaveAsync(session, cancellationToken);
@@ -1188,7 +1188,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
                         ex.BindingId, ex.ConversationId);
 
-                    if (session?.Session.ConversationId is { } convId)
+                    if (session?.ConversationId is { } convId)
                         await _conversationRouter.MuteBindingAsync(convId, ex.BindingId, cancellationToken);
                 }
                 catch (Exception ex)

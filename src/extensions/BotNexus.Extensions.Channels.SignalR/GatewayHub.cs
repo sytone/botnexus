@@ -493,7 +493,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
 
-        if (gatewaySession?.Session.ConversationId is { } conversationId && _resetService is not null)
+        if (gatewaySession?.ConversationId is { } conversationId && _resetService is not null)
         {
             await _resetService.ResetActiveSessionAsync(
                 conversationId,
@@ -516,8 +516,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 _logger.LogWarning(ex, "Supervisor stop failed for orphan session {SessionId}; reset will proceed.", typedSessionId);
             }
 
-            gatewaySession.Session.Status = GatewaySessionStatus.Sealed;
-            gatewaySession.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            gatewaySession.Status = GatewaySessionStatus.Sealed;
+            gatewaySession.UpdatedAt = DateTimeOffset.UtcNow;
             await _sessions.SaveAsync(gatewaySession, CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -548,7 +548,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             var outcome = session.TryApplyCompactionResult(result);
             if (outcome != HistoryReplaceOutcome.Aborted)
             {
-                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                session.UpdatedAt = DateTimeOffset.UtcNow;
             }
         }
         await _sessions.SaveAsync(session, CancellationToken.None);

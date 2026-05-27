@@ -115,7 +115,7 @@ public sealed class CrossWorldFederationController(
             if (resolved.Error is { } resolveError)
                 return resolveError;
 
-            return await ExecuteRelayAsync(request, resolved.Session!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
+            return await ExecuteRelayAsync(request, resolved.GatewaySession!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -124,10 +124,10 @@ public sealed class CrossWorldFederationController(
                 return resolveError;
 
             await using var lease = await sessionWriteLock
-                .AcquireAsync(resolved.Session!.SessionId, cancellationToken)
+                .AcquireAsync(resolved.GatewaySession!.SessionId, cancellationToken)
                 .ConfigureAwait(false);
 
-            return await ExecuteRelayAsync(request, resolved.Session!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
+            return await ExecuteRelayAsync(request, resolved.GatewaySession!, resolved.Conversation!, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -293,7 +293,7 @@ public sealed class CrossWorldFederationController(
             if (existing.Status == GatewaySessionStatus.Sealed)
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' is sealed and cannot be reused — start a new cross-world exchange." }));
 
-            if (existing.Session.ConversationId is not { } existingConversationId)
+            if (existing.ConversationId is not { } existingConversationId)
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' has no bound conversation — refuse to reuse." }));
 
             var existingConv = await conversationStore.GetAsync(existingConversationId, cancellationToken).ConfigureAwait(false);
@@ -331,7 +331,7 @@ public sealed class CrossWorldFederationController(
 
         var sessionId = SessionId.Create();
         var session = await sessionStore.GetOrCreateAsync(sessionId, targetAgentId, cancellationToken).ConfigureAwait(false);
-        session.Session.ConversationId = conversation.ConversationId;
+        session.ConversationId = conversation.ConversationId;
         session.SessionType = SessionType.AgentAgent;
         session.ChannelType = CrossWorldChannel;
         session.CallerId = null;
@@ -463,7 +463,7 @@ public sealed class CrossWorldFederationController(
         }
     }
 
-    private readonly record struct ResolveResult(GatewaySession? Session, Conversation? Conversation, ActionResult<CrossWorldRelayResponse>? Error)
+    private readonly record struct ResolveResult(GatewaySession? GatewaySession, Conversation? Conversation, ActionResult<CrossWorldRelayResponse>? Error)
     {
         public static ResolveResult Ok(GatewaySession session, Conversation conversation)
             => new(session, conversation, null);

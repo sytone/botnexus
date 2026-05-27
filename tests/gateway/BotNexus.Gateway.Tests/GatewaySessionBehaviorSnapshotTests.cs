@@ -84,6 +84,47 @@ public sealed class GatewaySessionBehaviorSnapshotTests
         gatewaySession.MessageCount.ShouldBe(1);
     }
 
+    [Fact]
+    public void ConversationId_RoundTripsThroughProxy_ReadingInnerRecord()
+    {
+        var session = CreateSession();
+        var conversationId = ConversationId.From("conv-abc");
+
+        session.ConversationId = conversationId;
+
+        session.ConversationId.ShouldBe(conversationId);
+        session.Session.ConversationId.ShouldBe(conversationId,
+            "F-9 / Phase 7: the ConversationId proxy setter must mutate the inner " +
+            "Session record so persistence sees the value. If this fails, the proxy " +
+            "is storing the value in a private field instead of delegating.");
+    }
+
+    [Fact]
+    public void ConversationId_ProxyGetter_ReflectsInnerRecordChanges()
+    {
+        var session = CreateSession();
+        session.Session.ConversationId = ConversationId.From("conv-direct");
+
+        session.ConversationId.ShouldBe(ConversationId.From("conv-direct"),
+            "F-9 / Phase 7: the ConversationId proxy getter must read directly from " +
+            "the inner Session record. If this fails, the proxy is caching a stale " +
+            "value and reads after persistence-layer writes would be wrong.");
+    }
+
+    [Fact]
+    public void ConversationId_ProxyAcceptsNull_ForOrphanSessions()
+    {
+        var session = CreateSession();
+        session.ConversationId = ConversationId.From("conv-set");
+        session.ConversationId = null;
+
+        session.ConversationId.ShouldBeNull(
+            "F-9 / Phase 7: the ConversationId proxy must accept null assignment for " +
+            "orphan / legacy ungrouped sessions. If this fails, the proxy lost null-" +
+            "tolerance and callers cannot clear the binding.");
+        session.Session.ConversationId.ShouldBeNull();
+    }
+
     private static GatewaySession CreateSession()
         => new()
         {

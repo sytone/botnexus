@@ -104,16 +104,16 @@ public sealed class ChannelHistoryController : ControllerBase
             {
                 boundaries.Add(new ChannelHistorySessionBoundary(
                     messages.Count,
-                    slice.Session.SessionId.Value,
-                    slice.Session.CreatedAt));
+                    slice.GatewaySession.SessionId.Value,
+                    slice.GatewaySession.CreatedAt));
             }
 
             var messageIndex = slice.StartIndex;
             foreach (var entry in slice.Entries)
             {
                 messages.Add(new ChannelHistoryMessage(
-                    $"{slice.Session.SessionId}:{messageIndex}",
-                    slice.Session.SessionId.Value,
+                    $"{slice.GatewaySession.SessionId}:{messageIndex}",
+                    slice.GatewaySession.SessionId.Value,
                     entry.Role,
                     StripControlTags(entry.Content),
                     entry.Timestamp,
@@ -128,7 +128,7 @@ public sealed class ChannelHistoryController : ControllerBase
 
         var oldestSlice = slices[^1];
         var hasMore = oldestSlice.StartIndex > 0 || oldestSlice.SessionIndex < sessions.Count - 1;
-        var nextCursor = hasMore ? $"{oldestSlice.Session.SessionId}:{oldestSlice.StartIndex}" : null;
+        var nextCursor = hasMore ? $"{oldestSlice.GatewaySession.SessionId}:{oldestSlice.StartIndex}" : null;
 
         return Ok(new ChannelHistoryResponse(messages, nextCursor, hasMore, boundaries));
     }
@@ -191,7 +191,7 @@ public sealed class ChannelHistoryController : ControllerBase
 
     private sealed record HistorySlice(
         int SessionIndex,
-        GatewaySession Session,
+        GatewaySession GatewaySession,
         int StartIndex,
         IReadOnlyList<SessionEntry> Entries);
 }

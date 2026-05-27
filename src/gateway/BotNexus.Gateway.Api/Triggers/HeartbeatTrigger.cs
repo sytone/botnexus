@@ -96,7 +96,7 @@ public sealed class HeartbeatTrigger(
         session.ChannelType = null;
         session.CallerId ??= $"heartbeat:{agentId.Value}";
         session.SessionType = SessionType.Heartbeat;
-        session.Session.ConversationId = conversation.ConversationId;
+        session.ConversationId = conversation.ConversationId;
         session.Metadata["triggerType"] = Type.Value;
 
         if (string.IsNullOrWhiteSpace(request?.ModelOverride))
