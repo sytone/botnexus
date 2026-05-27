@@ -1,10 +1,14 @@
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
-/// Dedicated facade over the WebSocket reconnect-replay infrastructure for a single
-/// <see cref="Session"/>. Owns the underlying <see cref="SessionReplayBuffer"/> and
-/// stamps <see cref="Session"/>.<c>UpdatedAt</c> on activity that the runtime
-/// previously stamped through forwarding methods on
+/// Dedicated facade over the outbound-stream reconnect-replay infrastructure for a
+/// single <see cref="Session"/>. The gateway is transport-agnostic — channels
+/// (SignalR, Teams, TUI, ...) own the actual wire delivery. This peer only
+/// records the sequenced outbound stream so a channel that supports reconnect
+/// (e.g. a SignalR hub negotiating a new transport after a drop) can replay any
+/// gap from the last acknowledged sequence ID. Owns the underlying
+/// <see cref="SessionReplayBuffer"/> and stamps <see cref="Session"/>.<c>UpdatedAt</c>
+/// on activity that the runtime previously stamped through forwarding methods on
 /// <see cref="GatewaySessionRuntime"/>.
 /// </summary>
 /// <remarks>
@@ -34,7 +38,9 @@ public sealed class SessionStreamReplay
     }
 
     /// <summary>
-    /// Gets the next WebSocket outbound sequence ID for reconnect replay.
+    /// Gets the next outbound-stream sequence ID for reconnect replay. The
+    /// sequence is transport-agnostic and is consumed by whichever channel
+    /// adapter is currently delivering this session's outbound payloads.
     /// The value is rehydrated from persistence through <see cref="SetState"/>;
     /// there is no public setter, so <see cref="SetState"/> is the single
     /// mutation surface for state restore.

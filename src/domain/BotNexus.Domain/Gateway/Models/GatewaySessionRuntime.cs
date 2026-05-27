@@ -32,10 +32,11 @@ public sealed class GatewaySessionRuntime
     public Session Session { get; }
 
     /// <summary>
-    /// Gets the dedicated WebSocket reconnect-replay peer for this session.
-    /// The 8 forwarding stream-replay methods previously hosted here moved to
-    /// <see cref="SessionStreamReplay"/> (#575); production and test callers
-    /// must funnel through <c>session.StreamReplay</c>.
+    /// Gets the dedicated outbound-stream reconnect-replay peer for this
+    /// session. The 8 forwarding stream-replay methods previously hosted here
+    /// moved to <see cref="SessionStreamReplay"/> (#575); production and test
+    /// callers must funnel through <c>session.StreamReplay</c>. Channels own
+    /// the actual transport; this peer is only the in-memory sequenced log.
     /// </summary>
     public SessionStreamReplay StreamReplay { get; }
 

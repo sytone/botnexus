@@ -4,7 +4,9 @@ namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
 /// A real-time activity event broadcast by the Gateway for monitoring and UI updates.
-/// Subscribers (WebSocket clients, dashboards) receive these as they happen.
+/// Subscribers (channel adapters, dashboards, monitoring tools) receive these as
+/// they happen. The gateway is transport-agnostic — how each subscriber delivers
+/// the event to a user-facing surface is the subscriber's concern.
 /// </summary>
 public sealed record GatewayActivity
 {

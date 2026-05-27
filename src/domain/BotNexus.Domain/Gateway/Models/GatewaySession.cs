@@ -149,10 +149,12 @@ public sealed class GatewaySession
     }
 
     /// <summary>
-    /// Dedicated WebSocket reconnect-replay peer for this session. The 8
+    /// Dedicated outbound-stream reconnect-replay peer for this session. The 8
     /// stream-replay members previously hosted on the facade (#575) collapsed
     /// here so the conversational session surface is no longer mixed with
-    /// transport-replay infrastructure.
+    /// outbound-stream replay infrastructure. The gateway is transport-agnostic
+    /// — channels (SignalR, Teams, ...) own how outbound payloads reach a user;
+    /// this peer only records the sequenced stream for replay on reconnect.
     /// </summary>
     public SessionStreamReplay StreamReplay => Runtime.StreamReplay;
 
@@ -299,7 +301,10 @@ public sealed record SessionEntry
 }
 
 /// <summary>
-/// A sequenced outbound WebSocket payload stored for reconnect replay.
+/// A sequenced outbound stream payload stored for reconnect replay. The
+/// payload is transport-agnostic — channel adapters own delivery; this record
+/// just timestamps and sequences the JSON body so a reconnecting channel can
+/// replay any gap from the last acknowledged sequence ID.
 /// </summary>
 /// <param name="SequenceId">Monotonically increasing sequence ID.</param>
 /// <param name="PayloadJson">Serialized outbound payload.</param>
