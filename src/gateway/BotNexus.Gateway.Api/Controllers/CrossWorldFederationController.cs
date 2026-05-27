@@ -237,6 +237,22 @@ public sealed class CrossWorldFederationController(
                 FinishSummary = exchangeFinished ? finishSummary : null
             });
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // #553: caller-initiated cancellation must NOT seal the session. Sealing here would
+            // poison the session for any sender retry — the sender's next call would hit the
+            // sealed-session 409 guard in ResolveSessionAsync and the exchange would be
+            // permanently broken by a transient client-side timeout / abort. Rethrow without
+            // touching session.Status; the session remains Active and the sender can retry
+            // with the same RemoteSessionId. Note: ActiveSessionId is intentionally LEFT
+            // pinned so a fast retry sees the conversation as in-flight rather than briefly
+            // flipping to "idle" then back to "active" in the portal.
+            //
+            // Guard is `when (cancellationToken.IsCancellationRequested)` so OCEs raised by
+            // any OTHER token (e.g. an internal timeout linked downstream) still fall through
+            // to the catch-all and seal — those are genuine failures, not caller intent.
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex,
