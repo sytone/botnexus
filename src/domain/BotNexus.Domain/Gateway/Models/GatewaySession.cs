@@ -77,6 +77,19 @@ public sealed class GatewaySession
         set => Session.SessionType = value;
     }
 
+    /// <summary>
+    /// Conversation this session belongs to, or <c>null</c> for orphan / legacy
+    /// ungrouped sessions. Always mutate through this proxy — the
+    /// <see cref="GatewaySessionFacadeArchitectureTests"/> fence bans reach-through
+    /// access via <c>session.Session.ConversationId</c> so the proxy stays the
+    /// single source of truth (F-9 / Phase 7).
+    /// </summary>
+    public ConversationId? ConversationId
+    {
+        get => Session.ConversationId;
+        set => Session.ConversationId = value;
+    }
+
     /// <summary>Computed interactivity marker.</summary>
     public bool IsInteractive => Session.IsInteractive;
 
@@ -230,16 +243,10 @@ public sealed class GatewaySession
         => Runtime.SetStreamReplayState(nextSequenceId, streamEvents);
 
     /// <summary>
-    /// Executes to session.
+    /// Wraps an existing domain <see cref="Session"/> record in a new
+    /// <see cref="GatewaySession"/>. Used by tests and serialization paths that
+    /// already hold a domain record and need the gateway-level lock + replay buffer.
     /// </summary>
-    /// <returns>The to session result.</returns>
-    public Session ToSession() => Session;
-
-    /// <summary>
-    /// Executes from session.
-    /// </summary>
-    /// <param name="session">The session.</param>
-    /// <returns>The from session result.</returns>
     public static GatewaySession FromSession(Session session) => new(session);
 
     // Applies the injected redactor to sensitive fields before the entry is stored.

@@ -250,7 +250,7 @@ public sealed class FileSessionStore : SessionStoreBase
             session.ExpiresAt,
             session.NextSequenceId,
             [.. session.GetStreamEventSnapshot()],
-            session.Session.ConversationId,
+            session.ConversationId,
             session.Metadata.Count == 0 ? null : new Dictionary<string, object?>(session.Metadata));
         await SessionMetadataSidecar.WriteAsync(
             _fileSystem,

@@ -174,7 +174,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
             return [];
         }
 
-        var conversationId = session.Session.ConversationId;
+        var conversationId = session.ConversationId;
         if (conversationId is null)
         {
             _logger.LogDebug("GetOutboundBindings: session {SessionId} has no ConversationId -- returning empty", sessionId);
@@ -334,9 +334,9 @@ public sealed class DefaultConversationRouter : IConversationRouter
             isNewSession = true;
         }
 
-        if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
+        if (session.ConversationId is null || session.ConversationId != conversation.ConversationId)
         {
-            session.Session.ConversationId = conversation.ConversationId;
+            session.ConversationId = conversation.ConversationId;
             await _sessionStore.SaveAsync(session, ct);
         }
 

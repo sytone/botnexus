@@ -162,8 +162,8 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         }
 
         // Step 4: seal the session (Status = Sealed; SaveAsync). Not ArchiveAsync — see class docs.
-        gatewaySession.Session.Status = SessionStatus.Sealed;
-        gatewaySession.Session.UpdatedAt = _timeProvider.GetUtcNow();
+        gatewaySession.Status = SessionStatus.Sealed;
+        gatewaySession.UpdatedAt = _timeProvider.GetUtcNow();
         await _sessions.SaveAsync(gatewaySession, cancellationToken).ConfigureAwait(false);
 
         // Step 5: clear ActiveSessionId. The router creates a fresh session on next inbound.

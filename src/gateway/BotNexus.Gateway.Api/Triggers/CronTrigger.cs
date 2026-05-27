@@ -82,8 +82,8 @@ public sealed class CronTrigger(
         if (request is not null && request.ResolvedConversationId is null)
             request.ResolvedConversationId = conversation.ConversationId;
 
-        if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
-            session.Session.ConversationId = conversation.ConversationId;
+        if (session.ConversationId is null || session.ConversationId != conversation.ConversationId)
+            session.ConversationId = conversation.ConversationId;
 
         // Update the conversation's active session to this run so history loads the latest.
         if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
@@ -231,7 +231,7 @@ public sealed class CronTrigger(
                 .ConfigureAwait(false);
             foreach (var session in duplicateSessions)
             {
-                session.Session.ConversationId = canonical.ConversationId;
+                session.ConversationId = canonical.ConversationId;
                 await sessions.SaveAsync(session, ct).ConfigureAwait(false);
             }
 

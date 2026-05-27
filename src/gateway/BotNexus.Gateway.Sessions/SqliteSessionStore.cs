@@ -607,7 +607,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", session.UpdatedAt.ToString("O"));
-        command.Parameters.AddWithValue("$conversationId", (object?)session.Session.ConversationId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("$conversationId", (object?)session.ConversationId?.Value ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

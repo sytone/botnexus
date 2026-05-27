@@ -186,7 +186,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
             if (childSession is not null)
             {
-                childSession.Session.ConversationId = request.InheritedConversationId;
+                childSession.ConversationId = request.InheritedConversationId;
                 await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
             }
         }

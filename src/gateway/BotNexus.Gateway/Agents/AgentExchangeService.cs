@@ -98,7 +98,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         // F-6 eager-pin pattern (PR #547): set ConversationId and save BEFORE any path that could
         // observe the child session, so it is never visible to ListByConversationAsync as an orphan.
-        session.Session.ConversationId = conversation.ConversationId;
+        session.ConversationId = conversation.ConversationId;
         session.SessionType = SessionType.AgentAgent;
         session.ChannelType = null;
         session.CallerId = null;
@@ -262,7 +262,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         var sessionId = SessionId.Create();
         var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, cancellationToken).ConfigureAwait(false);
-        session.Session.ConversationId = conversation.ConversationId;
+        session.ConversationId = conversation.ConversationId;
         session.SessionType = SessionType.AgentAgent;
         session.ChannelType = ChannelKey.From("cross-world");
         session.CallerId = null;

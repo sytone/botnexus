@@ -139,7 +139,7 @@ public sealed class ConversationTool(
             else
             {
                 session = await sessionStore.GetOrCreateAsync(SessionId.Create(), conversation.AgentId, ct).ConfigureAwait(false);
-                session.Session.ConversationId = conversation.ConversationId;
+                session.ConversationId = conversation.ConversationId;
                 conversation.ActiveSessionId = session.SessionId;
                 conversation.UpdatedAt = DateTimeOffset.UtcNow;
                 await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
@@ -148,7 +148,7 @@ public sealed class ConversationTool(
         else
         {
             session = await sessionStore.GetOrCreateAsync(SessionId.Create(), conversation.AgentId, ct).ConfigureAwait(false);
-            session.Session.ConversationId = conversation.ConversationId;
+            session.ConversationId = conversation.ConversationId;
             conversation.ActiveSessionId = session.SessionId;
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
             await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
@@ -261,7 +261,7 @@ public sealed class ConversationTool(
             var session = await sessionStore
                 .GetOrCreateAsync(SessionId.Create(), targetAgentId, ct)
                 .ConfigureAwait(false);
-            session.Session.ConversationId = created.ConversationId;
+            session.ConversationId = created.ConversationId;
             session.AddEntry(new SessionEntry
             {
                 Role = MessageRole.User,
