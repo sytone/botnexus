@@ -110,23 +110,43 @@ public sealed class GatewaySessionRuntime
     /// <see cref="AddEntry"/> followed by <see cref="SnapshotHistoryForCompaction"/>
     /// as separate locked operations leaves a window where a concurrent
     /// destructive mutation can shift the appended entry away from
-    /// <c>snapshot.Count - 1</c>.
+    /// <c>snapshot.Count - 1</c>. Also captures the
+    /// <see cref="Session.UpdatedAt"/> value observed immediately before the
+    /// append in <see cref="SessionAppendResult.PriorUpdatedAt"/>, so callers
+    /// that intend to restore UpdatedAt after a slow follow-on operation
+    /// don't have to do an unsafe pre-call read.
     /// </summary>
     /// <param name="entry">The entry to append.</param>
     /// <returns>
-    /// A snapshot taken under the same lock as the append. The appended
-    /// entry is always at index <c>snapshot.Count - 1</c>.
+    /// The result of the append. <see cref="SessionAppendResult.Snapshot"/>
+    /// is taken under the same lock as the append (the appended entry is
+    /// always at index <c>snapshot.Count - 1</c>);
+    /// <see cref="SessionAppendResult.PriorUpdatedAt"/> is the
+    /// <see cref="Session.UpdatedAt"/> value sampled immediately before the
+    /// append, also under the same lock.
     /// </returns>
-    public HistorySnapshot AddEntryAndSnapshot(SessionEntry entry)
+    public SessionAppendResult AddEntryAndSnapshot(SessionEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         lock (_lock)
         {
+            // Capture the pre-append UpdatedAt under the same lock as the
+            // append (rubber-duck bug-hunt BLOCKING for #573). A callsite
+            // that reads session.UpdatedAt OUTSIDE the lock before calling
+            // AddEntryAndSnapshot can be raced by a concurrent destructive
+            // mutation that lands between the read and the lock, leaving
+            // the caller with a stale anchor that — if later passed to
+            // TryReplaceHistoryFromSnapshot(restoreUpdatedAtOnApplied: ...)
+            // on the Applied path — would roll the timestamp backwards
+            // past the concurrent mutation.
+            var priorUpdatedAt = Session.UpdatedAt;
             Session.History.Add(entry);
             _additionVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
             var snapshot = Session.History.ToArray();
-            return new HistorySnapshot(snapshot, _destructiveVersion, snapshot.Length);
+            return new SessionAppendResult(
+                new HistorySnapshot(snapshot, _destructiveVersion, snapshot.Length),
+                priorUpdatedAt);
         }
     }
 

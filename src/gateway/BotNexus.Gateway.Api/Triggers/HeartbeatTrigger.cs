@@ -136,7 +136,7 @@ public sealed class HeartbeatTrigger(
 
         // --- Phase 2 (race-safe ack-prune, #573) ---------------------------
         // The soul path shares its session with concurrent flows (interactive
-        // turns, compaction). Two race windows must be closed:
+        // turns, compaction). Three race windows must be closed:
         //  (1) AddEntry + SnapshotHistoryForCompaction as separate locked
         //      calls leaves a window where a concurrent destructive mutation
         //      shifts the heartbeat user away from snapshot.Count - 1.
@@ -146,12 +146,19 @@ public sealed class HeartbeatTrigger(
         //      timestamps. => pass restoreUpdatedAtOnApplied so the
         //      restoration happens INSIDE the runtime lock on the Applied
         //      path only.
+        //  (3) An UNLOCKED pre-append read of session.UpdatedAt would race
+        //      a concurrent ReplaceHistory landing between the read and the
+        //      AddEntryAndSnapshot lock — Applied would then restore to a
+        //      stale anchor predating that ReplaceHistory. => the prior
+        //      UpdatedAt is captured atomically inside AddEntryAndSnapshot
+        //      and returned in SessionAppendResult.PriorUpdatedAt.
         // The heartbeat path (RunInHeartbeatSessionAsync) mints a unique
         // sessionId per run so concurrent activity is impossible; the same
         // shared helper applies harmlessly stricter semantics there.
-        var preHeartbeatUpdatedAt = session.UpdatedAt;
-        var snapshotWithHeartbeat = session.AddEntryAndSnapshot(
+        var appendResult = session.AddEntryAndSnapshot(
             new SessionEntry { Role = MessageRole.User, Content = prompt });
+        var snapshotWithHeartbeat = appendResult.Snapshot;
+        var preHeartbeatUpdatedAt = appendResult.PriorUpdatedAt;
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);

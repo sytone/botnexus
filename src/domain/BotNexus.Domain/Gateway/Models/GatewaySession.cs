@@ -183,11 +183,12 @@ public sealed class GatewaySession
     /// Thread-safe atomic append + snapshot. Equivalent to
     /// <see cref="AddEntry"/> followed by <see cref="SnapshotHistoryForCompaction"/>
     /// but performed under a single runtime lock so the appended entry is
-    /// guaranteed to be at <c>snapshot.Count - 1</c> regardless of concurrent
-    /// destructive mutations. Content is redacted before storage when a
-    /// redactor is configured.
+    /// guaranteed to be at <c>Snapshot.Count - 1</c> regardless of concurrent
+    /// destructive mutations, AND the pre-append
+    /// <see cref="UpdatedAt"/> value is captured atomically with the append.
+    /// Content is redacted before storage when a redactor is configured.
     /// </summary>
-    public HistorySnapshot AddEntryAndSnapshot(SessionEntry entry) => Runtime.AddEntryAndSnapshot(Redact(entry));
+    public SessionAppendResult AddEntryAndSnapshot(SessionEntry entry) => Runtime.AddEntryAndSnapshot(Redact(entry));
 
     /// <summary>Replaces the session history with a compacted version.</summary>
     public void ReplaceHistory(IReadOnlyList<SessionEntry> compactedEntries) => Runtime.ReplaceHistory(compactedEntries);
