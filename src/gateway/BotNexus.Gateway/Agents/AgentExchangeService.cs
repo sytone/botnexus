@@ -198,6 +198,13 @@ public sealed class AgentExchangeService : IAgentExchangeService
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // #553: caller-initiated cancellation must NOT seal the session. See the matching
+            // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale —
+            // sealing here would poison the session for any caller retry.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Agent conversation failed for session '{SessionId}'.", sessionId);
@@ -358,6 +365,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["remoteSessionId"] = remoteSessionId;
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // #553: caller-initiated cancellation must NOT seal the session. See the matching
+            // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale.
+            throw;
         }
         catch (Exception ex)
         {

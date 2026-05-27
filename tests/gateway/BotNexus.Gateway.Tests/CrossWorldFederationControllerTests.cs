@@ -1209,6 +1209,172 @@ public sealed class CrossWorldFederationControllerTests
         return (controller, sessions, conversations, supervisor);
     }
 
+    // ─── #553 cancellation-no-seal pins ─────────────────────────────────────────────────
+    //
+    // Issue #553: caller-initiated cancellation must NOT seal the session. Before the fix
+    // the catch-all in ExecuteRelayAsync sealed the session on ANY exception (including
+    // OperationCanceledException raised by the caller's cancellation token), and the
+    // sealed-session 409 guard in ResolveSessionAsync then permanently rejected the
+    // sender's retry attempts. The fix inserts a
+    //     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+    // before the catch-all so caller cancellation rethrows without touching session.Status.
+    // The `when` filter is essential — OCEs from unrelated tokens still seal.
+
+    [Fact]
+    public async Task RelayAsync_WhenCallerCancelsDuringPromptAsync_RethrowsOce_AndDoesNotSealSession()
+    {
+        using var cts = new CancellationTokenSource();
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, CancellationToken ct) =>
+            {
+                // Cancel the caller's token then throw OCE bound to that same token, simulating
+                // a caller HTTP timeout / abort that propagates into PromptAsync.
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("unreachable");
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var act = async () => await controller.RelayAsync(BuildRequest(message: "hello"), cts.Token);
+
+        await act.ShouldThrowAsync<OperationCanceledException>();
+
+        // Exactly one session was created by the relay before cancellation hit. Find it and
+        // assert it's still Active — the core acceptance criterion of #553.
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1, "RelayAsync should have created exactly one session before the OCE fired");
+
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(GatewaySessionStatus.Active,
+            "#553: caller-initiated cancellation must NOT seal the session. Sealing here would " +
+            "poison the session for any sender retry — the sender's next call would hit the " +
+            "sealed-session 409 guard in ResolveSessionAsync and the exchange would be " +
+            "permanently broken by a transient client-side timeout.");
+        session.Metadata.ContainsKey("error").ShouldBeFalse(
+            "The 'error' metadata key is written exclusively by the seal-on-error catch-all. " +
+            "If it's present after caller cancellation, the OCE rethrow path took the wrong branch.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_AfterCallerCancellation_SessionIsReusableByRetryWithSameRemoteSessionId()
+    {
+        // AC #3 from #553: a subsequent reuse of the same SessionId must succeed after a
+        // cancelled relay. The current sealed-session 409 guard in ResolveSessionAsync would
+        // reject the retry; this test only passes if the session was left Active.
+        using var cts = new CancellationTokenSource();
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var promptCallCount = 0;
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, CancellationToken ct) =>
+            {
+                var n = Interlocked.Increment(ref promptCallCount);
+                if (n == 1)
+                {
+                    cts.Cancel();
+                    ct.ThrowIfCancellationRequested();
+                    throw new InvalidOperationException("unreachable");
+                }
+                return Task.FromResult(new AgentResponse { Content = "retry-success" });
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // Call 1: cancelled mid-flight, OCE rethrows, session must stay Active.
+        var act1 = async () => await controller.RelayAsync(BuildRequest(message: "first"), cts.Token);
+        await act1.ShouldThrowAsync<OperationCanceledException>();
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1);
+        var sessionId = existence[0].SessionId;
+
+        var sessionAfterCancel = await sessions.GetAsync(sessionId);
+        sessionAfterCancel.ShouldNotBeNull();
+        sessionAfterCancel!.Status.ShouldBe(GatewaySessionStatus.Active);
+
+        // Call 2: retry with same RemoteSessionId, fresh token. Must succeed because the
+        // sealed-session 409 guard in ResolveSessionAsync only fires on Sealed sessions.
+        var retryRequest = BuildRequest(message: "retry", remoteSessionId: sessionId.Value);
+        var retryResponse = await controller.RelayAsync(retryRequest, CancellationToken.None);
+
+        var ok = retryResponse.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.Response.ShouldBe("retry-success",
+            "Retry with the same RemoteSessionId after a cancelled call must succeed (AC #3). " +
+            "If this fails with a 409 (sealed-session conflict), the OCE rethrow path is sealing " +
+            "the session contrary to #553.");
+        payload.SessionId.ShouldBe(sessionId.Value,
+            "Retry must reuse the same session — the sender's idempotent-retry semantic depends on it.");
+    }
+
+    /// <summary>
+    /// Vacuity guard for the <c>when (cancellationToken.IsCancellationRequested)</c> filter.
+    /// An OCE thrown by an UNRELATED token (e.g. a downstream timeout linked into the
+    /// supervisor) must still fall through to the catch-all and seal — otherwise a genuine
+    /// inner timeout would silently leak as "session is Active" and corrupt the retry contract.
+    /// If this test fails, the filter has been weakened to a bare
+    /// <c>catch (OperationCanceledException)</c> and the discriminator is gone.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_WhenInnerTokenCancels_NotCallerToken_StillSealsSession()
+    {
+        using var innerCts = new CancellationTokenSource();
+        using var callerCts = new CancellationTokenSource();
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, CancellationToken _) =>
+            {
+                innerCts.Cancel();
+                throw new OperationCanceledException(innerCts.Token);
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var act = async () => await controller.RelayAsync(BuildRequest(message: "hello"), callerCts.Token);
+
+        await act.ShouldThrowAsync<OperationCanceledException>();
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1);
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+
+        // callerCts was NEVER cancelled, so the `when` filter does not match and the OCE
+        // falls through to the catch-all that seals. This pins the filter against being
+        // weakened to a bare `catch (OperationCanceledException)`.
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            "An OCE from a token unrelated to the caller's must still seal — that's a genuine " +
+            "failure (e.g. downstream HTTP timeout). The `when (cancellationToken.IsCancellationRequested)` " +
+            "filter is what discriminates between caller intent and inner failure. If this assertion " +
+            "fails, the filter has been weakened and the discrimination is gone — every OCE " +
+            "anywhere downstream would now leak as 'session still Active' regardless of cause.");
+        session.Metadata.ShouldContainKey("error");
+    }
+
     private static CrossWorldFederationController BuildControllerCore(
         ISessionStore sessions,
         IConversationStore conversations,
