@@ -73,6 +73,54 @@ public sealed class GatewaySessionBehaviorSnapshotTests
     }
 
     [Fact]
+    public async Task AllocateSequenceId_StampsSessionUpdatedAt()
+    {
+        // Parity pin (#575 — rubber-duck HIGH): pre-extract, the runtime forwarding
+        // method `AllocateSequenceId` stamped `Session.UpdatedAt = DateTimeOffset.UtcNow`
+        // after delegating to the buffer. After extracting to `SessionStreamReplay`,
+        // the new facade must preserve this behaviour exactly — anything less would
+        // silently change the UpdatedAt cadence on the soul/heartbeat replay path.
+        var session = CreateSession();
+        var initialUpdatedAt = session.UpdatedAt;
+
+        // Use a real sleep rather than re-reading the wall clock because UpdatedAt is
+        // stamped via DateTimeOffset.UtcNow inside SessionStreamReplay — without a real
+        // gap the assertion is timing-sensitive on fast CI machines.
+        await Task.Delay(5);
+
+        var allocated = session.StreamReplay.AllocateSequenceId();
+
+        allocated.ShouldBe(1);
+        session.UpdatedAt.ShouldBeGreaterThan(initialUpdatedAt,
+            "F-9 / Phase 7 (#575) parity pin: AllocateSequenceId must stamp " +
+            "Session.UpdatedAt. If this fails, the extract dropped the UpdatedAt-stamping " +
+            "side-effect from the runtime's forwarding method and the soul-write " +
+            "freshness gate would observe stale timestamps on heartbeat sequencing.");
+    }
+
+    [Fact]
+    public async Task AddEvent_StampsSessionUpdatedAt()
+    {
+        // Parity pin (#575 — rubber-duck HIGH): pre-extract, the runtime forwarding
+        // method `AddStreamEvent` stamped `Session.UpdatedAt = DateTimeOffset.UtcNow`
+        // after delegating to the buffer. The new facade must preserve this exactly —
+        // otherwise streaming-only activity (no AddEntry, no AllocateSequenceId) would
+        // not bump the timestamp and idle-session detection would seal active streams.
+        var session = CreateSession();
+        var initialUpdatedAt = session.UpdatedAt;
+
+        await Task.Delay(5);
+
+        session.StreamReplay.AddEvent(1, """{"type":"delta","sequenceId":1}""", replayWindowSize: 10);
+
+        session.UpdatedAt.ShouldBeGreaterThan(initialUpdatedAt,
+            "F-9 / Phase 7 (#575) parity pin: AddEvent must stamp Session.UpdatedAt. " +
+            "If this fails, the extract dropped the UpdatedAt-stamping side-effect; " +
+            "streaming-only sessions would never refresh their freshness gate and the " +
+            "session-cleanup service would seal active streams as idle.");
+    }
+
+    [Fact]
     public void GatewaySession_Composition_UsesSharedDomainSessionState()
     {
         var domainSession = new Session
