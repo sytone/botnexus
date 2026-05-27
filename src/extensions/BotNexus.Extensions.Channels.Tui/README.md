@@ -53,10 +53,10 @@ builder.Services.AddBotNexusTuiChannel();
 
 ### Local Testing
 
-The TUI adapter is useful for verifying the outbound message pipeline without a WebSocket client or external channel:
+The TUI adapter is useful for verifying the outbound message pipeline without any streaming channel extension or external surface:
 
 1. Register the TUI channel in your Gateway host
-2. Send a message via the REST API or WebSocket targeting the `"tui"` channel
+2. Send a message via the REST API targeting the `"tui"` channel
 3. Observe the output on the console
 
 ## Configuration

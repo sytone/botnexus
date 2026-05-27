@@ -1,6 +1,6 @@
 # BotNexus Gateway
 
-The **Gateway** is the central orchestrator of the BotNexus platform. It manages multi-agent execution, session persistence, real-time WebSocket streaming, and extensibility via pluggable strategies and channel adapters.
+The **Gateway** is the central orchestrator of the BotNexus platform. It manages multi-agent execution, session persistence, outbound-stream broadcasting, and extensibility via pluggable strategies and channel adapters. The gateway itself only hosts a REST API — real-time delivery to end-user surfaces (browser, Teams, TUI, …) is owned by channel extensions that subscribe to gateway events and bring their own transport (e.g. the bundled SignalR channel extension mounts a SignalR hub).
 
 ## Architecture
 
@@ -10,7 +10,7 @@ The Gateway is composed of **6 core projects**:
 |---------|---------|
 | **BotNexus.Gateway.Abstractions** | Interface contracts (IAgentConfigurationSource, IIsolationStrategy, IChannelAdapter, ISessionStore) |
 | **BotNexus.Gateway** | Main host — message routing, agent supervision, hot reload, channel management |
-| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) + WebSocket handler + SignalR hub |
+| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) and middleware (auth, rate-limit, correlation-id). Channel extensions mount their own additional endpoints (e.g. the SignalR channel mounts a hub) via `MapExtensionEndpoints`. |
 | **BotNexus.Gateway.Sessions** | Session persistence implementations (InMemory, FileSessionStore) |
 | **BotNexus.Gateway.Conversations** | Conversation persistence (InMemory, File, Sqlite) and routing |
 | **BotNexus.Cli** | Command-line interface for Gateway management and interaction |
@@ -104,7 +104,7 @@ Channels declare which interaction features they support. The Gateway uses these
 
 | Flag | Purpose | Example |
 |------|---------|---------|
-| `SupportsStreaming` | Real-time token streaming | WebSocket: ✅, REST: ❌ |
+| `SupportsStreaming` | Real-time token streaming | SignalR: ✅, REST: ❌ |
 | `SupportsSteering` | Mid-run steering injection | WebUI: ✅, Telegram: ❌ |
 | `SupportsFollowUp` | Queued follow-up messages | WebUI: ✅, Slack: ✅ |
 | `SupportsThinkingDisplay` | Display agent reasoning | WebUI: ✅, Discord: ❌ |
@@ -298,7 +298,7 @@ The `GatewayAuthManager` auto-refreshes expired OAuth tokens when needed.
 
 ### Gateway Endpoint Protection (Auth Middleware)
 
-The `GatewayAuthMiddleware` protects the Gateway's HTTP and WebSocket endpoints. It delegates validation to `ApiKeyGatewayAuthHandler`.
+The `GatewayAuthMiddleware` protects the Gateway's HTTP endpoints (REST API plus any endpoints mounted by channel extensions, such as the SignalR hub). It delegates validation to `ApiKeyGatewayAuthHandler`. Requests that upgrade from HTTP (for example, a SignalR negotiation that selects the WebSocket transport) pass through the same middleware — these are classified as `"WS"` in audit logs to distinguish them from plain HTTP requests, but they share one auth pipeline.
 
 #### How It Works
 
@@ -395,15 +395,9 @@ Configure via the `gateway` section in `config.json`:
 }
 ```
 
-### Session Locking (WebSocket)
+### Session Concurrency
 
-Each session allows **one active WebSocket connection** at a time. When a second WebSocket attempts to connect to the same session:
-
-1. The duplicate connection is accepted briefly
-2. Immediately closed with status code **4409** and message `"Session already has an active connection"`
-3. The original connection continues unaffected
-
-This prevents race conditions from multiple browser tabs or clients writing to the same session simultaneously.
+The gateway does not bind a session to any single transport connection. Multiple subscribers (e.g. multiple browser tabs of the same user, the Blazor portal plus a TUI debugger) can observe the same session simultaneously; outbound payloads fan out to every live binding the conversation has, and the channel extension owning each binding is responsible for delivering them. When a channel extension detects that one of its connections is no longer reachable, it raises `StaleChannelConnectionException` so the gateway can demote that binding to `Muted` without sealing the session.
 
 ### MaxConcurrentSessions
 
@@ -594,116 +588,9 @@ The script builds the Gateway, starts it on a temporary port, fetches `/swagger/
 - **PATCH `/api/sessions/{sessionId}/resume`** — Resume a suspended session
 - **DELETE `/api/sessions/{sessionId}`** — Delete a session
 
-### WebSocket (Real-time Streaming)
-- **GET/WebSocket `/ws`**
-  - Query params: `?agent={agentId}&session={sessionId}`
-  - See [WebSocket Protocol](#websocket-protocol) section in root README
+### Realtime Streaming
 
-## WebSocket Protocol
-
-### Connection
-```
-ws://localhost:5005/ws?agent=assistant&session={sessionId}
-```
-
-If `session` is omitted, a new session ID is auto-generated.
-
-### Client → Server Messages
-
-**Send a message:**
-```json
-{ "type": "message", "content": "What is 2+2?" }
-```
-
-**Abort active execution:**
-```json
-{ "type": "abort" }
-```
-
-**Inject steering message into active run:**
-```json
-{ "type": "steer", "content": "Focus on the main point." }
-```
-
-**Queue a follow-up for the next run:**
-```json
-{ "type": "follow_up", "content": "And what about 3+3?" }
-```
-
-**Keepalive ping:**
-```json
-{ "type": "ping" }
-```
-
-### Server → Client Messages
-
-**Connection established:**
-```json
-{ "type": "connected", "connectionId": "...", "sessionId": "...", "sequenceId": 1 }
-```
-
-**Agent started processing:**
-```json
-{ "type": "message_start", "messageId": "uuid-..." }
-```
-
-**Thinking delta (streaming agent reasoning):**
-```json
-{ "type": "thinking_delta", "delta": "Let me think about...", "messageId": "uuid-..." }
-```
-
-**Content delta (streaming response text):**
-```json
-{ "type": "content_delta", "delta": "2+2 is", "messageId": "uuid-..." }
-```
-
-**Tool execution started:**
-```json
-{
-  "type": "tool_start",
-  "toolCallId": "call_...",
-  "toolName": "calculate",
-  "messageId": "uuid-..."
-}
-```
-
-**Tool result received:**
-```json
-{
-  "type": "tool_end",
-  "toolCallId": "call_...",
-  "toolName": "calculate",
-  "toolResult": "4",
-  "toolIsError": false,
-  "messageId": "uuid-..."
-}
-```
-
-**Agent completed:**
-```json
-{
-  "type": "message_end",
-  "messageId": "uuid-...",
-  "usage": {
-    "inputTokens": 50,
-    "outputTokens": 100
-  }
-}
-```
-
-**Error occurred:**
-```json
-{
-  "type": "error",
-  "message": "Agent not found",
-  "code": "NOT_FOUND"
-}
-```
-
-**Keepalive pong:**
-```json
-{ "type": "pong" }
-```
+The gateway exposes streaming events (`message_start`, `content_delta`, `thinking_delta`, `tool_start`, `tool_end`, `message_end`, …) as in-process events on `IActivityBroadcaster`. Subscribers — typically channel extensions — re-encode those events for their own transport and deliver them to end-user surfaces. The bundled SignalR channel extension mounts a SignalR hub for the Blazor portal; see `src/extensions/BotNexus.Extensions.Channels.SignalR/` for that hub's wire shape and the Blazor client. To consume streaming events from your own channel, implement `IChannelAdapter` and subscribe to `IActivityBroadcaster` (see `src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs` for a reference implementation).
 
 ## Gateway Lifecycle Management
 
@@ -873,12 +760,9 @@ curl -X POST http://localhost:5005/api/chat \
   }'
 ```
 
-### Test via WebSocket
-```bash
-# Use websocat, wscat, or any WebSocket client
-wscat -c "ws://localhost:5005/ws?agent=test-agent&session=test-session-1"
-# Type: { "type": "message", "content": "Hello!" }
-```
+### Test Real-time Streaming
+
+Use the Blazor portal (`http://localhost:5005`) — it connects through the bundled SignalR channel extension. To exercise streaming from a custom channel, register your own `IChannelAdapter` and observe `IActivityBroadcaster` events.
 
 ### Explore the API
 
@@ -943,8 +827,7 @@ src/gateway/
 │   │   ├── AgentsController.cs
 │   │   ├── SessionsController.cs
 │   │   └── ConfigController.cs
-│   └── WebSocket/
-│       └── GatewayHub.cs              # SignalR hub + session groups
+│   └── (channel hubs — e.g. the SignalR hub — live in their own extension projects under src/extensions/)
 ├── BotNexus.Gateway.Sessions/
 │   ├── InMemorySessionStore.cs
 │   ├── FileSessionStore.cs
@@ -980,21 +863,16 @@ src/gateway/
 2. Wait for existing sessions to complete, or increase the limit in agent config
 3. Set `maxConcurrentSessions: 0` for unlimited
 
-### WebSocket 4409 (Session Already Connected)
-1. Another WebSocket client is already connected to this session
-2. Close the existing connection first, or use a different session ID
-3. Each session allows exactly one active WebSocket connection
-
 ### Session history lost
 1. Verify `sessionsDirectory` is writable
 2. Check disk space availability
 3. Confirm `ISessionStore` is not in-memory for production
 4. Check if `SessionCleanupService` TTL is too aggressive — default is 24 hours
 
-### WebSocket connection drops
-1. Check browser WebSocket support (console for errors)
-2. Verify firewall allows WebSocket connections
-3. Check Gateway logs for timeout or protocol errors
+### Streaming events don't reach the browser
+1. Check the channel extension that owns the connection (e.g. the SignalR hub at `/hubs/gateway` for the Blazor portal) — its logs should show negotiation + transport selection
+2. Verify the relevant binding hasn't been demoted to `Muted` after a stale-connection event (see Session Concurrency above)
+3. Check Gateway logs for any `StaleChannelConnectionException` from the channel adapter
 
 ### Config changes not taking effect
 1. Verify the file was saved (some editors use write-rename which the watcher detects)

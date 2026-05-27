@@ -24,7 +24,7 @@ This is a leaf dependency — it references no other BotNexus packages.
 | `IChannelManager` | Channels | Read-only registry for looking up registered channel adapters. |
 | `IIsolationStrategy` | Isolation | Security boundary between agent and user — bounds what the agent can reach and leak (in-process, sandbox, container, remote). |
 | `IMessageRouter` | Routing | Routes inbound messages to the appropriate agent(s) based on targeting, session, and defaults. |
-| `IGatewayAuthHandler` | Security | Authenticates API and WebSocket requests; returns a caller identity. |
+| `IGatewayAuthHandler` | Security | Authenticates HTTP requests reaching the Gateway (REST API plus any extension endpoints such as the SignalR hub); returns a caller identity. |
 | `ISessionStore` | Sessions | Persistence interface for gateway sessions (get, create, save, delete, list). |
 
 ### Models (Records and Classes)
