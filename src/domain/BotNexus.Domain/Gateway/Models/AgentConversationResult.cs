@@ -34,10 +34,13 @@ public sealed record AgentExchangeResult
     /// Why the conversation loop ended.
     /// <list type="bullet">
     ///   <item><c>exchangeFinished</c> — the target agent invoked the <c>finish_agent_exchange</c>
-    ///   tool successfully (Phase 8 / F-11 — replaces the deprecated <c>objectiveMet</c> substring
-    ///   heuristic from issue #379).</item>
-    ///   <item><c>maxTurnsReached</c> — loop exhausted all turns without a completion signal</item>
-    ///   <item><c>error</c> — an exception was thrown during the exchange</item>
+    ///   tool successfully (Phase 8 / F-11; this replaced the old prose-substring objective
+    ///   detection from issue #379).</item>
+    ///   <item><c>singleShot</c> — the request did not set an <see cref="AgentExchangeRequest.Objective"/>,
+    ///   so the exchange ran for exactly one prompt and returned the target's first response.</item>
+    ///   <item><c>maxTurnsReached</c> — the multi-turn loop exhausted <see cref="AgentExchangeRequest.MaxTurns"/>
+    ///   without a completion signal.</item>
+    ///   <item><c>error</c> — an exception was thrown during the exchange.</item>
     /// </list>
     /// </summary>
     public string? CompletionReason { get; init; }
