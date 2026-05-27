@@ -400,7 +400,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private static string ResolveCompletionReason(bool exchangeFinished, bool singleShot)
     {
         if (exchangeFinished) return "exchangeFinished";
-        if (singleShot) return "objectiveMet"; // preserve old back-compat name for the single-shot case
+        if (singleShot) return "singleShot";
         return "maxTurnsReached";
     }
 

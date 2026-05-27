@@ -669,13 +669,13 @@ public sealed class AgentExchangeServiceTests
     }
 
     [Fact]
-    public async Task ConverseAsync_NoObjectiveSet_ObjectiveMetReasonReturned()
+    public async Task ConverseAsync_NoObjectiveSet_SingleShotReasonReturned()
     {
-        // Wire-value back-compat pin (plan-vs-impl PR #553 suggestion S-2). When no objective is
-        // set, the loop runs exactly one turn (single-shot) and CompletionReason is "objectiveMet"
-        // — the LEGACY name preserved across the F-11 refactor so existing consumers that switch
-        // on this string continue to work. Renaming to "singleShot" would be a wire break and is
-        // explicitly tracked as a Phase 8 follow-up in plan.md (not in scope for this PR).
+        // Wire-value pin (closes #552). When no objective is set, the loop runs exactly one
+        // turn (single-shot) and CompletionReason is "singleShot" — renamed from the historical
+        // "objectiveMet" because no objective was ever provided in this code path. The rename
+        // is a deliberate wire change; the architecture fence in
+        // SingleShotWireValueArchitectureTests bans the legacy literal from production source.
         var initiator = AgentId.From("test-agent");
         var target = AgentId.From("agent-c");
         var registry = CreateRegistry(initiator, target, ["agent-c"]);
@@ -704,7 +704,10 @@ public sealed class AgentExchangeServiceTests
         });
 
         handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        result.CompletionReason.ShouldBe("objectiveMet");
+        result.CompletionReason.ShouldBe("singleShot",
+            "When no Objective is set, the exchange runs exactly one prompt and CompletionReason " +
+            "must report \"singleShot\" — not \"objectiveMet\" (renamed in #552). If this fails " +
+            "with the legacy value, the rename has been reverted.");
     }
 
     [Fact]
