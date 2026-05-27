@@ -7,7 +7,6 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed class GatewaySessionRuntime
 {
     private readonly Lock _lock = new();
-    private readonly SessionReplayBuffer _replayBuffer = new();
 
     // Optimistic-concurrency counters for the compaction-rebase protocol (#532).
     // _additionVersion increments on append-only mutations (AddEntry/AddEntries).
@@ -24,6 +23,7 @@ public sealed class GatewaySessionRuntime
     public GatewaySessionRuntime(Session session)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
+        StreamReplay = new SessionStreamReplay(new SessionReplayBuffer(), session);
     }
 
     /// <summary>
@@ -31,15 +31,13 @@ public sealed class GatewaySessionRuntime
     /// </summary>
     public Session Session { get; }
 
-    public long NextSequenceId
-    {
-        get => _replayBuffer.NextSequenceId;
-        set => _replayBuffer.NextSequenceId = value;
-    }
-
-    public List<GatewaySessionStreamEvent> StreamEventLog => [.. _replayBuffer.GetStreamEventSnapshot()];
-
-    public SessionReplayBuffer ReplayBuffer => _replayBuffer;
+    /// <summary>
+    /// Gets the dedicated WebSocket reconnect-replay peer for this session.
+    /// The 8 forwarding stream-replay methods previously hosted here moved to
+    /// <see cref="SessionStreamReplay"/> (#575); production and test callers
+    /// must funnel through <c>session.StreamReplay</c>.
+    /// </summary>
+    public SessionStreamReplay StreamReplay { get; }
 
     /// <summary>
     /// Executes add entry.
@@ -279,50 +277,4 @@ public sealed class GatewaySessionRuntime
         }
     }
 
-    /// <summary>
-    /// Executes allocate sequence id.
-    /// </summary>
-    /// <returns>The allocate sequence id result.</returns>
-    public long AllocateSequenceId()
-    {
-        var sequenceId = _replayBuffer.AllocateSequenceId();
-        Session.UpdatedAt = DateTimeOffset.UtcNow;
-        return sequenceId;
-    }
-
-    /// <summary>
-    /// Executes add stream event.
-    /// </summary>
-    /// <param name="sequenceId">The sequence id.</param>
-    /// <param name="payloadJson">The payload json.</param>
-    /// <param name="replayWindowSize">The replay window size.</param>
-    public void AddStreamEvent(long sequenceId, string payloadJson, int replayWindowSize)
-    {
-        _replayBuffer.AddStreamEvent(sequenceId, payloadJson, replayWindowSize);
-        Session.UpdatedAt = DateTimeOffset.UtcNow;
-    }
-
-    /// <summary>
-    /// Executes get stream events after.
-    /// </summary>
-    /// <param name="lastSequenceId">The last sequence id.</param>
-    /// <param name="maxReplayCount">The max replay count.</param>
-    /// <returns>The get stream events after result.</returns>
-    public IReadOnlyList<GatewaySessionStreamEvent> GetStreamEventsAfter(long lastSequenceId, int maxReplayCount)
-        => _replayBuffer.GetStreamEventsAfter(lastSequenceId, maxReplayCount);
-
-    /// <summary>
-    /// Executes get stream event snapshot.
-    /// </summary>
-    /// <returns>The get stream event snapshot result.</returns>
-    public IReadOnlyList<GatewaySessionStreamEvent> GetStreamEventSnapshot()
-        => _replayBuffer.GetStreamEventSnapshot();
-
-    /// <summary>
-    /// Executes set stream replay state.
-    /// </summary>
-    /// <param name="nextSequenceId">The next sequence id.</param>
-    /// <param name="streamEvents">The stream events.</param>
-    public void SetStreamReplayState(long nextSequenceId, IEnumerable<GatewaySessionStreamEvent>? streamEvents)
-        => _replayBuffer.SetState(nextSequenceId, streamEvents);
 }

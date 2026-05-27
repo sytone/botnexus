@@ -126,9 +126,9 @@ public sealed class GatewaySessionThreadSafetyTests
     {
         var session = CreateSession();
 
-        var first = session.AllocateSequenceId();
-        var second = session.AllocateSequenceId();
-        var third = session.AllocateSequenceId();
+        var first = session.StreamReplay.AllocateSequenceId();
+        var second = session.StreamReplay.AllocateSequenceId();
+        var third = session.StreamReplay.AllocateSequenceId();
 
         first.ShouldBe(1);
         second.ShouldBe(2);
@@ -136,42 +136,47 @@ public sealed class GatewaySessionThreadSafetyTests
     }
 
     [Fact]
-    public void AddStreamEvent_WithReplayWindow_KeepsLatestBoundedEvents()
+    public void AddEvent_WithReplayWindow_KeepsLatestBoundedEvents()
     {
         var session = CreateSession();
 
-        session.AddStreamEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 2);
-        session.AddStreamEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 2);
-        session.AddStreamEvent(3, """{"type":"pong","sequenceId":3}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(3, """{"type":"pong","sequenceId":3}""", replayWindowSize: 2);
 
-        var replay = session.GetStreamEventSnapshot();
+        var replay = session.StreamReplay.GetEventSnapshot();
         replay.Count().ShouldBe(2);
         replay.Select(evt => evt.SequenceId).ToList().ShouldBe(new long[] { 2, 3 });
     }
 
     [Fact]
-    public void GetStreamEventsAfter_WithNoMissedMessages_ReturnsEmpty()
+    public void GetEventsAfter_WithNoMissedMessages_ReturnsEmpty()
     {
         var session = CreateSession();
-        session.AddStreamEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 10);
-        session.AddStreamEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 10);
+        session.StreamReplay.AddEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 10);
+        session.StreamReplay.AddEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 10);
 
-        var replay = session.GetStreamEventsAfter(lastSequenceId: 2, maxReplayCount: 10);
+        var replay = session.StreamReplay.GetEventsAfter(lastSequenceId: 2, maxReplayCount: 10);
 
         replay.ShouldBeEmpty();
     }
 
     [Fact]
-    public void ReplayBuffer_WhenUsedDirectly_RemainsCompatibleWithSessionReplayApis()
+    public void StreamReplay_AccessedViaFacade_DeliversSameSnapshotAndAfterQuery()
     {
+        // Pre-#575 this test reached through `session.ReplayBuffer.AddStreamEvent(...)`,
+        // bypassing the UpdatedAt-stamping facade. The `session.ReplayBuffer`
+        // accessor no longer exists and the `SessionStreamReplayArchitectureTests`
+        // fence prevents the reach-through shape from returning; this test now
+        // exercises the new facade and pins the snapshot/after-query round-trip.
         var session = CreateSession();
 
-        session.ReplayBuffer.AddStreamEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 2);
-        session.ReplayBuffer.AddStreamEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 2);
-        session.ReplayBuffer.AddStreamEvent(3, """{"type":"pong","sequenceId":3}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 2);
+        session.StreamReplay.AddEvent(3, """{"type":"pong","sequenceId":3}""", replayWindowSize: 2);
 
-        session.GetStreamEventSnapshot().Select(evt => evt.SequenceId).ToList().ShouldBe(new long[] { 2, 3 });
-        session.GetStreamEventsAfter(lastSequenceId: 2, maxReplayCount: 10)
+        session.StreamReplay.GetEventSnapshot().Select(evt => evt.SequenceId).ToList().ShouldBe(new long[] { 2, 3 });
+        session.StreamReplay.GetEventsAfter(lastSequenceId: 2, maxReplayCount: 10)
             .Select(evt => evt.SequenceId)
             .ShouldHaveSingleItem()
             .ShouldBe(3);

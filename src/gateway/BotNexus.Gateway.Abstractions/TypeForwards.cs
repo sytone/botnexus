@@ -32,6 +32,7 @@
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.OutboundMessage))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionHistoryResponse))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionReplayBuffer))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionStreamReplay))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionStatus))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SoulAgentConfig))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.HeartbeatAgentConfig))]
