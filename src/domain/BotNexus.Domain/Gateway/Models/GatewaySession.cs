@@ -179,6 +179,17 @@ public sealed class GatewaySession
     /// <summary>Thread-safe append of multiple entries. Content is redacted before storage when a redactor is configured.</summary>
     public void AddEntries(IEnumerable<SessionEntry> entries) => Runtime.AddEntries(entries.Select(Redact));
 
+    /// <summary>
+    /// Thread-safe atomic append + snapshot. Equivalent to
+    /// <see cref="AddEntry"/> followed by <see cref="SnapshotHistoryForCompaction"/>
+    /// but performed under a single runtime lock so the appended entry is
+    /// guaranteed to be at <c>Snapshot.Count - 1</c> regardless of concurrent
+    /// destructive mutations, AND the pre-append
+    /// <see cref="UpdatedAt"/> value is captured atomically with the append.
+    /// Content is redacted before storage when a redactor is configured.
+    /// </summary>
+    public SessionAppendResult AddEntryAndSnapshot(SessionEntry entry) => Runtime.AddEntryAndSnapshot(Redact(entry));
+
     /// <summary>Replaces the session history with a compacted version.</summary>
     public void ReplaceHistory(IReadOnlyList<SessionEntry> compactedEntries) => Runtime.ReplaceHistory(compactedEntries);
 
@@ -196,13 +207,15 @@ public sealed class GatewaySession
     /// Optimistically applies a replacement history derived from an earlier
     /// snapshot. See <see cref="HistoryReplaceOutcome"/> for outcomes; see
     /// <see cref="GatewaySessionRuntime.TryReplaceHistoryFromSnapshot"/> for
-    /// the full contract.
+    /// the full contract including the <paramref name="restoreUpdatedAtOnApplied"/>
+    /// in-lock UpdatedAt restoration semantics.
     /// </summary>
     public HistoryReplaceOutcome TryReplaceHistoryFromSnapshot(
         IReadOnlyList<SessionEntry> replacement,
         long expectedDestructiveVersion,
-        int expectedHistoryCount)
-        => Runtime.TryReplaceHistoryFromSnapshot(replacement, expectedDestructiveVersion, expectedHistoryCount);
+        int expectedHistoryCount,
+        DateTimeOffset? restoreUpdatedAtOnApplied = null)
+        => Runtime.TryReplaceHistoryFromSnapshot(replacement, expectedDestructiveVersion, expectedHistoryCount, restoreUpdatedAtOnApplied);
 
     /// <summary>Returns a snapshot of the history (safe to iterate).</summary>
     public IReadOnlyList<SessionEntry> GetHistorySnapshot() => Runtime.GetHistorySnapshot();

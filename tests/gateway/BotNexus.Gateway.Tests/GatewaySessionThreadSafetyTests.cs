@@ -177,6 +177,199 @@ public sealed class GatewaySessionThreadSafetyTests
             .ShouldBe(3);
     }
 
+    [Fact]
+    public void AddEntryAndSnapshot_AppendsEntry_AndReturnsSnapshotWithEntryAsLast()
+    {
+        var session = CreateSession();
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
+
+        var appendResult = session.AddEntryAndSnapshot(new SessionEntry { Role = MessageRole.User, Content = "hb" });
+
+        appendResult.Snapshot.Count.ShouldBe(2);
+        appendResult.Snapshot.Entries[^1].Content.ShouldBe("hb");
+        session.History.Count.ShouldBe(2);
+        session.History[^1].Content.ShouldBe("hb");
+    }
+
+    [Fact]
+    public void AddEntryAndSnapshot_CapturesPriorUpdatedAt_AtomicallyWithAppend()
+    {
+        // The atomicity contract: PriorUpdatedAt reflects what UpdatedAt
+        // was IMMEDIATELY BEFORE the append (under the same lock), not
+        // what a caller's unlocked pre-call read might have observed.
+        // Without this contract, a caller pattern like
+        //     pre = session.UpdatedAt;          // UNLOCKED read
+        //     snap = session.AddEntryAndSnapshot(...);
+        // is race-prone — a concurrent ReplaceHistory can land between the
+        // read and the lock, leaving `pre` stale. This pin makes the
+        // atomic-prior-UpdatedAt the contract.
+        var session = CreateSession();
+        var oldAnchor = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
+        session.UpdatedAt = oldAnchor;
+
+        var appendResult = session.AddEntryAndSnapshot(new SessionEntry { Role = MessageRole.User, Content = "hb" });
+
+        appendResult.PriorUpdatedAt.ShouldBe(oldAnchor);
+        // The append itself stamped UpdatedAt forward; the returned
+        // PriorUpdatedAt is the pre-append observation, not the post.
+        session.UpdatedAt.ShouldNotBe(oldAnchor);
+    }
+
+    [Fact]
+    public async Task AddEntryAndSnapshot_UnderConcurrentReplaceHistory_PriorUpdatedAtNeverPredatesObservedDestructiveStamp()
+    {
+        // Rubber-duck bug-hunt BLOCKING regression (#573): without atomic
+        // capture, a caller that reads UpdatedAt before AddEntryAndSnapshot
+        // could observe a stale pre-ReplaceHistory time and then restore
+        // backwards on Applied. Atomic capture closes that window: every
+        // AddEntryAndSnapshot's PriorUpdatedAt is consistent with the
+        // history state that ReplaceHistory left behind.
+        var session = CreateSession();
+        const int iterations = 200;
+        var iterationCounter = 0;
+        var violations = 0;
+
+        var appender = Task.Run(() =>
+        {
+            for (var i = 0; i < iterations; i++)
+            {
+                var observedBefore = session.UpdatedAt;
+                var appendResult = session.AddEntryAndSnapshot(new SessionEntry
+                {
+                    Role = MessageRole.User,
+                    Content = $"hb-{i}"
+                });
+                // PriorUpdatedAt cannot predate any prior mutation that
+                // the appender's own pre-call read observed (because the
+                // atomic lock pairs prior-UpdatedAt with the append).
+                if (appendResult.PriorUpdatedAt < observedBefore)
+                    Interlocked.Increment(ref violations);
+                Interlocked.Increment(ref iterationCounter);
+            }
+        });
+
+        var destroyer = Task.Run(() =>
+        {
+            while (Volatile.Read(ref iterationCounter) < iterations)
+            {
+                session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "wipe" }]);
+            }
+        });
+
+        await Task.WhenAll(appender, destroyer);
+        violations.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AddEntryAndSnapshot_UnderConcurrentReplaceHistory_AppendIsAtomicWithSnapshot()
+    {
+        // The atomicity invariant the heartbeat path depends on: across
+        // many interleavings of AddEntryAndSnapshot vs ReplaceHistory, the
+        // returned snapshot must ALWAYS identify the appended entry as the
+        // last one — never have the destructive mutation shift it out.
+        // (A naive AddEntry-then-Snapshot pair would fail this contract
+        // because the destructive mutation can land between the two calls.)
+        var session = CreateSession();
+        const int iterations = 200;
+        var mismatches = 0;
+        var iterationCounter = 0;
+
+        var appender = Task.Run(() =>
+        {
+            for (var i = 0; i < iterations; i++)
+            {
+                var appendResult = session.AddEntryAndSnapshot(new SessionEntry
+                {
+                    Role = MessageRole.User,
+                    Content = $"hb-{i}"
+                });
+                if (appendResult.Snapshot.Entries[^1].Content != $"hb-{i}")
+                    Interlocked.Increment(ref mismatches);
+                Interlocked.Increment(ref iterationCounter);
+            }
+        });
+
+        var destroyer = Task.Run(() =>
+        {
+            while (Volatile.Read(ref iterationCounter) < iterations)
+            {
+                session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "wipe" }]);
+            }
+        });
+
+        await Task.WhenAll(appender, destroyer);
+        mismatches.ShouldBe(0);
+    }
+
+    [Fact]
+    public void TryReplaceHistoryFromSnapshot_AppliedPath_RestoresUpdatedAtFromCaller()
+    {
+        var session = CreateSession();
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
+        var appendResult = session.AddEntryAndSnapshot(new SessionEntry { Role = MessageRole.User, Content = "hb" });
+        var restoreTo = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var outcome = session.TryReplaceHistoryFromSnapshot(
+            [new SessionEntry { Role = MessageRole.User, Content = "u1" }],
+            appendResult.Snapshot.DestructiveVersion,
+            appendResult.Snapshot.Count,
+            restoreUpdatedAtOnApplied: restoreTo);
+
+        outcome.ShouldBe(HistoryReplaceOutcome.Applied);
+        session.UpdatedAt.ShouldBe(restoreTo);
+        session.History.Select(e => e.Content).ToList().ShouldBe(["u1"]);
+    }
+
+    [Fact]
+    public void TryReplaceHistoryFromSnapshot_RebasedPath_IgnoresRestoreUpdatedAt()
+    {
+        var session = CreateSession();
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
+        var appendResult = session.AddEntryAndSnapshot(new SessionEntry { Role = MessageRole.User, Content = "hb" });
+        var staleAnchor = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Concurrent AddEntry between snapshot and apply -> Rebased.
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "raced-in" });
+        var preApply = session.UpdatedAt;
+
+        var outcome = session.TryReplaceHistoryFromSnapshot(
+            [new SessionEntry { Role = MessageRole.User, Content = "u1" }],
+            appendResult.Snapshot.DestructiveVersion,
+            appendResult.Snapshot.Count,
+            restoreUpdatedAtOnApplied: staleAnchor);
+
+        outcome.ShouldBe(HistoryReplaceOutcome.Rebased);
+        session.UpdatedAt.ShouldBeGreaterThanOrEqualTo(preApply);
+        session.UpdatedAt.ShouldNotBe(staleAnchor);
+        session.History.Select(e => e.Content).ToList().ShouldBe(["u1", "raced-in"]);
+    }
+
+    [Fact]
+    public void TryReplaceHistoryFromSnapshot_AbortedPath_DoesNotTouchUpdatedAt()
+    {
+        var session = CreateSession();
+        var appendResult = session.AddEntryAndSnapshot(new SessionEntry { Role = MessageRole.User, Content = "hb" });
+
+        // Concurrent destructive mutation -> Aborted.
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "wipe" }]);
+        var postWipeUpdatedAt = session.UpdatedAt;
+        var anyRestoreAnchor = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var outcome = session.TryReplaceHistoryFromSnapshot(
+            [],
+            appendResult.Snapshot.DestructiveVersion,
+            appendResult.Snapshot.Count,
+            restoreUpdatedAtOnApplied: anyRestoreAnchor);
+
+        outcome.ShouldBe(HistoryReplaceOutcome.Aborted);
+        // Aborted MUST NOT touch UpdatedAt — the concurrent destructive
+        // mutation already stamped it; we must not overwrite with the
+        // caller's restore anchor (or anything else).
+        session.UpdatedAt.ShouldBe(postWipeUpdatedAt);
+        session.History.Select(e => e.Content).ToList().ShouldBe(["wipe"]);
+    }
+
     private static GatewaySession CreateSession()
         => new() { SessionId = SessionId.From($"session-{Guid.NewGuid():N}"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
 }

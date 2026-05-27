@@ -120,7 +120,7 @@ public sealed class HeartbeatTrigger(
     }
 
     // -----------------------------------------------------------------
-    // Shared execution — with Phase 2 transcript pruning
+    // Shared execution — with Phase 2 race-safe transcript pruning (#573)
     // -----------------------------------------------------------------
     private async Task<SessionId> ExecuteInSessionAsync(
         AgentId agentId,
@@ -134,11 +134,31 @@ public sealed class HeartbeatTrigger(
         var session = preloadedSession
             ?? await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
 
-        // --- Phase 2: snapshot pre-turn state ---
-        var preHeartbeatHistory = session.GetHistorySnapshot();
-        var preHeartbeatUpdatedAt = session.UpdatedAt;
-
-        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+        // --- Phase 2 (race-safe ack-prune, #573) ---------------------------
+        // The soul path shares its session with concurrent flows (interactive
+        // turns, compaction). Three race windows must be closed:
+        //  (1) AddEntry + SnapshotHistoryForCompaction as separate locked
+        //      calls leaves a window where a concurrent destructive mutation
+        //      shifts the heartbeat user away from snapshot.Count - 1.
+        //      => use atomic AddEntryAndSnapshot.
+        //  (2) A post-apply assignment to session.UpdatedAt would race with
+        //      concurrent AddEntry and clobber legitimate fresh activity
+        //      timestamps. => pass restoreUpdatedAtOnApplied so the
+        //      restoration happens INSIDE the runtime lock on the Applied
+        //      path only.
+        //  (3) An UNLOCKED pre-append read of session.UpdatedAt would race
+        //      a concurrent ReplaceHistory landing between the read and the
+        //      AddEntryAndSnapshot lock — Applied would then restore to a
+        //      stale anchor predating that ReplaceHistory. => the prior
+        //      UpdatedAt is captured atomically inside AddEntryAndSnapshot
+        //      and returned in SessionAppendResult.PriorUpdatedAt.
+        // The heartbeat path (RunInHeartbeatSessionAsync) mints a unique
+        // sessionId per run so concurrent activity is impossible; the same
+        // shared helper applies harmlessly stricter semantics there.
+        var appendResult = session.AddEntryAndSnapshot(
+            new SessionEntry { Role = MessageRole.User, Content = prompt });
+        var snapshotWithHeartbeat = appendResult.Snapshot;
+        var preHeartbeatUpdatedAt = appendResult.PriorUpdatedAt;
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
@@ -148,14 +168,40 @@ public sealed class HeartbeatTrigger(
 
         if (IsHeartbeatAck(response.Content, ackMaxChars))
         {
-            // --- Phase 2: prune the heartbeat turn and restore UpdatedAt ---
-            session.ReplaceHistory(preHeartbeatHistory);
-            session.UpdatedAt = preHeartbeatUpdatedAt;
-            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+            // Replacement = snapshot minus its last entry (the heartbeat user
+            // we just appended). The atomic AddEntryAndSnapshot guaranteed
+            // that the heartbeat user is at index snapshot.Count - 1.
+            var replacement = snapshotWithHeartbeat.Entries
+                .Take(snapshotWithHeartbeat.Count - 1)
+                .ToArray();
+            var outcome = session.TryReplaceHistoryFromSnapshot(
+                replacement,
+                snapshotWithHeartbeat.DestructiveVersion,
+                snapshotWithHeartbeat.Count,
+                restoreUpdatedAtOnApplied: preHeartbeatUpdatedAt);
 
-            logger.LogDebug(
-                "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — turn pruned.",
-                agentId, sessionId);
+            switch (outcome)
+            {
+                case HistoryReplaceOutcome.Applied:
+                    logger.LogDebug(
+                        "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — turn pruned, UpdatedAt restored.",
+                        agentId, sessionId);
+                    break;
+
+                case HistoryReplaceOutcome.Rebased:
+                    logger.LogDebug(
+                        "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — turn pruned; concurrent activity preserved, UpdatedAt left at concurrent time.",
+                        agentId, sessionId);
+                    break;
+
+                case HistoryReplaceOutcome.Aborted:
+                    logger.LogWarning(
+                        "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — concurrent destructive mutation detected; ack-prune aborted to preserve compactor work. The heartbeat user turn was already replaced by the concurrent mutation.",
+                        agentId, sessionId);
+                    break;
+            }
+
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
         }
         else
         {
