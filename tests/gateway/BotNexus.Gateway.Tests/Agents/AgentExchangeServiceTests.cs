@@ -977,26 +977,27 @@ public sealed class AgentExchangeServiceTests
         sessionA.ShouldNotBeNull();
         sessionB.ShouldNotBeNull();
 
-        sessionA!.History
-            .Where(e => e.Role == MessageRole.User)
-            .Select(e => e.Content)
-            .ShouldContain("msg-A");
-        sessionA.History
-            .Where(e => e.Role == MessageRole.User)
-            .Select(e => e.Content)
-            .ShouldNotContain("msg-B",
-                "Caller B's message leaked into caller A's session — concurrent ConverseAsync " +
-                "calls cross-contaminated state. Either ConverseAsync regressed to shared-session " +
-                "shape, or its sessions aren't actually isolated.");
-        sessionB!.History
-            .Where(e => e.Role == MessageRole.User)
-            .Select(e => e.Content)
-            .ShouldContain("msg-B");
-        sessionB.History
-            .Where(e => e.Role == MessageRole.User)
-            .Select(e => e.Content)
-            .ShouldNotContain("msg-A",
-                "Caller A's message leaked into caller B's session — same regression class as above.");
+        // Full-shape assertion (bug-hunt LOW #4 on PR #551 critique sweep): a regression that
+        // leaks assistant-side content (e.g. shared response buffer, swapped reply queues) would
+        // not surface in a user-only filter. Assert each session's entire history shape — counts,
+        // ordering, and both user + assistant content — to catch corruption on either side.
+        sessionA!.History.Count.ShouldBe(2,
+            "Session A must contain exactly its own user + assistant pair (no leaked entries).");
+        sessionA.History[0].Role.ShouldBe(MessageRole.User);
+        sessionA.History[0].Content.ShouldBe("msg-A");
+        sessionA.History[1].Role.ShouldBe(MessageRole.Assistant);
+        sessionA.History[1].Content.ShouldBe("reply:msg-A",
+            "Caller A's assistant turn is the response keyed to A's user message. A leaked " +
+            "'reply:msg-B' here would prove cross-session response cross-attribution.");
+
+        sessionB!.History.Count.ShouldBe(2,
+            "Session B must contain exactly its own user + assistant pair (no leaked entries).");
+        sessionB.History[0].Role.ShouldBe(MessageRole.User);
+        sessionB.History[0].Content.ShouldBe("msg-B");
+        sessionB.History[1].Role.ShouldBe(MessageRole.Assistant);
+        sessionB.History[1].Content.ShouldBe("reply:msg-B",
+            "Caller B's assistant turn is the response keyed to B's user message. A leaked " +
+            "'reply:msg-A' here would prove cross-session response cross-attribution.");
     }
 
         private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)

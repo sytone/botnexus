@@ -97,8 +97,17 @@ public sealed class SessionWriteLockTests
         using var cts = new CancellationTokenSource();
         var waiterTask = sut.AcquireAsync(sessionId, cts.Token);
 
-        // Yield to give the waiter a chance to actually enter WaitAsync before we cancel.
-        await Task.Delay(50);
+        // Spin-wait deterministically until the waiter has actually incremented the slot's
+        // refcount (proving it entered the gate and is parked in WaitAsync). Without this,
+        // a Task.Delay(50) heuristic could fire BEFORE the waiter parked, in which case
+        // cancelling would short-circuit before the catch/decrement path runs — and the
+        // refcount-leak regression we're trying to catch would survive.
+        var spinDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (sut.RefCountFor(sessionId) < 2 && DateTime.UtcNow < spinDeadline)
+            await Task.Yield();
+        sut.RefCountFor(sessionId).ShouldBe(2,
+            "Waiter never entered WaitAsync — cancellation would not exercise the catch path.");
+
         cts.Cancel();
 
         await Should.ThrowAsync<OperationCanceledException>(async () => await waiterTask);

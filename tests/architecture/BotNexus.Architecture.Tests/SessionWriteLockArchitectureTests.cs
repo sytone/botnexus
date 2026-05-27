@@ -45,6 +45,42 @@ public sealed class SessionWriteLockArchitectureTests
             "File: " + path);
     }
 
+    /// <summary>
+    /// The lock MUST be registered as a singleton — a transient or scoped registration would
+    /// make every request acquire its own private lock with no contention, silently re-opening
+    /// the #551 race window. The behavioural tests in <c>CrossWorldFederationControllerTests</c>
+    /// wire a single shared lock by hand so they cannot catch this regression. Per plan-vs-impl
+    /// critique MEDIUM-4 on the PR sweep, scan the DI composition root explicitly.
+    /// </summary>
+    [Fact]
+    public void GatewayDi_RegistersISessionWriteLock_AsSingleton()
+    {
+        var path = LocateGatewayServiceCollectionExtensionsFile();
+        var source = File.ReadAllText(path);
+
+        // The registration must be a singleton variant. Accept either AddSingleton or
+        // TryAddSingleton — both produce the same lifetime semantics.
+        var singletonPattern = new System.Text.RegularExpressions.Regex(
+            @"\b(?:AddSingleton|TryAddSingleton)\s*<\s*ISessionWriteLock\s*,\s*SessionWriteLock\s*>",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+        singletonPattern.IsMatch(source).ShouldBeTrue(
+            "GatewayServiceCollectionExtensions.cs must register ISessionWriteLock as a singleton " +
+            "(AddSingleton or TryAddSingleton). A transient or scoped registration silently " +
+            "re-opens the #551 race window because every request would get its own private lock " +
+            "instance and never contend on the shared per-session slots.\n" +
+            "File: " + path);
+
+        // Sanity: there must NOT be a competing non-singleton registration anywhere in the file.
+        var transientPattern = new System.Text.RegularExpressions.Regex(
+            @"\b(?:AddTransient|TryAddTransient|AddScoped|TryAddScoped)\s*<\s*ISessionWriteLock\s*,",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+        transientPattern.IsMatch(source).ShouldBeFalse(
+            "GatewayServiceCollectionExtensions.cs contains a transient or scoped registration of " +
+            "ISessionWriteLock alongside the singleton one. The DI container would pick whichever " +
+            "ran last, silently downgrading the lock lifetime and re-opening the #551 race.\n" +
+            "File: " + path);
+    }
+
     [Fact]
     public void Fence_IsNotVacuous_AgainstSyntheticViolation_NoAcquireAtAll()
     {
@@ -194,6 +230,14 @@ public sealed class SessionWriteLockArchitectureTests
         var srcRoot = FindSourceRoot();
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway.Api", "Controllers", "CrossWorldFederationController.cs");
         File.Exists(path).ShouldBeTrue("Expected CrossWorldFederationController.cs at " + path);
+        return path;
+    }
+
+    private static string LocateGatewayServiceCollectionExtensionsFile()
+    {
+        var srcRoot = FindSourceRoot();
+        var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway", "Extensions", "GatewayServiceCollectionExtensions.cs");
+        File.Exists(path).ShouldBeTrue("Expected GatewayServiceCollectionExtensions.cs at " + path);
         return path;
     }
 

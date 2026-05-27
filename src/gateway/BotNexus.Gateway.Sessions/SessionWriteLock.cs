@@ -117,6 +117,20 @@ public sealed class SessionWriteLock : ISessionWriteLock, IDisposable
         }
     }
 
+    /// <summary>
+    /// Exposed for tests: returns the current refcount of the slot for
+    /// <paramref name="sessionId"/>, or 0 if no slot exists. This is the
+    /// "how many callers currently hold OR are waiting for this session's
+    /// lock" probe — used by concurrency tests to deterministically detect
+    /// that a waiter has entered <c>WaitAsync</c> (refcount == 2) without
+    /// relying on a timing-based <c>Task.Delay</c>.
+    /// </summary>
+    internal int RefCountFor(SessionId sessionId)
+    {
+        lock (_gate)
+            return _locks.TryGetValue(sessionId, out var slot) ? slot.RefCount : 0;
+    }
+
     private sealed class LockSlot
     {
         public SemaphoreSlim Semaphore { get; } = new(1, 1);

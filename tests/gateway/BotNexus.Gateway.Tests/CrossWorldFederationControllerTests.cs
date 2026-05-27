@@ -919,7 +919,7 @@ public sealed class CrossWorldFederationControllerTests
         // callers progress to PromptAsync simultaneously — step (3) would observe a second
         // PromptCallCount tick before A is released.
 
-        var (controller, sessions, conversations, _, barrier) = BuildControllerWithBarrier();
+        var (controller, sessions, conversations, _, barrier, sessionWriteLock) = BuildControllerWithBarrier();
         SetApiKeyHeader(controller, SharedApiKey);
 
         // Seed a reusable cross-world session so the RemoteSessionId branch (which acquires the
@@ -955,13 +955,22 @@ public sealed class CrossWorldFederationControllerTests
             BuildRequest(message: "turn-B", remoteSessionId: seededId.Value),
             CancellationToken.None));
 
-        // Give caller B plenty of time to reach AcquireAsync. With the lock in place B parks in
-        // SemaphoreSlim.WaitAsync. Without the lock B would proceed to PromptAsync and the
-        // barrier would tick the counter to 2.
-        await Task.Delay(150);
+        // Deterministically wait until caller B has reached AcquireAsync and is parked behind
+        // caller A (refcount == 2). Without this probe a Task.Delay heuristic could fire BEFORE
+        // B reached the lock, masking a lock regression that lets B race through PromptAsync
+        // on a slow CI runner. The lock instance was constructed in BuildControllerWithBarrier
+        // and is the same singleton both callers were wired against.
+        var lockInstance = sessionWriteLock;
+        var spinDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (lockInstance.RefCountFor(seededId) < 2 && DateTime.UtcNow < spinDeadline && !callerBTask.IsCompleted)
+            await Task.Yield();
+
         callerBTask.IsCompleted.ShouldBeFalse(
-            "Caller B must be blocked on SessionWriteLock.AcquireAsync while caller A holds the " +
-            "lease. A no-op lock would let B race A through PromptAsync and complete here.");
+            "Caller B completed BEFORE caller A released — SessionWriteLock failed to serialize " +
+            "concurrent relays on the same session id, re-opening the #551 race window.");
+        lockInstance.RefCountFor(seededId).ShouldBe(2,
+            "Lock regression: caller B is not parked on the same slot as caller A. Either the " +
+            "lock is not being acquired or the per-session keying is wrong.");
         Volatile.Read(ref barrier.PromptCallCount).ShouldBe(1,
             "Lock regression: caller B's PromptAsync was invoked while caller A's lease was still " +
             "held — SessionWriteLock failed to serialize concurrent relays on the same session id, " +
@@ -1001,7 +1010,7 @@ public sealed class CrossWorldFederationControllerTests
         // keying — that would silently serialize unrelated cross-world traffic and make the
         // gateway a global bottleneck.
 
-        var (controller, sessions, conversations, _, barrier) = BuildControllerWithBarrier();
+        var (controller, sessions, conversations, _, barrier, _) = BuildControllerWithBarrier();
         SetApiKeyHeader(controller, SharedApiKey);
 
         // Two independently seeded cross-world sessions belonging to the same target agent.
@@ -1268,7 +1277,8 @@ public sealed class CrossWorldFederationControllerTests
     /// prove the per-session lock serialises concurrent relays on the same RemoteSessionId.
     /// </summary>
     private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
-        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor, BarrierState Barrier)
+        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor, BarrierState Barrier,
+        SessionWriteLock Lock)
         BuildControllerWithBarrier()
     {
         var sessions = new InMemorySessionStore();
@@ -1295,9 +1305,12 @@ public sealed class CrossWorldFederationControllerTests
 
         // Share one SessionWriteLock across both concurrent callers — the production singleton
         // shape. A fresh-per-controller lock would make the test vacuous (each caller would have
-        // its own lock and never serialise).
-        var controller = BuildControllerCore(sessions, conversations, supervisor.Object, new SessionWriteLock());
-        return (controller, sessions, conversations, supervisor, barrier);
+        // its own lock and never serialise). The lock is returned so callers can probe its
+        // refcount deterministically (see #551 critique-sweep MEDIUM-2/3 — replaces a
+        // Task.Delay(150) timing heuristic with a refcount spin-wait).
+        var sessionWriteLock = new SessionWriteLock();
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object, sessionWriteLock);
+        return (controller, sessions, conversations, supervisor, barrier, sessionWriteLock);
     }
 
     /// <summary>
