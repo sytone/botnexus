@@ -65,6 +65,8 @@ You should see the root command help listing all available subcommands.
 13. [provider](#provider) — Show or set up providers
 14. [provider setup](#provider-setup) — Interactive provider setup wizard
 15. [provider list](#provider-list) — List configured providers
+16. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+17. [provider remove](#provider-remove) — Remove a provider non-interactively
 16. [prompt](#prompt) — Manage prompt templates
 17. [prompt list](#prompt-list) — List available prompt templates
 18. [prompt render](#prompt-render) — Render a prompt template
@@ -824,6 +826,85 @@ Example output:
 │ github-copilot  │ Yes     │ OAuth │ gpt-4.1       │ default │
 │ openai          │ Yes     │ sk-…  │ gpt-4o        │ default │
 └─────────────────┴─────────┴───────┴───────────────┴─────────┘
+```
+
+---
+
+## provider add
+
+Add or update a provider entry in `config.json` non-interactively. Designed for scripts, CI, and integration tests that need to configure providers without the interactive wizard.
+
+When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
+
+### Usage
+
+```powershell
+botnexus provider add --name <NAME> [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | **Required.** Provider name (e.g. `openai`, `integration-mock`). |
+| `--api <API>` | API contract this provider handles. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. |
+| `--api-key <KEY>` | API key value, or `auth:<name>` to reference an OAuth entry in `auth.json`. |
+| `--base-url <URL>` | Base URL for OpenAI-compatible endpoints, or catalog file path for `integration-mock`. |
+| `--default-model <ID>` | Default model id for this provider. |
+| `--model <ID>` | Allowed model id. Repeatable. Omit to allow all models registered for this provider. |
+| `--disabled` | Add the provider in disabled state. Disabled providers are hidden from the API. |
+| `--target <PATH>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Print the serialized provider entry after save. |
+
+### Examples
+
+**Add an OpenAI provider:**
+
+```powershell
+botnexus provider add --name openai --api-key sk-... --default-model gpt-4o
+```
+
+**Add the integration-mock provider for tests (uses built-in `HELLO_WORLD` catalog):**
+
+```powershell
+botnexus provider add --name integration-mock --api integration-mock --default-model integration-mock-echo
+```
+
+**Add an OpenAI-compatible local endpoint with a restricted model list:**
+
+```powershell
+botnexus provider add --name local-vllm `
+    --api openai-completions `
+    --base-url http://localhost:8000/v1 `
+    --api-key not-needed `
+    --model llama-3-8b --model llama-3-70b `
+    --default-model llama-3-8b
+```
+
+---
+
+## provider remove
+
+Remove a provider entry from `config.json` non-interactively. Returns exit code 0 even if the named provider does not exist (idempotent).
+
+### Usage
+
+```powershell
+botnexus provider remove --name <NAME> [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | **Required.** Provider name to remove. |
+| `--target <PATH>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Print remaining provider count after removal. |
+
+### Examples
+
+```powershell
+botnexus provider remove --name integration-mock
 ```
 
 ---

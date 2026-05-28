@@ -24,10 +24,12 @@ Projects in `src/agent/` must **never** depend on projects outside this folder. 
 | `BotNexus.Agent.Providers.Anthropic` | Anthropic Messages API provider |
 | `BotNexus.Agent.Providers.Copilot` | GitHub Copilot provider |
 | `BotNexus.Agent.Providers.OpenAICompat` | OpenAI-compatible endpoint provider (vLLM, SGLang, etc.) |
+| `BotNexus.Agent.Providers.IntegrationMock` | Deterministic provider for integration, UI, and concurrency tests — returns scripted, key-based responses |
 
 ## Adding a new provider
 
 1. Create `src/agent/BotNexus.Agent.Providers.{Name}/`
 2. Reference only `BotNexus.Agent.Providers.Core` (sibling project)
-3. Implement `ILlmProvider` or extend `LlmClient`
-4. Do not reference gateway, extension, or domain projects
+3. Implement `IApiProvider` (from `BotNexus.Agent.Providers.Core.Registry`) — declare an `Api` string that uniquely identifies the wire contract (e.g. `"openai-completions"`, `"anthropic-messages"`, `"integration-mock"`)
+4. Register the provider and its models in `src/gateway/BotNexus.Gateway.Api/Program.cs`
+5. Do not reference gateway, extension, or domain projects

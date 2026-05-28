@@ -311,11 +311,17 @@ Enable the extension in `~/.botnexus/config.json` (or `appsettings.json`):
 
 ## Creating a Provider Extension
 
+> **Note:** LLM providers are currently **not** loaded through the extension pipeline. They live in `src/agent/BotNexus.Agent.Providers.*/` projects and implement
+> `IApiProvider` (from `BotNexus.Agent.Providers.Core.Registry`). Registration is wired directly in
+> `src/gateway/BotNexus.Gateway.Api/Program.cs` rather than discovered from the `extensions/providers/` folder. The historical pattern below is kept for reference and as a target for a future provider-extension host; until that lands, ship new providers as agent projects following the convention in `src/agent/AGENTS.md`.
+
 **Providers** are LLM backends that agents use for intelligence. Examples: OpenAI, Anthropic, GitHub Copilot, local models.
 
 ### Step 1: Create a Provider Class
 
-Inherit from `LlmProviderBase` (or implement `ILlmProvider` directly for advanced use cases).
+Implement `IApiProvider` from `BotNexus.Agent.Providers.Core.Registry`. The interface exposes an `Api` string (the wire-contract identifier, e.g. `"openai-completions"`) and a `Stream`/`StreamSimple` pair that returns an `LlmStream`. See `src/agent/BotNexus.Agent.Providers.OpenAICompat/` for a working reference implementation, and `src/agent/BotNexus.Agent.Providers.IntegrationMock/` for a deterministic test-only provider.
+
+The (legacy, non-functional) `LlmProviderBase` example below is preserved only to illustrate the historical extension shape — do **not** copy it verbatim.
 
 ```csharp
 using System.Runtime.CompilerServices;
@@ -878,7 +884,7 @@ public sealed class GitHubExtensionRegistrar : IExtensionRegistrar
 
 ### Convention-Based Registration (Automatic)
 
-If your extension assembly contains **exactly one** type implementing `IChannel`, `ILlmProvider`, or `ITool`, the loader will automatically register it without requiring an `IExtensionRegistrar`.
+If your extension assembly contains **exactly one** type implementing `IChannel` or `ITool`, the loader will automatically register it without requiring an `IExtensionRegistrar`. (LLM providers are not currently extension-loaded — see the [Creating a Provider Extension](#creating-a-provider-extension) note.)
 
 ```csharp
 // Extension loader discovers this automatically
@@ -1570,7 +1576,7 @@ dotnet publish src/BotNexus.Gateway -o ./publish
 
 ### "IExtensionRegistrar not found"
 
-**Cause:** Extension assembly doesn't have an `IExtensionRegistrar` implementation and convention-based registration failed (multiple or no implementations of `IChannel`/`ILlmProvider`/`ITool`).
+**Cause:** Extension assembly doesn't have an `IExtensionRegistrar` implementation and convention-based registration failed (multiple or no implementations of `IChannel`/`ITool`).
 
 **Fix:**
 1. Create a class implementing `IExtensionRegistrar`
@@ -1639,7 +1645,7 @@ To create a BotNexus extension:
 1. **Create a class library** targeting `net10.0`
 2. **Add `ExtensionType` and `ExtensionName`** to `.csproj`
 3. **Import `Extension.targets`** to auto-copy binaries
-4. **Implement the interface** (`IChannel`, `ILlmProvider`, or `ITool`)
+4. **Implement the interface** (`IChannel` or `ITool`; LLM providers ship as `src/agent/` projects implementing `IApiProvider`)
 5. **Optionally implement `IExtensionRegistrar`** for advanced DI
 6. **Add configuration** to `~/.botnexus/config.json` (or `appsettings.json`)
 7. **Build** and binaries appear in `extensions/{type}/{name}/`

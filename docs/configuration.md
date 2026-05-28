@@ -55,17 +55,11 @@ On first run, BotNexus creates a minimal default config:
 
 ```json
 {
-  "BotNexus": {
-    "ExtensionsPath": "~/.botnexus/extensions",
-    "Providers": {},
-    "Channels": {
-      "Instances": {}
-    },
-    "Tools": {
-      "Extensions": {},
-      "McpServers": {}
-    }
-  }
+  "$schema": "https://raw.githubusercontent.com/sytone/botnexus/main/docs/botnexus-config.schema.json",
+  "version": 1,
+  "providers": {},
+  "agents": {},
+  "channels": {}
 }
 ```
 
@@ -75,22 +69,36 @@ To add your first provider, run the interactive setup wizard:
 botnexus provider setup
 ```
 
-Or add it manually to the `Providers` section:
+Or add it manually to the `providers` section. `config.json` is a flat top-level document — there is **no** `BotNexus` wrapper. All keys use `camelCase`:
 
 ```json
 {
-  "BotNexus": {
-    "ExtensionsPath": "~/.botnexus/extensions",
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "gpt-4o",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
+  "version": 1,
+  "providers": {
+    "github-copilot": {
+      "enabled": true,
+      "apiKey": "auth:github-copilot",
+      "defaultModel": "gpt-4o"
+    },
+    "openai": {
+      "enabled": true,
+      "apiKey": "sk-...",
+      "defaultModel": "gpt-4o-mini"
     }
   }
 }
 ```
+
+**`ProviderConfig` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | `bool` | Whether this provider is active. Disabled providers are hidden from the API. Defaults to `true`. |
+| `apiKey` | `string?` | API key value, or `auth:<name>` to reference an OAuth entry in `auth.json`. |
+| `baseUrl` | `string?` | Base URL override for OpenAI-compatible endpoints, or catalog file path for `integration-mock`. |
+| `defaultModel` | `string?` | Default model id used when an agent does not specify one. |
+| `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
+| `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
 
 ---
 
@@ -1003,14 +1011,15 @@ extensions/
 
 ### Extension Registration
 
-Each extension assembly can implement `IExtensionRegistrar` to register types in the DI container:
+Each extension assembly can implement `IExtensionRegistrar` to register types in the DI container. (LLM providers are not currently extension-loaded — they ship as `src/agent/BotNexus.Agent.Providers.*/` projects and are wired in `Program.cs`. The snippet below illustrates the historical extension shape only.)
 
 ```csharp
 public class CopilotExtensionRegistrar : IExtensionRegistrar
 {
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
-        services.AddSingleton<ILlmProvider>(sp =>
+        // Historical example only — providers are not currently extension-loaded.
+        services.AddSingleton<IApiProvider>(sp =>
         {
             var tokenStore = new FileOAuthTokenStore();
             // ... create and return CopilotProvider

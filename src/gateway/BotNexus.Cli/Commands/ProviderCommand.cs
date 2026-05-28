@@ -57,6 +57,8 @@ internal sealed class ProviderCommand
 
         command.AddCommand(setupCommand);
         command.AddCommand(listCommand);
+        command.AddCommand(BuildAddCommand(verboseOption));
+        command.AddCommand(BuildRemoveCommand(verboseOption));
 
         // Default to setup when no subcommand given
         var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
@@ -71,6 +73,149 @@ internal sealed class ProviderCommand
         });
 
         return command;
+    }
+
+    private static Command BuildAddCommand(Option<bool> verboseOption)
+    {
+        var cmd = new Command("add", "Add or update a provider non-interactively. Useful for scripts and CI.");
+        var nameOpt = new Option<string>("--name", "Provider name (e.g. 'openai', 'integration-mock').") { IsRequired = true };
+        var apiOpt = new Option<string?>("--api", () => null, "API contract handled by this provider (e.g. 'openai-completions', 'openai-responses', 'anthropic-messages', 'integration-mock'). Defaults to 'openai-completions'.");
+        var apiKeyOpt = new Option<string?>("--api-key", () => null, "API key value, or 'auth:<name>' to reference an auth.json OAuth entry.");
+        var baseUrlOpt = new Option<string?>("--base-url", () => null, "Base URL for OpenAI-compatible endpoints, or catalog path for 'integration-mock'.");
+        var defaultModelOpt = new Option<string?>("--default-model", () => null, "Default model id for this provider.");
+        var modelsOpt = new Option<string[]>("--model", () => Array.Empty<string>(), "Allowed model id (repeatable). Omit to allow all models registered for this provider.")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
+        var disabledOpt = new Option<bool>("--disabled", () => false, "Mark the provider as disabled. Disabled providers are hidden from the API.");
+        var targetOpt = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+
+        cmd.AddOption(nameOpt);
+        cmd.AddOption(apiOpt);
+        cmd.AddOption(apiKeyOpt);
+        cmd.AddOption(baseUrlOpt);
+        cmd.AddOption(defaultModelOpt);
+        cmd.AddOption(modelsOpt);
+        cmd.AddOption(disabledOpt);
+        cmd.AddOption(targetOpt);
+
+        cmd.SetHandler(async context =>
+        {
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var target = context.ParseResult.GetValueForOption(targetOpt);
+            var home = CliPaths.ResolveTarget(target);
+            var configPath = Path.Combine(home, "config.json");
+            var name = context.ParseResult.GetValueForOption(nameOpt)!;
+            var api = context.ParseResult.GetValueForOption(apiOpt);
+            var apiKey = context.ParseResult.GetValueForOption(apiKeyOpt);
+            var baseUrl = context.ParseResult.GetValueForOption(baseUrlOpt);
+            var defaultModel = context.ParseResult.GetValueForOption(defaultModelOpt);
+            var models = context.ParseResult.GetValueForOption(modelsOpt) ?? Array.Empty<string>();
+            var disabled = context.ParseResult.GetValueForOption(disabledOpt);
+
+            context.ExitCode = await new ProviderCommand().ExecuteAddAsync(
+                configPath, name, api, apiKey, baseUrl, defaultModel, models, enabled: !disabled, verbose, CancellationToken.None);
+        });
+
+        return cmd;
+    }
+
+    private static Command BuildRemoveCommand(Option<bool> verboseOption)
+    {
+        var cmd = new Command("remove", "Remove a provider non-interactively.");
+        var nameOpt = new Option<string>("--name", "Provider name to remove.") { IsRequired = true };
+        var targetOpt = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+
+        cmd.AddOption(nameOpt);
+        cmd.AddOption(targetOpt);
+
+        cmd.SetHandler(async context =>
+        {
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var target = context.ParseResult.GetValueForOption(targetOpt);
+            var home = CliPaths.ResolveTarget(target);
+            var configPath = Path.Combine(home, "config.json");
+            var name = context.ParseResult.GetValueForOption(nameOpt)!;
+
+            context.ExitCode = await new ProviderCommand().ExecuteRemoveAsync(configPath, name, verbose, CancellationToken.None);
+        });
+
+        return cmd;
+    }
+
+    internal async Task<int> ExecuteAddAsync(
+        string configPath,
+        string name,
+        string? api,
+        string? apiKey,
+        string? baseUrl,
+        string? defaultModel,
+        IReadOnlyCollection<string> models,
+        bool enabled,
+        bool verbose,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            AnsiConsole.MarkupLine("[red]--name is required.[/]");
+            return 1;
+        }
+
+        var config = await LoadOrCreateConfigAsync(configPath, cancellationToken);
+        config.Providers ??= new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase);
+
+        var existed = config.Providers.TryGetValue(name, out var existing);
+        var updated = new ProviderConfig
+        {
+            Enabled = enabled,
+            ApiKey = apiKey ?? (existed ? existing!.ApiKey : null),
+            BaseUrl = baseUrl ?? (existed ? existing!.BaseUrl : null),
+            DefaultModel = defaultModel ?? (existed ? existing!.DefaultModel : null),
+            Api = api ?? (existed ? existing!.Api : null),
+            Models = models.Count > 0 ? models.ToList() : (existed ? existing!.Models : null)
+        };
+
+        config.Providers[name] = updated;
+        await SaveConfigAsync(config, configPath, cancellationToken);
+
+        AnsiConsole.MarkupLine(existed
+            ? $"[green]✓[/] Provider [green]{name}[/] updated."
+            : $"[green]✓[/] Provider [green]{name}[/] added.");
+        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+
+        if (verbose)
+        {
+            var json = JsonSerializer.Serialize(updated, WriteJsonOptions);
+            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(json)}[/]");
+        }
+
+        return 0;
+    }
+
+    internal async Task<int> ExecuteRemoveAsync(string configPath, string name, bool verbose, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            AnsiConsole.MarkupLine("[red]--name is required.[/]");
+            return 1;
+        }
+
+        var config = await LoadOrCreateConfigAsync(configPath, cancellationToken);
+        if (config.Providers is null || !config.Providers.ContainsKey(name))
+        {
+            AnsiConsole.MarkupLine($"[yellow]No provider named '{Markup.Escape(name)}' to remove.[/]");
+            return 0;
+        }
+
+        config.Providers.Remove(name);
+        await SaveConfigAsync(config, configPath, cancellationToken);
+
+        AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{Markup.Escape(name)}[/] removed.");
+        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+        if (verbose)
+            AnsiConsole.MarkupLine($"[dim]Remaining providers: {config.Providers.Count}[/]");
+
+        return 0;
     }
 
     internal async Task<int> ExecuteDefaultAsync(bool verbose, CancellationToken cancellationToken)
