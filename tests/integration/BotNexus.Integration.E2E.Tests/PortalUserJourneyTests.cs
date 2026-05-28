@@ -67,17 +67,151 @@ public sealed class PortalUserJourneyTests
         }
     }
 
-    // ─── Followup placeholders for issue #598 ──────────────────────────────
-    // These flows depend on portal selectors (agent picker, "new conversation"
-    // button, message composer, conversation list) that are still evolving.
-    // Pin them down once the portal exposes stable `data-testid` hooks.
+    // ─── Followup flows for issue #598 ─────────────────────────────────────
+    // These use stable data-testid selectors added to AgentDashboard, ChatPanel
+    // and MainLayout so the assertions don't churn with cosmetic UI changes.
 
-    [Fact(Skip = "Followup #598: open conversation per agent and send HELLO_WORLD")]
-    public void NewConversation_PerAgent_SendHelloWorld() { }
+    [SkippableFact]
+    public async Task NewConversation_PerAgent_SendHelloWorld()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture initialization failed: {_fx.Error}");
+        try { await PlaywrightBootstrap.EnsureBrowserInstalledAsync(); }
+        catch (Exception ex) { Skip.If(true, $"Playwright browser install unavailable: {ex.Message}"); }
 
-    [Fact(Skip = "Followup #598: trigger MULTI_DELTA streams in parallel across all 3 agents")]
-    public void ParallelMultiDelta_AcrossAgents_AllCompleteIndependently() { }
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await PlaywrightBootstrap.LaunchChromiumAsync(playwright);
 
-    [Fact(Skip = "Followup #598: existing conversation receives TOOL_CALL_SEQUENCE while a new one streams concurrently")]
-    public void MixedExistingAndNewConversations_ConcurrentMessages() { }
+        foreach (var agentId in _fx.AgentIds)
+        {
+            var context = await browser.NewContextAsync();
+            var page = await context.NewPageAsync();
+
+            await SendAndAwaitAsync(page, agentId, "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+
+            await context.CloseAsync();
+        }
+    }
+
+    [SkippableFact]
+    public async Task ParallelMultiDelta_AcrossAgents_AllCompleteIndependently()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture initialization failed: {_fx.Error}");
+        try { await PlaywrightBootstrap.EnsureBrowserInstalledAsync(); }
+        catch (Exception ex) { Skip.If(true, $"Playwright browser install unavailable: {ex.Message}"); }
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await PlaywrightBootstrap.LaunchChromiumAsync(playwright);
+
+        var tasks = _fx.AgentIds.Select(async agentId =>
+        {
+            var context = await browser.NewContextAsync();
+            try
+            {
+                var page = await context.NewPageAsync();
+                await SendAndAwaitAsync(page, agentId, "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
+            }
+            finally { await context.CloseAsync(); }
+        }).ToArray();
+
+        await Task.WhenAll(tasks);
+    }
+
+    [SkippableFact]
+    public async Task MixedExistingAndNewConversations_ConcurrentMessages()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture initialization failed: {_fx.Error}");
+        try { await PlaywrightBootstrap.EnsureBrowserInstalledAsync(); }
+        catch (Exception ex) { Skip.If(true, $"Playwright browser install unavailable: {ex.Message}"); }
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await PlaywrightBootstrap.LaunchChromiumAsync(playwright);
+
+        // Seed an "existing" conversation on alpha by sending a HELLO_WORLD first.
+        var seedContext = await browser.NewContextAsync();
+        var seedPage = await seedContext.NewPageAsync();
+        await SendAndAwaitAsync(seedPage, _fx.AgentIds[0], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+        await seedContext.CloseAsync();
+
+        // In parallel:
+        //   (a) reopen the portal on alpha (the existing conv is auto-selected) and send MULTI_DELTA
+        //   (b) open a fresh context on bravo, which auto-creates a new conversation, send HELLO_WORLD
+        var existing = Task.Run(async () =>
+        {
+            var ctx = await browser.NewContextAsync();
+            try
+            {
+                var page = await ctx.NewPageAsync();
+                await SendAndAwaitAsync(page, _fx.AgentIds[0], "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
+            }
+            finally { await ctx.CloseAsync(); }
+        });
+
+        var fresh = Task.Run(async () =>
+        {
+            var ctx = await browser.NewContextAsync();
+            try
+            {
+                var page = await ctx.NewPageAsync();
+                await SendAndAwaitAsync(page, _fx.AgentIds[1], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+            }
+            finally { await ctx.CloseAsync(); }
+        });
+
+        await Task.WhenAll(existing, fresh);
+    }
+
+    // ─── Helpers ───────────────────────────────────────────────────────────
+
+    private async Task SendAndAwaitAsync(IPage page, string agentId, string message, string expectedFragment, int timeoutMs)
+    {
+        var url = $"{_fx.GatewayBaseUrl}/chat/{agentId}";
+        var response = await page.GotoAsync(url, new PageGotoOptions
+        {
+            WaitUntil = WaitUntilState.NetworkIdle,
+            Timeout = 60_000,
+        });
+        Xunit.Assert.NotNull(response);
+        Xunit.Assert.True(response!.Ok, $"GET {url} returned {response.Status}");
+
+        // Scope to this agent's panel — all agents render concurrently in the
+        // multi-pane layout, so a global [data-testid] match is ambiguous.
+        var panel = page.Locator($"#{agentId}-conversation-panel");
+        await panel.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Attached,
+            Timeout = 30_000,
+        });
+
+        var composer = panel.Locator("[data-testid='chat-composer']");
+        await composer.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 30_000,
+        });
+
+        await composer.FillAsync(message);
+        await panel.Locator("[data-testid='chat-send']").ClickAsync();
+
+        // Wait for an assistant message containing the expected fragment.
+        var assistantMatch = panel.Locator(
+            "[data-testid='message'][data-message-role='Assistant'], [data-testid='streaming-message']")
+            .Filter(new LocatorFilterOptions { HasTextString = expectedFragment });
+
+        try
+        {
+            await assistantMatch.First.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Attached,
+                Timeout = timeoutMs,
+            });
+        }
+        catch (TimeoutException)
+        {
+            var snapshot = await page.ContentAsync();
+            Xunit.Assert.Fail(
+                $"Agent '{agentId}' did not produce assistant message containing '{expectedFragment}' " +
+                $"within {timeoutMs}ms after sending '{message}'.\nHTML head:\n" +
+                snapshot[..Math.Min(2000, snapshot.Length)]);
+        }
+    }
 }

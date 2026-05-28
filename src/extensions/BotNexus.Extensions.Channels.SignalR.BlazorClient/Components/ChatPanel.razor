@@ -140,7 +140,7 @@
         </div>
     }
 
-    <div class="messages-container" @ref="_messagesContainer">
+    <div class="messages-container" data-testid="messages" @ref="_messagesContainer">
         @if (IsLoadingHistory)
         {
             <div class="history-loading">
@@ -235,7 +235,9 @@
                     </div>
                 }
 
-                <div class="message @msg.CssClass">
+                <div class="message @msg.CssClass"
+                     data-testid="message"
+                     data-message-role="@msg.Role">
                     <div class="message-header">
                         <span class="message-role">@msg.Role</span>
                         <div class="message-meta">
@@ -277,7 +279,9 @@
 
         @if (IsStreaming && !string.IsNullOrEmpty(CurrentStreamBuffer))
         {
-            <div class="message assistant streaming">
+            <div class="message assistant streaming"
+                 data-testid="streaming-message"
+                 data-message-role="Assistant">
                 <div class="message-header">
                     <span class="message-role">Assistant</span>
                     <span class="message-time">now</span>
@@ -317,6 +321,7 @@
             @if (!IsReadOnly)
             {
                 <textarea class="chat-input @ExpandingInputClass"
+                          data-testid="chat-composer"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
@@ -354,6 +359,7 @@
                 else
                 {
                     <button class="send-btn"
+                            data-testid="chat-send"
                             @onclick="SendMessage"
                             disabled="@(!IsConnected || string.IsNullOrWhiteSpace(_inputText))">
                         Send

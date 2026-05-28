@@ -24,6 +24,33 @@
       { "type": "text_delta", "delta": " portal must",   "delayMs": 80 },
       { "type": "text_delta", "delta": " correctly assemble", "delayMs": 80 },
       { "type": "text_delta", "delta": " each chunk.",        "delayMs": 80 },
+      { "type": "text_delta", "delta": " [MULTI_DELTA_COMPLETE]", "delayMs": 40 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
+    "TOOL_CALL_SEQUENCE": [
+      { "type": "text_delta", "delta": "Let me check that for you.", "delayMs": 40 },
+      { "type": "text_end" },
+      {
+        "type": "tool_call",
+        "toolName": "noop",
+        "toolCallId": "mock-tool-1",
+        "toolArguments": { "query": "demo" },
+        "delayMs": 60
+      },
+      { "type": "text_delta", "delta": "Tool finished. ", "delayMs": 40 },
+      { "type": "text_delta", "delta": "[TOOL_CALL_SEQUENCE_COMPLETE]", "delayMs": 40 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
+    "LONG_RUNNING": [
+      { "type": "text_delta", "delta": "Starting a long task", "delayMs": 100 },
+      { "type": "text_delta", "delta": "...", "delayMs": 500 },
+      { "type": "text_delta", "delta": " still working", "delayMs": 500 },
+      { "type": "text_delta", "delta": "...", "delayMs": 500 },
+      { "type": "text_delta", "delta": " [LONG_RUNNING_COMPLETE]", "delayMs": 100 },
       { "type": "text_end" },
       { "type": "done", "stopReason": "stop" }
     ]
