@@ -246,7 +246,15 @@ public static class PlatformConfigLoader
             if (!providerConfig.Enabled)
                 continue;
 
-            if (!string.IsNullOrWhiteSpace(providerConfig.BaseUrl) &&
+            // The integration-mock provider repurposes BaseUrl as a filesystem path to
+            // a JSON catalog (per IntegrationMockProvider). Skip the http(s) URL check
+            // in that case — both the CLI `provider add --base-url` help text and the
+            // ProviderConfig.Api docs already describe this carve-out.
+            var isIntegrationMock = string.Equals(
+                providerConfig.Api, "integration-mock", StringComparison.OrdinalIgnoreCase);
+
+            if (!isIntegrationMock &&
+                !string.IsNullOrWhiteSpace(providerConfig.BaseUrl) &&
                 (!Uri.TryCreate(providerConfig.BaseUrl, UriKind.Absolute, out var providerUri) ||
                  (providerUri.Scheme != Uri.UriSchemeHttp && providerUri.Scheme != Uri.UriSchemeHttps)))
             {

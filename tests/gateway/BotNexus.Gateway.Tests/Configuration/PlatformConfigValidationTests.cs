@@ -711,6 +711,21 @@ public sealed class PlatformConfigValidationTests
     }
 
     [Fact]
+    public Task Validate_IntegrationMockProviderWithFilesystemBaseUrl_NoErrors()
+        => WithProviderConfigAsync(
+            "integration-mock",
+            """{ "api": "integration-mock", "baseUrl": "C:\\tmp\\catalog.json" }""",
+            config =>
+            {
+                // The integration-mock provider repurposes baseUrl as a path to a JSON
+                // catalog file (see IntegrationMockProvider). The http(s) URL check
+                // must not fire for this case — both the CLI help and the README say
+                // a filesystem path is the expected value here.
+                config.Providers!["integration-mock"].BaseUrl.ShouldBe("C:\\tmp\\catalog.json");
+                config.Providers!["integration-mock"].Api.ShouldBe("integration-mock");
+            });
+
+    [Fact]
     public Task Validate_TelegramFlatChannelConfig_NoErrors()
         => WithConfigFileAsync(
             """

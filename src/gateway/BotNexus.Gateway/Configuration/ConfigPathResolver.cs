@@ -261,7 +261,8 @@ public sealed class ConfigPathResolver : IConfigPathResolver
 
                 var key = FindOrCreateDictionaryKey(dictionary, token.Name);
                 var existing = dictionary[key];
-                if (existing is null && createMissing && !token.IsTerminalListOnly)
+                if (existing is null && createMissing && !token.IsTerminalListOnly
+                    && !IsLeafType(dictionaryValueType))
                 {
                     if (!TryCreateInstance(dictionaryValueType, out existing, out error))
                         return false;
@@ -289,7 +290,8 @@ public sealed class ConfigPathResolver : IConfigPathResolver
                 }
 
                 var existing = property.GetValue(current);
-                if (existing is null && createMissing && !token.IsTerminalListOnly)
+                if (existing is null && createMissing && !token.IsTerminalListOnly
+                    && !IsLeafType(property.PropertyType))
                 {
                     if (!TryCreateInstance(property.PropertyType, out existing, out error))
                         return false;

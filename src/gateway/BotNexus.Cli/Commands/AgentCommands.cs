@@ -26,7 +26,7 @@ internal sealed class AgentCommands
         });
 
         var idArgument = new Argument<string>("id", "Agent ID.");
-        var providerOption = new Option<string>("--provider", () => "copilot", "Agent provider name.");
+        var providerOption = new Option<string>("--provider", () => "github-copilot", "Agent provider name.");
         var modelOption = new Option<string>("--model", () => "gpt-4.1", "Agent model name.");
         var enabledOption = new Option<bool>("--enabled", () => true, "Whether the agent is enabled.");
 
@@ -42,7 +42,7 @@ internal sealed class AgentCommands
         addCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(idArgument);
-            var provider = context.ParseResult.GetValueForOption(providerOption) ?? "copilot";
+            var provider = context.ParseResult.GetValueForOption(providerOption) ?? "github-copilot";
             var model = context.ParseResult.GetValueForOption(modelOption) ?? "gpt-4.1";
             var enabled = context.ParseResult.GetValueForOption(enabledOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -82,10 +82,31 @@ internal sealed class AgentCommands
             context.ExitCode = await ExecuteWizardAsync(configPath, verbose, CancellationToken.None);
         });
 
+        var showIdArgument = new Argument<string>("id", "Agent ID.");
+        var showTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+        var showJsonOption = new Option<bool>("--json", "Emit raw JSON instead of a formatted table.");
+        var showCommand = new Command("show", "Show the resolved configuration for a single agent.")
+        {
+            showIdArgument,
+            showTargetOption,
+            showJsonOption
+        };
+        showCommand.SetHandler(async context =>
+        {
+            var id = context.ParseResult.GetValueForArgument(showIdArgument);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var target = context.ParseResult.GetValueForOption(showTargetOption);
+            var asJson = context.ParseResult.GetValueForOption(showJsonOption);
+            var home = CliPaths.ResolveTarget(target);
+            var configPath = Path.Combine(home, "config.json");
+            context.ExitCode = await ExecuteShowAsync(id, configPath, asJson, verbose, CancellationToken.None);
+        });
+
         command.AddCommand(listCommand);
         command.AddCommand(addCommand);
         command.AddCommand(removeCommand);
         command.AddCommand(wizardCommand);
+        command.AddCommand(showCommand);
         return command;
     }
 
@@ -276,6 +297,59 @@ internal sealed class AgentCommands
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Removed agent [green]{Markup.Escape(matchedId)}[/].");
+        return 0;
+    }
+
+    public async Task<int> ExecuteShowAsync(string id, string configPath, bool asJson, bool verbose, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Agent ID is required.");
+            return 1;
+        }
+
+        var config = await LoadConfigRequiredAsync(configPath, cancellationToken);
+        if (config is null)
+            return 1;
+
+        if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
+            return 1;
+        }
+
+        var agent = config.Agents[matchedId];
+
+        if (asJson)
+        {
+            var opts = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            };
+            AnsiConsole.WriteLine(System.Text.Json.JsonSerializer.Serialize(agent, opts));
+            return 0;
+        }
+
+        var table = new Table().AddColumn("Field").AddColumn("Value");
+        table.AddRow("id", Markup.Escape(matchedId));
+        table.AddRow("displayName", Markup.Escape(agent.DisplayName ?? string.Empty));
+        table.AddRow("description", Markup.Escape(agent.Description ?? string.Empty));
+        table.AddRow("provider", Markup.Escape(agent.Provider ?? string.Empty));
+        table.AddRow("model", Markup.Escape(agent.Model ?? string.Empty));
+        table.AddRow("enabled", agent.Enabled ? "[green]Yes[/]" : "[red]No[/]");
+        if (agent.AllowedModels is { Count: > 0 })
+            table.AddRow("allowedModels", Markup.Escape(string.Join(", ", agent.AllowedModels)));
+        if (agent.SubAgents is { Count: > 0 })
+            table.AddRow("subAgents", Markup.Escape(string.Join(", ", agent.SubAgents)));
+        if (agent.Extensions is { Count: > 0 })
+            table.AddRow("extensions", Markup.Escape(string.Join(", ", agent.Extensions.Keys)));
+        AnsiConsole.Write(table);
+
+        if (verbose)
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
+
         return 0;
     }
 

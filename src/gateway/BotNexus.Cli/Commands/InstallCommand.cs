@@ -6,7 +6,7 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class InstallCommand
 {
-    private const string DefaultRepo = "https://github.com/jbullen/botnexus.git";
+    private const string DefaultRepo = "https://github.com/sytone/botnexus.git";
 
     public Command Build(Option<bool> verboseOption)
     {

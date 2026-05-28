@@ -429,7 +429,7 @@ botnexus agent add <ID> [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--provider` | `copilot` | Agent provider name (e.g., `copilot`, `openai`, `anthropic`). |
+| `--provider` | `github-copilot` | Agent provider name (must match a configured provider; e.g. `github-copilot`, `openai`, `anthropic`, or any provider added via `botnexus provider add`). |
 | `--model` | `gpt-4.1` | Model name for this agent (e.g., `gpt-4o`, `claude-3-sonnet`). |
 | `--enabled` | `true` | Whether the agent is enabled (`true` or `false`). |
 | `--verbose` | — | Show the updated configuration. |
@@ -465,6 +465,53 @@ botnexus agent add experimental --provider anthropic --model claude-3-sonnet --e
 ```powershell
 botnexus agent add assistant --verbose
 ```
+
+---
+
+## agent show
+
+Show the resolved configuration for a single agent.
+
+### Usage
+
+```powershell
+botnexus agent show <ID> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `<ID>` | Agent ID to inspect. |
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--json` | Emit raw JSON instead of a formatted table. Useful for scripts and CI. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Print the source config path under the table. |
+
+### Examples
+
+**Inspect an agent in table form:**
+
+```powershell
+botnexus agent show assistant
+```
+
+**Pipe agent config to jq:**
+
+```powershell
+botnexus agent show assistant --json | jq .model
+```
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Agent found and printed. |
+| `1` | Config missing/invalid or agent ID not found. |
 
 ---
 
