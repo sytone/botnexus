@@ -199,6 +199,7 @@ public sealed class ExtensionLoaderTests : IDisposable
         services.AddSingleton(Mock.Of<IChannelDispatcher>());
         services.AddSingleton(Mock.Of<IActivityBroadcaster>());
         services.AddSingleton(Mock.Of<ISessionCompactor>());
+        services.AddSingleton(Mock.Of<ISessionCompactionCoordinator>());
         services.AddSingleton(Mock.Of<ISessionWarmupService>());
         services.AddSingleton(Mock.Of<IConversationDispatcher>());
         services.AddSingleton(Mock.Of<IConversationRouter>());
