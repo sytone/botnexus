@@ -33,14 +33,18 @@ internal sealed class ProviderCommand
 
         var setupCommand = new Command("setup", "Interactively add and authenticate a new provider.");
         var setupTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+        var setupProviderOption = new Option<string?>("--provider", () => null,
+            $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt and runs the rest of the setup flow (API-key prompt or OAuth device-code flow). Useful for scripting and integration tests.");
         setupCommand.Add(setupTargetOption);
+        setupCommand.Add(setupProviderOption);
         setupCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(setupTargetOption);
+            var preselected = context.ParseResult.GetValueForOption(setupProviderOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
-            context.ExitCode = await ExecuteSetupAsync(configPath, home, verbose, CancellationToken.None);
+            context.ExitCode = await ExecuteSetupAsync(configPath, home, verbose, preselected, CancellationToken.None);
         });
 
         var listCommand = new Command("list", "List configured providers.");
@@ -62,14 +66,20 @@ internal sealed class ProviderCommand
 
         // Default to setup when no subcommand given
         var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+        var defaultProviderOption = new Option<string?>("--provider", () => null,
+            $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt.");
         command.Add(defaultTargetOption);
+        command.Add(defaultProviderOption);
         command.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(defaultTargetOption);
+            var preselected = context.ParseResult.GetValueForOption(defaultProviderOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
-            context.ExitCode = await ExecuteDefaultAsync(configPath, home, verbose, CancellationToken.None);
+            context.ExitCode = preselected is null
+                ? await ExecuteDefaultAsync(configPath, home, verbose, CancellationToken.None)
+                : await ExecuteSetupAsync(configPath, home, verbose, preselected, CancellationToken.None);
         });
 
         return command;
@@ -274,10 +284,23 @@ internal sealed class ProviderCommand
     }
 
     internal async Task<int> ExecuteSetupAsync(bool verbose, CancellationToken cancellationToken)
-        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, cancellationToken);
+        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, null, cancellationToken);
 
     internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, CancellationToken cancellationToken)
+        => await ExecuteSetupAsync(configPath, home, verbose, null, cancellationToken);
+
+    internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, string? preselectedProvider, CancellationToken cancellationToken)
     {
+        if (preselectedProvider is not null)
+        {
+            if (!KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine($"[red]Unknown provider '{Markup.Escape(preselectedProvider)}'. Known providers: {string.Join(", ", KnownProviders)}.[/]");
+                AnsiConsole.MarkupLine("[dim]For other providers (e.g. local OpenAI-compatible servers or 'integration-mock'), use [green]botnexus provider add[/].[/]");
+                return 1;
+            }
+        }
+
         var config = await LoadOrCreateConfigAsync(configPath, cancellationToken);
 
         // Seed the wizard context with the loaded config
@@ -286,10 +309,23 @@ internal sealed class ProviderCommand
         ctx.Set("verbose", verbose);
         ctx.Set("home", home);
 
-        var wizard = new WizardBuilder()
-            .AskSelection("pick-provider", "Which provider do you want to configure?", "provider",
+        var wizardBuilder = new WizardBuilder();
+
+        if (preselectedProvider is null)
+        {
+            wizardBuilder.AskSelection("pick-provider", "Which provider do you want to configure?", "provider",
                 KnownProviders,
-                p => ProviderDisplayNames.TryGetValue(p, out var display) ? display : p)
+                p => ProviderDisplayNames.TryGetValue(p, out var display) ? display : p);
+        }
+        else
+        {
+            // Pre-seed the provider key and use a no-op action so the wizard stays linear.
+            var resolved = KnownProviders.First(p => string.Equals(p, preselectedProvider, StringComparison.OrdinalIgnoreCase));
+            ctx.Set("provider", resolved);
+            wizardBuilder.Action("pick-provider", (_, _) => Task.CompletedTask);
+        }
+
+        var wizard = wizardBuilder
             .Action("show-provider", (c, _) =>
             {
                 var name = c.Get<string>("provider");

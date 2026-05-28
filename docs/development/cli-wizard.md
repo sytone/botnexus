@@ -274,6 +274,7 @@ The flow demonstrates several wizard patterns:
 3. **Branching** — `Check` step routes to OAuth flow or API key prompt based on provider type
 4. **Custom steps** — `OAuthFlowStep` runs the GitHub device code flow, `PickModelStep` queries the model registry and prompts for selection
 5. **Action step** — final `save` step writes the config and auth files
+6. **Bypassable first prompt** — `provider setup --provider <name>` pre-seeds the wizard context with the chosen provider key and substitutes the `AskSelection` step with a no-op `Action`, letting scripts and integration tests skip the interactive selection prompt while still exercising the remainder of the flow (API-key prompt or OAuth device-code handoff).
 
 See `Commands/ProviderCommand.cs` for the full implementation.
 

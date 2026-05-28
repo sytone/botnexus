@@ -85,6 +85,19 @@ public sealed class LocalCliMockProviderTests : IAsyncLifetime
         prov.GetProperty("enabled").GetBoolean().ShouldBeTrue();
         prov.GetProperty("api").GetString().ShouldBe("integration-mock");
         prov.GetProperty("defaultModel").GetString().ShouldBe("integration-mock-echo");
+
+        // 4. the CLI itself must see the provider via `provider list`
+        var listResult = await ProcessRunner.RunAsync(
+            _fixture.CliExecutablePath,
+            $"provider list --target \"{_home}\"",
+            environment: new Dictionary<string, string?> { ["BOTNEXUS_HOME"] = null },
+            timeout: CommandTimeout);
+        listResult.ExitCode.ShouldBe(0,
+            $"provider list failed.\nStdOut:\n{listResult.StdOut}\nStdErr:\n{listResult.StdErr}");
+        listResult.Combined.ShouldContain("integration-mock",
+            customMessage: $"provider list did not surface the just-added provider.\nStdOut:\n{listResult.StdOut}");
+        listResult.Combined.ShouldContain("integration-mock-echo",
+            customMessage: $"provider list did not surface the default model.\nStdOut:\n{listResult.StdOut}");
     }
 
     [Fact]
