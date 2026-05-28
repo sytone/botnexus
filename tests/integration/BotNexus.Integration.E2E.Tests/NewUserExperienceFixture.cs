@@ -77,11 +77,18 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             var cliProject = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
 
             // 1 ─ pack -----------------------------------------------------
+            // /nodeReuse:false + UseSharedCompilation=false force MSBuild and the
+            // Roslyn compile-server to exit cleanly so `dotnet pack` returns control
+            // instead of leaving long-lived build nodes attached to our captured
+            // stdout (which manifests as a TimeoutException even though the pack
+            // itself finished).
             Log.Add($"[pack] dotnet pack {cliProject} → {packDir} (Version={PackVersion})");
             var pack = await ProcessRunner.RunAsync(
                 "dotnet",
                 $"pack \"{cliProject}\" --configuration Release --output \"{packDir}\" " +
-                $"/p:Version={PackVersion} /p:PackageVersion={PackVersion} --nologo",
+                $"/p:Version={PackVersion} /p:PackageVersion={PackVersion} " +
+                $"/nodeReuse:false /p:UseSharedCompilation=false --nologo",
+                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: PackTimeout);
             if (pack.ExitCode != 0)
             {
@@ -94,6 +101,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             var install = await ProcessRunner.RunAsync(
                 "dotnet",
                 $"tool install --tool-path \"{toolDir}\" --add-source \"{packDir}\" --version {PackVersion} {PackageId}",
+                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: InstallTimeout);
             if (install.ExitCode != 0 || !File.Exists(CliExecutablePath))
             {
@@ -127,34 +135,41 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
 
             // World identity + extension toggles via the generic config setter
             // (issue #599 tracks dedicated `world` and `extension` commands).
-            await RunCliAsync("config", $"set world.id e2e-world --target \"{Home}\"");
-            await RunCliAsync("config", $"set world.displayName \"E2E World\" --target \"{Home}\"");
-            await RunCliAsync("config", $"set extensions.enabled true --target \"{Home}\"");
+            // All these live under GatewaySettingsConfig, hence the `gateway.*` prefix.
+            await RunCliAsync("config", $"set gateway.world \"{{\\\"id\\\":\\\"e2e-world\\\",\\\"name\\\":\\\"E2E World\\\"}}\" --target \"{Home}\"");
+            await RunCliAsync("config", $"set gateway.extensions.enabled true --target \"{Home}\"");
 
             // Default agent → first provisioned agent.
             await RunCliAsync("config", $"set gateway.defaultAgentId {AgentIds[0]} --target \"{Home}\"");
 
-            // 5 ─ pre-build the solution in Release so `gateway start --attached`
-            //     completes its build step quickly. The CLI gateway flow builds the
-            //     whole solution before launching BotNexus.Gateway.Api.dll; doing it
-            //     once here avoids the build dominating per-test startup time.
-            Log.Add($"[build] dotnet build BotNexus.slnx -c Release (warmup)");
+            // 5 ─ pre-build the solution then start the gateway via the CLI with
+            //     --skip-build. We must pre-build (a) so the gateway dll exists and
+            //     (b) so the in-test build can't collide with the running testhost
+            //     that has many of the same dlls loaded for the test process itself
+            //     (BotNexus.Domain, BotNexus.Gateway.Contracts, etc.) — MSBuild
+            //     would otherwise try to overwrite those locked dlls. /nodeReuse:false
+            //     + UseSharedCompilation=false force MSBuild and the Roslyn server
+            //     to exit cleanly so this subprocess returns.
+            Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild)");
             var build = await ProcessRunner.RunAsync(
                 "dotnet",
-                "build BotNexus.slnx --configuration Release --nologo --tl:off",
+                "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
                 workingDirectory: repoRoot,
+                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: SolutionBuildTimeout);
             if (build.ExitCode != 0)
             {
-                Error = $"Solution release build exit {build.ExitCode}.\n{build.Combined}";
+                Error = $"Solution prebuild exit {build.ExitCode}.\n{build.Combined}";
                 return;
             }
 
-            // 6 ─ start the gateway via the CLI (the real user flow).
-            //     `--attached` runs the Gateway.Api as a child of the CLI process so
-            //     killing the CLI subprocess tears down the gateway with it.
             GatewayPort = PickFreePort();
             Log.Add($"[gateway] picked port {GatewayPort}");
+
+            // The gateway honours platformConfig.Gateway.ListenUrl OVER ASPNETCORE_URLS / --port.
+            // Set it explicitly so the chosen test port wins on the bind.
+            await RunCliAsync("config", $"set gateway.listenUrl http://127.0.0.1:{GatewayPort} --target \"{Home}\"");
+
             var env = new Dictionary<string, string?>
             {
                 ["BOTNEXUS_HOME"] = Home,
@@ -162,7 +177,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             };
             _gateway = ProcessRunner.StartBackground(
                 CliExecutablePath,
-                $"gateway start --attached --source \"{repoRoot}\" --target \"{Home}\" --port {GatewayPort}",
+                $"gateway start --attached --skip-build --source \"{repoRoot}\" --target \"{Home}\" --port {GatewayPort}",
                 environment: env);
 
             var ready = await WaitForGatewayReadyAsync(GatewayBaseUrl, GatewayReadyTimeout, _gateway);

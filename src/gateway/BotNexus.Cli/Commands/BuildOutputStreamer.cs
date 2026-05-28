@@ -28,7 +28,7 @@ internal static partial class BuildOutputStreamer
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"build \"{solution}\" -c Release --nologo --tl:off /p:SkipTests=true /p:SkipCli=true /p:SourceRevisionId={commitSha}",
+            Arguments = $"build \"{solution}\" -c Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false /p:SkipTests=true /p:SkipCli=true /p:SourceRevisionId={commitSha}",
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,

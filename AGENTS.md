@@ -70,14 +70,16 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
 
 5. **Do not use `--no-verify`** for code changes. The pre-commit hook runs the test suite and must pass.
 
-6. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
+6. **Do not use `--no-build` with `dotnet test` or `dotnet run`.** It causes stale-binary issues, silent skips when fixtures fail to rebuild, and confusing test-output gaps. Always let `dotnet test` rebuild — if the build is too slow, fix the build, don't bypass it.
 
-7. **If you delete a class or service**, you MUST rewrite its tests for the replacement — not delete them.
+7. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
+
+8. **If you delete a class or service**, you MUST rewrite its tests for the replacement — not delete them.
    - Old class deleted → old test file deleted AND new test file created for the replacement
    - Tests are never net-deleted; they are migrated
    - A refactor that reduces test coverage is a regression
 
-8. **Component tests (bUnit) are mandatory** for all Blazor components. Every `.razor` component must have a corresponding test covering:
+9. **Component tests (bUnit) are mandatory** for all Blazor components. Every `.razor` component must have a corresponding test covering:
    - Rendering in default/empty state
    - Rendering with data
    - User interactions (clicks, input)

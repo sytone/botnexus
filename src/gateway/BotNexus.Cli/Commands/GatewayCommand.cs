@@ -28,12 +28,14 @@ internal sealed class GatewayCommand
 
         // Start command
         var attachedOption = new Option<bool>("--attached", "Run in foreground instead of detached mode.");
+        var skipBuildOption = new Option<bool>("--skip-build", "Skip the implicit solution rebuild before starting. Use this when you've already built (e.g. CI, tests, or `dotnet build` ran moments ago) — otherwise the rebuild step will fight for file locks if any binary is in use.");
         var startCommand = new Command("start", "Start the gateway process")
         {
             portOption,
             sourceOption,
             targetOption,
-            attachedOption
+            attachedOption,
+            skipBuildOption
         };
         startCommand.SetHandler(async context =>
         {
@@ -41,10 +43,11 @@ internal sealed class GatewayCommand
             var source = context.ParseResult.GetValueForOption(sourceOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
             var attached = context.ParseResult.GetValueForOption(attachedOption);
+            var skipBuild = context.ParseResult.GetValueForOption(skipBuildOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var repoRoot = CliPaths.ResolveSource(source);
             var home = CliPaths.ResolveTarget(target);
-            context.ExitCode = await StartAsync(repoRoot, home, port, attached, verbose, context.GetCancellationToken());
+            context.ExitCode = await StartAsync(repoRoot, home, port, attached, verbose, skipBuild, context.GetCancellationToken());
         });
 
         // Stop command
@@ -102,16 +105,19 @@ internal sealed class GatewayCommand
         return command;
     }
 
-    private async Task<int> StartAsync(string repoRoot, string home, int port, bool attached, bool verbose, CancellationToken cancellationToken)
+    private async Task<int> StartAsync(string repoRoot, string home, int port, bool attached, bool verbose, bool skipBuild, CancellationToken cancellationToken)
     {
         if (attached)
         {
-            return await StartAttachedAsync(repoRoot, home, port, verbose, cancellationToken);
+            return await StartAttachedAsync(repoRoot, home, port, verbose, skipBuild, cancellationToken);
         }
 
-        var buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
-        if (buildResult != 0)
-            return buildResult;
+        if (!skipBuild)
+        {
+            var buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
+            if (buildResult != 0)
+                return buildResult;
+        }
 
         var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
 
@@ -201,11 +207,14 @@ internal sealed class GatewayCommand
         }
     }
 
-    private async Task<int> StartAttachedAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
+    private async Task<int> StartAttachedAsync(string repoRoot, string home, int port, bool verbose, bool skipBuild, CancellationToken cancellationToken)
     {
-        var buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
-        if (buildResult != 0)
-            return buildResult;
+        if (!skipBuild)
+        {
+            var buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
+            if (buildResult != 0)
+                return buildResult;
+        }
 
         var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
 
@@ -416,7 +425,7 @@ internal sealed class GatewayCommand
         await Task.Delay(1000, cancellationToken);
 
         // Start
-        return await StartAsync(repoRoot, home, port, attached: false, verbose, cancellationToken);
+        return await StartAsync(repoRoot, home, port, attached: false, verbose, skipBuild: false, cancellationToken);
     }
 
     private static string FormatUptime(TimeSpan uptime)

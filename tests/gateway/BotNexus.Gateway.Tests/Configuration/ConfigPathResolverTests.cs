@@ -229,6 +229,27 @@ public sealed class ConfigPathResolverTests
     }
 
     [Fact]
+    public async Task ConfigSet_TerminalScalarOnUninitializedNestedObject_CreatesObjectAndAssigns()
+    {
+        await using var fixture = await CliConfigFixture.CreateAsync("""
+            {
+              "gateway": {
+                "listenUrl": "http://localhost:5005"
+              }
+            }
+            """);
+
+        // gateway.rateLimit is null; setting the scalar `enabled` must auto-create the
+        // RateLimitConfig intermediate and assign the bool — not try to instantiate `bool`
+        // (or any leaf type) itself (regression: #598).
+        var setResult = await fixture.RunCliAsync("config", "set", "gateway.rateLimit.enabled", "true");
+        setResult.ExitCode.ShouldBe(0, setResult.CombinedOutput);
+
+        var config = await fixture.LoadConfigAsync();
+        config.Gateway?.RateLimit?.Enabled.ShouldBe(true);
+    }
+
+    [Fact]
     public async Task ConfigGet_WithArrayIndexPath_ReturnsError()
     {
         await using var fixture = await CliConfigFixture.CreateAsync("""

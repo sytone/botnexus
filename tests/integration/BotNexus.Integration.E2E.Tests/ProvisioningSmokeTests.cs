@@ -38,12 +38,13 @@ public sealed class ProvisioningSmokeTests
         foreach (var id in _fx.AgentIds)
             agents.TryGetProperty(id, out _).ShouldBeTrue($"agent '{id}' missing from config.json");
 
-        root.TryGetProperty("locations", out var locations).ShouldBeTrue();
+        root.TryGetProperty("gateway", out var gateway).ShouldBeTrue();
+        gateway.TryGetProperty("world", out var world).ShouldBeTrue();
+        world.GetProperty("id").GetString().ShouldBe("e2e-world");
+
+        gateway.TryGetProperty("locations", out var locations).ShouldBeTrue();
         foreach (var name in _fx.LocationNames)
             locations.TryGetProperty(name, out _).ShouldBeTrue($"location '{name}' missing from config.json");
-
-        root.TryGetProperty("world", out var world).ShouldBeTrue();
-        world.GetProperty("id").GetString().ShouldBe("e2e-world");
     }
 
     [SkippableFact]

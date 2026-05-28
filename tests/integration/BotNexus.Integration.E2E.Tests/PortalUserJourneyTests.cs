@@ -43,16 +43,27 @@ public sealed class PortalUserJourneyTests
         Xunit.Assert.NotNull(response);
         Xunit.Assert.True(response!.Ok, $"GET / returned {response.Status}");
 
-        // The portal renders agent IDs somewhere on the page — sidebar list,
-        // dropdown, or workspace card. Rather than couple to a specific DOM
-        // selector (which churns) assert the text appears anywhere on the page
-        // once the SPA has settled.
-        var body = await page.ContentAsync();
+        // The portal is a Blazor WASM SPA — agents are fetched after hydration.
+        // Use Playwright's text locator with a wait rather than racing a static
+        // ContentAsync() snapshot taken right after NetworkIdle (the agent list
+        // request may resolve after the SPA registers its first idle window).
         foreach (var id in _fx.AgentIds)
         {
-            Xunit.Assert.True(
-                body.Contains(id, StringComparison.OrdinalIgnoreCase),
-                $"Portal HTML did not contain agent id '{id}'.");
+            try
+            {
+                await page.GetByText(id, new PageGetByTextOptions { Exact = false })
+                    .First
+                    .WaitForAsync(new LocatorWaitForOptions
+                    {
+                        State = WaitForSelectorState.Attached,
+                        Timeout = 30_000,
+                    });
+            }
+            catch (TimeoutException)
+            {
+                var snapshot = await page.ContentAsync();
+                Xunit.Assert.Fail($"Portal did not render agent id '{id}' within 30s. HTML head:\n{snapshot[..Math.Min(2000, snapshot.Length)]}");
+            }
         }
     }
 
