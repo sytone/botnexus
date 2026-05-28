@@ -39,12 +39,11 @@ public sealed record InboundMessageContext(
     /// / <see cref="RequestedSessionId"/> properties on the context.
     /// </summary>
     /// <remarks>
-    /// This is the only legitimate site that reads <see cref="InboundMessage.TargetAgentId"/>,
-    /// <see cref="InboundMessage.SessionId"/>, and <see cref="InboundMessage.ConversationId"/>
-    /// — the architecture fence in <c>InboundMessageOverrideFenceTests</c> bans every other
-    /// consumer from re-parsing those raw fields. Null / empty / whitespace inputs are
-    /// gracefully normalised to a <c>null</c> override (the Vogen factories would otherwise
-    /// throw on whitespace and crash the inbound pipeline).
+    /// Delegates the legacy-field lift to <see cref="InboundMessageRoutingHints.FromMessage"/>
+    /// — that helper is the architecture-fence-sanctioned single reader of the legacy
+    /// override fields (see <c>InboundMessageOverrideFenceTests</c>). Null / empty /
+    /// whitespace inputs are gracefully normalised to a <c>null</c> override (the Vogen
+    /// factories would otherwise throw on whitespace and crash the inbound pipeline).
     /// </remarks>
     /// <param name="agentId">Agent selected for the message.</param>
     /// <param name="message">Inbound transport payload.</param>
@@ -57,21 +56,13 @@ public sealed record InboundMessageContext(
             message.ChannelAddress,
             message.SenderId,
             message.BindingId);
+        var hints = InboundMessageRoutingHints.FromMessage(message);
         return new InboundMessageContext(
             agentId,
             message,
             source,
-            RequestedConversationId: TryLiftConversationId(message.ConversationId),
-            RequestedAgentId: TryLiftAgentId(message.TargetAgentId),
-            RequestedSessionId: TryLiftSessionId(message.SessionId));
+            RequestedConversationId: hints.RequestedConversationId,
+            RequestedAgentId: hints.RequestedAgentId,
+            RequestedSessionId: hints.RequestedSessionId);
     }
-
-    private static ConversationId? TryLiftConversationId(string? raw)
-        => string.IsNullOrWhiteSpace(raw) ? null : ConversationId.From(raw);
-
-    private static AgentId? TryLiftAgentId(string? raw)
-        => string.IsNullOrWhiteSpace(raw) ? null : AgentId.From(raw);
-
-    private static SessionId? TryLiftSessionId(string? raw)
-        => string.IsNullOrWhiteSpace(raw) ? null : SessionId.From(raw);
 }

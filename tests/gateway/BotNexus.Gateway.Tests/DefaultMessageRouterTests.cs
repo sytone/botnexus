@@ -69,6 +69,44 @@ public sealed class DefaultMessageRouterTests
         route.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public async Task ResolveAsync_WithEmptyOrWhitespaceTargetAgentId_FallsThroughToDefault_DoesNotThrow(string blank)
+    {
+        // Sub-PR 6.2 normalisation pin: the typed routing-hint lift treats null / empty /
+        // whitespace as "no hint" rather than constructing a Vogen AgentId (which would
+        // throw on whitespace). Pre-PR the router used IsNullOrEmpty + AgentId.From, so a
+        // whitespace-only TargetAgentId would crash the route. Channel adapters historically
+        // pass empty strings on "no override"; this fall-through is the intended shape.
+        var registry = CreateRegistryWithAgents("agent-default");
+        var router = CreateRouter(registry, new InMemorySessionStore(), "agent-default");
+
+        var route = await router.ResolveAsync(CreateMessage(targetAgentId: blank));
+
+        route.ShouldHaveSingleItem().ShouldBe("agent-default");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public async Task ResolveAsync_WithEmptyOrWhitespaceSessionId_FallsThroughToDefault_DoesNotThrow(string blank)
+    {
+        // Sub-PR 6.2 normalisation pin: same shape as the TargetAgentId pin above, applied
+        // to the session-binding priority level. Whitespace-only SessionId must not throw
+        // and must not be looked up as a real session id; it falls through to the default
+        // agent. Defends against a regression that reverts the lift to IsNullOrEmpty +
+        // SessionId.From (which would throw on whitespace).
+        var registry = CreateRegistryWithAgents("agent-default");
+        var router = CreateRouter(registry, new InMemorySessionStore(), "agent-default");
+
+        var route = await router.ResolveAsync(CreateMessage(sessionId: blank));
+
+        route.ShouldHaveSingleItem().ShouldBe("agent-default");
+    }
+
     private static DefaultAgentRegistry CreateRegistryWithAgents(params string[] agentIds)
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);

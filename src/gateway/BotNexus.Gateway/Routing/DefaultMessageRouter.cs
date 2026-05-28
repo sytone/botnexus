@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Dispatching;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -47,23 +48,28 @@ public sealed class DefaultMessageRouter : IMessageRouter
             return targets;
         }
 
+        // Sub-PR 6.2 (#582): consume Vogen-typed routing hints instead of reading the legacy
+        // string fields directly. InboundMessageRoutingHints.FromMessage is the sanctioned
+        // single reader (architecture fence allowlist); whitespace-or-empty inputs normalise
+        // to null hints, replacing the prior IsNullOrEmpty branches in this method.
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+
         // Priority 1: Explicit target
-        if (!string.IsNullOrEmpty(message.TargetAgentId))
+        if (hints.RequestedAgentId is { } targetAgentId)
         {
-            var targetAgentId = AgentId.From(message.TargetAgentId);
             if (_registry.Contains(targetAgentId))
                 return Complete([targetAgentId.Value]);
 
-            _logger.LogWarning("Explicit target agent '{AgentId}' not found", message.TargetAgentId);
+            _logger.LogWarning("Explicit target agent '{AgentId}' not found", targetAgentId.Value);
             return Complete([]);
         }
 
         // Priority 2: Session-bound agent
-        if (!string.IsNullOrEmpty(message.SessionId))
+        if (hints.RequestedSessionId is { } requestedSessionId)
         {
             using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
-            sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
-            var session = await _sessions.GetAsync(SessionId.From(message.SessionId), cancellationToken);
+            sessionActivity?.SetTag("botnexus.session.id", requestedSessionId.Value);
+            var session = await _sessions.GetAsync(requestedSessionId, cancellationToken);
             if (session is not null && _registry.Contains(session.AgentId))
                 return Complete([session.AgentId.Value]);
         }
