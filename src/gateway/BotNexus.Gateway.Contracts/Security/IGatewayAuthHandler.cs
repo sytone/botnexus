@@ -1,12 +1,16 @@
 namespace BotNexus.Gateway.Abstractions.Security;
 
 /// <summary>
-/// Authenticates API and WebSocket requests to the Gateway.
+/// Authenticates HTTP requests reaching the Gateway. The Gateway only hosts a
+/// REST API; channel extensions own their own user-facing transports and may
+/// mount additional endpoints (e.g. a SignalR hub) through the same HTTP host,
+/// in which case those endpoints also pass through this handler.
 /// Implementations validate credentials and return a caller identity.
 /// </summary>
 /// <remarks>
-/// <para>Built into the Gateway API middleware pipeline. Each request passes through
-/// authentication before reaching controllers or WebSocket handlers.</para>
+/// <para>Built into the Gateway API middleware pipeline. Every request passes
+/// through authentication before reaching REST controllers or extension-hosted
+/// endpoints.</para>
 /// <para>Built-in implementations (planned):</para>
 /// <list type="bullet">
 ///   <item><b>ApiKeyAuthHandler</b> — Static API key validation. Suitable for development
@@ -45,7 +49,10 @@ public sealed record GatewayAuthContext
     /// <summary>The request path.</summary>
     public required string Path { get; init; }
 
-    /// <summary>The HTTP method (GET, POST, etc.) or "WS" for WebSocket.</summary>
+    /// <summary>The HTTP method (GET, POST, etc.) or "WS" for an HTTP-upgrade
+    /// request (e.g. a SignalR negotiation transitioning to a WebSocket-backed
+    /// transport — the upgrade still arrives as an HTTP request but is
+    /// classified here for audit-friendly logging).</summary>
     public required string Method { get; init; }
 }
 

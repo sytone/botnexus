@@ -205,7 +205,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     // Use a detached token for agent processing so client disconnect
                     // doesn't kill in-progress agent work. The agent continues in the
-                    // background even if the WebSocket closes.
+                    // background even if the originating channel disconnects.
                     await ProcessInboundMessageAsync(item.Message, CancellationToken.None);
                     item.Completion.TrySetResult();
                 }

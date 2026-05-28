@@ -149,23 +149,14 @@ public sealed class GatewaySession
     }
 
     /// <summary>
-    /// Next WebSocket outbound sequence ID for reconnect replay.
+    /// Dedicated outbound-stream reconnect-replay peer for this session. The 8
+    /// stream-replay members previously hosted on the facade (#575) collapsed
+    /// here so the conversational session surface is no longer mixed with
+    /// outbound-stream replay infrastructure. The gateway is transport-agnostic
+    /// — channels (SignalR, Teams, ...) own how outbound payloads reach a user;
+    /// this peer only records the sequenced stream for replay on reconnect.
     /// </summary>
-    public long NextSequenceId
-    {
-        get => Runtime.NextSequenceId;
-        set => Runtime.NextSequenceId = value;
-    }
-
-    /// <summary>
-    /// Bounded replay log of sequenced outbound WebSocket payloads.
-    /// </summary>
-    public List<GatewaySessionStreamEvent> StreamEventLog => Runtime.StreamEventLog;
-
-    /// <summary>
-    /// Replay buffer for outbound sequenced payloads.
-    /// </summary>
-    public SessionReplayBuffer ReplayBuffer => Runtime.ReplayBuffer;
+    public SessionStreamReplay StreamReplay => Runtime.StreamReplay;
 
     /// <summary>
     /// Removes any crash-sentinel entries from the session history.
@@ -226,34 +217,6 @@ public sealed class GatewaySession
     /// <param name="offset">Zero-based offset into history.</param>
     /// <param name="limit">Maximum number of items to return.</param>
     public IReadOnlyList<SessionEntry> GetHistorySnapshot(int offset, int limit) => Runtime.GetHistorySnapshot(offset, limit);
-
-    /// <summary>
-    /// Atomically allocates and returns the next outbound sequence ID.
-    /// </summary>
-    public long AllocateSequenceId() => Runtime.AllocateSequenceId();
-
-    /// <summary>
-    /// Records a sequenced outbound payload into the bounded replay log.
-    /// </summary>
-    public void AddStreamEvent(long sequenceId, string payloadJson, int replayWindowSize) => Runtime.AddStreamEvent(sequenceId, payloadJson, replayWindowSize);
-
-    /// <summary>
-    /// Returns replay entries after <paramref name="lastSequenceId"/>, bounded by <paramref name="maxReplayCount"/>.
-    /// </summary>
-    public IReadOnlyList<GatewaySessionStreamEvent> GetStreamEventsAfter(long lastSequenceId, int maxReplayCount)
-        => Runtime.GetStreamEventsAfter(lastSequenceId, maxReplayCount);
-
-    /// <summary>
-    /// Returns a safe snapshot of replay entries.
-    /// </summary>
-    public IReadOnlyList<GatewaySessionStreamEvent> GetStreamEventSnapshot()
-        => Runtime.GetStreamEventSnapshot();
-
-    /// <summary>
-    /// Replaces replay state from persisted storage.
-    /// </summary>
-    public void SetStreamReplayState(long nextSequenceId, IEnumerable<GatewaySessionStreamEvent>? streamEvents)
-        => Runtime.SetStreamReplayState(nextSequenceId, streamEvents);
 
     /// <summary>
     /// Wraps an existing domain <see cref="Session"/> record in a new
@@ -338,7 +301,10 @@ public sealed record SessionEntry
 }
 
 /// <summary>
-/// A sequenced outbound WebSocket payload stored for reconnect replay.
+/// A sequenced outbound stream payload stored for reconnect replay. The
+/// payload is transport-agnostic — channel adapters own delivery; this record
+/// just timestamps and sequences the JSON body so a reconnecting channel can
+/// replay any gap from the last acknowledged sequence ID.
 /// </summary>
 /// <param name="SequenceId">Monotonically increasing sequence ID.</param>
 /// <param name="PayloadJson">Serialized outbound payload.</param>

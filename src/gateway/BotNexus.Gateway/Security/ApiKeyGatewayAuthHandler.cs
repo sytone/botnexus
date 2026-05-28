@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace BotNexus.Gateway.Security;
 
 /// <summary>
-/// API key authentication handler for Gateway HTTP and WebSocket requests.
+/// API key authentication handler for Gateway HTTP requests.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -9,7 +9,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>
 /// REST endpoint for non-streaming chat. Routes through the gateway message queue
-/// to ensure proper session serialization. For real-time streaming, use the WebSocket endpoint.
+/// to ensure proper session serialization. For real-time streaming, use a
+/// streaming channel extension (e.g. the SignalR channel) — the gateway itself
+/// only exposes a REST surface; streaming transports live in channel extensions.
 /// </summary>
 /// <summary>
 /// Represents chat controller.

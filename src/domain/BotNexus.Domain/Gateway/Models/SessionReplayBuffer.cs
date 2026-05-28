@@ -1,7 +1,9 @@
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
-/// Thread-safe bounded replay buffer for sequenced WebSocket outbound payloads.
+/// Thread-safe bounded replay buffer for sequenced outbound stream payloads.
+/// The buffer is transport-agnostic — channel adapters (SignalR, Teams, etc.)
+/// own the actual wire delivery and decide whether to replay on reconnect.
 /// </summary>
 public sealed class SessionReplayBuffer
 {
@@ -12,7 +14,7 @@ public sealed class SessionReplayBuffer
     private long _nextSequenceId = 1;
 
     /// <summary>
-    /// Next WebSocket outbound sequence ID for reconnect replay.
+    /// Next outbound stream sequence ID for reconnect replay.
     /// </summary>
     public long NextSequenceId
     {

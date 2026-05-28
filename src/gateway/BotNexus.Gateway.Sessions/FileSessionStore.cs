@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Diagnostics;
 using System.IO.Abstractions;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
@@ -205,7 +206,7 @@ public sealed class FileSessionStore : SessionStoreBase
             foreach (var pair in meta.Metadata)
                 session.Metadata[pair.Key] = pair.Value;
         }
-        session.SetStreamReplayState(meta.NextSequenceId, meta.StreamEvents);
+        session.StreamReplay.SetState(meta.PersistedNextSequenceId, meta.StreamEvents);
 
         var historyPath = GetHistoryPath(sessionId);
         var entries = await SessionJsonl.ReadAllAsync<SessionEntry>(
@@ -248,8 +249,8 @@ public sealed class FileSessionStore : SessionStoreBase
             session.UpdatedAt,
             session.Status,
             session.ExpiresAt,
-            session.NextSequenceId,
-            [.. session.GetStreamEventSnapshot()],
+            session.StreamReplay.NextSequenceId,
+            [.. session.StreamReplay.GetEventSnapshot()],
             session.ConversationId,
             session.Metadata.Count == 0 ? null : new Dictionary<string, object?>(session.Metadata));
         await SessionMetadataSidecar.WriteAsync(
@@ -273,7 +274,10 @@ public sealed class FileSessionStore : SessionStoreBase
         DateTimeOffset UpdatedAt,
         SessionStatus Status = SessionStatus.Active,
         DateTimeOffset? ExpiresAt = null,
-        long NextSequenceId = 1,
+        // Renamed from NextSequenceId to keep the #575 SessionStreamReplay architecture fence
+        // (`SessionStreamReplayArchitectureTests`) maximally tight. The JSON wire shape stays
+        // `nextSequenceId` (CamelCase) so existing on-disk sidecars round-trip unchanged.
+        [property: JsonPropertyName("nextSequenceId")] long PersistedNextSequenceId = 1,
         List<GatewaySessionStreamEvent>? StreamEvents = null,
         ConversationId? ConversationId = null,
         // PR #549: cross-world federation receiver requires Session.Metadata to round-trip on disk

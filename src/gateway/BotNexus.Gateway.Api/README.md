@@ -1,10 +1,10 @@
 # BotNexus.Gateway.Api
 
-> ASP.NET Core API surface — REST controllers and WebSocket middleware for the BotNexus Gateway.
+> ASP.NET Core API surface — REST controllers and middleware for the BotNexus Gateway.
 
 ## Overview
 
-This package provides the public HTTP and WebSocket API for the BotNexus Gateway. All REST endpoints (`/api/*`) and WebSocket connections (`/ws`) are served here. The Blazor WebUI (`BotNexus.WebUI`) is hosted as a separate project. This package contains no orchestration logic — that is in `BotNexus.Gateway` — it only translates between HTTP/WebSocket and the gateway's internal interfaces.
+This package provides the public HTTP API for the BotNexus Gateway. All REST endpoints (`/api/*`) and supporting middleware (auth, rate-limiting, correlation-id) are served here. The Blazor portal (hosted by the `BotNexus.Extensions.Channels.SignalR.BlazorClient` extension) and any other channel that needs to push streaming data to a user mount their own endpoints (e.g. a SignalR hub) via `MapExtensionEndpoints` — this package contains no transport-specific delivery code. It also contains no orchestration logic — that is in `BotNexus.Gateway` — it only translates between HTTP and the gateway's internal interfaces.
 
 ## API Endpoints
 
@@ -58,31 +58,9 @@ All REST endpoints are in the `/api/` path and require authentication (if config
 | `PATCH` | `/api/sessions/{sessionId}/suspend` | Suspend a session |
 | `PATCH` | `/api/sessions/{sessionId}/resume` | Resume a suspended session |
 
-### WebSocket
+### Real-time Streaming
 
-**Endpoint:** `ws://localhost:5005/ws?agent=<agentId>&session=<sessionId>`
-
-The WebSocket connection provides streaming chat access to an agent session. Messages are JSON:
-
-```json
-{
-  "type": "message",
-  "content": "Hello!"
-}
-```
-
-Responses stream as `GatewayStreamEvent` JSON events:
-
-```json
-{
-  "type": "content_delta",
-  "content": "Hello! I'm"
-}
-```
-
-**Activity Stream:** `ws://localhost:5005/ws/activity?agent=<agentId>`
-
-Subscribes to real-time activity events (agent started, tool called, streaming ended, etc.).
+This package does not expose a streaming endpoint. Streaming events (`message_start`, `content_delta`, `thinking_delta`, `tool_start`, `tool_end`, `message_end`, …) are published in-process on `IActivityBroadcaster`; channel extensions subscribe to that broadcaster and re-encode events for whatever transport they own. The bundled Blazor portal is served by the SignalR channel extension at `src/extensions/BotNexus.Extensions.Channels.SignalR/` — that extension mounts a SignalR hub via `MapExtensionEndpoints` for browser delivery.
 
 ### Health & Documentation
 
@@ -161,7 +139,6 @@ Adds an `X-Correlation-Id` header to every request/response for end-to-end traci
 | `GatewayAuthMiddleware` | - | ASP.NET Core middleware for authentication and authorization |
 | `RateLimitingMiddleware` | - | Per-client HTTP request rate limiting (429 + Retry-After) |
 | `CorrelationIdMiddleware` | - | Adds X-Correlation-Id header for end-to-end request tracing |
-| `ActivityWebSocketHandler` | WebSocket | Handles WebSocket connections for activity stream and chat |
 
 ## Development
 

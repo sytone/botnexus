@@ -3,9 +3,12 @@ using BotNexus.Gateway.Abstractions.Models;
 namespace BotNexus.Gateway.Abstractions.Activity;
 
 /// <summary>
-/// Broadcasts real-time activity events to subscribers (WebSocket clients, monitoring tools).
-/// Uses a fan-out pattern: each subscriber gets their own bounded channel with drop-oldest
-/// semantics to prevent slow consumers from blocking the Gateway.
+/// Broadcasts real-time activity events to subscribers. The gateway is
+/// transport-agnostic — subscribers are typically channel adapters that
+/// re-encode and deliver events to user-facing surfaces, or in-process
+/// monitoring tools (dashboards, audit pipelines). Uses a fan-out pattern:
+/// each subscriber gets their own bounded channel with drop-oldest semantics
+/// to prevent slow consumers from blocking the Gateway.
 /// </summary>
 /// <remarks>
 /// <para>
