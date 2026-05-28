@@ -1,26 +1,31 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
-using BotNexus.Gateway.Abstractions.Triggers;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
-/// Fires a synthetic memory-trigger agent turn immediately before session compaction.
-/// Gives the agent an opportunity to write important context to disk before history is
-/// summarised and truncated.
+/// Fires a synthetic memory-flush agent turn immediately before session compaction by
+/// steering the existing live agent handle. Gives the agent an opportunity to write
+/// important context to disk before history is summarised and truncated.
 /// </summary>
+/// <remarks>
+/// The flush is performed via <see cref="IAgentSupervisor"/> steering into the live
+/// handle — no new session or conversation is created. If no live handle exists the
+/// flush is skipped (the agent is not running so there is nothing to save).
+/// </remarks>
 public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
 {
-    private readonly IEnumerable<IInternalTrigger> _triggers;
+    private readonly IAgentSupervisor _supervisor;
     private readonly ILogger<PreCompactionMemoryFlusher> _logger;
 
     public PreCompactionMemoryFlusher(
-        IEnumerable<IInternalTrigger> triggers,
+        IAgentSupervisor supervisor,
         ILogger<PreCompactionMemoryFlusher> logger)
     {
-        _triggers = triggers;
+        _supervisor = supervisor;
         _logger = logger;
     }
 
@@ -45,17 +50,18 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
     /// <inheritdoc/>
     public async Task FlushAsync(AgentId agentId, Session session, CompactionOptions options, CancellationToken ct = default)
     {
-        var trigger = ResolveTrigger();
-        if (trigger is null)
+        // Use the live agent handle — no new session/conversation is created.
+        var handle = _supervisor.GetHandle(agentId, session.SessionId);
+        if (handle is null)
         {
-            _logger.LogWarning(
-                "No suitable internal trigger found for memory flush on session {SessionId}. Skipping flush.",
+            _logger.LogDebug(
+                "Pre-compaction memory flush skipped for session {SessionId}: no live agent handle found.",
                 session.SessionId);
             return;
         }
 
-        var timeoutCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCt.CancelAfter(TimeSpan.FromSeconds(options.MemoryFlush.TimeoutSeconds));
+        var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.MemoryFlush.TimeoutSeconds));
 
         try
         {
@@ -63,14 +69,7 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
                 "Pre-compaction memory flush starting for session {SessionId}, agent {AgentId}.",
                 session.SessionId, agentId);
 
-            await trigger.CreateSessionAsync(
-                agentId,
-                options.MemoryFlush.PromptText,
-                timeoutCt.Token,
-                new InternalTriggerRequest
-                {
-                    ConversationId = session.ConversationId
-                }).ConfigureAwait(false);
+            await handle.SteerAsync(options.MemoryFlush.PromptText, timeoutCts.Token).ConfigureAwait(false);
 
             // Record that a flush has run for this compaction cycle.
             var currentCycle = session.History.Count(e => e.IsCompactionSummary) + 1;
@@ -80,7 +79,7 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
                 "Pre-compaction memory flush completed for session {SessionId}.",
                 session.SessionId);
         }
-        catch (OperationCanceledException) when (timeoutCt.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             _logger.LogWarning(
                 "Pre-compaction memory flush timed out after {Seconds}s for session {SessionId}. Compaction will proceed.",
@@ -94,15 +93,8 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
         }
         finally
         {
-            timeoutCt.Dispose();
+            timeoutCts.Dispose();
         }
-    }
-
-    private IInternalTrigger? ResolveTrigger()
-    {
-        var all = _triggers.ToList();
-        return all.FirstOrDefault(t => t.Type.Equals(TriggerType.Memory))
-            ?? all.FirstOrDefault(t => t.Type.Equals(TriggerType.Cron));
     }
 
     private static int GetLastFlushCycle(Session session)

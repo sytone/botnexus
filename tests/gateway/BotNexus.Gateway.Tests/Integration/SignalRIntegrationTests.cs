@@ -971,6 +971,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public AgentInstance? GetInstance(AgentId requestedAgentId, SessionId requestedSessionId)
             => requestedAgentId == agentId && requestedSessionId == sessionId ? _instance : null;
 
+        public IAgentHandle? GetHandle(AgentId requestedAgentId, SessionId requestedSessionId) => null;
+
         public IReadOnlyList<AgentInstance> GetAllInstances() => [_instance];
 
         public Task StopAllAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

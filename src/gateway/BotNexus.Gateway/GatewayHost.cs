@@ -466,6 +466,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         }
                     }
                     var result = await _compactor.CompactAsync(session, _compactionOptions.CurrentValue, cancellationToken);
+                    var compactionApplied = false;
                     if (result.Succeeded && result.CompactedHistory is not null)
                     {
                         var outcome = session.TryApplyCompactionResult(result);
@@ -473,9 +474,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         {
                             case HistoryReplaceOutcome.Applied:
                                 session.UpdatedAt = DateTimeOffset.UtcNow;
+                                compactionApplied = true;
                                 break;
                             case HistoryReplaceOutcome.Rebased:
                                 session.UpdatedAt = DateTimeOffset.UtcNow;
+                                compactionApplied = true;
                                 _logger.LogInformation(
                                     "Session {SessionId} auto-compaction rebased over concurrent additions; " +
                                     "TokensAfter is approximate.", sessionId);
@@ -491,6 +494,37 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
                         sessionId, result.EntriesSummarized, result.EntriesPreserved);
+
+                    if (compactionApplied)
+                    {
+                        // Evict the cached agent handle so the next GetOrCreateAsync (below) builds
+                        // a fresh context that includes the compaction summary. Without this, a live
+                        // handle would continue with its pre-compaction in-memory message list and
+                        // have no knowledge of the summary that was just written to the session.
+                        await _supervisor.StopAsync(Domain.Primitives.AgentId.From(agentId), Domain.Primitives.SessionId.From(sessionId), cancellationToken).ConfigureAwait(false);
+
+                        // Notify the user in the conversation that compaction occurred. This is a
+                        // system-level status message — not an agent reply — so it is sent directly
+                        // to the channel without going through the LLM.
+                        var compactionNote = $"_[Session context compacted: {result.EntriesSummarized} older messages summarised, {result.EntriesPreserved} recent messages preserved. Continuing…]_";
+                        if (ResolveChannelAdapter(message.ChannelType) is { } notifyChannel)
+                        {
+                            try
+                            {
+                                await notifyChannel.SendAsync(new OutboundMessage
+                                {
+                                    ChannelType = message.ChannelType,
+                                    ChannelAddress = message.ChannelAddress,
+                                    Content = compactionNote,
+                                    SessionId = sessionId
+                                }, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (Exception notifyEx)
+                            {
+                                _logger.LogWarning(notifyEx, "Failed to send compaction notification for session {SessionId}", sessionId);
+                            }
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

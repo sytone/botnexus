@@ -377,6 +377,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
 
         public Task StopAsync(AgentId agentId, SessionId sessionId, CancellationToken ct) => Task.CompletedTask;
         public AgentInstance? GetInstance(AgentId agentId, SessionId sessionId) => null;
+        public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId) => null;
         public IReadOnlyList<AgentInstance> GetAllInstances() => [];
         public Task StopAllAsync(CancellationToken ct) => Task.CompletedTask;
     }
