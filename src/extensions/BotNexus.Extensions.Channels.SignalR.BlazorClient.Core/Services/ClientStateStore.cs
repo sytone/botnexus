@@ -325,18 +325,36 @@ public sealed class ClientStateStore : IClientStateStore
         _sessionToAgent[sessionId] = agentId;
         if (!_agents.TryGetValue(agentId, out var agent))
             return;
-        agent.SessionId = sessionId;
-        if (channelType is not null)
-            agent.ChannelType = channelType;
-        if (sessionType is not null)
-            agent.SessionType = sessionType;
-        // Immediately bind session to active conversation so TryResolveConversationBySession works
-        // without waiting for the async REST refresh. This eliminates the race condition (#314)
-        // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
-        if (agent.ActiveConversationId is not null &&
-            agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv))
+
+        // Cron sessions must not overwrite the active user-facing session or the active
+        // conversation's ActiveSessionId. Doing so caused new user conversations to receive
+        // a cron: session ID prefix, because RefreshConversationsForAgentAsync iterates all
+        // sessions (including cron) and the last one processed would stamp agent.SessionId.
+        var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(sessionId) && sessionId.StartsWith("cron:", StringComparison.Ordinal));
+        if (!isCron)
         {
-            activeConv.ActiveSessionId = sessionId;
+            agent.SessionId = sessionId;
+            if (channelType is not null)
+                agent.ChannelType = channelType;
+            if (sessionType is not null)
+                agent.SessionType = sessionType;
+            // Immediately bind session to active conversation so TryResolveConversationBySession works
+            // without waiting for the async REST refresh. This eliminates the race condition (#314)
+            // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
+            if (agent.ActiveConversationId is not null &&
+                agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
+                !activeConv.IsVirtualSession)
+            {
+                activeConv.ActiveSessionId = sessionId;
+            }
+        }
+        else
+        {
+            // For cron sessions, only update the virtual conversation projection if it exists.
+            // Never touch agent.SessionId or a real user conversation.
+            if (channelType is not null)
+                agent.ChannelType ??= channelType;
         }
     }
 
