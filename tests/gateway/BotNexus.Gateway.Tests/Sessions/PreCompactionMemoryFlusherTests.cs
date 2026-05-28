@@ -1,7 +1,7 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
-using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -11,6 +11,7 @@ namespace BotNexus.Gateway.Tests.Sessions;
 public sealed class PreCompactionMemoryFlusherTests
 {
     private static readonly AgentId TestAgent = AgentId.From("agent-a");
+    private static readonly SessionId TestSessionId = SessionId.From("session-1");
 
     // ─── ShouldFlush ───────────────────────────────────────────────────────────
 
@@ -79,42 +80,56 @@ public sealed class PreCompactionMemoryFlusherTests
     // ─── FlushAsync ────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task FlushAsync_WhenTriggerAvailable_CallsCreateSessionAsync()
+    public async Task FlushAsync_WhenLiveHandleAvailable_CallsSteerAsync()
     {
         var session = BuildInteractiveSession();
-        var triggerMock = new Mock<IInternalTrigger>();
-        triggerMock.SetupGet(t => t.Type).Returns(TriggerType.Memory);
-        triggerMock.Setup(t => t.CreateSessionAsync(
-                It.IsAny<AgentId>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<InternalTriggerRequest?>()))
-            .ReturnsAsync(SessionId.From("flush-session"));
+        var handleMock = new Mock<IAgentHandle>();
+        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        var flusher = CreateFlusher(triggerMock.Object);
+        var supervisorMock = new Mock<IAgentSupervisor>();
+        supervisorMock.Setup(s => s.GetHandle(TestAgent, TestSessionId))
+            .Returns(handleMock.Object);
+
+        var flusher = new PreCompactionMemoryFlusher(supervisorMock.Object, NullLogger<PreCompactionMemoryFlusher>.Instance);
         var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
 
         await flusher.FlushAsync(TestAgent, session, options);
 
-        triggerMock.Verify(t => t.CreateSessionAsync(
-            TestAgent,
-            It.Is<string>(s => s.Contains("compaction")),
-            It.IsAny<CancellationToken>(),
-            It.IsAny<InternalTriggerRequest?>()), Times.Once);
+        handleMock.Verify(h => h.SteerAsync(
+            It.Is<string>(s => s.Length > 0),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task FlushAsync_WhenTriggerThrows_DoesNotRethrow()
+    public async Task FlushAsync_WhenNoLiveHandle_DoesNotThrow()
     {
         var session = BuildInteractiveSession();
-        var triggerMock = new Mock<IInternalTrigger>();
-        triggerMock.SetupGet(t => t.Type).Returns(TriggerType.Memory);
-        triggerMock.Setup(t => t.CreateSessionAsync(
-                It.IsAny<AgentId>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
-            .ThrowsAsync(new InvalidOperationException("agent not found"));
+        var supervisorMock = new Mock<IAgentSupervisor>();
+        supervisorMock.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns((IAgentHandle?)null);
 
-        var flusher = CreateFlusher(triggerMock.Object);
+        var flusher = new PreCompactionMemoryFlusher(supervisorMock.Object, NullLogger<PreCompactionMemoryFlusher>.Instance);
+        var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
+
+        // No live handle — should skip silently without throwing
+        var act = async () => await flusher.FlushAsync(TestAgent, session, options);
+        await act.ShouldNotThrowAsync();
+    }
+
+    [Fact]
+    public async Task FlushAsync_WhenSteerThrows_DoesNotRethrow()
+    {
+        var session = BuildInteractiveSession();
+        var handleMock = new Mock<IAgentHandle>();
+        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("agent failed"));
+
+        var supervisorMock = new Mock<IAgentSupervisor>();
+        supervisorMock.Setup(s => s.GetHandle(TestAgent, TestSessionId))
+            .Returns(handleMock.Object);
+
+        var flusher = new PreCompactionMemoryFlusher(supervisorMock.Object, NullLogger<PreCompactionMemoryFlusher>.Instance);
         var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
 
         // Non-fatal: should not throw
@@ -123,28 +138,18 @@ public sealed class PreCompactionMemoryFlusherTests
     }
 
     [Fact]
-    public async Task FlushAsync_WhenNoTriggerAvailable_DoesNotThrow()
-    {
-        var session = BuildInteractiveSession();
-        var flusher = CreateFlusher(); // no triggers
-        var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
-
-        var act = async () => await flusher.FlushAsync(TestAgent, session, options);
-        await act.ShouldNotThrowAsync();
-    }
-
-    [Fact]
     public async Task FlushAsync_WhenSucceeds_RecordsFlushCycleInMetadata()
     {
         var session = BuildInteractiveSession();
-        var triggerMock = new Mock<IInternalTrigger>();
-        triggerMock.SetupGet(t => t.Type).Returns(TriggerType.Memory);
-        triggerMock.Setup(t => t.CreateSessionAsync(
-                It.IsAny<AgentId>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
-            .ReturnsAsync(SessionId.From("flush-session"));
+        var handleMock = new Mock<IAgentHandle>();
+        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        var flusher = CreateFlusher(triggerMock.Object);
+        var supervisorMock = new Mock<IAgentSupervisor>();
+        supervisorMock.Setup(s => s.GetHandle(TestAgent, TestSessionId))
+            .Returns(handleMock.Object);
+
+        var flusher = new PreCompactionMemoryFlusher(supervisorMock.Object, NullLogger<PreCompactionMemoryFlusher>.Instance);
         var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
 
         await flusher.FlushAsync(TestAgent, session, options);
@@ -155,15 +160,20 @@ public sealed class PreCompactionMemoryFlusherTests
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
 
-    private static PreCompactionMemoryFlusher CreateFlusher(params IInternalTrigger[] triggers)
-        => new(triggers, NullLogger<PreCompactionMemoryFlusher>.Instance);
+    private static PreCompactionMemoryFlusher CreateFlusher()
+    {
+        var supervisorMock = new Mock<IAgentSupervisor>();
+        supervisorMock.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns((IAgentHandle?)null);
+        return new PreCompactionMemoryFlusher(supervisorMock.Object, NullLogger<PreCompactionMemoryFlusher>.Instance);
+    }
 
     private static Session BuildInteractiveSession()
         => BuildSession(SessionType.UserAgent);
 
     private static Session BuildSession(SessionType type) => new()
     {
-        SessionId = SessionId.From(Guid.NewGuid().ToString("N")),
+        SessionId = TestSessionId,
         AgentId = TestAgent,
         SessionType = type
     };
