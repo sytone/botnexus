@@ -210,8 +210,10 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var quillResult = await connection.InvokeAsync<JsonElement>("SendMessage", "quill", "signalr", "hello quill", (string?)null, cts.Token);
 
         dispatcher.Messages.Count.ShouldBe(2);
-        dispatcher.Messages[0].TargetAgentId.ShouldBe("nova");
-        dispatcher.Messages[1].TargetAgentId.ShouldBe("quill");
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("nova");
+        dispatcher.Messages[1].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[1].RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("quill");
 
         var sessionStore = factory.Services.GetRequiredService<ISessionStore>();
         var novaSession = await sessionStore.GetAsync(SessionId.From(novaResult.GetProperty("sessionId").GetString()!), cts.Token);
@@ -358,7 +360,8 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
             "Steer", TestAgentId, "steer-session-2", "be more thorough", "explicit-target-conv", cts.Token);
 
         var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
-        dispatched.ConversationId.ShouldBe(
+        dispatched.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(
             "explicit-target-conv",
             "Steer with explicit conversationId must carry it through; #192");
     }

@@ -763,8 +763,10 @@ public sealed class GatewayHostTests
             SenderId = "subagent:test",
             Sender = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("subagent:test")),
             ChannelAddress = ChannelAddress.From("parent-session"),
-            SessionId = "parent-session",
-            TargetAgentId = "agent-a",
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                RequestedSessionId: BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+                RequestedConversationId: null),
             Content = "subagent completion wake-up",
             Metadata = new Dictionary<string, object?> { ["messageType"] = "subagent-completion" }
         });
@@ -824,7 +826,10 @@ public sealed class GatewayHostTests
             SenderId = "subagent:test",
             Sender = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("subagent:test")),
             ChannelAddress = ChannelAddress.From("parent-session"),
-            TargetAgentId = "agent-a",
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                RequestedSessionId: null,
+                RequestedConversationId: null),
             Content = "subagent completion wake-up",
             Metadata = new Dictionary<string, object?> { ["messageType"] = "subagent-completion" }
         });
@@ -1596,7 +1601,7 @@ public sealed class GatewayHostTests
             Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
-            SessionId = sessionId,
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(null, sessionId, null),
             Metadata = metadata ?? new Dictionary<string, object?>()
         };
 

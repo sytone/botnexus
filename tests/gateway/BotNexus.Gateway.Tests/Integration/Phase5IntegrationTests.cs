@@ -188,7 +188,10 @@ public sealed class Phase5IntegrationTests
             SenderId = "phase5-tester",
             Sender = CitizenId.Of(UserId.From("phase5-tester")),
             ChannelAddress = ChannelAddress.From("phase5-live-conv"),
-            SessionId = "phase5-live",
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: null,
+                RequestedSessionId: SessionId.From("phase5-live"),
+                RequestedConversationId: null),
             Content = "Reply with a short greeting."
         });
 

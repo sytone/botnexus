@@ -162,9 +162,10 @@ public sealed class ConversationTool(
                 Sender = CitizenId.Of(agentId),
                 ChannelAddress = ChannelAddress.From(conversation.AgentId.Value),
                 Content = message.Trim(),
-                TargetAgentId = conversation.AgentId.Value,
-                SessionId = session.SessionId.Value,
-                ConversationId = conversation.ConversationId.Value,
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: conversation.AgentId,
+                    RequestedSessionId: session.SessionId,
+                    RequestedConversationId: conversation.ConversationId),
                 Metadata = new Dictionary<string, object?>
                 {
                     ["messageType"] = "message",
@@ -285,9 +286,10 @@ public sealed class ConversationTool(
                         Sender = CitizenId.Of(agentId),
                         ChannelAddress = ChannelAddress.From(targetAgentId.Value),
                         Content = message.Trim(),
-                        TargetAgentId = targetAgentId.Value,
-                        SessionId = session.SessionId.Value,
-                        ConversationId = created.ConversationId.Value,
+                        RoutingHints = new InboundMessageRoutingHints(
+                            RequestedAgentId: targetAgentId,
+                            RequestedSessionId: session.SessionId,
+                            RequestedConversationId: created.ConversationId),
                         Metadata = new Dictionary<string, object?>
                         {
                             ["messageType"] = "message",

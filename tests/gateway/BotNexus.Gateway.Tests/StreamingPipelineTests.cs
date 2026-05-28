@@ -187,7 +187,7 @@ public sealed class StreamingPipelineTests
             Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From("conv-1"),
             Content = content,
-            SessionId = "session-1"
+            RoutingHints = new InboundMessageRoutingHints(null, SessionId.From("session-1"), null)
         };
 
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)

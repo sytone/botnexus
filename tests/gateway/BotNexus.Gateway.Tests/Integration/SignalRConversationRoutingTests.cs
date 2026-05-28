@@ -73,8 +73,10 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         // The hub returns the default portal session; the ConversationId on the dispatched message
         // is what routes correctly — verify the dispatcher received it.
         dispatcher.Messages.ShouldHaveSingleItem();
-        dispatcher.Messages[0].ConversationId.ShouldBe(conversationId,
-            "InboundMessage.ConversationId must carry the target conversationId for direct routing");
+        var dispatched = dispatcher.Messages[0];
+        dispatched.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(conversationId,
+            "InboundMessage.RoutingHints.RequestedConversationId must carry the target conversationId for direct routing");
     }
 
     // ── Two messages to same conversation: both sessions link to same conversationId ──
@@ -109,7 +111,7 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         // With conversation-first routing, both dispatched InboundMessages carry the same ConversationId.
         // No duplicate thread bindings, no double fan-out.
         dispatcher.Messages.Count.ShouldBe(2);
-        dispatcher.Messages.ShouldAllBe(m => m.ConversationId == conversationId,
+        dispatcher.Messages.ShouldAllBe(m => m.RoutingHints != null && m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId,
             "both messages to same conversation should carry the correct ConversationId for routing");
     }
 
@@ -181,7 +183,7 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
 
         // The dispatched messages should both carry the target conversationId
         dispatcher.Messages.Count.ShouldBe(2);
-        dispatcher.Messages.ShouldAllBe(m => m.ConversationId == conversationId,
+        dispatcher.Messages.ShouldAllBe(m => m.RoutingHints != null && m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId,
             "after reset, sending to same conversationId should still dispatch with the correct ConversationId");
     }
 

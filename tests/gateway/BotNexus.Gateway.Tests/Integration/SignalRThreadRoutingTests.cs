@@ -85,10 +85,12 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         msg1.ShouldNotBeNull();
         msg2.ShouldNotBeNull();
 
-        msg1!.ConversationId.ShouldBe(conv1Id,
-            "InboundMessage.ConversationId for conv1 message should be the conversationId");
-        msg2!.ConversationId.ShouldBe(conv2Id,
-            "InboundMessage.ConversationId for conv2 message should be the conversationId");
+        msg1!.RoutingHints.ShouldNotBeNull();
+        msg1.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(conv1Id,
+            "InboundMessage.RoutingHints.RequestedConversationId for conv1 message should be the conversationId");
+        msg2!.RoutingHints.ShouldNotBeNull();
+        msg2.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(conv2Id,
+            "InboundMessage.RoutingHints.RequestedConversationId for conv2 message should be the conversationId");
     }
 
     /// <summary>
@@ -112,8 +114,9 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "default hello", (string?)null, cts.Token);
 
         var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
-        dispatched.ConversationId.ShouldBeNull(
-            "SendMessage without conversationId must dispatch with ConversationId=null to use binding lookup");
+        // SendMessage without conversationId: hints may be null (no overrides) or present with null ConversationId.
+        (dispatched.RoutingHints?.RequestedConversationId).ShouldBeNull(
+            "SendMessage without conversationId must dispatch with RoutingHints.RequestedConversationId=null to use binding lookup");
         dispatched.ChannelAddress.ShouldBe(ChannelAddress.From(TestAgentId));
     }
 
@@ -168,7 +171,8 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         // And the dispatched message for the new conversation should carry the conversationId
         var newMsg = dispatcher.Messages.LastOrDefault();
         newMsg.ShouldNotBeNull();
-        newMsg!.ConversationId.ShouldBe(newConvId,
+        newMsg!.RoutingHints.ShouldNotBeNull();
+        newMsg.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(newConvId,
             "the new conversation's message should be dispatched with ConversationId set for direct routing");
     }
 

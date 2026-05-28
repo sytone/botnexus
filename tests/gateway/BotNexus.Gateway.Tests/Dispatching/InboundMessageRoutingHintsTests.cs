@@ -148,8 +148,6 @@ public sealed class InboundMessageRoutingHintsTests
             SenderId = "sender-1",
             Sender = CitizenId.Of(UserId.From("sender-1")),
             Content = "hello",
-            TargetAgentId = targetAgentId,
-            SessionId = sessionId,
-            ConversationId = conversationId
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(targetAgentId, sessionId, conversationId)
         };
 }

@@ -196,7 +196,10 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                     SenderId = Environment.UserName,
                     Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                     ChannelAddress = ChannelAddress.From("console"),
-                    SessionId = "tui-console",
+                    RoutingHints = new InboundMessageRoutingHints(
+                        RequestedAgentId: null,
+                        RequestedSessionId: SessionId.From("tui-console"),
+                        RequestedConversationId: null),
                     Content = steerContent,
                     Metadata = new Dictionary<string, object?>
                     {
@@ -212,7 +215,10 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                 SenderId = Environment.UserName,
                 Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                 ChannelAddress = ChannelAddress.From("console"),
-                SessionId = "tui-console",
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: null,
+                    RequestedSessionId: SessionId.From("tui-console"),
+                    RequestedConversationId: null),
                 Content = line
             }, cancellationToken);
         }

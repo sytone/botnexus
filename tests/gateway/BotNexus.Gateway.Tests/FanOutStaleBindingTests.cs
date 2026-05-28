@@ -46,7 +46,7 @@ public sealed class FanOutStaleBindingTests
             Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
-            SessionId = sessionId,
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(null, sessionId, null),
             Metadata = new Dictionary<string, object?>()
         };
 

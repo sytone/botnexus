@@ -301,8 +301,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     SenderId = connectionId,
                     Sender = CitizenId.Of(UserId.From(connectionId)),
                     ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
-                    SessionId = session.SessionId.Value,
-                    TargetAgentId = typedAgentId.Value,
+                    RoutingHints = new InboundMessageRoutingHints(
+                        RequestedAgentId: typedAgentId,
+                        RequestedSessionId: session.SessionId,
+                        RequestedConversationId: null),
                     Content = content,
                     ContentParts = parts,
                     Metadata = new Dictionary<string, object?> { ["messageType"] = "message-with-media" }
@@ -326,9 +328,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 SenderId = senderId,
                 Sender = CitizenId.Of(UserId.From(senderId)),
                 ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
-                ConversationId = conversationId, // router uses this to find the right conversation directly
-                SessionId = typedSessionId.Value,
-                TargetAgentId = typedAgentId.Value,
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: typedAgentId,
+                    RequestedSessionId: typedSessionId,
+                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
                 Content = content,
                 Metadata = new Dictionary<string, object?> { ["messageType"] = messageType }
             },
@@ -416,10 +419,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     SenderId = connectionId,
                     Sender = CitizenId.Of(UserId.From(connectionId)),
                     ChannelAddress = ChannelAddress.From(typedAgentId.Value),
-                    SessionId = typedSessionId.Value,
-                    TargetAgentId = typedAgentId.Value,
+                    RoutingHints = new InboundMessageRoutingHints(
+                        RequestedAgentId: typedAgentId,
+                        RequestedSessionId: typedSessionId,
+                        RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
                     Content = content,
-                    ConversationId = normalizedConversationId,
                     Metadata = new Dictionary<string, object?>
                     {
                         ["messageType"] = "steer",
@@ -709,9 +713,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 ChannelAddress = channelAddress,
                 SenderId = Context.ConnectionId,
                 Sender = CitizenId.Of(UserId.From(Context.ConnectionId)),
-                TargetAgentId = agentId.Value,
                 Content = string.Empty,
-                ConversationId = conversationId
+                // RoutingHints intentionally omitted — the outer InboundMessageContext below
+                // carries the typed RequestedAgentId + RequestedConversationId explicitly;
+                // the positional-record constructor does not re-derive hints from the message
+                // (only FromInboundMessage does that). Sub-PR 6.3 (#586) deleted the legacy
+                // string override fields, so the inner message carries no routing payload.
             },
             new ChannelSource(
                 channelType,

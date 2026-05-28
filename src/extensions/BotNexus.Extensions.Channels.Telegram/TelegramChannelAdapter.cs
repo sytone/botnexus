@@ -381,7 +381,10 @@ public sealed class TelegramChannelAdapter(
             ChannelAddress = TelegramChannelAddress.Encode(chatId, message.MessageThreadId),
             Content = textContent,
             ContentParts = contentParts,
-            TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(
+                targetAgentId: runtime.Config.AgentId,
+                sessionId: null,
+                conversationId: null),
             Metadata = new Dictionary<string, object?>
             {
                 ["telegramBotName"] = runtime.BotName,
