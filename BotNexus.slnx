@@ -85,6 +85,7 @@
   </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />
+    <Project Path="tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />

@@ -1,0 +1,31 @@
+{
+  "scripts": {
+    "HELLO_WORLD": [
+      { "type": "text_delta", "delta": "Hello", "delayMs": 20 },
+      { "type": "text_delta", "delta": ", ",    "delayMs": 20 },
+      { "type": "text_delta", "delta": "world", "delayMs": 20 },
+      { "type": "text_delta", "delta": "!",     "delayMs": 20 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
+    "MULTI_DELTA": [
+      { "type": "text_delta", "delta": "Thinking", "delayMs": 80 },
+      { "type": "text_delta", "delta": " about",   "delayMs": 80 },
+      { "type": "text_delta", "delta": " the",     "delayMs": 80 },
+      { "type": "text_delta", "delta": " problem", "delayMs": 80 },
+      { "type": "text_delta", "delta": " carefully",     "delayMs": 120 },
+      { "type": "text_delta", "delta": ". Here is",      "delayMs": 80 },
+      { "type": "text_delta", "delta": " a long-form",   "delayMs": 80 },
+      { "type": "text_delta", "delta": " response that", "delayMs": 80 },
+      { "type": "text_delta", "delta": " streams in",    "delayMs": 80 },
+      { "type": "text_delta", "delta": " many small",    "delayMs": 80 },
+      { "type": "text_delta", "delta": " deltas so the", "delayMs": 80 },
+      { "type": "text_delta", "delta": " portal must",   "delayMs": 80 },
+      { "type": "text_delta", "delta": " correctly assemble", "delayMs": 80 },
+      { "type": "text_delta", "delta": " each chunk.",        "delayMs": 80 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ]
+  }
+}
