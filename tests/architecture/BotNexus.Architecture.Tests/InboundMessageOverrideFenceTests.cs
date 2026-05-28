@@ -16,7 +16,7 @@ namespace BotNexus.Architecture.Tests;
 /// The legacy fields remain on <see langword="InboundMessage"/> for one umbrella-issue (#579)
 /// cycle so adapter writers (Telegram, SignalR, ServiceBus, internal channel adapter) can
 /// continue populating them while the migration is in flight. Sub-PR 6.2 (issue
-/// <c>#581</c>) migrates the deferred reader sites listed in the allowlist; sub-PR 6.3 deletes
+/// <c>#582</c>) migrates the deferred reader sites listed in the allowlist; sub-PR 6.3 deletes
 /// the legacy fields entirely and this fence becomes trivially vacuous.
 /// </para>
 /// <para>
@@ -43,20 +43,20 @@ public sealed class InboundMessageOverrideFenceTests
         // RequestedSessionId / RequestedConversationId on InboundMessageContext.
         ["src/gateway/BotNexus.Gateway.Dispatching/InboundMessageContext.cs"] = "Lift-shim — the sanctioned single reader that projects legacy override fields into the typed context.",
 
-        // DEFERRED to sub-PR 6.2 (#581): pre-routing reader. DefaultMessageRouter.ResolveAsync
+        // DEFERRED to sub-PR 6.2 (#582): pre-routing reader. DefaultMessageRouter.ResolveAsync
         // receives a raw InboundMessage BEFORE the agent has been resolved, so it cannot yet
         // construct an InboundMessageContext (which requires AgentId). Migrating this requires
         // either changing IMessageRouter's shape or constructing the context partially earlier
         // in the pipeline — both larger than 6.1.
-        ["src/gateway/BotNexus.Gateway/Routing/DefaultMessageRouter.cs"] = "DEFERRED to #581 (sub-PR 6.2): pre-routing reader; runs before AgentId is known.",
+        ["src/gateway/BotNexus.Gateway/Routing/DefaultMessageRouter.cs"] = "DEFERRED to #582 (sub-PR 6.2): pre-routing reader; runs before AgentId is known.",
 
-        // DEFERRED to sub-PR 6.2 (#581): GatewayHost has ~12 sites of message.SessionId
+        // DEFERRED to sub-PR 6.2 (#582): GatewayHost has ~12 sites of message.SessionId
         // / message.ConversationId reads scattered across ProcessInboundMessageAsync,
         // GetQueueKey, SendBusyAsync, and CleanupQueueIfClosedSessionAsync. Most call sites
         // don't have an InboundMessageContext in scope; migration requires either threading
         // context through 4+ private methods or constructing context once early. Either is a
         // separate change.
-        ["src/gateway/BotNexus.Gateway/GatewayHost.cs"] = "DEFERRED to #581 (sub-PR 6.2): scattered legacy reads in queue/cleanup pipeline; needs broader refactor.",
+        ["src/gateway/BotNexus.Gateway/GatewayHost.cs"] = "DEFERRED to #582 (sub-PR 6.2): scattered legacy reads in queue/cleanup pipeline; needs broader refactor.",
 
         // OUT OF SCOPE for Phase 6 / F-10 entirely: these three adapters read message.SessionId
         // on OutboundMessage (NOT InboundMessage). The legacy override fields targeted by #580
