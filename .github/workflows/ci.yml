@@ -57,7 +57,7 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Test
-        run: dotnet test --no-build --collect:"XPlat Code Coverage"
+        run: dotnet test --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration."
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

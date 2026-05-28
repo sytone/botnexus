@@ -112,7 +112,7 @@
                                         .OrderByDescending(c => c.IsDefault)
                                         .ThenByDescending(c => c.UpdatedAt))
                                     {
-                                        <div class="conversation-list-item">
+                                        <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
                                             <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
                                                     @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
                                                 <span class="conversation-list-item-main">
