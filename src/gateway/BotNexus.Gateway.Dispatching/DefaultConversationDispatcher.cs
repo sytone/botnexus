@@ -36,7 +36,7 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             context.AgentId,
             context.Source.ChannelType,
             context.Source.ChannelAddress,
-            context.RequestedConversationId,
+            context.RequestedConversationId?.Value,
             cancellationToken,
             initiator: context.Message.Sender);
 
@@ -63,9 +63,9 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
         InboundMessageContext context,
         CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(context.RequestedConversationId))
+        if (context.RequestedConversationId is { } requested)
         {
-            return await _conversationStore.GetAsync(ConversationId.From(context.RequestedConversationId), cancellationToken);
+            return await _conversationStore.GetAsync(requested, cancellationToken);
         }
 
         return await _conversationStore.ResolveByBindingAsync(

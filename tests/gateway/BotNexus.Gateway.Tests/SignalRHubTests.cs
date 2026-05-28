@@ -169,7 +169,7 @@ public sealed class SignalRHubTests
 
         var conversationDispatcher = new Mock<IConversationDispatcher>();
         conversationDispatcher.Setup(value => value.DispatchAsync(
-                It.Is<InboundMessageContext>(context => context.RequestedConversationId == targetConversationId),
+                It.Is<InboundMessageContext>(context => context.RequestedConversationId == BotNexus.Domain.Primitives.ConversationId.From(targetConversationId)),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
                 context,

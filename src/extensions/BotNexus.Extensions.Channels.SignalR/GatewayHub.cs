@@ -698,6 +698,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Use agentId as the channel address so every connection from the same agent
         // routes to the same portal conversation, regardless of SignalR connection ID.
         var channelAddress = ChannelAddress.From(agentId.Value);
+        var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
+            ? (ConversationId?)null
+            : ConversationId.From(conversationId);
         var context = new InboundMessageContext(
             agentId,
             new InboundMessage
@@ -714,7 +717,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 channelType,
                 channelAddress,
                 Context.ConnectionId),
-            conversationId);
+            RequestedConversationId: typedConversationId,
+            RequestedAgentId: agentId);
         var dispatchResult = await _conversationDispatcher.DispatchAsync(context, Context.ConnectionAborted);
 
         var session = await _sessions.GetOrCreateAsync(dispatchResult.Resolution.SessionId, agentId, Context.ConnectionAborted);
