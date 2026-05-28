@@ -93,9 +93,71 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
             0,
             $"botnexus init failed.\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
 
+        // ── Directory layout ──────────────────────────────────────────────
+        // With an explicit --target (non-default home), the CLI seeds only the
+        // config file. The richer layout (auth.json, agents/, sessions/, logs/)
+        // is reserved for BotNexusHome.Initialize() on the default home path,
+        // so we assert that nothing extra leaks into the sandbox.
         Directory.Exists(configHome).ShouldBeTrue(
             $"Expected init to create config home at {configHome}.");
-        File.Exists(Path.Combine(configHome, "config.json")).ShouldBeTrue(
-            "Expected init to create config.json in the target home.");
+
+        var configPath = Path.Combine(configHome, "config.json");
+        File.Exists(configPath).ShouldBeTrue(
+            $"Expected init to create config.json at {configPath}.");
+
+        var actualEntries = Directory.GetFileSystemEntries(configHome)
+            .Select(p => Path.GetFileName(p)!)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        actualEntries.ShouldBe(
+            new[] { "config.json" },
+            $"Unexpected entries in {configHome}. Got: {string.Join(", ", actualEntries)}");
+
+        // ── config.json content ───────────────────────────────────────────
+        await using var stream = File.OpenRead(configPath);
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+        var root = doc.RootElement;
+
+        root.ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Object);
+
+        // version
+        root.TryGetProperty("version", out var version).ShouldBeTrue("config.json missing 'version'.");
+        version.GetInt32().ShouldBe(1);
+
+        // gateway block
+        root.TryGetProperty("gateway", out var gateway).ShouldBeTrue("config.json missing 'gateway'.");
+        gateway.GetProperty("listenUrl").GetString().ShouldBe("http://0.0.0.0:5005");
+        gateway.GetProperty("defaultAgentId").GetString().ShouldBe("assistant");
+        gateway.GetProperty("enableProviderRequestLogging").GetBoolean().ShouldBeFalse();
+
+        var sessionStore = gateway.GetProperty("sessionStore");
+        sessionStore.GetProperty("type").GetString().ShouldBe("Sqlite");
+        var connectionString = sessionStore.GetProperty("connectionString").GetString();
+        connectionString.ShouldNotBeNullOrWhiteSpace();
+        connectionString!.ShouldStartWith("Data Source=");
+        // Connection string must point inside the sandboxed home (not the user's real ~/.botnexus).
+        connectionString.ShouldContain("sessions.sqlite");
+        var expectedSqlitePath = Path.Combine(configHome, "sessions.sqlite");
+        connectionString.ShouldContain(
+            expectedSqlitePath,
+            customMessage: $"sessionStore.connectionString must point at the sandboxed home. Got: {connectionString}");
+
+        // cron block
+        root.TryGetProperty("cron", out var cron).ShouldBeTrue("config.json missing 'cron'.");
+        cron.GetProperty("enabled").GetBoolean().ShouldBeTrue();
+        cron.GetProperty("tickIntervalSeconds").GetInt32().ShouldBe(60);
+
+        // agents block + defaults + seeded assistant
+        root.TryGetProperty("agents", out var agents).ShouldBeTrue("config.json missing 'agents'.");
+
+        agents.TryGetProperty("defaults", out var defaults).ShouldBeTrue("agents.defaults missing.");
+        var memory = defaults.GetProperty("memory");
+        memory.GetProperty("enabled").GetBoolean().ShouldBeTrue();
+        memory.GetProperty("indexing").GetString().ShouldBe("auto");
+
+        agents.TryGetProperty("assistant", out var assistant).ShouldBeTrue("agents.assistant missing.");
+        assistant.GetProperty("provider").GetString().ShouldBe("github-copilot");
+        assistant.GetProperty("model").GetString().ShouldBe("gpt-4.1");
+        assistant.GetProperty("enabled").GetBoolean().ShouldBeTrue();
     }
 }
