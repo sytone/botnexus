@@ -744,6 +744,8 @@ botnexus provider setup [OPTIONS]
 
 | Option | Description |
 |---|---|
+| `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus`. |
+| `--provider <NAME>` | Pre-select the provider (`github-copilot`, `openai`, or `anthropic`) and skip the interactive provider-selection prompt. Useful for scripting and integration tests where the rest of the flow (API-key prompt, OAuth device-code flow) is still exercised but the first prompt is suppressed. |
 | `--verbose` | Show the saved provider configuration in JSON. |
 
 ### Examples
