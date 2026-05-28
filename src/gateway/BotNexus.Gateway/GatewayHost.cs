@@ -232,20 +232,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
     private async Task ProcessInboundMessageAsync(InboundMessage message, CancellationToken cancellationToken)
     {
+        // Sub-PR 6.2 (#582): lift the legacy string-typed routing overrides into Vogen-typed
+        // hints once at entry; every downstream telemetry tag / activity payload / fall-back
+        // reads from the typed hints. This matches the pattern established for the conversation
+        // dispatcher in 6.1 and is the structural prerequisite for sub-PR 6.3 deleting the
+        // legacy fields from InboundMessage.
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+        var requestedSessionIdValue = hints.RequestedSessionId?.Value;
+
         using var activity = GatewayDiagnostics.Source.StartActivity("gateway.dispatch", ActivityKind.Server);
         activity?.SetTag("botnexus.channel.type", message.ChannelType);
-        activity?.SetTag("botnexus.session.id", message.SessionId);
+        activity?.SetTag("botnexus.session.id", requestedSessionIdValue);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
         GatewayTelemetry.MessagesProcessed.Add(1,
             new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
-            new KeyValuePair<string, object?>("botnexus.session.id", message.SessionId));
+            new KeyValuePair<string, object?>("botnexus.session.id", requestedSessionIdValue));
 
         await _activity.PublishAsync(new GatewayActivity
         {
             Type = GatewayActivityType.MessageReceived,
             ChannelType = message.ChannelType,
             Message = message.Content,
-            SessionId = message.SessionId
+            SessionId = requestedSessionIdValue
         }, cancellationToken);
 
         var targetAgents = await _router.ResolveAsync(message, cancellationToken);
@@ -257,7 +265,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         foreach (var agentId in targetAgents)
         {
-            var sessionId = message.SessionId ?? $"{message.ChannelType}:{message.ChannelAddress}:{agentId}";
+            var sessionId = requestedSessionIdValue ?? $"{message.ChannelType}:{message.ChannelAddress}:{agentId}";
             using var agentActivity = GatewayDiagnostics.Source.StartActivity("gateway.agent_process", ActivityKind.Internal);
             agentActivity?.SetTag("botnexus.agent.id", agentId);
             agentActivity?.SetTag("botnexus.session.id", sessionId);
@@ -297,9 +305,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 // Internal sub-agent wake-ups target an already-known parent session.
                 // Routing them through conversation resolution creates synthetic internal
                 // conversations and can misroute the user-visible response stream.
-                var internalTargetSessionId = !string.IsNullOrWhiteSpace(message.SessionId)
-                    ? message.SessionId
-                    : message.ChannelAddress.Value;
+                var internalTargetSessionId = requestedSessionIdValue
+                    ?? message.ChannelAddress.Value;
 
                 if (!string.IsNullOrWhiteSpace(internalTargetSessionId))
                     sessionId = internalTargetSessionId;
@@ -324,7 +331,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     AgentId.From(agentId),
                     message.ChannelType,
                     message.ChannelAddress,
-                    conversationId: message.ConversationId,
+                    conversationId: hints.RequestedConversationId?.Value,
                     cancellationToken,
                     initiator: message.Sender);
                 sessionId = routingResult.SessionId.Value;
@@ -918,9 +925,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     }
 
     private static string GetQueueKey(InboundMessage message)
-        => !string.IsNullOrWhiteSpace(message.SessionId)
-            ? message.SessionId
+    {
+        // Sub-PR 6.2 (#582): typed routing-hint read replaces direct legacy field read.
+        // Whitespace SessionId values now collapse to channel-key fallback (was: kept the
+        // whitespace string as the queue key, which would have prevented two real sessions
+        // sharing whitespace ids — vanishingly unlikely but the new shape is more honest).
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+        return hints.RequestedSessionId is { } sid
+            ? sid.Value
             : $"{message.ChannelType}:{message.ChannelAddress}";
+    }
 
     private async Task HandleUserInputRequiredAsync(
         InboundMessage message,
@@ -1020,24 +1034,33 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (ResolveChannelAdapter(message.ChannelType) is not { } channel)
             return;
 
+        // Sub-PR 6.2 (#582): forward typed session-id hint into the OutboundMessage envelope
+        // (OutboundMessage.SessionId remains a string property — it is the wire shape and
+        // is out of scope for the InboundMessage fence).
+        var hints = InboundMessageRoutingHints.FromMessage(message);
         await channel.SendAsync(new OutboundMessage
         {
             ChannelType = message.ChannelType,
             ChannelAddress = message.ChannelAddress,
             Content = BusyMessage,
-            SessionId = message.SessionId
+            SessionId = hints.RequestedSessionId?.Value
         }, cancellationToken);
     }
 
     private async Task CleanupQueueIfClosedSessionAsync(string queueKey, InboundMessage message, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(message.SessionId))
+        // Sub-PR 6.2 (#582): lift hints inline; the typed RequestedSessionId carries the
+        // pre-normalised Vogen SessionId, so we can pass it straight into _sessions.GetAsync
+        // without re-parsing through SessionId.From (which the prior code did on the raw
+        // string). Whitespace inputs collapse to null hints and short-circuit the cleanup.
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+        if (hints.RequestedSessionId is not { } requestedSessionId)
             return;
 
         using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
-        sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
+        sessionActivity?.SetTag("botnexus.session.id", requestedSessionId.Value);
 
-        var session = await _sessions.GetAsync(SessionId.From(message.SessionId), cancellationToken);
+        var session = await _sessions.GetAsync(requestedSessionId, cancellationToken);
         if (session?.Status is not SessionStatus.Sealed)
             return;
 

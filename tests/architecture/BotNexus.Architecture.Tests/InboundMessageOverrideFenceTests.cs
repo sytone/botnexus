@@ -8,26 +8,29 @@ namespace BotNexus.Architecture.Tests;
 /// Architecture fitness function enforcing the <c>#580</c> sub-PR 6.1 contract: production
 /// source code must not read the legacy weakly-typed <c>InboundMessage.{TargetAgentId, SessionId,
 /// ConversationId}</c> override fields. The typed equivalents on <see langword="InboundMessageContext"/>
-/// (<c>RequestedAgentId</c>, <c>RequestedSessionId</c>, <c>RequestedConversationId</c>) carry the
-/// same routing intent in Vogen-typed shape and are the only sanctioned readers.
+/// (<c>RequestedAgentId</c>, <c>RequestedSessionId</c>, <c>RequestedConversationId</c>) and on the
+/// new <see langword="InboundMessageRoutingHints"/> projection carry the same routing intent in
+/// Vogen-typed shape and are the only sanctioned readers.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The legacy fields remain on <see langword="InboundMessage"/> for one umbrella-issue (#579)
 /// cycle so adapter writers (Telegram, SignalR, ServiceBus, internal channel adapter) can
 /// continue populating them while the migration is in flight. Sub-PR 6.2 (issue
-/// <c>#582</c>) migrates the deferred reader sites listed in the allowlist; sub-PR 6.3 deletes
-/// the legacy fields entirely and this fence becomes trivially vacuous.
+/// <c>#582</c>) introduced <c>InboundMessageRoutingHints</c> as the sanctioned single reader and
+/// migrated <see langword="DefaultMessageRouter"/> and <see langword="GatewayHost"/> through it;
+/// at that point <see langword="InboundMessageContext.FromInboundMessage"/> stopped reading the
+/// legacy fields directly (it delegates to the hints helper) and dropped off the allowlist.
+/// Sub-PR 6.3 deletes the legacy fields entirely and this fence becomes trivially vacuous.
 /// </para>
 /// <para>
 /// The fence bans the pattern <c>message.&lt;FieldName&gt;</c> outside an allowlist. The
-/// allowlist has two categories: (1) the shim itself
-/// (<c>InboundMessageContext.FromInboundMessage</c>) which exists precisely to lift the legacy
-/// fields into the typed context once at the channel boundary, and (2) the sites deferred to
-/// sub-PR 6.2 because they need broader refactoring (pre-routing reads that don't yet have a
-/// typed context, or scattered reads inside <see langword="GatewayHost"/>'s queue/cleanup
-/// pipeline). Each deferred allowlist entry must cite the follow-up issue so the migration
-/// is auditable.
+/// allowlist has two categories: (1) the single sanctioned reader
+/// (<c>InboundMessageRoutingHints.FromMessage</c>) which exists precisely to lift the legacy
+/// fields into typed routing hints once at the routing boundary, and (2) the
+/// <c>OutboundMessage</c> adapter readers that share property names with <c>InboundMessage</c>
+/// but operate on a distinct type and a different routing axis. After sub-PR 6.2 the allowlist
+/// shrunk from 6 entries to 4.
 /// </para>
 /// </remarks>
 public sealed class InboundMessageOverrideFenceTests
@@ -38,25 +41,13 @@ public sealed class InboundMessageOverrideFenceTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> s_allowlist = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        // The lift-shim itself: the WHOLE POINT of FromInboundMessage is to read these three
-        // fields ONCE at the channel boundary and project them into typed RequestedAgentId /
-        // RequestedSessionId / RequestedConversationId on InboundMessageContext.
-        ["src/gateway/BotNexus.Gateway.Dispatching/InboundMessageContext.cs"] = "Lift-shim — the sanctioned single reader that projects legacy override fields into the typed context.",
-
-        // DEFERRED to sub-PR 6.2 (#582): pre-routing reader. DefaultMessageRouter.ResolveAsync
-        // receives a raw InboundMessage BEFORE the agent has been resolved, so it cannot yet
-        // construct an InboundMessageContext (which requires AgentId). Migrating this requires
-        // either changing IMessageRouter's shape or constructing the context partially earlier
-        // in the pipeline — both larger than 6.1.
-        ["src/gateway/BotNexus.Gateway/Routing/DefaultMessageRouter.cs"] = "DEFERRED to #582 (sub-PR 6.2): pre-routing reader; runs before AgentId is known.",
-
-        // DEFERRED to sub-PR 6.2 (#582): GatewayHost has ~12 sites of message.SessionId
-        // / message.ConversationId reads scattered across ProcessInboundMessageAsync,
-        // GetQueueKey, SendBusyAsync, and CleanupQueueIfClosedSessionAsync. Most call sites
-        // don't have an InboundMessageContext in scope; migration requires either threading
-        // context through 4+ private methods or constructing context once early. Either is a
-        // separate change.
-        ["src/gateway/BotNexus.Gateway/GatewayHost.cs"] = "DEFERRED to #582 (sub-PR 6.2): scattered legacy reads in queue/cleanup pipeline; needs broader refactor.",
+        // The sanctioned single reader (#582 sub-PR 6.2): InboundMessageRoutingHints.FromMessage
+        // is the WHOLE POINT — it reads these three fields ONCE and projects them into typed
+        // Vogen-shaped RequestedAgentId / RequestedSessionId / RequestedConversationId. Every
+        // production consumer (DefaultMessageRouter, GatewayHost, InboundMessageContext) routes
+        // through this helper instead of touching the legacy fields directly. Sub-PR 6.3 deletes
+        // the legacy fields and this entry becomes vacuous (no fields to read).
+        ["src/gateway/BotNexus.Gateway.Dispatching/InboundMessageRoutingHints.cs"] = "Sanctioned single reader — projects legacy override fields into typed routing hints at the routing boundary.",
 
         // OUT OF SCOPE for Phase 6 / F-10 entirely: these three adapters read message.SessionId
         // on OutboundMessage (NOT InboundMessage). The legacy override fields targeted by #580
@@ -95,13 +86,16 @@ public sealed class InboundMessageOverrideFenceTests
 
         violations.ShouldBeEmpty(
             "Reads of the legacy `InboundMessage.{TargetAgentId,SessionId,ConversationId}` " +
-            "fields were replaced with typed `InboundMessageContext.{RequestedAgentId," +
-            "RequestedSessionId,RequestedConversationId}` in #580 (Phase 6 / F-10 sub-PR 6.1). " +
-            "If you must add a new reader, either:\n" +
-            "  (a) consume the typed properties on `InboundMessageContext` instead (preferred), or\n" +
+            "fields were replaced with the typed `InboundMessageRoutingHints` projection " +
+            "(introduced in #580 sub-PR 6.1; expanded in #582 sub-PR 6.2 to cover the router " +
+            "and gateway-host call sites). If you must add a new reader, either:\n" +
+            "  (a) consume the typed properties via " +
+            "`InboundMessageRoutingHints.FromMessage(message).Requested{Agent,Session,Conversation}Id` " +
+            "(or `InboundMessageContext.FromInboundMessage(...)` if you already have an AgentId), or\n" +
             "  (b) add an explicit allowlist entry with an issue link explaining why the typed " +
             "path is not yet workable.\n" +
-            "Adding without an allowlist entry will fail CI.\n" +
+            "Adding without an allowlist entry will fail CI. Sub-PR 6.3 will delete the legacy " +
+            "fields entirely, at which point this fence becomes vacuous.\n" +
             "Violations:\n  " + string.Join("\n  ", violations));
     }
 
@@ -280,6 +274,46 @@ public sealed class InboundMessageOverrideFenceTests
             "False-positive guard: comment-only mentions of the legacy shape must not trip " +
             "the fence. If this fails, the comment stripper has regressed and the fence will " +
             "block PRs that legitimately document the migration history.");
+    }
+
+    [Fact]
+    public void Fence_KnownLimitation_AliasedReceiverEscapes()
+    {
+        // Bug-hunt critique fold-in (#582 sub-PR 6.2): the regex-based fence is anchored on
+        // the literal `message` identifier so it CANNOT detect a deliberate alias such as
+        // `var m = message; var sid = m.SessionId;`. Detecting alias chains requires symbol
+        // tracking (Roslyn-semantic analysis), which is out of scope for the transitional
+        // fence. The mitigation is sub-PR 6.3 (next PR): once the legacy fields are deleted
+        // from InboundMessage, the C# compiler enforces the contract directly and any alias
+        // bypass becomes a hard compile error. This pin documents the known limitation so a
+        // future contributor who tries to "fix" the regex understands the trade-off.
+        const string syntheticAlias = """
+            var m = message;
+            var sid = m.SessionId;
+            """;
+        ContainsLegacyOverrideRead(StripComments(syntheticAlias)).ShouldBeFalse(
+            "Known-limitation pin: the regex fence does NOT detect aliased reads. This is " +
+            "deliberate — symbol tracking is out of scope for a transitional fence whose " +
+            "mitigation is sub-PR 6.3's field deletion. If this assertion starts FAILING " +
+            "because the regex was extended to catch aliases, that's an improvement: update " +
+            "this test to ShouldBeTrue and add a vacuity guard for the new shape.");
+    }
+
+    [Fact]
+    public void Fence_KnownLimitation_CastReceiverEscapes()
+    {
+        // Bug-hunt critique fold-in (#582 sub-PR 6.2): companion to the aliased-receiver
+        // pin above. A cast-then-read shape `((InboundMessage)obj).SessionId` slips past
+        // the receiver-anchored regex. Same mitigation: sub-PR 6.3's field deletion makes
+        // any such read a compile error. Pinned as a known limitation, not a defect.
+        const string syntheticCast = """
+            var sid = ((InboundMessage)obj).SessionId;
+            """;
+        ContainsLegacyOverrideRead(StripComments(syntheticCast)).ShouldBeFalse(
+            "Known-limitation pin: the regex fence does NOT detect cast-then-read shapes. " +
+            "Same trade-off as the aliased-receiver limitation; sub-PR 6.3's field deletion " +
+            "is the structural mitigation. If this starts FAILING because the regex was " +
+            "extended, update this test to ShouldBeTrue.");
     }
 
     /// <summary>
