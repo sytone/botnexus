@@ -79,9 +79,10 @@ public sealed class ServiceBusChannelAdapterTests
         dispatched.ChannelType.ShouldBe(ChannelKey.From("servicebus"));
         dispatched.SenderId.ShouldBe("user@org.com");
         dispatched.Content.ShouldBe("Hello agent");
-        dispatched.TargetAgentId.ShouldBe("coding-agent");
-        dispatched.SessionId.ShouldBe("sess-123");
-        dispatched.ConversationId.ShouldBe("conv-xyz");
+        dispatched.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("coding-agent");
+        dispatched.RoutingHints.RequestedSessionId!.Value.Value.ShouldBe("sess-123");
+        dispatched.RoutingHints.RequestedConversationId!.Value.Value.ShouldBe("conv-xyz");
         dispatched.ChannelAddress.Value.ShouldBe("conv-xyz");
     }
 
@@ -105,9 +106,9 @@ public sealed class ServiceBusChannelAdapterTests
 
         dispatched.Content.ShouldBe("minimal message");
         dispatched.SenderId.ShouldBe("bot@sys.com");
-        dispatched.TargetAgentId.ShouldBeNull();
-        dispatched.SessionId.ShouldBeNull();
-        dispatched.ConversationId.ShouldBeNull();
+        // Minimal envelope: no overrides supplied. LiftFromStrings returns null when all 3 inputs blank,
+        // so RoutingHints itself is null on the inbound message.
+        dispatched.RoutingHints.ShouldBeNull();
         // ChannelAddress falls back to senderId when conversationId is absent.
         dispatched.ChannelAddress.Value.ShouldBe("bot@sys.com");
     }
@@ -357,9 +358,10 @@ public sealed class ServiceBusChannelAdapterTests
             .Single();
 
         dispatched.SenderId.ShouldBe("fallback@sys.com");
-        dispatched.TargetAgentId.ShouldBe("fallback-agent");
-        dispatched.SessionId.ShouldBe("fallback-sess");
-        dispatched.ConversationId.ShouldBe("fallback-conv");
+        dispatched.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("fallback-agent");
+        dispatched.RoutingHints.RequestedSessionId!.Value.Value.ShouldBe("fallback-sess");
+        dispatched.RoutingHints.RequestedConversationId!.Value.Value.ShouldBe("fallback-conv");
     }
 
     // ── Test: SendAsync uses replyTo from metadata when no pending context ────

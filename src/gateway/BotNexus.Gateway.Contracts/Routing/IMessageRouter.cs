@@ -10,8 +10,8 @@ namespace BotNexus.Gateway.Abstractions.Routing;
 /// <remarks>
 /// <para>Routing priority (highest to lowest):</para>
 /// <list type="number">
-///   <item>Explicit <see cref="InboundMessage.TargetAgentId"/> — message is sent to that agent.</item>
-///   <item>Session-bound agent — if <see cref="InboundMessage.SessionId"/> is set and the session
+///   <item>Explicit <see cref="InboundMessage.RoutingHints"/> requested agent — the message is sent to that agent.</item>
+///   <item>Session-bound agent — if the routing hints carry a requested session id and that session
 ///   has an existing agent binding, that agent is used.</item>
 ///   <item>Channel-specific routing rules — configured per channel type.</item>
 ///   <item>Default agent — the Gateway's configured default agent.</item>

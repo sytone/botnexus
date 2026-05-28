@@ -7,14 +7,12 @@ namespace BotNexus.Gateway.Tests.Dispatching;
 
 /// <summary>
 /// Pins the strongly-typed routing-hint contract on
-/// <see cref="InboundMessageRoutingHints"/> introduced by F-10 sub-PR 6.2 (#582).
-/// This helper is the architecture-fence-sanctioned single reader of the legacy
-/// <see cref="InboundMessage.TargetAgentId"/>,
-/// <see cref="InboundMessage.SessionId"/>, and
-/// <see cref="InboundMessage.ConversationId"/> fields — every other production
-/// consumer (router, gateway host, conversation dispatcher) reads the typed
-/// projections produced here. These pins lock the lift behaviour at the new
-/// reader site so the sub-PR 6.3 legacy-field deletion lands on a stable shape.
+/// <see cref="InboundMessageRoutingHints"/> introduced by F-10 sub-PR 6.2 (#582)
+/// and promoted to a first-class property on
+/// <see cref="InboundMessage.RoutingHints"/> by sub-PR 6.3 (#586).
+/// Locks the lift behaviour so future writer-site changes that wire raw
+/// strings through <see cref="InboundMessageRoutingHints.LiftFromStrings"/>
+/// continue to produce the expected null / typed projections.
 /// </summary>
 public sealed class InboundMessageRoutingHintsTests
 {
@@ -148,8 +146,6 @@ public sealed class InboundMessageRoutingHintsTests
             SenderId = "sender-1",
             Sender = CitizenId.Of(UserId.From("sender-1")),
             Content = "hello",
-            TargetAgentId = targetAgentId,
-            SessionId = sessionId,
-            ConversationId = conversationId
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(targetAgentId, sessionId, conversationId)
         };
 }

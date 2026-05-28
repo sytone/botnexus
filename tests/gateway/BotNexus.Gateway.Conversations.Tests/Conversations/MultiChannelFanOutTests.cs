@@ -428,7 +428,7 @@ public sealed class MultiChannelFanOutTests
                 Sender = CitizenId.Of(UserId.From($"sender-{channelType}")),
                 ChannelAddress = ChannelAddress.From(channelAddress),
                 Content = content,
-                SessionId = sessionId,
+                RoutingHints = InboundMessageRoutingHints.LiftFromStrings(null, sessionId, null),
                 Metadata = new Dictionary<string, object?>()
             };
 

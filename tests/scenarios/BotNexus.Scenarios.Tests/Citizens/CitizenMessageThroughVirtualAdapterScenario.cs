@@ -107,7 +107,7 @@ public sealed class CitizenMessageThroughVirtualAdapterScenario
                 _agentId,
                 message.ChannelType,
                 message.ChannelAddress,
-                message.ConversationId,
+                message.RoutingHints?.RequestedConversationId?.Value,
                 cancellationToken);
         }
     }

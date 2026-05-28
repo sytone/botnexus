@@ -97,8 +97,8 @@ public sealed class TelegramMultiBotTests
         await twoMessagesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await adapter.StopAsync(CancellationToken.None);
 
-        dispatchedMessages.ShouldContain(m => m.TargetAgentId == "agent-b" && m.Content == "hello from bot1");
-        dispatchedMessages.ShouldContain(m => m.TargetAgentId == "assistant" && m.Content == "hello from bot2");
+        dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-b" && m.Content == "hello from bot1");
+        dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "assistant" && m.Content == "hello from bot2");
     }
 
     /// <summary>
@@ -149,7 +149,8 @@ public sealed class TelegramMultiBotTests
         var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await adapter.StopAsync(CancellationToken.None);
 
-        message.TargetAgentId.ShouldBe("legacy-agent");
+        message.RoutingHints.ShouldNotBeNull();
+        message.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("legacy-agent");
         message.Content.ShouldBe("legacy message");
     }
 

@@ -58,16 +58,6 @@ public sealed record InboundMessage
     /// <summary>When the message was received.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 
-    /// <summary>
-    /// Optional explicit agent target. If set, bypasses default routing.
-    /// </summary>
-    public string? TargetAgentId { get; init; }
-
-    /// <summary>
-    /// Optional explicit session ID. If set, resumes an existing session.
-    /// </summary>
-    public string? SessionId { get; init; }
-
     /// <summary>Extensible metadata from the channel adapter.</summary>
     public IReadOnlyDictionary<string, object?> Metadata { get; init; } =
         new Dictionary<string, object?>();
@@ -79,10 +69,22 @@ public sealed record InboundMessage
     public BindingId? BindingId { get; init; }
 
     /// <summary>
-    /// When set, routes directly to this conversation, bypassing binding lookup.
-    /// Used by portal clients that know which conversation they are viewing.
+    /// Optional strongly-typed routing hints supplied by the channel adapter
+    /// — the agent, session, and/or conversation the client wants to talk to.
+    /// Null when the channel has no override (the default for most inbound
+    /// traffic; the router resolves the destination from the binding instead).
     /// </summary>
-    public string? ConversationId { get; init; }
+    /// <remarks>
+    /// Prior to sub-PR 6.3 (<c>#586</c>) these hints lived on
+    /// <see cref="InboundMessage"/> as three weakly-typed <c>string?</c>
+    /// fields (<c>TargetAgentId</c>, <c>SessionId</c>, <c>ConversationId</c>).
+    /// They were collapsed into a single typed record so every downstream
+    /// consumer reads Vogen-typed values and so writers cannot accidentally
+    /// supply one override without the others. Read via
+    /// <see cref="InboundMessageRoutingHints.FromMessage(InboundMessage)"/>
+    /// when the consumer needs to default null to <see cref="InboundMessageRoutingHints.Empty"/>.
+    /// </remarks>
+    public InboundMessageRoutingHints? RoutingHints { get; init; }
 }
 
 /// <summary>

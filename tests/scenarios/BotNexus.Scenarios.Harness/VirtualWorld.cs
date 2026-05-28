@@ -234,9 +234,8 @@ public sealed class VirtualWorld : IAsyncDisposable
             SenderId = fromUser,
             Sender = CitizenId.Of(UserId.From(fromUser)),
             ChannelAddress = ChannelAddress.From(address),
-            TargetAgentId = toAgent,
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(toAgent, null, conversationId),
             Content = content,
-            ConversationId = conversationId,
         };
         await _adapter.SimulateInboundAsync(inbound, cancellationToken);
         return new DispatchedInbound(

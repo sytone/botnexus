@@ -85,7 +85,7 @@ public sealed class SignalRHubTests
         result.SessionId.ShouldNotBeNullOrWhiteSpace();
         result.AgentId.ShouldBe("agent-a");
         dispatcher.Verify(value => value.DispatchAsync(
-            It.Is<InboundMessage>(m => m.TargetAgentId == "agent-a" && m.Content == "hello"),
+            It.Is<InboundMessage>(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-a" && m.Content == "hello"),
             CancellationToken.None), Times.Once);
     }
 
@@ -111,7 +111,8 @@ public sealed class SignalRHubTests
         result.ChannelType.ShouldBe("signalr");
         groups.Verify(value => value.AddToGroupAsync("conn-1", It.Is<string>(g => g.StartsWith("session:")), It.IsAny<CancellationToken>()), Times.Once);
         dispatched.ShouldNotBeNull();
-        dispatched!.TargetAgentId.ShouldBe("agent-a");
+        dispatched!.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("agent-a");
         dispatched.Content.ShouldBe("hello");
     }
 
@@ -131,7 +132,8 @@ public sealed class SignalRHubTests
                 It.Is<InboundMessage>(m =>
                     m.ChannelType == ChannelKey.From("signalr") &&
                     m.SenderId == "conn-1" &&
-                    m.TargetAgentId == "agent-a" &&
+                    m.RoutingHints != null &&
+                    m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-a" &&
                     m.Content == "hello"),
                 CancellationToken.None),
             Times.Once);
@@ -310,7 +312,8 @@ public sealed class SignalRHubTests
         result.ChannelType.ShouldBe("telegram");
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
-                    m.TargetAgentId == "agent-a" &&
+                    m.RoutingHints != null &&
+                    m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-a" &&
                     m.Content == "needs-new-session"),
                 CancellationToken.None),
             Times.Once);
@@ -331,7 +334,8 @@ public sealed class SignalRHubTests
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
                     m.ChannelType == ChannelKey.From("signalr") &&
-                    m.TargetAgentId == "agent-a"),
+                    m.RoutingHints != null &&
+                    m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-a"),
                 CancellationToken.None),
             Times.Once);
     }
@@ -399,8 +403,9 @@ public sealed class SignalRHubTests
 
         result.SessionId.ShouldBe(requestedSessionId);
         dispatched.ShouldNotBeNull();
-        dispatched!.SessionId.ShouldBe(requestedSessionId);
-        dispatched.ConversationId.ShouldBeNull();
+        dispatched!.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(requestedSessionId);
+        dispatched.RoutingHints.RequestedConversationId.ShouldBeNull();
         dispatched.Metadata["messageType"].ShouldBe("steer");
         dispatched.Metadata["control"].ShouldBe("steer");
     }
@@ -420,7 +425,8 @@ public sealed class SignalRHubTests
         var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", "conv-42");
 
         dispatched.ShouldNotBeNull();
-        dispatched!.ConversationId.ShouldBe("conv-42");
+        dispatched!.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe("conv-42");
     }
 
     [Fact]

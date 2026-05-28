@@ -295,6 +295,6 @@ public sealed class GatewayHostResolveSessionTypeTests
             Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From("conv-1"),
             Content = content,
-            SessionId = sessionId
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(null, sessionId, null)
         };
 }

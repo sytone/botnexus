@@ -173,10 +173,11 @@ public sealed class ConversationToolTests
         // Assert: dispatcher was called exactly once with the correct inbound message
         await dispatcher.Received(1).DispatchAsync(
             Arg.Is<InboundMessage>(m =>
-                m.TargetAgentId == "nova" &&
+                m.RoutingHints != null &&
+                m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
                 m.Content == "Please investigate issue #285" &&
-                m.SessionId == activeSessionId &&
-                m.ConversationId == conversationId &&
+                m.RoutingHints.RequestedSessionId != null && m.RoutingHints.RequestedSessionId.Value.Value == activeSessionId &&
+                m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId &&
                 m.ChannelType.Equals(ChannelKey.From("internal"))),
             Arg.Any<CancellationToken>());
     }
@@ -260,7 +261,8 @@ public sealed class ConversationToolTests
         await dispatcher.Received(1).DispatchAsync(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Hello Nova!" &&
-                m.TargetAgentId == "nova" &&
+                m.RoutingHints != null &&
+                m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
                 m.ChannelType == ChannelKey.From("internal")),
             Arg.Any<CancellationToken>());
 

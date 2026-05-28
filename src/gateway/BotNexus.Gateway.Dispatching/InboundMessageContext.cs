@@ -12,17 +12,16 @@ namespace BotNexus.Gateway.Dispatching;
 /// <param name="Source">Normalized channel source identity for the inbound payload.</param>
 /// <param name="RequestedConversationId">
 /// Optional explicit conversation target from the transport when the client already knows
-/// its active conversation. Lifted from the legacy <see cref="InboundMessage.ConversationId"/>
-/// override by <see cref="FromInboundMessage"/>; consumers must read this typed property
-/// rather than re-parsing the raw string field.
+/// its active conversation. Lifted from <see cref="InboundMessage.RoutingHints"/> by
+/// <see cref="FromInboundMessage"/>.
 /// </param>
 /// <param name="RequestedAgentId">
-/// Optional explicit agent target supplied by the transport. Lifted from the legacy
-/// <see cref="InboundMessage.TargetAgentId"/> override by <see cref="FromInboundMessage"/>.
+/// Optional explicit agent target supplied by the transport. Lifted from
+/// <see cref="InboundMessage.RoutingHints"/> by <see cref="FromInboundMessage"/>.
 /// </param>
 /// <param name="RequestedSessionId">
-/// Optional explicit session resume target supplied by the transport. Lifted from the legacy
-/// <see cref="InboundMessage.SessionId"/> override by <see cref="FromInboundMessage"/>.
+/// Optional explicit session resume target supplied by the transport. Lifted from
+/// <see cref="InboundMessage.RoutingHints"/> by <see cref="FromInboundMessage"/>.
 /// </param>
 public sealed record InboundMessageContext(
     AgentId AgentId,
@@ -33,17 +32,15 @@ public sealed record InboundMessageContext(
     SessionId? RequestedSessionId = null)
 {
     /// <summary>
-    /// Creates a dispatch context directly from an inbound transport payload, lifting the
-    /// legacy stringly-typed routing overrides on <see cref="InboundMessage"/> into the
+    /// Creates a dispatch context directly from an inbound transport payload, projecting
+    /// the typed <see cref="InboundMessage.RoutingHints"/> payload (if any) into the
     /// strongly-typed <see cref="RequestedConversationId"/> / <see cref="RequestedAgentId"/>
     /// / <see cref="RequestedSessionId"/> properties on the context.
     /// </summary>
     /// <remarks>
-    /// Delegates the legacy-field lift to <see cref="InboundMessageRoutingHints.FromMessage"/>
-    /// — that helper is the architecture-fence-sanctioned single reader of the legacy
-    /// override fields (see <c>InboundMessageOverrideFenceTests</c>). Null / empty /
-    /// whitespace inputs are gracefully normalised to a <c>null</c> override (the Vogen
-    /// factories would otherwise throw on whitespace and crash the inbound pipeline).
+    /// Delegates the read to <see cref="InboundMessageRoutingHints.FromMessage"/>, which
+    /// returns <see cref="InboundMessageRoutingHints.Empty"/> when the message has no
+    /// routing hints — callers never have to null-check.
     /// </remarks>
     /// <param name="agentId">Agent selected for the message.</param>
     /// <param name="message">Inbound transport payload.</param>

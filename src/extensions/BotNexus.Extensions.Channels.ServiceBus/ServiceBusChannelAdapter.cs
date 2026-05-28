@@ -321,9 +321,10 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
             Sender = CitizenId.Of(UserId.From(senderId)),
             ChannelAddress = channelAddress,
             Content = envelope.Content,
-            TargetAgentId = envelope.AgentId ?? GetApplicationProperty(applicationProperties, "agentId"),
-            SessionId = envelope.SessionId ?? GetApplicationProperty(applicationProperties, "sessionId"),
-            ConversationId = conversationId,
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(
+                targetAgentId: envelope.AgentId ?? GetApplicationProperty(applicationProperties, "agentId"),
+                sessionId: envelope.SessionId ?? GetApplicationProperty(applicationProperties, "sessionId"),
+                conversationId: conversationId),
             Timestamp = envelope.Timestamp ?? DateTimeOffset.UtcNow,
             Metadata = metadata,
         };

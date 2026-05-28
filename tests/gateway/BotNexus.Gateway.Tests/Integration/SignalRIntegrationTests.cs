@@ -263,8 +263,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         sessionId.ShouldNotBeNullOrWhiteSpace();
 
         var msg = dispatcher.Messages.ShouldHaveSingleItem();
-        msg.TargetAgentId.ShouldBe(TestAgentId);
-        msg.SessionId.ShouldBe(sessionId);
+        msg.RoutingHints.ShouldNotBeNull();
+        msg.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe(TestAgentId);
+        msg.RoutingHints.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
         msg.Content.ShouldBe("hello");
         msg.Metadata["messageType"].ShouldBe("message");
     }
@@ -305,9 +306,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "latest", (string?)null, cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
-        dispatcher.Messages[0].TargetAgentId.ShouldBe(TestAgentId);
-        dispatcher.Messages[0].Content.ShouldBe("latest");
-        dispatcher.Messages[0].SessionId.ShouldNotBeNullOrWhiteSpace();
+        var dispatched = dispatcher.Messages[0];
+        dispatched.RoutingHints.ShouldNotBeNull();
+        dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe(TestAgentId);
+        dispatched.Content.ShouldBe("latest");
+        dispatched.RoutingHints.RequestedSessionId.ShouldNotBeNull();
+        dispatched.RoutingHints.RequestedSessionId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -351,7 +355,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].Content.ShouldBe("send-during-join");
-        dispatcher.Messages[0].SessionId.ShouldNotBeNullOrWhiteSpace();
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -372,7 +378,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].Content.ShouldBe("immediate-after-join");
-        dispatcher.Messages[0].SessionId.ShouldNotBeNullOrWhiteSpace();
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -397,10 +405,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.Count().ShouldBe(2);
         dispatcher.Messages.Where(m =>
-            m.TargetAgentId == agentA &&
+            m.RoutingHints != null &&
+            m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == agentA &&
             m.Content == "message-for-a").ShouldHaveSingleItem();
         dispatcher.Messages.Where(m =>
-            m.TargetAgentId == agentB &&
+            m.RoutingHints != null &&
+            m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == agentB &&
             m.Content == "message-for-b").ShouldHaveSingleItem();
     }
 
@@ -426,10 +436,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.Count().ShouldBe(2);
         dispatcher.Messages.Where(m =>
-            m.TargetAgentId == agentA &&
+            m.RoutingHints != null &&
+            m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == agentA &&
             m.Content == "message-for-a").ShouldHaveSingleItem();
         dispatcher.Messages.Where(m =>
-            m.TargetAgentId == agentB &&
+            m.RoutingHints != null &&
+            m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == agentB &&
             m.Content == "message-for-b").ShouldHaveSingleItem();
     }
 
@@ -464,7 +476,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         result.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].Content.ShouldBe("after-leave");
-        dispatcher.Messages[0].SessionId.ShouldNotBeNullOrWhiteSpace();
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -569,8 +583,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.ShouldHaveSingleItem();
         result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        dispatcher.Messages[0].SessionId.ShouldBe(sessionId);
-        dispatcher.Messages[0].ConversationId.ShouldBeNull();
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
+        dispatcher.Messages[0].RoutingHints!.RequestedConversationId.ShouldBeNull();
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
         dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
     }
@@ -594,8 +609,9 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         dispatcher.Messages.ShouldHaveSingleItem();
         result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        dispatcher.Messages[0].SessionId.ShouldBe(sessionId);
-        dispatcher.Messages[0].ConversationId.ShouldBe("conv-42");
+        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
+        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
+        dispatcher.Messages[0].RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe("conv-42");
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
         dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
     }
@@ -919,7 +935,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         public Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default)
         {
-            if (failOnNullSessionId && string.IsNullOrWhiteSpace(message.SessionId))
+            if (failOnNullSessionId && string.IsNullOrWhiteSpace(message.RoutingHints?.RequestedSessionId?.Value))
                 throw new InvalidOperationException("sessionId is required.");
 
             Messages.Add(message);

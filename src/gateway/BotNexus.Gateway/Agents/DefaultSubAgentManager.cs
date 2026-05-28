@@ -434,8 +434,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 SenderId = $"subagent:{subAgentId}",
                 Sender = CitizenId.Of(childAgentId),
                 ChannelAddress = ChannelAddress.From(updated.ParentSessionId.Value),
-                SessionId = updated.ParentSessionId.Value,
-                TargetAgentId = parentAgentId.Value,
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: parentAgentId,
+                    RequestedSessionId: updated.ParentSessionId,
+                    RequestedConversationId: null),
                 Content = followUp,
                 Metadata = new Dictionary<string, object?>
                 {

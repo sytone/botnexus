@@ -88,6 +88,6 @@ public sealed class GatewayHostQueueRoutingPinTests
             SenderId = "sender-1",
             Sender = CitizenId.Of(UserId.From("sender-1")),
             Content = "hi",
-            SessionId = sessionId
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(null, sessionId, null)
         };
 }

@@ -19,20 +19,21 @@ public sealed class ServiceBusInboundEnvelope
     [JsonPropertyName("correlationId")]
     public string? CorrelationId { get; set; }
 
-    /// <summary>Target agent identifier; maps to <c>InboundMessage.TargetAgentId</c>.</summary>
+    /// <summary>Target agent identifier; lifted into <c>InboundMessage.RoutingHints.RequestedAgentId</c>.</summary>
     [JsonPropertyName("agentId")]
     public string? AgentId { get; set; }
 
     /// <summary>
     /// Conversation identifier used to resume or group messages in the same thread.
-    /// Maps to <c>InboundMessage.ConversationId</c> and <c>InboundMessage.ChannelAddress</c>.
+    /// Lifted into <c>InboundMessage.RoutingHints.RequestedConversationId</c> and used
+    /// as the source of <c>InboundMessage.ChannelAddress</c>.
     /// </summary>
     [JsonPropertyName("conversationId")]
     public string? ConversationId { get; set; }
 
     /// <summary>
     /// Existing session identifier. When set, the gateway resumes the named session
-    /// rather than creating a new one. Maps to <c>InboundMessage.SessionId</c>.
+    /// rather than creating a new one. Lifted into <c>InboundMessage.RoutingHints.RequestedSessionId</c>.
     /// </summary>
     [JsonPropertyName("sessionId")]
     public string? SessionId { get; set; }

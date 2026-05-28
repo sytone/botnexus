@@ -713,7 +713,8 @@ public sealed class TelegramChannelAdapterTests
         var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await adapter.StopAsync(CancellationToken.None);
 
-        message.TargetAgentId.ShouldBe("agent-b");
+        message.RoutingHints.ShouldNotBeNull();
+        message.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("agent-b");
         message.ChannelAddress.ShouldBe(ChannelAddress.From("42"));
         message.Content.ShouldBe("hello");
     }

@@ -59,7 +59,10 @@ public sealed class SenderClassificationTests
             SenderId = "alice",
             Sender = CitizenId.Of(senderId),
             ChannelAddress = ChannelAddress.From("conv-1"),
-            SessionId = SessionIdValue,
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: null,
+                RequestedSessionId: SessionId.From(SessionIdValue),
+                RequestedConversationId: null),
             Content = "hello"
         });
 
@@ -86,8 +89,10 @@ public sealed class SenderClassificationTests
             SenderId = "subagent:wake-1",
             Sender = CitizenId.Of(childAgentId),
             ChannelAddress = ChannelAddress.From(SessionIdValue),
-            SessionId = SessionIdValue,
-            TargetAgentId = AgentIdValue,
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: AgentId.From(AgentIdValue),
+                RequestedSessionId: SessionId.From(SessionIdValue),
+                RequestedConversationId: null),
             Content = "wake-up"
         });
 
@@ -111,7 +116,10 @@ public sealed class SenderClassificationTests
             SenderId = "bob",
             Sender = CitizenId.Of(senderId),
             ChannelAddress = ChannelAddress.From("conv-1"),
-            SessionId = SessionIdValue,
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: null,
+                RequestedSessionId: SessionId.From(SessionIdValue),
+                RequestedConversationId: null),
             Content = "hello"
         };
 
@@ -140,8 +148,10 @@ public sealed class SenderClassificationTests
             SenderId = "subagent:wake-2",
             Sender = CitizenId.Of(childAgentId),
             ChannelAddress = ChannelAddress.From(SessionIdValue),
-            SessionId = SessionIdValue,
-            TargetAgentId = AgentIdValue,
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: AgentId.From(AgentIdValue),
+                RequestedSessionId: SessionId.From(SessionIdValue),
+                RequestedConversationId: null),
             Content = "follow-up"
         });
 

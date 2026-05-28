@@ -217,7 +217,7 @@ public sealed class CopilotIntegrationTests
             Sender = CitizenId.Of(UserId.From("integration-user")),
             ChannelAddress = ChannelAddress.From("copilot-integration-conversation"),
             Content = content,
-            SessionId = "integration-session"
+            RoutingHints = new InboundMessageRoutingHints(null, SessionId.From("integration-session"), null)
         };
 
     private static CopilotAuth? TryLoadAuth()

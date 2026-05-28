@@ -143,8 +143,7 @@ public sealed class DefaultMessageRouterTests
             Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From("conv-1"),
             Content = "hello",
-            TargetAgentId = targetAgentId,
-            SessionId = sessionId
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(targetAgentId, sessionId, null)
         };
 }
 

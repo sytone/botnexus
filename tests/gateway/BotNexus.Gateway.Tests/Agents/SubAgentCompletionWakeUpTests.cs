@@ -31,8 +31,9 @@ public sealed class SubAgentCompletionWakeUpTests
                     message.Content.Contains(summary, StringComparison.Ordinal) &&
                     message.Metadata.ContainsKey("messageType") &&
                     string.Equals(message.Metadata["messageType"] as string, "subagent-completion", StringComparison.Ordinal) &&
-                    message.SessionId == "parent-session" &&
-                    message.TargetAgentId == "parent-agent"),
+                    message.RoutingHints != null &&
+                    message.RoutingHints.RequestedSessionId != null && message.RoutingHints.RequestedSessionId.Value.Value == "parent-session" &&
+                    message.RoutingHints.RequestedAgentId != null && message.RoutingHints.RequestedAgentId.Value.Value == "parent-agent"),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
