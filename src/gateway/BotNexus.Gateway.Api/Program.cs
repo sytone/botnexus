@@ -13,6 +13,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.IntegrationMock;
 using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
 using BotNexus.Domain.World;
@@ -228,16 +229,28 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>()));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>()));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
+    apiProviders.Register(new IntegrationMockProvider());
 
     serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
+    new IntegrationMockModels().RegisterAll(models);
 
-    // Register models from openai-compat providers in config (e.g. Ollama, LM Studio)
+    // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
+    // or any provider with an explicit Api override (e.g. integration-mock).
     var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
     if (platformConfig.Providers is not null)
     {
         foreach (var (providerName, providerConfig) in platformConfig.Providers)
         {
-            if (!providerConfig.Enabled || string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
+            if (!providerConfig.Enabled)
+                continue;
+
+            var apiName = string.IsNullOrWhiteSpace(providerConfig.Api)
+                ? "openai-completions"
+                : providerConfig.Api!;
+            // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
+            // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
+            // possibly empty) — skip the BaseUrl gate.
+            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
                 continue;
 
             if (providerConfig.Models is { Count: > 0 })
@@ -247,9 +260,9 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
-                        Api: "openai-completions",
+                        Api: apiName,
                         Provider: providerName,
-                        BaseUrl: providerConfig.BaseUrl,
+                        BaseUrl: providerConfig.BaseUrl ?? string.Empty,
                         Reasoning: modelId.Contains("reasoning", StringComparison.OrdinalIgnoreCase),
                         Input: ["text"],
                         Cost: new ModelCost(0, 0, 0, 0),
@@ -260,7 +273,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
         }
     }
 
-    // Register the model for any agent using an openai-compat provider not in BuiltInModels
+    // Register the model for any agent using a config-defined provider not in BuiltInModels.
     if (platformConfig.Agents is not null && platformConfig.Providers is not null)
     {
         foreach (KeyValuePair<string, AgentDefinitionConfig> agentEntry in platformConfig.Agents)
@@ -270,7 +283,10 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 continue;
             if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
                 continue;
-            if (string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
+            var apiName = string.IsNullOrWhiteSpace(agentProvider.Api)
+                ? "openai-completions"
+                : agentProvider.Api!;
+            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
                 continue;
             if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
                 continue;
@@ -278,9 +294,9 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             models.Register(agentConfig.Provider, new LlmModel(
                 Id: agentConfig.Model,
                 Name: agentConfig.Model,
-                Api: "openai-completions",
+                Api: apiName,
                 Provider: agentConfig.Provider,
-                BaseUrl: agentProvider.BaseUrl,
+                BaseUrl: agentProvider.BaseUrl ?? string.Empty,
                 Reasoning: agentConfig.Model.Contains("reasoning", StringComparison.OrdinalIgnoreCase),
                 Input: ["text"],
                 Cost: new ModelCost(0, 0, 0, 0),

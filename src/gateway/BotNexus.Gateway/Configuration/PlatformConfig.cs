@@ -78,6 +78,15 @@ public sealed class ProviderConfig
 
     /// <summary>Allowed model IDs for this provider. Null means all models, empty means none.</summary>
     public List<string>? Models { get; set; }
+
+    /// <summary>
+    /// Optional API identifier used when registering models from this provider's <see cref="Models"/>
+    /// list. Defaults to <c>"openai-completions"</c> for backward compatibility with config-driven
+    /// OpenAI-compatible endpoints (Ollama, LM Studio, etc.). Set to <c>"integration-mock"</c> or
+    /// another registered provider's API name to register models against a different
+    /// <see cref="BotNexus.Agent.Providers.Core.Registry.IApiProvider"/>.
+    /// </summary>
+    public string? Api { get; set; }
 }
 
 /// <summary>Gateway runtime configuration.</summary>
