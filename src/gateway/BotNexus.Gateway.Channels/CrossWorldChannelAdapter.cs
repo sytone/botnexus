@@ -55,6 +55,10 @@ public sealed class CrossWorldChannelAdapter(
         var sourceSessionId = TryGetMetadata(message.Metadata, "sourceSessionId");
         var remoteSessionId = TryGetMetadata(message.Metadata, "remoteSessionId");
         var apiKey = TryGetMetadata(message.Metadata, "apiKey");
+        // P9-C: lift sender-determined finality signal off OutboundMessage.Metadata so the
+        // receiver can archive its conversation on the final turn even when the target agent
+        // never invokes finish_agent_exchange (single-shot + max-turns cases).
+        var closeAfterResponse = TryGetMetadataBool(message.Metadata, "closeAfterResponse");
 
         var requestUri = BuildRelayUri(endpoint);
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
@@ -67,7 +71,8 @@ public sealed class CrossWorldChannelAdapter(
                 Message = message.Content,
                 ConversationId = conversationId,
                 SourceSessionId = sourceSessionId,
-                RemoteSessionId = remoteSessionId
+                RemoteSessionId = remoteSessionId,
+                CloseAfterResponse = closeAfterResponse
             }, options: JsonOptions)
         };
 
@@ -110,6 +115,19 @@ public sealed class CrossWorldChannelAdapter(
             return null;
 
         return value.ToString();
+    }
+
+    private static bool TryGetMetadataBool(IReadOnlyDictionary<string, object?> metadata, string key)
+    {
+        if (!metadata.TryGetValue(key, out var value) || value is null)
+            return false;
+
+        return value switch
+        {
+            bool b => b,
+            string s => bool.TryParse(s, out var parsed) && parsed,
+            _ => false
+        };
     }
 }
 
