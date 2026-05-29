@@ -55,7 +55,7 @@ else
                 return "BotNexus";
 
             var agentLabel = string.IsNullOrWhiteSpace(agent.DisplayName)
-                ? activeAgentId
+                ? System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(activeAgentId.Replace("-", " "))
                 : agent.DisplayName;
 
             if (agent.ActiveConversationId is not { Length: > 0 } convId ||
