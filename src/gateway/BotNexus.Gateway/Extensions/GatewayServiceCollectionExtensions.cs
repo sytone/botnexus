@@ -403,7 +403,13 @@ public static class GatewayServiceCollectionExtensions
 
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
-            services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
+            // Phase 9 / P9-B (#615): thread the conversation store so save-time legacy
+            // backfill applies in InMemory test/dev deployments too.
+            services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
+                new InMemorySessionStore(
+                    redactor: serviceProvider.GetService<ISecretRedactor>(),
+                    conversationStore: serviceProvider.GetService<IConversationStore>(),
+                    logger: serviceProvider.GetService<ILogger<InMemorySessionStore>>())));
             return;
         }
 
@@ -421,7 +427,9 @@ public static class GatewayServiceCollectionExtensions
                 return new FileSessionStore(
                     sessionsPath,
                     serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
-                    fs);
+                    fs,
+                    conversationStore: serviceProvider.GetService<IConversationStore>(),
+                    redactor: serviceProvider.GetService<ISecretRedactor>());
             }));
             return;
         }
