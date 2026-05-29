@@ -116,6 +116,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentExchangeService, AgentExchangeService>();
         services.AddSingleton<CrossWorldInboundAuthService>();
+        services.TryAddSingleton<IWorldContext, PlatformWorldContext>();
         services.TryAddSingleton<CrossWorldChannelOptions>();
         services.AddSingleton<CrossWorldChannelAdapter>(serviceProvider =>
             new CrossWorldChannelAdapter(
@@ -474,7 +475,8 @@ public static class GatewayServiceCollectionExtensions
                 return new FileConversationStore(
                     conversationsPath,
                     serviceProvider.GetRequiredService<ILogger<FileConversationStore>>(),
-                    fs);
+                    fs,
+                    serviceProvider.GetService<IWorldContext>());
             }));
             return;
         }
@@ -488,7 +490,8 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<IConversationStore>(serviceProvider =>
                 new SqliteConversationStore(
                     connectionString,
-                    serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>())));
+                    serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
+                    serviceProvider.GetService<IWorldContext>())));
             return;
         }
 
