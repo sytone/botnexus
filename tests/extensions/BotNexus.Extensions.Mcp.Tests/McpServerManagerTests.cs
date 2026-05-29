@@ -1,5 +1,12 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Mcp.Transport;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Extensions.Mcp.Tests;
 
@@ -223,5 +230,107 @@ public class McpServerManagerTests
         tools.ShouldBeEmpty("server should time out during init");
 
         await manager.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ContributeAsync_WhenServerWarmupIsPending_DoesNotBlockAgentCreation()
+    {
+        await McpServerWarmupCache.DisposeAllAsync();
+        var contributor = new McpToolContributor(NullLoggerFactory.Instance);
+        var descriptor = CreateDescriptor(new McpExtensionConfig
+        {
+            Servers = new Dictionary<string, McpServerConfig>
+            {
+                ["slow"] = new McpServerConfig
+                {
+                    Command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "cmd.exe" : "/bin/cat",
+                    Args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ["/c", "ping -n 5 127.0.0.1 > nul"] : [],
+                    InitTimeoutMs = 5_000
+                }
+            }
+        });
+        var context = CreateContributionContext(descriptor);
+
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            var contribution = await contributor.ContributeAsync(context);
+            sw.Stop();
+
+            contribution.Tools.ShouldBeEmpty();
+            contribution.ResourcesToDispose.ShouldBeNull();
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            await McpServerWarmupCache.DisposeAllAsync();
+        }
+    }
+
+    [Fact]
+    public async Task McpServerWarmupHostedService_StartAsync_KicksOffConfiguredAgents()
+    {
+        await McpServerWarmupCache.DisposeAllAsync();
+        var descriptor = CreateDescriptor(new McpExtensionConfig
+        {
+            Servers = new Dictionary<string, McpServerConfig>
+            {
+                ["empty"] = new McpServerConfig()
+            }
+        });
+        var registry = new StubAgentRegistry([descriptor]);
+        var service = new McpServerWarmupHostedService(registry, NullLoggerFactory.Instance);
+
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+
+            McpServerWarmupCache.Count.ShouldBe(1);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static AgentDescriptor CreateDescriptor(McpExtensionConfig config)
+    {
+        var element = JsonSerializer.SerializeToElement(config, JsonContext.Default.McpExtensionConfig);
+        return new AgentDescriptor
+        {
+            AgentId = AgentId.From("test-agent"),
+            DisplayName = "Test Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            ExtensionConfig = new Dictionary<string, JsonElement>
+            {
+                ["botnexus-mcp"] = element
+            }
+        };
+    }
+
+    private static AgentToolContributionContext CreateContributionContext(AgentDescriptor descriptor)
+        => new(
+            descriptor,
+            new AgentExecutionContext { SessionId = SessionId.Create() },
+            Path.GetTempPath(),
+            new AllowAllPathValidator(),
+            _ => null,
+            (_, _) => Task.FromResult<string?>(null));
+
+    private sealed class AllowAllPathValidator : IPathValidator
+    {
+        public bool CanRead(string absolutePath) => true;
+        public bool CanWrite(string absolutePath) => true;
+        public string? ValidateAndResolve(string rawPath, FileAccessMode mode) => rawPath;
+    }
+
+    private sealed class StubAgentRegistry(IReadOnlyList<AgentDescriptor> descriptors) : IAgentRegistry
+    {
+        public void Register(AgentDescriptor descriptor) => throw new NotSupportedException();
+        public void Unregister(AgentId agentId) => throw new NotSupportedException();
+        public AgentDescriptor? Get(AgentId agentId) => descriptors.FirstOrDefault(d => d.AgentId == agentId);
+        public IReadOnlyList<AgentDescriptor> GetAll() => descriptors;
+        public bool Contains(AgentId agentId) => descriptors.Any(d => d.AgentId == agentId);
     }
 }

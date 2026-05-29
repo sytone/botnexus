@@ -12,6 +12,7 @@ public sealed class McpClient : IAsyncDisposable
 {
     private readonly IMcpTransport _transport;
     private readonly string _serverId;
+    private readonly SemaphoreSlim _protocolLock = new(1, 1);
     private int _nextId;
     private McpServerCapabilities? _capabilities;
     private bool _initialized;
@@ -33,38 +34,46 @@ public sealed class McpClient : IAsyncDisposable
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct = default)
     {
-        await _transport.ConnectAsync(ct).ConfigureAwait(false);
-
-        var initParams = new McpInitializeParams();
-
-        var request = new JsonRpcRequest
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            Id = Interlocked.Increment(ref _nextId),
-            Method = "initialize",
-            Params = JsonSerializer.SerializeToElement(initParams, JsonContext.Default.McpInitializeParams),
-        };
+            await _transport.ConnectAsync(ct).ConfigureAwait(false);
 
-        await _transport.SendAsync(request, ct).ConfigureAwait(false);
-        var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
+            var initParams = new McpInitializeParams();
 
-        if (response.Error is not null)
-        {
-            throw new McpException(
-                $"MCP initialize failed: {response.Error.Message}",
-                response.Error.Code);
+            var request = new JsonRpcRequest
+            {
+                Id = Interlocked.Increment(ref _nextId),
+                Method = "initialize",
+                Params = JsonSerializer.SerializeToElement(initParams, JsonContext.Default.McpInitializeParams),
+            };
+
+            await _transport.SendAsync(request, ct).ConfigureAwait(false);
+            var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
+
+            if (response.Error is not null)
+            {
+                throw new McpException(
+                    $"MCP initialize failed: {response.Error.Message}",
+                    response.Error.Code);
+            }
+
+            if (response.Result is JsonElement result)
+            {
+                var initResult = JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpInitializeResult);
+                _capabilities = initResult?.Capabilities;
+            }
+
+            // Send initialized notification per MCP spec
+            var notification = new JsonRpcNotification { Method = "notifications/initialized" };
+            await _transport.SendNotificationAsync(notification, ct).ConfigureAwait(false);
+
+            _initialized = true;
         }
-
-        if (response.Result is JsonElement result)
+        finally
         {
-            var initResult = JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpInitializeResult);
-            _capabilities = initResult?.Capabilities;
+            _protocolLock.Release();
         }
-
-        // Send initialized notification per MCP spec
-        var notification = new JsonRpcNotification { Method = "notifications/initialized" };
-        await _transport.SendNotificationAsync(notification, ct).ConfigureAwait(false);
-
-        _initialized = true;
     }
 
     /// <summary>
@@ -74,29 +83,37 @@ public sealed class McpClient : IAsyncDisposable
     {
         EnsureInitialized();
 
-        var request = new JsonRpcRequest
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            Id = Interlocked.Increment(ref _nextId),
-            Method = "tools/list",
-        };
+            var request = new JsonRpcRequest
+            {
+                Id = Interlocked.Increment(ref _nextId),
+                Method = "tools/list",
+            };
 
-        await _transport.SendAsync(request, ct).ConfigureAwait(false);
-        var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
+            await _transport.SendAsync(request, ct).ConfigureAwait(false);
+            var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
 
-        if (response.Error is not null)
-        {
-            throw new McpException(
-                $"MCP tools/list failed: {response.Error.Message}",
-                response.Error.Code);
+            if (response.Error is not null)
+            {
+                throw new McpException(
+                    $"MCP tools/list failed: {response.Error.Message}",
+                    response.Error.Code);
+            }
+
+            if (response.Result is JsonElement result)
+            {
+                var toolsResult = JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpToolsListResult);
+                return toolsResult?.Tools ?? [];
+            }
+
+            return [];
         }
-
-        if (response.Result is JsonElement result)
+        finally
         {
-            var toolsResult = JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpToolsListResult);
-            return toolsResult?.Tools ?? [];
+            _protocolLock.Release();
         }
-
-        return [];
     }
 
     /// <summary>
@@ -109,36 +126,44 @@ public sealed class McpClient : IAsyncDisposable
     {
         EnsureInitialized();
 
-        var callParams = new McpToolCallParams
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            Name = toolName,
-            Arguments = arguments,
-        };
+            var callParams = new McpToolCallParams
+            {
+                Name = toolName,
+                Arguments = arguments,
+            };
 
-        var request = new JsonRpcRequest
-        {
-            Id = Interlocked.Increment(ref _nextId),
-            Method = "tools/call",
-            Params = JsonSerializer.SerializeToElement(callParams, JsonContext.Default.McpToolCallParams),
-        };
+            var request = new JsonRpcRequest
+            {
+                Id = Interlocked.Increment(ref _nextId),
+                Method = "tools/call",
+                Params = JsonSerializer.SerializeToElement(callParams, JsonContext.Default.McpToolCallParams),
+            };
 
-        await _transport.SendAsync(request, ct).ConfigureAwait(false);
-        var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
+            await _transport.SendAsync(request, ct).ConfigureAwait(false);
+            var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
 
-        if (response.Error is not null)
-        {
-            throw new McpException(
-                $"MCP tools/call '{toolName}' failed: {response.Error.Message}",
-                response.Error.Code);
+            if (response.Error is not null)
+            {
+                throw new McpException(
+                    $"MCP tools/call '{toolName}' failed: {response.Error.Message}",
+                    response.Error.Code);
+            }
+
+            if (response.Result is JsonElement result)
+            {
+                return JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpToolCallResult)
+                       ?? new McpToolCallResult();
+            }
+
+            return new McpToolCallResult();
         }
-
-        if (response.Result is JsonElement result)
+        finally
         {
-            return JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpToolCallResult)
-                   ?? new McpToolCallResult();
+            _protocolLock.Release();
         }
-
-        return new McpToolCallResult();
     }
 
     /// <inheritdoc />
@@ -146,6 +171,7 @@ public sealed class McpClient : IAsyncDisposable
     {
         await _transport.DisconnectAsync().ConfigureAwait(false);
         await _transport.DisposeAsync().ConfigureAwait(false);
+        _protocolLock.Dispose();
     }
 
     private void EnsureInitialized()

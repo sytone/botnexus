@@ -6,25 +6,35 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Extensions.Mcp;
 
 /// <summary>
-/// Contributes MCP-bridged tools by starting configured servers for the target agent session.
+/// Contributes MCP-bridged tools from the non-blocking server warmup cache.
 /// </summary>
 public sealed class McpToolContributor(ILoggerFactory loggerFactory) : IAgentToolContributor
 {
     /// <inheritdoc />
-    public async Task<AgentToolContribution> ContributeAsync(
+    public Task<AgentToolContribution> ContributeAsync(
         AgentToolContributionContext context,
         CancellationToken cancellationToken = default)
     {
-        var config = ResolveExtensionConfig<McpExtensionConfig>(context.Descriptor, "botnexus-mcp");
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var config = ResolveMcpExtensionConfig(context.Descriptor);
         if (config is not { Servers.Count: > 0 })
-            return new AgentToolContribution([]);
+            return Task.FromResult(new AgentToolContribution([]));
 
-        var manager = new McpServerManager(loggerFactory.CreateLogger<McpServerManager>());
-        var tools = await manager.StartServersAsync(config, cancellationToken).ConfigureAwait(false);
+        var entry = McpServerWarmupCache.EnsureStarted(
+            context.Descriptor.AgentId.Value,
+            config,
+            loggerFactory.CreateLogger<McpServerManager>());
 
-        IReadOnlyList<object> resourcesToDispose = [manager];
-        return new AgentToolContribution(tools, resourcesToDispose);
+        var contribution = entry.TryGetReadyTools(out var tools)
+            ? new AgentToolContribution(tools)
+            : new AgentToolContribution([]);
+
+        return Task.FromResult(contribution);
     }
+
+    internal static McpExtensionConfig? ResolveMcpExtensionConfig(AgentDescriptor descriptor)
+        => ResolveExtensionConfig<McpExtensionConfig>(descriptor, "botnexus-mcp");
 
     private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
     {
