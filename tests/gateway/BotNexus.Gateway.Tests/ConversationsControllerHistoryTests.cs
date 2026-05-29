@@ -339,7 +339,7 @@ public sealed class ConversationsControllerHistoryTests
         var listResult = await controller.List("assistant", CancellationToken.None);
         var list = (listResult as OkObjectResult)?.Value as IReadOnlyList<ConversationSummary>;
         list.ShouldNotBeNull();
-        list!.ShouldNotContain(summary => summary.ConversationId == conversationId);
+        list!.ShouldNotContain(summary => summary.ConversationId == conversationId.Value);
 
         var sessionsController = new SessionsController(sessions);
         var defaultSessionsResult = await sessionsController.List("assistant", cancellationToken: CancellationToken.None);

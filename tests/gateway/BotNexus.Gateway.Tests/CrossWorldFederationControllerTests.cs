@@ -412,7 +412,7 @@ public sealed class CrossWorldFederationControllerTests
         stored[0].Status.ShouldBe(GatewaySessionStatus.Sealed,
             customMessage: "Failure must seal the session — otherwise it lingers as Active and " +
                 "blocks new relays from reusing the binding/agent slot.");
-        stored[0].Session.ConversationId.ShouldNotBeNull(
+        stored[0].Session.ConversationId.IsInitialized().ShouldBeTrue(
             customMessage: "Even on failure the session must keep its ConversationId — losing it " +
                 "in the catch block re-introduces the orphan bug.");
 

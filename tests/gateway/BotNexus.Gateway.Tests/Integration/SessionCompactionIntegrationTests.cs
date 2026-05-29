@@ -2,8 +2,10 @@ using BotNexus.Domain.Primitives;
 using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -579,9 +581,10 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         public string DirectoryPath { get; }
         public string DatabasePath { get; }
         public string ConnectionString { get; }
+        public InMemoryConversationStore Conversations { get; } = new();
 
         public SqliteSessionStore CreateStore()
-            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance);
+            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, Conversations);
 
         public void Dispose()
         {

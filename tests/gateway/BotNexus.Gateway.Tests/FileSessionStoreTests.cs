@@ -1,7 +1,9 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
@@ -28,18 +30,20 @@ public sealed class FileSessionStoreTests
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-with-conv"));
 
         reloaded.ShouldNotBeNull();
-        reloaded.Session.ConversationId.ShouldNotBeNull(
+        reloaded.Session.ConversationId.IsInitialized().ShouldBeTrue(
             "FileSessionStore lost ConversationId on round-trip — sessions go orphan on restart (F-7)");
-        reloaded.Session.ConversationId!.Value.ShouldBe(
+        reloaded.Session.ConversationId.ShouldBe(
             conversationId,
             "FileSessionStore corrupted ConversationId on round-trip");
     }
 
     [Fact]
-    public async Task SaveAsync_PreservesNullConversationId_AcrossReload()
+    public async Task SaveAsync_UnsetConversationId_BackfillsLegacyOnRoundTrip()
     {
-        // Companion to the above — a session saved with null ConversationId must
-        // round-trip as null (not as some sentinel string, not as an exception).
+        // Phase 9 / P9-B-2 (#627): Session.ConversationId is non-nullable. The historical
+        // "null round-trip" behaviour is replaced by the resolver-backed backfill: an unset
+        // ConversationId on save is stamped with the agent's legacy:{agentId} conversation
+        // before the sidecar is written, and round-trips as that stamped value.
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
@@ -49,7 +53,8 @@ public sealed class FileSessionStoreTests
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-no-conv"));
 
         reloaded.ShouldNotBeNull();
-        reloaded.Session.ConversationId.ShouldBeNull();
+        reloaded.Session.ConversationId.IsInitialized().ShouldBeTrue(
+            "Unset ConversationId must be backfilled by the legacy resolver on save (#627).");
     }
 
     [Fact]
@@ -526,13 +531,15 @@ public sealed class FileSessionStoreTests
                 "FileSessionStoreTests",
                 Guid.NewGuid().ToString("N"));
             FileSystem.Directory.CreateDirectory(StorePath);
+            Conversations = new InMemoryConversationStore();
         }
 
         public string StorePath { get; }
         public MockFileSystem FileSystem { get; }
+        public InMemoryConversationStore Conversations { get; }
 
-        public FileSessionStore CreateStore()
-            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem);
+        public FileSessionStore CreateStore(IConversationStore? conversationStore = null)
+            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, conversationStore ?? Conversations);
 
         public void Dispose()
         {

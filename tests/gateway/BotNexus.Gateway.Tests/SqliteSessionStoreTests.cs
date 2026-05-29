@@ -1,7 +1,9 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -856,14 +858,21 @@ public sealed class SqliteSessionStoreTests
             Directory.CreateDirectory(DirectoryPath);
             DatabasePath = Path.Combine(DirectoryPath, "sessions.db");
             ConnectionString = $"Data Source={DatabasePath};Pooling=False";
+            Conversations = new InMemoryConversationStore();
         }
 
         public string DirectoryPath { get; }
         public string DatabasePath { get; }
         public string ConnectionString { get; }
 
-        public SqliteSessionStore CreateStore()
-            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance);
+        // Shared across all CreateStore() calls in the same fixture so
+        // legacy-conversation rows resolved by one store instance are visible to
+        // subsequent stores opened on the same SQLite database — required for
+        // the post-P9-B-2 fail-loud "unset ConversationId on save" guard.
+        public InMemoryConversationStore Conversations { get; }
+
+        public SqliteSessionStore CreateStore(IConversationStore? conversationStore = null)
+            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? Conversations);
 
         public void Dispose()
         {

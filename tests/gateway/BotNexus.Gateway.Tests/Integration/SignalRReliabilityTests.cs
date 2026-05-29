@@ -83,8 +83,8 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         firstSession.ShouldNotBeNull();
         secondSession.ShouldNotBeNull();
-        firstSession!.Session.ConversationId.ShouldNotBeNull("first connection must resolve a conversation; #441");
-        secondSession!.Session.ConversationId.ShouldNotBeNull("reconnect must resolve a conversation; #441");
+        firstSession!.Session.ConversationId.IsInitialized().ShouldBeTrue("first connection must resolve a conversation; #441");
+        secondSession!.Session.ConversationId.IsInitialized().ShouldBeTrue("reconnect must resolve a conversation; #441");
         secondSession.Session.ConversationId.ShouldBe(
             firstSession.Session.ConversationId,
             "reconnect must resolve to the same conversation as the original session; #441");
@@ -221,8 +221,8 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         novaSession.ShouldNotBeNull();
         quillSession.ShouldNotBeNull();
-        novaSession!.Session.ConversationId.ShouldNotBeNull("nova send must resolve a conversation");
-        quillSession!.Session.ConversationId.ShouldNotBeNull("quill send must resolve a conversation");
+        novaSession!.Session.ConversationId.IsInitialized().ShouldBeTrue("nova send must resolve a conversation");
+        quillSession!.Session.ConversationId.IsInitialized().ShouldBeTrue("quill send must resolve a conversation");
         quillSession.Session.ConversationId.ShouldNotBe(
             novaSession.Session.ConversationId,
             "agent switch must route into the new agent's conversation, not the previous agent's; #314");
