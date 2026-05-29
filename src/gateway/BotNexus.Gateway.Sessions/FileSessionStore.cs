@@ -45,6 +45,25 @@ public sealed class FileSessionStore : SessionStoreBase
     private readonly ISecretRedactor? _redactor;
     private readonly LegacyConversationResolver? _legacyResolver;
 
+    // Phase 9 / P9-B-2 (#627): eager startup sweep mirrors
+    // SqliteSessionStore.MigrateOrphanedSessionsAsync. A SemaphoreSlim + bool flag
+    // (rather than a cached Task) so a cancelled first caller cannot poison subsequent
+    // calls — if the first attempt throws OperationCanceledException the next caller
+    // re-enters the lock and tries again with its own token.
+    private readonly SemaphoreSlim _migrationLock = new(1, 1);
+    private bool _migrated;
+
+    // Test probe (#627): increments exactly once per MigrateOrphanedSessionsAsync entry.
+    // Counted via Interlocked because EnsureMigratedAsync is called from multiple
+    // concurrent task contexts before the lock is acquired. Exposed via
+    // <see cref="MigrationInvocationCount"/> so the concurrent-callers test can prove
+    // the sweep ran exactly once, decoupled from inner resolver ListAsync call counts
+    // (the resolver may issue 1-3 ListAsync calls per single sweep depending on cache
+    // state, so counting ListAsync at the conversation store conflates correctness
+    // with resolver implementation detail).
+    private int _migrationInvocationCount;
+    internal int MigrationInvocationCount => Volatile.Read(ref _migrationInvocationCount);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -92,6 +111,8 @@ public sealed class FileSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.get", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", sessionId);
 
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -109,6 +130,8 @@ public sealed class FileSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.get_or_create", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", sessionId);
         activity?.SetTag("botnexus.agent.id", agentId);
+
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
 
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -136,6 +159,8 @@ public sealed class FileSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.save", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", session.SessionId);
         activity?.SetTag("botnexus.agent.id", session.AgentId);
+
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
 
         // Backfill outside the per-store lock — the resolver may call the conversation
         // store which has its own locking; nesting would risk lock-ordering issues
@@ -190,6 +215,8 @@ public sealed class FileSessionStore : SessionStoreBase
 
     protected override async Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
     {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -207,6 +234,174 @@ public sealed class FileSessionStore : SessionStoreBase
             return sessions;
         }
         finally { _lock.Release(); }
+    }
+
+    /// <summary>
+    /// One-time eager sweep that mirrors <c>SqliteSessionStore.MigrateOrphanedSessionsAsync</c>:
+    /// every pre-Phase-9 sidecar on disk with no <c>ConversationId</c> is grouped by agent,
+    /// linked to that agent's <c>legacy:{agentId}</c> conversation via
+    /// <see cref="LegacyConversationResolver"/>, and the most-recently-updated Active orphan
+    /// per agent is bound as the conversation's <see cref="Conversation.ActiveSessionId"/>.
+    /// Safe to run on every startup — no-op when no orphans exist or no resolver is wired.
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="SemaphoreSlim"/> + <c>_migrated</c> flag (NOT a cached
+    /// <see cref="Task"/>) so a cancelled first caller does not poison subsequent callers
+    /// — they re-enter the lock and retry with their own token.
+    /// </remarks>
+    private async Task EnsureMigratedAsync(CancellationToken cancellationToken)
+    {
+        if (_migrated) return;
+        if (_legacyResolver is null) { _migrated = true; return; }
+
+        await _migrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_migrated) return;
+            try
+            {
+                Interlocked.Increment(ref _migrationInvocationCount);
+                await MigrateOrphanedSessionsAsync(cancellationToken).ConfigureAwait(false);
+                _migrated = true;
+            }
+            catch (OperationCanceledException)
+            {
+                // Do NOT set _migrated — let the next caller retry with their own token.
+                throw;
+            }
+        }
+        finally { _migrationLock.Release(); }
+    }
+
+    /// <summary>
+    /// Scans the store directory for sidecar files with no persisted <c>ConversationId</c>,
+    /// groups by agent, stamps each group with the agent's legacy conversation, rewrites
+    /// every orphan sidecar so the stamp is durable, and binds the most-recently-updated
+    /// Active orphan per agent as the conversation's active session pointer. Mirrors
+    /// <c>SqliteSessionStore.MigrateOrphanedSessionsAsync</c>; runs once per process via
+    /// <see cref="EnsureMigratedAsync"/>.
+    /// </summary>
+    private async Task MigrateOrphanedSessionsAsync(CancellationToken cancellationToken)
+    {
+        if (_legacyResolver is null) return;
+
+        // Pass 1: enumerate orphan sidecars (ConversationId is null or absent on disk).
+        // Hold the read lock briefly to avoid racing with concurrent SaveAsync writes.
+        var orphans = new List<(SessionId SessionId, AgentId AgentId, SessionStatus Status, DateTimeOffset UpdatedAt)>();
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            foreach (var metaFile in _fileSystem.Directory.GetFiles(_storePath, "*.meta.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                SessionMeta? meta;
+                try
+                {
+                    meta = await SessionMetadataSidecar.ReadAsync<SessionMeta>(
+                        _fileSystem,
+                        metaFile,
+                        JsonOptions,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Skip unreadable sidecars; do not fail the entire sweep on a single
+                    // corrupted file. The load path will surface the same error if the
+                    // sidecar is later requested by id.
+                    _logger.LogWarning(ex,
+                        "Skipping unreadable sidecar {SidecarPath} during orphan sweep.",
+                        metaFile);
+                    continue;
+                }
+
+                if (meta is null) continue;
+                if (meta.ConversationId is not null) continue;
+
+                var sessionId = SessionId.From(Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(metaFile)));
+                orphans.Add((sessionId, meta.AgentId, meta.Status, meta.UpdatedAt));
+            }
+        }
+        finally { _lock.Release(); }
+
+        if (orphans.Count == 0) return;
+
+        // Pass 2: group by agent, resolve legacy conversation per agent, bind the
+        // most-recently-updated Active orphan as the conversation's active pointer,
+        // then stamp each orphan sidecar in turn. Bind MUST run BEFORE the stamp loop
+        // because LoadFromFileAsync has its own load-time backfill that calls
+        // BindActiveSessionIfNoneAsync(firstSessionLoaded). Without this ordering, the
+        // alphabetically-first orphan would silently win the bind race against the
+        // most-recently-updated orphan. Resolver call must be outside the per-store
+        // lock — it acquires its own per-agent semaphore plus the conversation store's
+        // lock; nesting risks deadlock.
+        var totalMigrated = 0;
+        foreach (var group in orphans.GroupBy(o => o.AgentId))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var agentId = group.Key;
+            var legacy = await _legacyResolver.ResolveAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+            // Bind first: pick the most-recently-updated Active orphan. Sealed/Suspended/
+            // Expired orphans are not bound — they're history, not live work. The bind is
+            // first-wins via the resolver's per-agent semaphore, so subsequent
+            // load-time-backfill BindActiveSessionIfNoneAsync calls in this loop are
+            // no-ops once this completes.
+            var activeOrphans = group
+                .Where(o => o.Status == SessionStatus.Active)
+                .OrderByDescending(o => o.UpdatedAt)
+                .ToList();
+            if (activeOrphans.Count > 0)
+            {
+                await _legacyResolver.BindActiveSessionIfNoneAsync(
+                    legacy,
+                    activeOrphans[0].SessionId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            // Reload + rewrite each orphan sidecar so the stamp is durable on disk.
+            foreach (var orphan in group)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                GatewaySession? session;
+                await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (_cache.TryGetValue(orphan.SessionId, out var cached))
+                    {
+                        session = cached;
+                    }
+                    else
+                    {
+                        session = await LoadFromFileAsync(orphan.SessionId, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally { _lock.Release(); }
+
+                if (session is null) continue;
+
+                // LoadFromFileAsync already backfills via the resolver path — but only when
+                // the session is loaded individually. The eager sweep guarantees every orphan
+                // gets touched even when no caller ever explicitly requests it.
+                if (!session.ConversationId.IsInitialized())
+                {
+                    session.ConversationId = legacy.ConversationId;
+                    await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await WriteToFileAsync(session, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally { _lock.Release(); }
+                }
+                totalMigrated++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Orphaned session migration (file store): linked {Count} session(s) across {AgentCount} agent(s) to their legacy conversations.",
+            totalMigrated, orphans.Select(o => o.AgentId).Distinct().Count());
     }
 
     private async Task<GatewaySession?> LoadFromFileAsync(SessionId sessionId, CancellationToken cancellationToken)
@@ -229,12 +424,19 @@ public sealed class FileSessionStore : SessionStoreBase
             CreatedAt = meta.CreatedAt,
             UpdatedAt = meta.UpdatedAt,
             Status = meta.Status,
-            ExpiresAt = meta.ExpiresAt,
-            ConversationId = meta.ConversationId
+            ExpiresAt = meta.ExpiresAt
+            // ConversationId is intentionally omitted when meta.ConversationId is null --
+            // the property defaults to an uninitialized ConversationId (the "unset" sentinel)
+            // and the load-time backfill below fires on it. Writing `default(ConversationId)`
+            // explicitly is prohibited by Vogen analyzer VOG009.
         }, _redactor)
         {
             CallerId = meta.CallerId
         };
+        if (meta.ConversationId is not null)
+        {
+            session.ConversationId = meta.ConversationId.Value;
+        }
         if (meta.Metadata is not null)
         {
             foreach (var pair in meta.Metadata)
@@ -259,11 +461,12 @@ public sealed class FileSessionStore : SessionStoreBase
             session.UpdatedAt = meta.UpdatedAt;
         }
 
-        // Phase 9 / P9-B (#615): if this session was persisted before Session.ConversationId
-        // was always populated, durably backfill the legacy conversation. The sidecar is
-        // rewritten so subsequent loads — and any reader that joins on ConversationId —
-        // observe the stamp without another resolution round trip.
-        if (session.ConversationId is null && _legacyResolver is not null)
+        // Phase 9 / P9-B (#615, #627): if this session was persisted before
+        // Session.ConversationId was always populated, durably backfill the legacy
+        // conversation. The sidecar is rewritten so subsequent loads — and any reader
+        // that joins on ConversationId — observe the stamp without another resolution
+        // round trip.
+        if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
         {
             var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
             session.ConversationId = legacy.ConversationId;
@@ -283,15 +486,15 @@ public sealed class FileSessionStore : SessionStoreBase
     }
 
     /// <summary>
-    /// Defensively stamps a session whose <see cref="Session.ConversationId"/> is null at
-    /// save time with the agent's <c>legacy:{agentId}</c> conversation, persisting the
-    /// stamp before the sidecar is written so subsequent reads see a consistent view.
-    /// No-op when no conversation store was registered (back-compat for test composition
-    /// roots).
+    /// Defensively stamps a session whose <see cref="Session.ConversationId"/> is unset
+    /// (<c>default(ConversationId)</c>) at save time with the agent's
+    /// <c>legacy:{agentId}</c> conversation, persisting the stamp before the sidecar is
+    /// written so subsequent reads see a consistent view. No-op when no conversation
+    /// store was registered (back-compat for test composition roots).
     /// </summary>
     private async Task EnsureConversationIdStampedAsync(GatewaySession session, CancellationToken cancellationToken)
     {
-        if (session.ConversationId is not null)
+        if (session.ConversationId.IsInitialized())
             return;
         if (_legacyResolver is null)
             return;
@@ -335,7 +538,13 @@ public sealed class FileSessionStore : SessionStoreBase
             session.ExpiresAt,
             session.StreamReplay.NextSequenceId,
             [.. session.StreamReplay.GetEventSnapshot()],
-            session.ConversationId,
+            // P9-B-2: Session.ConversationId is now non-nullable, but the SessionMeta
+            // sidecar still carries it as ConversationId? so back-compat readers see
+            // `null` for orphan rows (preserving the no-resolver back-compat path).
+            // Without the IsInitialized check, the unset Vogen default would wrap into
+            // Nullable<ConversationId>(HasValue=true, Value=default) and the Vogen STJ
+            // converter would throw "uninitialized value object" at write time.
+            session.ConversationId.IsInitialized() ? session.ConversationId : (ConversationId?)null,
             session.Metadata.Count == 0 ? null : new Dictionary<string, object?>(session.Metadata));
         await SessionMetadataSidecar.WriteAsync(
             _fileSystem,
