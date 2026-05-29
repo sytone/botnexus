@@ -12,7 +12,7 @@ public sealed class McpClient : IAsyncDisposable
 {
     private readonly IMcpTransport _transport;
     private readonly string _serverId;
-    private readonly SemaphoreSlim _requestLock = new(1, 1);
+    private readonly SemaphoreSlim _protocolLock = new(1, 1);
     private int _nextId;
     private McpServerCapabilities? _capabilities;
     private bool _initialized;
@@ -34,7 +34,7 @@ public sealed class McpClient : IAsyncDisposable
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct = default)
     {
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await _transport.ConnectAsync(ct).ConfigureAwait(false);
@@ -72,7 +72,7 @@ public sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            _requestLock.Release();
+            _protocolLock.Release();
         }
     }
 
@@ -83,7 +83,7 @@ public sealed class McpClient : IAsyncDisposable
     {
         EnsureInitialized();
 
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var request = new JsonRpcRequest
@@ -112,7 +112,7 @@ public sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            _requestLock.Release();
+            _protocolLock.Release();
         }
     }
 
@@ -126,7 +126,7 @@ public sealed class McpClient : IAsyncDisposable
     {
         EnsureInitialized();
 
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var callParams = new McpToolCallParams
@@ -162,7 +162,7 @@ public sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            _requestLock.Release();
+            _protocolLock.Release();
         }
     }
 
@@ -171,7 +171,7 @@ public sealed class McpClient : IAsyncDisposable
     {
         await _transport.DisconnectAsync().ConfigureAwait(false);
         await _transport.DisposeAsync().ConfigureAwait(false);
-        _requestLock.Dispose();
+        _protocolLock.Dispose();
     }
 
     private void EnsureInitialized()

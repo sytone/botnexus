@@ -313,7 +313,7 @@ public class McpServerManagerTests
         => new(
             descriptor,
             new AgentExecutionContext { SessionId = SessionId.Create() },
-            "/tmp",
+            Path.GetTempPath(),
             new AllowAllPathValidator(),
             _ => null,
             (_, _) => Task.FromResult<string?>(null));

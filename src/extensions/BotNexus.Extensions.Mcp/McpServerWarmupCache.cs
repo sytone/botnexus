@@ -9,7 +9,7 @@ namespace BotNexus.Extensions.Mcp;
 
 internal static class McpServerWarmupCache
 {
-    private static readonly ConcurrentDictionary<string, WarmupEntry> Entries = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, WarmupEntry> WarmupEntriesByKey = new(StringComparer.OrdinalIgnoreCase);
 
     public static WarmupEntry EnsureStarted(
         string agentId,
@@ -17,11 +17,11 @@ internal static class McpServerWarmupCache
         ILogger logger)
     {
         var key = BuildKey(agentId, config);
-        return Entries.GetOrAdd(key, _ =>
+        return WarmupEntriesByKey.GetOrAdd(key, _ =>
         {
             var manager = new McpServerManager(logger);
             var cts = new CancellationTokenSource();
-            var entry = new WarmupEntry(manager, cts);
+            var entry = new WarmupEntry(manager, cts, logger);
             entry.Start(config);
             return entry;
         });
@@ -29,14 +29,14 @@ internal static class McpServerWarmupCache
 
     public static async ValueTask DisposeAllAsync()
     {
-        var entries = Entries.ToArray();
-        Entries.Clear();
+        var entries = WarmupEntriesByKey.ToArray();
+        WarmupEntriesByKey.Clear();
 
         foreach (var entry in entries)
             await entry.Value.DisposeAsync().ConfigureAwait(false);
     }
 
-    internal static int Count => Entries.Count;
+    internal static int Count => WarmupEntriesByKey.Count;
 
     private static string BuildKey(string agentId, McpExtensionConfig config)
     {
@@ -49,13 +49,15 @@ internal static class McpServerWarmupCache
     {
         private readonly McpServerManager _manager;
         private readonly CancellationTokenSource _cts;
+        private readonly ILogger _logger;
         private Task? _startTask;
         private IReadOnlyList<IAgentTool> _tools = [];
 
-        public WarmupEntry(McpServerManager manager, CancellationTokenSource cts)
+        public WarmupEntry(McpServerManager manager, CancellationTokenSource cts, ILogger logger)
         {
             _manager = manager;
             _cts = cts;
+            _logger = logger;
         }
 
         public void Start(McpExtensionConfig config)
@@ -69,6 +71,11 @@ internal static class McpServerWarmupCache
                 catch (OperationCanceledException) when (_cts.IsCancellationRequested)
                 {
                     _tools = [];
+                }
+                catch (Exception ex)
+                {
+                    _tools = [];
+                    _logger.LogWarning(ex, "MCP server warmup failed unexpectedly.");
                 }
             }, _cts.Token);
         }
@@ -96,7 +103,7 @@ internal static class McpServerWarmupCache
                 }
                 catch
                 {
-                    // Best-effort cleanup; startup failures are already logged by the manager.
+                    // Best-effort cleanup; startup failures are logged by the warmup task or manager.
                 }
             }
 
