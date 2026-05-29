@@ -1065,6 +1065,153 @@ public sealed class CrossWorldFederationControllerTests
         xResponse.Result.ShouldBeOfType<OkObjectResult>();
     }
 
+    // ─── P9-C auto-archive A↔A receiver pins ────────────────────────────────────────────
+    //
+    // Phase 9 / P9-C — driven by W-3 directive: "A-A conversations should have an end
+    // and then the conversation is done as that topic of conversation is over." The
+    // receiver-side conversation must auto-archive when the exchange terminates:
+    //   * target invoked finish_agent_exchange      → exchangeFinished=true  → archive
+    //   * sender signalled final turn               → CloseAfterResponse=true → archive
+    //   * non-final relay                           → both false → clear ActiveSessionId, no archive
+    //   * receiver-side exception                   → archive (terminal failure)
+
+    [Fact]
+    public async Task RelayAsync_WhenExchangeFinishedByTarget_ArchivesReceiverConversation()
+    {
+        var (controller, _, conversations, _) = BuildControllerWithToolCalledFinish(
+            replyContent: "Done.",
+            finishReason: "shipped",
+            finishSummary: null);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeTrue();
+
+        var convs = await conversations.ListAsync();
+        convs.ShouldHaveSingleItem();
+        convs[0].Status.ShouldBe(ConversationStatus.Archived,
+            customMessage: "P9-C: receiver MUST archive its conversation when the target " +
+                "agent invokes finish_agent_exchange — A↔A conversations are bounded by " +
+                "their exchange.");
+        convs[0].ActiveSessionId.ShouldBeNull(
+            customMessage: "Archive must atomically clear ActiveSessionId (subsumes Clear).");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenSenderSignalsCloseAfterResponse_ArchivesReceiverConversation_EvenWithoutFinishTool()
+    {
+        // The critical P9-C wire-protocol pin: sender computed `isFinalTurn` and set
+        // CloseAfterResponse=true on the relay. Target did NOT invoke finish_agent_exchange
+        // (no objective + no tool call → single-shot terminates on the sender side via
+        // ResolveCompletionReason). Without this signal the receiver would leave its
+        // conversation Active forever for single-shot and max-turns-reached cases.
+        var (controller, _, conversations, _) = BuildController(replyContent: "ack");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse(
+            customMessage: "Target did not invoke finish tool — ExchangeFinished must remain false.");
+
+        var convs = await conversations.ListAsync();
+        convs.ShouldHaveSingleItem();
+        convs[0].Status.ShouldBe(ConversationStatus.Archived,
+            customMessage: "P9-C: CloseAfterResponse=true is the sender's finality signal — " +
+                "receiver MUST archive even though the target never invoked finish_agent_exchange. " +
+                "Without this, single-shot and MaxTurns-reached exchanges leave receiver-side " +
+                "A↔A conversations Active indefinitely.");
+        convs[0].ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RelayAsync_NonFinalRelay_DoesNotArchive_OnlyClearsActiveSession()
+    {
+        // Non-final relay (sender has more turns; target did not finish): the conversation
+        // remains Active so the next sender turn can reuse the RemoteSessionId. Only the
+        // pointer is cleared so the portal stops rendering "in flight" between turns.
+        var (controller, _, conversations, _) = BuildController(replyContent: "still working");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: false), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse();
+
+        var convs = await conversations.ListAsync();
+        convs.ShouldHaveSingleItem();
+        convs[0].Status.ShouldBe(ConversationStatus.Active,
+            customMessage: "Non-final relay must keep the conversation Active so the next " +
+                "sender turn can reuse RemoteSessionId. Premature archive would break multi-turn.");
+        convs[0].ActiveSessionId.ShouldBeNull(
+            customMessage: "ActiveSessionId is still cleared between turns so the portal does " +
+                "not render the conversation as in-flight while the sender pauses.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_OnPromptFailure_ArchivesReceiverConversation()
+    {
+        // Failure path: receiver session sealed by error catch; conversation also archived
+        // because terminal failure = exchange done.
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("target LLM upstream went bang"));
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var action = () => controller.RelayAsync(BuildRequest(), CancellationToken.None);
+        await action.ShouldThrowAsync<InvalidOperationException>();
+
+        var convs = await conversations.ListAsync();
+        convs.ShouldHaveSingleItem();
+        convs[0].Status.ShouldBe(ConversationStatus.Archived,
+            customMessage: "P9-C: a failed exchange is terminal — receiver MUST archive its " +
+                "conversation so it does not linger as Active in portal/list APIs after a failure.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenArchiveCalledTwice_IsIdempotent_AndDoesNotThrow()
+    {
+        // First relay archives; a hypothetical second call with the same RemoteSessionId would
+        // hit the sealed-session 409 guard in ResolveSessionAsync. But the underlying ArchiveAsync
+        // itself MUST be idempotent — re-archiving an already-Archived conversation is a no-op.
+        var (controller, _, conversations, _) = BuildControllerWithToolCalledFinish(
+            replyContent: "Done.",
+            finishReason: "shipped",
+            finishSummary: null);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var convs = await conversations.ListAsync();
+        var convId = convs.ShouldHaveSingleItem().ConversationId;
+
+        // Directly invoke ArchiveAsync a second time — must not throw or change observable state.
+        await conversations.ArchiveAsync(convId, CancellationToken.None);
+
+        var reloaded = await conversations.GetAsync(convId);
+        reloaded.ShouldNotBeNull();
+        reloaded!.Status.ShouldBe(ConversationStatus.Archived);
+        reloaded.ActiveSessionId.ShouldBeNull();
+    }
+
+    // ─── end P9-C receiver pins ──────────────────────────────────────────────────────────
+
     // ---- helpers ----
 
     private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
@@ -1497,7 +1644,8 @@ public sealed class CrossWorldFederationControllerTests
         string message = "hello",
         string? remoteSessionId = null,
         string? sourceSessionId = null,
-        string sourceAgentId = SourceAgentId)
+        string sourceAgentId = SourceAgentId,
+        bool closeAfterResponse = false)
         => new()
         {
             SourceWorldId = SourceWorldId,
@@ -1506,7 +1654,8 @@ public sealed class CrossWorldFederationControllerTests
             Message = message,
             ConversationId = "sender-conv-id",
             SourceSessionId = sourceSessionId,
-            RemoteSessionId = remoteSessionId
+            RemoteSessionId = remoteSessionId,
+            CloseAfterResponse = closeAfterResponse
         };
 }
 
