@@ -59,8 +59,8 @@ public abstract class SessionStoreBase : ISessionStore
     {
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
         IEnumerable<GatewaySession> result = sessions
-            .Where(session => session.ConversationId is not null
-                && session.ConversationId.Value == conversationId);
+            .Where(session => session.ConversationId.IsInitialized()
+                && session.ConversationId == conversationId);
         if (agentId is not null)
         {
             result = result.Where(session => session.AgentId == agentId);
