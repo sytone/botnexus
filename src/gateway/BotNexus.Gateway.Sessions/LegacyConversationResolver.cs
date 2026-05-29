@@ -112,12 +112,12 @@ public sealed class LegacyConversationResolver
     /// conversation so the canonical reset / dispatch paths
     /// (<c>DefaultConversationResetService.ResetActiveSessionAsync</c>,
     /// <c>DefaultConversationRouter</c>) can find the session via the conversation pointer.</para>
-    /// <para>If <see cref="Conversation.ActiveSessionId"/> is already set, this is a no-op —
-    /// the existing pointer is preserved to avoid clobbering a concurrent caller who may
-    /// have just bound their own active session. <b>Eventual-consistency invariant:</b>
-    /// last-stamp-wins races are acceptable because the conversation router self-heals
-    /// stale active-session pointers (<c>DefaultConversationResetService.cs</c> already
-    /// clears <c>ActiveSessionId</c> defensively when the pointed-at session is missing).</para>
+    /// <para><b>First-wins under concurrency:</b> binding acquires the per-agent semaphore
+    /// and re-fetches the conversation from the store before deciding to set the pointer.
+    /// This prevents the last-write-wins race where two concurrent binders both observe
+    /// <c>ActiveSessionId == null</c> on stale snapshots and overwrite each other. If
+    /// another caller already bound a pointer, this method mirrors that pointer back onto
+    /// the passed-in <paramref name="conversation"/> so callers observe the canonical value.</para>
     /// <para>The caller is responsible for verifying the session is in a state worth
     /// binding (typically <see cref="SessionStatus.Active"/>) — this method does not
     /// inspect the session itself.</para>
@@ -128,24 +128,68 @@ public sealed class LegacyConversationResolver
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(conversation);
+
+        // Quick out without lock acquisition — the in-memory copy already shows a binding.
+        // The re-check under lock below remains authoritative; this is just a fast path.
         if (conversation.ActiveSessionId is not null)
             return;
 
-        conversation.ActiveSessionId = sessionId;
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        var agentLock = _agentLocks.GetOrAdd(conversation.AgentId, _ => new SemaphoreSlim(1, 1));
+        await agentLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Re-fetch under lock so we make the decision against the canonical store
+            // state, not the (possibly stale) snapshot the caller passed in. Without this
+            // refresh, two concurrent stamps that each saw ActiveSessionId == null on
+            // their own snapshots would both proceed to overwrite.
+            var fresh = await _conversationStore.GetAsync(conversation.ConversationId, cancellationToken)
+                .ConfigureAwait(false);
+            if (fresh is null)
+                return; // Defensive: conversation vanished between resolve and bind.
 
-        _logger?.LogInformation(
-            "Bound legacy conversation {ConversationId} ActiveSessionId to backfilled session {SessionId}.",
-            conversation.ConversationId,
-            sessionId);
+            if (fresh.ActiveSessionId is not null)
+            {
+                // Another caller won the race. Mirror their pointer onto the caller's
+                // reference so subsequent reads of the in-memory conversation are correct.
+                conversation.ActiveSessionId = fresh.ActiveSessionId;
+                conversation.UpdatedAt = fresh.UpdatedAt;
+                return;
+            }
+
+            fresh.ActiveSessionId = sessionId;
+            fresh.UpdatedAt = DateTimeOffset.UtcNow;
+            await _conversationStore.SaveAsync(fresh, cancellationToken).ConfigureAwait(false);
+
+            // Mirror the bound pointer back to the caller's reference for consistency.
+            conversation.ActiveSessionId = sessionId;
+            conversation.UpdatedAt = fresh.UpdatedAt;
+
+            _logger?.LogInformation(
+                "Bound legacy conversation {ConversationId} ActiveSessionId to backfilled session {SessionId}.",
+                conversation.ConversationId,
+                sessionId);
+        }
+        finally
+        {
+            agentLock.Release();
+        }
     }
 
     private async Task<Conversation?> FindExistingAsync(AgentId agentId, string legacyTitle, CancellationToken cancellationToken)
     {
         var conversations = await _conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        // Security: match BOTH Title AND Initiator. The resolver-owned legacy row always
+        // has Initiator = CitizenId.Of(agentId) (the agent itself). The public REST
+        // POST /api/conversations endpoint leaves Initiator = null (no auth), so any
+        // user-planted row with the reserved "legacy:{agentId}" title cannot impersonate
+        // the resolver-owned row. Without this guard a caller could pre-create a
+        // conversation with the legacy title and attacker-controlled Instructions; the
+        // resolver would adopt it, and SystemPromptBuilder would inject the attacker's
+        // text into the agent's system prompt (XPIA via prompt injection — #615 critique).
+        var expectedInitiator = CitizenId.Of(agentId);
         return conversations.FirstOrDefault(c =>
             c.Title == legacyTitle &&
-            c.Status == ConversationStatus.Active);
+            c.Status == ConversationStatus.Active &&
+            c.Initiator == expectedInitiator);
     }
 }
