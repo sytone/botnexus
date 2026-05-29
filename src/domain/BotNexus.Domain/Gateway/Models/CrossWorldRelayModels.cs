@@ -34,6 +34,17 @@ public sealed record CrossWorldRelayRequest
     /// Gets or sets the remote session id.
     /// </summary>
     public string? RemoteSessionId { get; init; }
+
+    /// <summary>
+    /// Sender-determined finality signal (Phase 9 / P9-C). When <c>true</c>, the sender has
+    /// decided this is the final relay turn for the exchange — either because the request
+    /// was single-shot (no <c>Objective</c>) or because <c>turn == MaxTurns - 1</c>. The
+    /// receiver MUST archive its local conversation when the relay completes regardless of
+    /// whether the target agent invoked <c>finish_agent_exchange</c>. Defaults to <c>false</c>
+    /// so older senders without the signal preserve existing behaviour (receiver archives
+    /// only when <c>ExchangeFinished</c> is true).
+    /// </summary>
+    public bool CloseAfterResponse { get; init; }
 }
 
 /// <summary>
