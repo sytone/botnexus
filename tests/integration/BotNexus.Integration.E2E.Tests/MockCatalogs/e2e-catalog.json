@@ -26,6 +26,37 @@
       { "type": "text_delta", "delta": " each chunk.",        "delayMs": 80 },
       { "type": "text_end" },
       { "type": "done", "stopReason": "stop" }
+    ],
+
+    "TOOL_CALL_SEQUENCE": [
+      { "type": "text_delta", "delta": "Let me", "delayMs": 30 },
+      { "type": "text_delta", "delta": " check that", "delayMs": 30 },
+      { "type": "text_delta", "delta": " for you.", "delayMs": 30 },
+      { "type": "text_end" },
+      {
+        "type": "tool_call",
+        "toolName": "mock_lookup",
+        "toolCallId": "call-abc123",
+        "toolArguments": { "query": "test" }
+      },
+      { "type": "done", "stopReason": "tool_use" }
+    ],
+
+    "THINKING_BLOCK": [
+      { "type": "thinking_delta", "delta": "Let me reason",  "delayMs": 40 },
+      { "type": "thinking_delta", "delta": " about this...", "delayMs": 40 },
+      { "type": "thinking_end" },
+      { "type": "text_delta", "delta": "After careful",  "delayMs": 30 },
+      { "type": "text_delta", "delta": " consideration,", "delayMs": 30 },
+      { "type": "text_delta", "delta": " the answer is 42.", "delayMs": 30 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
+    "MOCK_ERROR": [
+      { "type": "text_delta", "delta": "About to fail...", "delayMs": 30 },
+      { "type": "text_end" },
+      { "type": "error", "errorMessage": "Simulated provider error", "stopReason": "error" }
     ]
   }
 }

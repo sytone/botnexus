@@ -126,11 +126,7 @@ public sealed class CompactionFlowTests
 
     private static async Task WaitForAssistantTextAsync(IPage page, string substring, TimeSpan timeout)
     {
-        // ChatPanel.razor renders assistant messages with two different content classes:
-        //   - `msg-content` for markdown-rendered turns (the normal completed path)
-        //   - `message-content` for plain-text and active streaming buffer
-        // Match either so the test does not silently time out on rendered markdown.
-        var locator = page.Locator(".message.assistant .msg-content, .message.assistant .message-content")
+        var locator = page.Locator(".message.assistant .message-content")
             .Filter(new LocatorFilterOptions { HasTextString = substring })
             .First;
         try
