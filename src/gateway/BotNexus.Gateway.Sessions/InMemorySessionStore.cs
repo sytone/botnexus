@@ -84,7 +84,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
 
         // Backfill outside the lock — the resolver may await a conversation store call.
         // _sync is non-async so we cannot hold it across the await anyway.
-        if (session.ConversationId is null && _legacyResolver is not null)
+        if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
         {
             var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
             session.ConversationId = legacy.ConversationId;

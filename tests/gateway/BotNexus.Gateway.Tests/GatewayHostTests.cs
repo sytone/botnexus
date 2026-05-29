@@ -1686,8 +1686,8 @@ public sealed class GatewayHostTests
 
         var savedSession = await sessions.GetAsync(expectedSessionId, CancellationToken.None);
         savedSession.ShouldNotBeNull();
-        savedSession!.Session.ConversationId.ShouldNotBeNull("Session.ConversationId must be stamped after inbound message");
-        savedSession.Session.ConversationId!.Value.Value.ShouldBe("c_stamptest1");
+        savedSession!.Session.ConversationId.IsInitialized().ShouldBeTrue("Session.ConversationId must be stamped after inbound message");
+        savedSession.Session.ConversationId.Value.ShouldBe("c_stamptest1");
     }
 
     [Fact]

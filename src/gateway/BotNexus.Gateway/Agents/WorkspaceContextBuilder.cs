@@ -169,8 +169,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         if (_sessionStore is not null)
         {
             var session = await _sessionStore.GetAsync(executionContext.SessionId, cancellationToken).ConfigureAwait(false);
-            if (session?.ConversationId is { } conversationId)
-                conversation = await _conversationStore.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
+            if (session is not null && session.ConversationId.IsInitialized())
+                conversation = await _conversationStore.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
         }
 
         if (conversation is null)

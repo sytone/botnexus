@@ -55,10 +55,13 @@ public sealed record Session
     public DateTimeOffset? ExpiresAt { get; set; }
 
     /// <summary>
-    /// Gets or sets the conversation this session belongs to, if any.
-    /// Sessions with no ConversationId are treated as legacy ungrouped sessions.
+    /// Gets or sets the conversation this session belongs to. Conversation is the
+    /// durable parent container; sessions are bounded transcripts inside a conversation.
+    /// The unset sentinel is <c>default(ConversationId)</c> — store implementations are
+    /// responsible for backfilling unset values to the agent's legacy conversation
+    /// before returning a session to callers (Phase 9 / P9-B; issues #615, #627).
     /// </summary>
-    public ConversationId? ConversationId { get; set; }
+    public ConversationId ConversationId { get; set; }
 
     /// <summary>
     /// Gets or sets the metadata.

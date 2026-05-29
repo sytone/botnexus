@@ -138,7 +138,7 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         var session = await sessionStore.GetAsync(SessionId.From(sessionId), cts.Token);
 
         session.ShouldNotBeNull();
-        session!.Session.ConversationId.ShouldNotBeNull(
+        session!.Session.ConversationId.IsInitialized().ShouldBeTrue(
             "SendMessage without explicit conversationId should still stamp the session with the default conversation's ID");
     }
 

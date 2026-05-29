@@ -388,8 +388,8 @@ public sealed class ConversationsController : ControllerBase
             if (virtualSession is null)
                 return NoContent();
 
-            if (virtualSession.ConversationId is { } linkedConversationId)
-                conversation = await _conversations.GetAsync(linkedConversationId, cancellationToken);
+            if (virtualSession.ConversationId.IsInitialized())
+                conversation = await _conversations.GetAsync(virtualSession.ConversationId, cancellationToken);
 
             if (conversation is null)
             {

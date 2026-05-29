@@ -97,8 +97,8 @@ public sealed class DefaultConversationRouterTests
 
         var session = await sessionStore.GetAsync(result.SessionId);
         session.ShouldNotBeNull();
-        session!.Session.ConversationId.ShouldNotBeNull();
-        session.Session.ConversationId!.Value.ShouldBe(result.Conversation.ConversationId);
+        session!.Session.ConversationId.IsInitialized().ShouldBeTrue();
+        session.Session.ConversationId.ShouldBe(result.Conversation.ConversationId);
     }
 
     [Fact]

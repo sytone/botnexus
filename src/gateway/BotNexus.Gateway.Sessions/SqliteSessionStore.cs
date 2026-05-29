@@ -499,7 +499,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// </remarks>
     private async Task EnsureConversationIdStampedAsync(GatewaySession session, CancellationToken cancellationToken)
     {
-        if (session.ConversationId is not null)
+        if (session.ConversationId.IsInitialized())
             return;
         if (_legacyResolver is null)
             return;
@@ -530,7 +530,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// </summary>
     private async Task BackfillLoadedSessionAsync(GatewaySession session, CancellationToken cancellationToken)
     {
-        if (session.ConversationId is not null)
+        if (session.ConversationId.IsInitialized())
             return;
         if (_legacyResolver is null)
             return;
@@ -598,10 +598,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (string.IsNullOrWhiteSpace(agentIdValue))
             return null;
 
-        ConversationId? conversationId = null;
-        if (reader.FieldCount > 10 && !reader.IsDBNull(10))
-            conversationId = ConversationId.From(reader.GetString(10));
-
         var domainSession = new Session
         {
             SessionId = SessionId.From(reader.GetString(0)),
@@ -612,9 +608,14 @@ public sealed class SqliteSessionStore : SessionStoreBase
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
-            Metadata = metadata,
-            ConversationId = conversationId
+            Metadata = metadata
+            // ConversationId is intentionally omitted when the column is NULL --
+            // the property defaults to an uninitialized ConversationId (the "unset" sentinel)
+            // and BackfillLoadedSessionAsync fires on it below. Writing `default(ConversationId)`
+            // explicitly is prohibited by Vogen analyzer VOG009.
         };
+        if (reader.FieldCount > 10 && !reader.IsDBNull(10))
+            domainSession.ConversationId = ConversationId.From(reader.GetString(10));
         var session = new GatewaySession(domainSession, redactor)
         {
             CallerId = reader.IsDBNull(3) ? null : reader.GetString(3)
@@ -692,7 +693,19 @@ public sealed class SqliteSessionStore : SessionStoreBase
         command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", session.UpdatedAt.ToString("O"));
-        command.Parameters.AddWithValue("$conversationId", (object?)session.ConversationId?.Value ?? DBNull.Value);
+        // Phase 9 / P9-B-2 (#627): the save-time backfill (EnsureConversationIdStampedAsync,
+        // line 136) is responsible for guaranteeing a non-default ConversationId by the
+        // time we reach this writer. Fail loud here instead of silently writing a NULL
+        // row — a NULL row would re-introduce the orphan condition the non-null flip is
+        // supposed to prevent.
+        if (!session.ConversationId.IsInitialized())
+            throw new InvalidOperationException(
+                $"Refusing to persist session '{session.SessionId.Value}' for agent " +
+                $"'{session.AgentId.Value}' with an unset ConversationId. Save-time " +
+                $"backfill (EnsureConversationIdStampedAsync) should have stamped this " +
+                $"before reaching the writer. Either register an IConversationStore on " +
+                $"the SqliteSessionStore constructor or set ConversationId explicitly.");
+        command.Parameters.AddWithValue("$conversationId", session.ConversationId.Value);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

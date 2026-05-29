@@ -163,17 +163,36 @@ public sealed class GatewaySessionBehaviorSnapshotTests
     }
 
     [Fact]
-    public void ConversationId_ProxyAcceptsNull_ForOrphanSessions()
+    public void ConversationId_DefaultsToUninitialized_OnNewSession()
     {
+        // Phase 9 / P9-B-2 (#627): Session.ConversationId is non-nullable. A brand-new
+        // session has an UNINITIALIZED ConversationId (the unset sentinel) until either
+        // the legacy resolver fires on save or the conversation router stamps it.
+        // IsInitialized() is the typed predicate; we never compare to `default(ConversationId)`
+        // literally (banned by Vogen analyzer VOG009).
         var session = CreateSession();
-        session.ConversationId = ConversationId.From("conv-set");
-        session.ConversationId = null;
 
-        session.ConversationId.ShouldBeNull(
-            "F-9 / Phase 7: the ConversationId proxy must accept null assignment for " +
-            "orphan / legacy ungrouped sessions. If this fails, the proxy lost null-" +
-            "tolerance and callers cannot clear the binding.");
-        session.Session.ConversationId.ShouldBeNull();
+        session.ConversationId.IsInitialized().ShouldBeFalse(
+            "F-9 / Phase 9: a freshly constructed GatewaySession must expose an " +
+            "uninitialized ConversationId so the storage layer can detect it and " +
+            "backfill the legacy conversation. If this fails, the unset sentinel " +
+            "has been lost.");
+        session.Session.ConversationId.IsInitialized().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ConversationId_AssignedValue_IsInitialized()
+    {
+        // Phase 9 / P9-B-2 (#627): when a ConversationId has been stamped on the session,
+        // IsInitialized() returns true and Value.Value is the assigned string.
+        var session = CreateSession();
+        var convId = ConversationId.From("conv-pinned");
+
+        session.ConversationId = convId;
+
+        session.ConversationId.IsInitialized().ShouldBeTrue();
+        session.ConversationId.ShouldBe(convId);
+        session.Session.ConversationId.ShouldBe(convId);
     }
 
     private static GatewaySession CreateSession()
