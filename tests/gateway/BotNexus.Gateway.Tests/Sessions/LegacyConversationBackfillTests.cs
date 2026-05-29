@@ -251,6 +251,24 @@ public sealed class LegacyConversationBackfillTests
             .ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task Sqlite_SaveAsync_NoResolver_PreservesNullConversationId()
+    {
+        // Back-compat for test composition roots / older deployments that don't wire an
+        // IConversationStore into the SQLite session store. Without a resolver, orphan
+        // sessions stay orphan (no stamping). Plan-vs-impl SHOULD-CONSIDER #3.
+        using var fixture = new SqliteFixture();
+        var store = fixture.CreateStore(conversationStore: null);
+        var session = await store.GetOrCreateAsync(SessionId.From("s-sq-no-resolver"), AgentId.From("a"));
+        await store.SaveAsync(session);
+
+        session.ConversationId.ShouldBeNull();
+
+        // Reloading through another no-resolver store must still observe null.
+        var reload = await fixture.CreateStore(conversationStore: null).GetAsync(SessionId.From("s-sq-no-resolver"));
+        reload!.ConversationId.ShouldBeNull();
+    }
+
     // --- Cross-store parity ---
 
     [Fact]
@@ -340,6 +358,29 @@ public sealed class LegacyConversationBackfillTests
         legacy.ActiveSessionId.ShouldBeNull(
             "Sealed sessions are history — they must not be bound as the legacy " +
             "conversation's ActiveSessionId.");
+    }
+
+    [Theory]
+    [InlineData(SessionStatus.Suspended)]
+    [InlineData(SessionStatus.Expired)]
+    public async Task InMemory_SaveAsync_StampingNonActiveOrphan_DoesNotBindActiveSessionId(SessionStatus nonActiveStatus)
+    {
+        // Mirrors the Sealed pin for the other two non-Active statuses (Suspended,
+        // Expired). Pinned as a Theory so a future refactor that swaps the `== Active`
+        // guard for a permissive predicate fails for every non-Active status.
+        var conversations = new InMemoryConversationStore();
+        var store = new InMemorySessionStore(redactor: null, conversationStore: conversations, logger: null);
+        var agentId = AgentId.From($"agent-orphan-{nonActiveStatus.ToString().ToLowerInvariant()}");
+
+        var session = await store.GetOrCreateAsync(SessionId.From($"s-{nonActiveStatus}"), agentId);
+        session.Status = nonActiveStatus;
+        await store.SaveAsync(session);
+
+        var legacy = (await conversations.ListAsync(agentId))
+            .Single(c => c.Title == $"legacy:{agentId.Value}");
+        legacy.ActiveSessionId.ShouldBeNull(
+            $"{nonActiveStatus} sessions are not the active candidate — must not bind " +
+            "the legacy conversation's ActiveSessionId.");
     }
 
     [Fact]

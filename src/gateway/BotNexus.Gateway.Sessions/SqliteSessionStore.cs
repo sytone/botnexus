@@ -465,12 +465,15 @@ public sealed class SqliteSessionStore : SessionStoreBase
             var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             totalMigrated += count;
 
-            // Point the conversation at the most recently active orphaned session,
-            // but only if it has no active session already.
-            if (latestSessionId is not null && conversation.ActiveSessionId is null)
+            // Point the conversation at the most recently active orphaned session via
+            // the shared resolver helper — first-wins under the per-agent lock so any
+            // concurrent stamping from a load-time backfill races safely.
+            if (latestSessionId is not null)
             {
-                conversation.ActiveSessionId = SessionId.From(latestSessionId);
-                await conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+                await resolver.BindActiveSessionIfNoneAsync(
+                    conversation,
+                    SessionId.From(latestSessionId),
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
