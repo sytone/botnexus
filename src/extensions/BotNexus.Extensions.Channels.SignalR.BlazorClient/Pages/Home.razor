@@ -8,7 +8,7 @@
 @inject NavigationManager Nav
 @implements IDisposable
 
-<PageTitle>BotNexus</PageTitle>
+<PageTitle>@PageTitle</PageTitle>
 
 @if (!PortalLoad.IsReady)
 {
@@ -42,6 +42,32 @@ else
     [Parameter] public string? AgentId { get; set; }
     [Parameter] public string? ConversationId { get; set; }
     private string? _appliedRouteKey;
+
+    private string PageTitle
+    {
+        get
+        {
+            if (Store.ActiveAgentId is not { Length: > 0 } activeAgentId)
+                return "BotNexus";
+
+            var agent = Store.GetAgent(activeAgentId);
+            if (agent is null)
+                return "BotNexus";
+
+            var agentLabel = string.IsNullOrWhiteSpace(agent.DisplayName)
+                ? activeAgentId
+                : agent.DisplayName;
+
+            if (agent.ActiveConversationId is not { Length: > 0 } convId ||
+                !agent.Conversations.TryGetValue(convId, out var conv) ||
+                string.IsNullOrWhiteSpace(conv.Title))
+            {
+                return $"{agentLabel} - BotNexus";
+            }
+
+            return $"{agentLabel} - {conv.Title}";
+        }
+    }
 
     protected override void OnInitialized()
     {
