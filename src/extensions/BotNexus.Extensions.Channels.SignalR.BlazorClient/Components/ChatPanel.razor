@@ -24,11 +24,11 @@
                         {
                             @if (IsReadOnly)
                             {
-                                <h3 class="conversation-title">@ActiveConversationTitle</h3>
+                                <h3 class="conversation-title" title="@ActiveConversationId">@ActiveConversationTitle</h3>
                             }
                             else
                             {
-                                <h3 class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</h3>
+                                <h3 class="conversation-title editable" @onclick="StartEditTitle" title="@($"{ActiveConversationId} - click to rename")">@ActiveConversationTitle</h3>
                             }
                             @if (ActiveConversation?.IsDefault == true)
                             {
