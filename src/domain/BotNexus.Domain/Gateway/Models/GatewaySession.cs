@@ -78,13 +78,15 @@ public sealed class GatewaySession
     }
 
     /// <summary>
-    /// Conversation this session belongs to, or <c>null</c> for orphan / legacy
-    /// ungrouped sessions. Always mutate through this proxy — the
+    /// Conversation this session belongs to. Always mutate through this proxy — the
     /// <see cref="GatewaySessionFacadeArchitectureTests"/> fence bans reach-through
     /// access via <c>session.Session.ConversationId</c> so the proxy stays the
-    /// single source of truth (F-9 / Phase 7).
+    /// single source of truth (F-9 / Phase 7). The unset sentinel is
+    /// <c>default(ConversationId)</c>; store implementations are responsible for
+    /// backfilling unset values before returning a session to callers
+    /// (Phase 9 / P9-B; issues #615, #627).
     /// </summary>
-    public ConversationId? ConversationId
+    public ConversationId ConversationId
     {
         get => Session.ConversationId;
         set => Session.ConversationId = value;
