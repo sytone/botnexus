@@ -8,6 +8,7 @@ using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -42,6 +43,7 @@ public sealed class FileSessionStore : SessionStoreBase
     private readonly Dictionary<SessionId, GatewaySession> _cache = [];
     private readonly ILogger<FileSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
+    private readonly LegacyConversationResolver? _legacyResolver;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -49,11 +51,38 @@ public sealed class FileSessionStore : SessionStoreBase
     };
 
     public FileSessionStore(string storePath, ILogger<FileSessionStore> logger, IFileSystem fileSystem, ISecretRedactor? redactor = null)
+        : this(storePath, logger, fileSystem, conversationStore: null, redactor: redactor)
+    {
+    }
+
+    /// <summary>
+    /// Initialises a new <see cref="FileSessionStore"/>.
+    /// </summary>
+    /// <param name="storePath">Directory used for session JSONL + metadata sidecar files.</param>
+    /// <param name="logger">Logger for diagnostic output.</param>
+    /// <param name="fileSystem">Abstracted file system (real or mocked).</param>
+    /// <param name="conversationStore">
+    /// When provided, sessions loaded with a null <see cref="Session.ConversationId"/> are
+    /// backfilled to the agent's <c>legacy:{agentId}</c> conversation via
+    /// <see cref="LegacyConversationResolver"/> and the sidecar is rewritten so the
+    /// stamp persists across restarts (Phase 9 / P9-B; issue #615). Save-time stamping
+    /// also defends against fresh sessions being persisted with no conversation bound.
+    /// </param>
+    /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
+    public FileSessionStore(
+        string storePath,
+        ILogger<FileSessionStore> logger,
+        IFileSystem fileSystem,
+        IConversationStore? conversationStore,
+        ISecretRedactor? redactor = null)
     {
         _storePath = storePath;
         _logger = logger;
         _fileSystem = fileSystem;
         _redactor = redactor;
+        _legacyResolver = conversationStore is not null
+            ? new LegacyConversationResolver(conversationStore, logger: null)
+            : null;
         _fileSystem.Directory.CreateDirectory(storePath);
     }
 
@@ -107,6 +136,11 @@ public sealed class FileSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.save", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", session.SessionId);
         activity?.SetTag("botnexus.agent.id", session.AgentId);
+
+        // Backfill outside the per-store lock — the resolver may call the conversation
+        // store which has its own locking; nesting would risk lock-ordering issues
+        // and there's no shared mutable state between resolution and write here.
+        await EnsureConversationIdStampedAsync(session, cancellationToken).ConfigureAwait(false);
 
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -225,7 +259,57 @@ public sealed class FileSessionStore : SessionStoreBase
             session.UpdatedAt = meta.UpdatedAt;
         }
 
+        // Phase 9 / P9-B (#615): if this session was persisted before Session.ConversationId
+        // was always populated, durably backfill the legacy conversation. The sidecar is
+        // rewritten so subsequent loads — and any reader that joins on ConversationId —
+        // observe the stamp without another resolution round trip.
+        if (session.ConversationId is null && _legacyResolver is not null)
+        {
+            var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+            session.ConversationId = legacy.ConversationId;
+
+            if (session.Status == SessionStatus.Active)
+            {
+                await _legacyResolver.BindActiveSessionIfNoneAsync(legacy, session.SessionId, cancellationToken).ConfigureAwait(false);
+            }
+
+            await WriteToFileAsync(session, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(
+                "Backfilled orphan session {SessionId} for agent {AgentId} with legacy conversation {LegacyConversationId} on load (sidecar rewritten).",
+                session.SessionId, session.AgentId, legacy.ConversationId);
+        }
+
         return session;
+    }
+
+    /// <summary>
+    /// Defensively stamps a session whose <see cref="Session.ConversationId"/> is null at
+    /// save time with the agent's <c>legacy:{agentId}</c> conversation, persisting the
+    /// stamp before the sidecar is written so subsequent reads see a consistent view.
+    /// No-op when no conversation store was registered (back-compat for test composition
+    /// roots).
+    /// </summary>
+    private async Task EnsureConversationIdStampedAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        if (session.ConversationId is not null)
+            return;
+        if (_legacyResolver is null)
+            return;
+
+        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+        session.ConversationId = legacy.ConversationId;
+
+        // If this is the current active session, also bind it as the conversation's
+        // active session pointer so the canonical reset path (DefaultConversationResetService)
+        // can find it. Sealed/Suspended/Expired sessions are not bound.
+        if (session.Status == SessionStatus.Active)
+        {
+            await _legacyResolver.BindActiveSessionIfNoneAsync(legacy, session.SessionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogWarning(
+            "Session {SessionId} for agent {AgentId} was saved with no ConversationId; stamped legacy conversation {LegacyConversationId}.",
+            session.SessionId, session.AgentId, legacy.ConversationId);
     }
 
     private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
