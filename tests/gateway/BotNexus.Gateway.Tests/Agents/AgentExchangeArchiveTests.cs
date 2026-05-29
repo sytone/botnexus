@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Http.Json;
+using BotNexus.Domain;
 using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
@@ -6,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
@@ -21,10 +25,11 @@ namespace BotNexus.Gateway.Tests.Agents;
 /// Phase 9 / P9-C contract pins on <see cref="AgentExchangeService"/>:
 /// local A↔A conversations auto-archive when the exchange terminates (driven by
 /// W-3 directive — "A-A conversations should have an end and then the conversation
-/// is done as that topic of conversation is over"). Cross-world sender behaviour
-/// is exercised end-to-end in
-/// <c>CrossWorldFederationControllerTests</c> via the receiver pins; this file
-/// focuses on the local single-process <c>ConverseAsync</c> path.
+/// is done as that topic of conversation is over"). The cross-world sender path
+/// (<c>ConverseCrossWorldAsync</c>) is exercised here too via a stubbed
+/// <see cref="CrossWorldChannelAdapter"/> so both seal-paths (success + error catch)
+/// are pinned end-to-end on the sender side; the receiver-side equivalents live in
+/// <c>CrossWorldFederationControllerTests</c>.
 /// </summary>
 public sealed class AgentExchangeArchiveTests
 {
@@ -271,6 +276,86 @@ public sealed class AgentExchangeArchiveTests
             customMessage: "Second exchange archived its OWN conversation as expected.");
     }
 
+    [Fact]
+    public async Task ConverseCrossWorldAsync_OnSuccessfulRelay_ArchivesSenderConversation()
+    {
+        // Sender-side cross-world archive pin: when the remote gateway returns a normal relay
+        // response (status="active"), the sender still archives its local conversation because
+        // single-shot (MaxTurns=1) means the sender has decided this is the final turn.
+        var (service, conversationStore, sessionStore, _) = BuildCrossWorldService(
+            handler: (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new CrossWorldRelayResponse
+                {
+                    Response = "Remote response",
+                    Status = "active",
+                    SessionId = "remote-session-1"
+                })
+            }));
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = AgentId.From("initiator-agent"),
+            TargetId = AgentId.From("world-b:agent-c"),
+            Message = "hello remote",
+            MaxTurns = 1
+        });
+
+        result.Status.ShouldBe("sealed");
+
+        var conv = await conversationStore.GetAsync(result.ConversationId);
+        conv.ShouldNotBeNull();
+        conv!.Status.ShouldBe(ConversationStatus.Archived,
+            customMessage: "P9-C: ConverseCrossWorldAsync MUST archive the sender-side A↔A " +
+                "conversation when the relay completes. Without this, sender-side cross-world " +
+                "conversations leak as Active in portal/list APIs.");
+
+        var session = await sessionStore.GetAsync(result.SessionId);
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task ConverseCrossWorldAsync_OnRelayFailure_ArchivesSenderConversation()
+    {
+        // Sender-side cross-world error catch pin: when the remote gateway throws (HTTP 500),
+        // the catch-all in ConverseCrossWorldAsync MUST still archive the sender's local
+        // conversation. Without this, a transient remote failure would leak the sender's
+        // conversation as Active forever.
+        var (service, conversationStore, sessionStore, _) = BuildCrossWorldService(
+            handler: (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("boom")
+            }));
+
+        ConversationId? observedConversationId = null;
+        try
+        {
+            await service.ConverseAsync(new AgentExchangeRequest
+            {
+                InitiatorId = AgentId.From("initiator-agent"),
+                TargetId = AgentId.From("world-b:agent-c"),
+                Message = "hello remote",
+                MaxTurns = 1
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected — relay surfaces as InvalidOperationException after the seal+archive.
+        }
+
+        // Find the most-recently-created conversation (the one the failed exchange minted).
+        var all = await conversationStore.ListAsync();
+        var lastConv = all.OrderByDescending(c => c.UpdatedAt).FirstOrDefault();
+        lastConv.ShouldNotBeNull();
+        observedConversationId = lastConv!.ConversationId;
+
+        lastConv.Status.ShouldBe(ConversationStatus.Archived,
+            customMessage: "P9-C: ConverseCrossWorldAsync error catch MUST archive the " +
+                "sender-side A↔A conversation. Without this, a remote-gateway failure leaks " +
+                "the conversation as Active.");
+    }
+
     // ---- helpers ----
 
     private static (AgentExchangeService Service, InMemoryConversationStore ConversationStore,
@@ -380,6 +465,87 @@ public sealed class AgentExchangeArchiveTests
         registry.Setup(r => r.Contains(initiator)).Returns(true);
         registry.Setup(r => r.Contains(target)).Returns(true);
         return registry;
+    }
+
+    private static (AgentExchangeService Service, InMemoryConversationStore ConversationStore,
+        InMemorySessionStore SessionStore, Mock<IAgentRegistry> Registry)
+        BuildCrossWorldService(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+    {
+        var initiator = AgentId.From("initiator-agent");
+        var crossWorldTarget = AgentId.From("world-b:agent-c");
+        var localResolved = AgentId.From("agent-c");
+
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
+        {
+            AgentId = initiator,
+            DisplayName = initiator.Value,
+            ApiProvider = "openai",
+            ModelId = "gpt-test",
+            SubAgentIds = ["world-b:agent-c"]
+        });
+        registry.Setup(r => r.Get(localResolved)).Returns(new AgentDescriptor
+        {
+            AgentId = localResolved,
+            DisplayName = localResolved.Value,
+            ApiProvider = "openai",
+            ModelId = "gpt-test"
+        });
+        registry.Setup(r => r.Contains(initiator)).Returns(true);
+        registry.Setup(r => r.Contains(crossWorldTarget)).Returns(false);
+
+        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        var adapter = new CrossWorldChannelAdapter(
+            NullLogger<CrossWorldChannelAdapter>.Instance,
+            new HttpClient(new StubHttpMessageHandler(handler)));
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            Mock.Of<IAgentSupervisor>(),
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance,
+            Options.Create(new PlatformConfig
+            {
+                Gateway = new GatewaySettingsConfig
+                {
+                    World = new WorldIdentity { Id = "world-a", Name = "World A" },
+                    CrossWorldPermissions =
+                    [
+                        new CrossWorldPermissionConfig
+                        {
+                            TargetWorldId = "world-b",
+                            AllowOutbound = true,
+                            AllowedAgents = ["initiator-agent"]
+                        }
+                    ],
+                    CrossWorld = new CrossWorldFederationConfig
+                    {
+                        Peers = new Dictionary<string, CrossWorldPeerConfig>
+                        {
+                            ["world-b"] = new()
+                            {
+                                Endpoint = "https://gateway-b.internal",
+                                ApiKey = "peer-key",
+                                Enabled = true
+                            }
+                        }
+                    }
+                }
+            }),
+            adapter);
+
+        return (service, conversationStore, sessionStore, registry);
+    }
+
+    private sealed class StubHttpMessageHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => responder(request, cancellationToken);
     }
 
     /// <summary>

@@ -1210,6 +1210,71 @@ public sealed class CrossWorldFederationControllerTests
         reloaded.ActiveSessionId.ShouldBeNull();
     }
 
+    [Fact]
+    public async Task RelayAsync_OnArchiveFailure_DoesNotPropagate_AndStillReturnsSuccess()
+    {
+        // Failure-isolation pin for the controller's ArchiveOnExchangeEndAsync helper (mirror of
+        // the local sender pin ConverseAsync_FailureDuringArchive_DoesNotPropagateException).
+        // The duplicate helper in the controller MUST also swallow archive failures so the
+        // receiver's successful relay response is not poisoned by a transient archive failure.
+        var sessions = new InMemorySessionStore();
+        var throwingConversations = new ThrowingArchiveConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        SessionId? capturedSessionId = null;
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                if (capturedSessionId is { } sid)
+                {
+                    var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
+                    if (s is not null
+                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
+                        && v is string activeId)
+                    {
+                        s.Metadata["finishedAgentExchangeId"] = activeId;
+                        s.Metadata["finishedAgentExchangeReason"] = "shipped";
+                        sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                }
+                return new AgentResponse
+                {
+                    Content = "Done.",
+                    ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: false)]
+                };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, SessionId, CancellationToken>((_, sid, _) => capturedSessionId = sid)
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, throwingConversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // RelayAsync MUST NOT throw — the archive failure is swallowed and logged inside
+        // ArchiveOnExchangeEndAsync.
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        response.ShouldNotBeNull();
+        var okResult = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = okResult.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.Response.ShouldBe("Done.");
+
+        throwingConversations.ArchiveCallCount.ShouldBe(1,
+            customMessage: "Receiver-side ArchiveOnExchangeEndAsync was called exactly once; " +
+                "the simulated failure was swallowed so the relay response was unaffected.");
+
+        // Session state side-effects: session itself was sealed BEFORE the archive call, so it
+        // remains Sealed even though archive failed.
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1);
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed);
+    }
+
     // ─── end P9-C receiver pins ──────────────────────────────────────────────────────────
 
     // ---- helpers ----
@@ -1664,6 +1729,38 @@ file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
     public T CurrentValue => value;
     public T Get(string? name) => value;
     public IDisposable? OnChange(Action<T, string?> listener) => null;
+}
+
+/// <summary>
+/// Conversation store that delegates everything to an internal <see cref="InMemoryConversationStore"/>
+/// except <see cref="ArchiveAsync"/>, which records the call count then throws. Used by the P9-C
+/// receiver-side failure-isolation pin to prove the controller's <c>ArchiveOnExchangeEndAsync</c>
+/// helper swallows archive failures so the relay response is not poisoned.
+/// </summary>
+file sealed class ThrowingArchiveConversationStore : IConversationStore
+{
+    private readonly InMemoryConversationStore _inner = new();
+    public int ArchiveCallCount { get; private set; }
+
+    public Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)
+        => _inner.GetAsync(conversationId, ct);
+    public Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
+        => _inner.ListAsync(agentId, ct);
+    public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
+        => _inner.ListForCitizenAsync(citizen, ct);
+    public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
+        => _inner.CreateAsync(conversation, ct);
+    public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
+        => _inner.SaveAsync(conversation, ct);
+    public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        ArchiveCallCount++;
+        throw new InvalidOperationException("simulated archive failure");
+    }
+    public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
+        => _inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
+        => _inner.GetSummariesAsync(agentId, ct);
 }
 
 /// <summary>
