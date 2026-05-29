@@ -1,5 +1,7 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Data.Sqlite;
@@ -13,6 +15,7 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
 {
     private readonly string _dbPath;
     private readonly string _connectionString;
+    private readonly InMemoryConversationStore _conversations = new();
 
     public SqliteSessionStoreConversationIdTests()
     {
@@ -55,8 +58,8 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
         }
     }
 
-    private SqliteSessionStore CreateStore()
-        => new(_connectionString, NullLogger<SqliteSessionStore>.Instance);
+    private SqliteSessionStore CreateStore(IConversationStore? conversationStore = null)
+        => new(_connectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? _conversations);
 
     [Fact]
     public async Task SaveAsync_WithConversationId_PersistedAndReloadedAfterStoreRebuild()
@@ -76,26 +79,29 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
         var reloaded = await store2.GetAsync(sessionId);
 
         reloaded.ShouldNotBeNull();
-        reloaded!.Session.ConversationId.ShouldNotBeNull();
-        reloaded.Session.ConversationId!.Value.ShouldBe(conversationId);
+        reloaded!.Session.ConversationId.IsInitialized().ShouldBeTrue();
+        reloaded.Session.ConversationId.ShouldBe(conversationId);
     }
 
     [Fact]
-    public async Task SaveAsync_NullConversationId_LoadsAsNull()
+    public async Task SaveAsync_UnsetConversationId_BackfillsLegacyOnRoundTrip()
     {
+        // Phase 9 / P9-B-2 (#627): Session.ConversationId is non-nullable. Unset values
+        // are stamped by the legacy resolver on save and the UPDATE in BackfillLoadedSessionAsync
+        // makes the row indexed-queryable. Round-trips as a real ConversationId.
         var sessionId = SessionId.From("test-session-no-conv");
         var agentId = AgentId.From("agent-no-conv");
 
         var store1 = CreateStore();
         var session = await store1.GetOrCreateAsync(sessionId, agentId);
-        // ConversationId intentionally left null
         await store1.SaveAsync(session);
 
         var store2 = CreateStore();
         var reloaded = await store2.GetAsync(sessionId);
 
         reloaded.ShouldNotBeNull();
-        reloaded!.Session.ConversationId.ShouldBeNull();
+        reloaded!.Session.ConversationId.IsInitialized().ShouldBeTrue(
+            "Unset ConversationId must be backfilled by the legacy resolver on save (#627).");
     }
 
     [Fact]
@@ -115,7 +121,7 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
         var found = all.FirstOrDefault(s => s.SessionId == sessionId);
 
         found.ShouldNotBeNull();
-        found!.Session.ConversationId.ShouldNotBeNull();
-        found.Session.ConversationId!.Value.ShouldBe(conversationId);
+        found!.Session.ConversationId.IsInitialized().ShouldBeTrue();
+        found.Session.ConversationId.ShouldBe(conversationId);
     }
 }

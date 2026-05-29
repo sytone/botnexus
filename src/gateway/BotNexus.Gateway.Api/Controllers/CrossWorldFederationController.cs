@@ -218,12 +218,19 @@ public sealed class CrossWorldFederationController(
             }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
-            // Leave the session Active so the sender can continue the exchange by supplying
-            // RemoteSessionId on the next turn; clear ActiveSessionId so portal stops rendering
-            // the conversation as "in flight" while the sender pauses between turns. When the
-            // exchange has finished, the session is already Sealed above and ResolveSessionAsync
-            // will reject any further reuse.
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            // P9-C: when the exchange is ending — either because the target invoked
+            // finish_agent_exchange (exchangeFinished) OR the sender signalled this is the
+            // final turn via CloseAfterResponse (single-shot / max-turns) — archive the
+            // receiver-side conversation. Otherwise just clear ActiveSessionId so the portal
+            // stops rendering it as "in flight" while the sender pauses between turns.
+            if (exchangeFinished || request.CloseAfterResponse)
+            {
+                await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            }
 
             return Ok(new CrossWorldRelayResponse
             {
@@ -262,7 +269,10 @@ public sealed class CrossWorldFederationController(
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            // P9-C: failed exchanges are terminal — archive rather than just clearing the
+            // pointer. The session is already sealed; the conversation should not linger as
+            // Active in portal/list APIs after a failure.
+            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }
@@ -293,8 +303,9 @@ public sealed class CrossWorldFederationController(
             if (existing.Status == GatewaySessionStatus.Sealed)
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' is sealed and cannot be reused — start a new cross-world exchange." }));
 
-            if (existing.ConversationId is not { } existingConversationId)
+            if (!existing.ConversationId.IsInitialized())
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' has no bound conversation — refuse to reuse." }));
+            var existingConversationId = existing.ConversationId;
 
             var existingConv = await conversationStore.GetAsync(existingConversationId, cancellationToken).ConfigureAwait(false);
             if (existingConv is null)
@@ -430,10 +441,61 @@ public sealed class CrossWorldFederationController(
         => string.Equals(left, right, StringComparison.Ordinal);
 
     /// <summary>
+    /// Archives the cross-world A↔A <see cref="Conversation"/> when its receiver-side
+    /// exchange terminates (Phase 9 / P9-C). Mirror of
+    /// <c>AgentExchangeService.ArchiveOnExchangeEndAsync</c>: A↔A conversations are bounded
+    /// by their exchange — when the exchange ends, the conversation is done.
+    /// </summary>
+    /// <remarks>
+    /// Subsumes <see cref="ClearActiveSessionAsync"/> on the success-finished and error
+    /// paths because <see cref="IConversationStore.ArchiveAsync"/> atomically sets
+    /// <c>Status = Archived</c> AND <c>ActiveSessionId = null</c>. Strict pointer guard:
+    /// only archives when latest <c>ActiveSessionId</c> equals
+    /// <paramref name="expectedSessionId"/> (any other state — null, different SessionId,
+    /// already-Archived — is skipped). Always uses <see cref="CancellationToken.None"/>
+    /// so caller cancellation cannot skip the archive after the session is sealed.
+    /// Helper-level dedup with <see cref="AgentExchangeService"/>'s identical method is
+    /// intentional for P9-C scope; W-3 may consolidate into a shared lifecycle service.
+    /// </remarks>
+    private async Task ArchiveOnExchangeEndAsync(
+        Conversation conversation,
+        SessionId expectedSessionId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var latest = await conversationStore.GetAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+            if (latest is null)
+                return;
+            if (latest.Status == ConversationStatus.Archived)
+                return;
+            if (latest.ActiveSessionId != expectedSessionId)
+            {
+                logger.LogDebug(
+                    "Skipping archive for cross-world conversation '{ConversationId}': ActiveSessionId is '{Current}', expected '{Expected}'.",
+                    conversation.ConversationId, latest.ActiveSessionId, expectedSessionId);
+                return;
+            }
+            await conversationStore.ArchiveAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Failed to archive cross-world conversation '{ConversationId}' after exchange end.",
+                conversation.ConversationId);
+        }
+    }
+
+    /// <summary>
     /// Clears <see cref="Conversation.ActiveSessionId"/> only if it still points at the
     /// session this call started. Avoids clobbering a newer concurrent relay's pointer.
     /// Failure is swallowed — ActiveSessionId is a diagnostic, not a correctness contract.
     /// </summary>
+    /// <remarks>
+    /// P9-C: still required for the non-final relay branch (exchange continuing — sender
+    /// will resume with the same <c>RemoteSessionId</c>). The terminal-archive case is
+    /// covered by <see cref="ArchiveOnExchangeEndAsync"/>.
+    /// </remarks>
     private async Task ClearActiveSessionAsync(
         Conversation conversation,
         SessionId expectedSessionId,

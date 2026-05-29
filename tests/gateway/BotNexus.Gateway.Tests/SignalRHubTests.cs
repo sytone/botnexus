@@ -250,6 +250,15 @@ public sealed class SignalRHubTests
 
         var conversationDispatcher = new DefaultConversationDispatcher(router, conversationStore);
 
+        static SessionCompactionCoordinator NewCoordinator(ISessionStore store)
+            => new(
+                Mock.Of<ISessionCompactor>(),
+                store,
+                Mock.Of<IAgentSupervisor>(),
+                Mock.Of<IChannelManager>(),
+                new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+                NullLogger<SessionCompactionCoordinator>.Instance);
+
         // Two hubs with different connection IDs but same underlying stores/router
         var hub1 = new GatewayHub(
             Mock.Of<IAgentSupervisor>(),
@@ -262,7 +271,8 @@ public sealed class SignalRHubTests
             conversationDispatcher,
             router,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHub>.Instance)
+            NullLogger<GatewayHub>.Instance,
+            compactionCoordinator: NewCoordinator(sessionStore))
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -280,7 +290,8 @@ public sealed class SignalRHubTests
             conversationDispatcher,
             router,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHub>.Instance)
+            NullLogger<GatewayHub>.Instance,
+            compactionCoordinator: NewCoordinator(sessionStore))
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -586,21 +597,33 @@ public sealed class SignalRHubTests
             NullLogger<DefaultConversationRouter>.Instance);
         var dispatcherForHub = conversationDispatcher ?? new DefaultConversationDispatcher(router, convStore);
 
+        var supervisorImpl = supervisor ?? Mock.Of<IAgentSupervisor>();
+        var compactorImpl = compactor ?? Mock.Of<ISessionCompactor>();
+        var optionsImpl = compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions());
+        var coordinator = new SessionCompactionCoordinator(
+            compactorImpl,
+            sessionStore,
+            supervisorImpl,
+            Mock.Of<IChannelManager>(),
+            optionsImpl,
+            NullLogger<SessionCompactionCoordinator>.Instance);
+
         var hub = new GatewayHub(
-            supervisor ?? Mock.Of<IAgentSupervisor>(),
+            supervisorImpl,
             registry ?? Mock.Of<IAgentRegistry>(),
             sessionStore,
             dispatcher ?? Mock.Of<IChannelDispatcher>(),
             activity ?? Mock.Of<IActivityBroadcaster>(),
-            compactor ?? Mock.Of<ISessionCompactor>(),
+            compactorImpl,
             warmup ?? Mock.Of<ISessionWarmupService>(),
             dispatcherForHub,
             router,
-            compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            optionsImpl,
             NullLogger<GatewayHub>.Instance,
             convStore,
             askUserResponseRegistry,
-            resetService)
+            resetService,
+            coordinator)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

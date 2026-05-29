@@ -12,6 +12,21 @@ public sealed record Conversation
     /// <summary>Gets or sets the unique conversation identifier.</summary>
     public ConversationId ConversationId { get; set; }
 
+    /// <summary>
+    /// Gets or sets the id of the world this conversation belongs to. Stamped by the
+    /// conversation store on persistence using the gateway's resolved <see cref="WorldIdentity"/>
+    /// (see <c>IWorldContext</c>). Defaults to empty string so pre-Phase-9 rows and in-memory
+    /// constructs deserialise unchanged — stores lazily backfill the field on read when empty so
+    /// older data converges to the current world id without an explicit migration script.
+    /// </summary>
+    /// <remarks>
+    /// Cross-world relayed conversations (see <c>CrossWorldFederationController</c>) carry the
+    /// receiving world id here; the source world id is preserved on <see cref="Metadata"/>
+    /// (<c>sourceWorldId</c>). This keeps the typed field locally meaningful (the world that
+    /// owns this row) while still allowing federation traces to be reconstructed from metadata.
+    /// </remarks>
+    public string WorldId { get; set; } = string.Empty;
+
     /// <summary>Gets or sets the agent that owns this conversation.</summary>
     public AgentId AgentId { get; set; }
 

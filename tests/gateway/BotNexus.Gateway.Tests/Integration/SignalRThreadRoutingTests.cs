@@ -161,11 +161,11 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         var targetedSession = await sessionStore.GetAsync(SessionId.From(newSessionId), cts.Token);
         defaultSession.ShouldNotBeNull();
         targetedSession.ShouldNotBeNull();
-        defaultSession!.Session.ConversationId.ShouldNotBeNull();
-        targetedSession!.Session.ConversationId.ShouldNotBeNull();
+        defaultSession!.Session.ConversationId.IsInitialized().ShouldBeTrue();
+        targetedSession!.Session.ConversationId.IsInitialized().ShouldBeTrue();
         targetedSession.Session.ConversationId.ShouldNotBe(defaultSession.Session.ConversationId,
             "targeted conversation should preserve a distinct ConversationId on its resolved session");
-        targetedSession.Session.ConversationId!.Value.Value.ShouldBe(newConvId,
+        targetedSession.Session.ConversationId.Value.ShouldBe(newConvId,
             "resolved session should keep the requested conversationId");
 
         // And the dispatched message for the new conversation should carry the conversationId

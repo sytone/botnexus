@@ -1,6 +1,8 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -110,14 +112,16 @@ public sealed class SqliteSessionStoreSessionParticipantBackCompatTests
             Directory.CreateDirectory(DirectoryPath);
             DatabasePath = Path.Combine(DirectoryPath, "sessions.db");
             ConnectionString = $"Data Source={DatabasePath};Pooling=False";
+            Conversations = new InMemoryConversationStore();
         }
 
         public string DirectoryPath { get; }
         public string DatabasePath { get; }
         public string ConnectionString { get; }
+        public InMemoryConversationStore Conversations { get; }
 
-        public SqliteSessionStore CreateStore()
-            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance);
+        public SqliteSessionStore CreateStore(IConversationStore? conversationStore = null)
+            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? Conversations);
 
         public void Dispose()
         {

@@ -196,7 +196,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["conversationStatus"] = "sealed";
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -213,7 +213,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
@@ -309,6 +309,13 @@ public sealed class AgentExchangeService : IAgentExchangeService
             {
                 AddTurn(MessageRole.User, message, transcript, session);
 
+                // P9-C: tell the receiver this is the final relay turn so it archives its local
+                // conversation. Without this signal the receiver only archives when the target
+                // agent invokes finish_agent_exchange, which leaves the receiver-side conversation
+                // Active forever for single-shot (no objective) and max-turns-reached exchanges.
+                var isFinalTurn = string.IsNullOrWhiteSpace(request.Objective)
+                                  || turn == request.MaxTurns - 1;
+
                 var relayResponse = await _crossWorldChannelAdapter.ExchangeAsync(
                     new OutboundMessage
                     {
@@ -325,7 +332,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
                             ["targetAgentId"] = resolvedTarget.AgentId.Value,
                             ["conversationId"] = conversation.ConversationId.Value,
                             ["sourceSessionId"] = sessionId.Value,
-                            ["remoteSessionId"] = remoteSessionId
+                            ["remoteSessionId"] = remoteSessionId,
+                            ["closeAfterResponse"] = isFinalTurn
                         }
                     },
                     cancellationToken).ConfigureAwait(false);
@@ -364,7 +372,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "sealed";
             session.Metadata["remoteSessionId"] = remoteSessionId;
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -379,7 +387,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
@@ -455,41 +463,65 @@ public sealed class AgentExchangeService : IAgentExchangeService
     }
 
     /// <summary>
-    /// Clears <see cref="Conversation.ActiveSessionId"/> after the exchange loop terminates so the
-    /// conversation is no longer reported as "in flight". The conversation itself stays
-    /// <see cref="ConversationStatus.Active"/> so it remains visible to the portal/list APIs —
-    /// archiving is a separate operator-driven action.
+    /// Archives the agent-agent <see cref="Conversation"/> when its exchange loop terminates
+    /// (Phase 9 / P9-C). Per the W-3 directive, A↔A conversations are inherently bounded by
+    /// their exchange — when the exchange ends (any reason except caller cancellation), the
+    /// conversation is done and stops appearing as Active in portal/list APIs.
     /// </summary>
     /// <remarks>
-    /// Only clears if the latest persisted <see cref="Conversation.ActiveSessionId"/> still equals
-    /// <paramref name="expectedSessionId"/>. If a newer caller has already reassigned the pointer
-    /// (concurrent <see cref="ConverseAsync"/> call sharing the same conversation), we must NOT
-    /// clobber their newer pointer — that would mark a live exchange as not-in-flight.
+    /// <para>
+    /// <strong>Subsumes <c>ClearActiveSessionAsync</c>:</strong> all three
+    /// <see cref="IConversationStore"/> impls implement <see cref="IConversationStore.ArchiveAsync"/>
+    /// as an atomic update that sets <c>Status = Archived</c> AND <c>ActiveSessionId = null</c>
+    /// in the same write — so the prior in-flight-clear is redundant.
+    /// </para>
+    /// <para>
+    /// <strong>Pointer guard (strict).</strong> Only archives if the latest persisted
+    /// <see cref="Conversation.ActiveSessionId"/> still equals <paramref name="expectedSessionId"/>.
+    /// Any other state — null (someone else cleared it), different SessionId (newer caller
+    /// reassigned it), already-Archived — is skipped without write. This is the rubber-duck
+    /// NB-2 tightening: a null-tolerant guard would archive on the receiver between-turn state.
+    /// </para>
+    /// <para>
+    /// <strong>Race window:</strong> the check (<see cref="IConversationStore.GetAsync"/>) and
+    /// the archive (<see cref="IConversationStore.ArchiveAsync"/>) are NOT atomic. A theoretical
+    /// race exists where a parallel actor mutates <c>ActiveSessionId</c> between the two calls.
+    /// For A↔A conversations this is implausible — <see cref="AgentExchangeService"/> creates
+    /// a fresh conversation per <see cref="ConverseAsync"/> call (never reused across calls)
+    /// and the receiver-side session is serialised by the sender per-relay-turn. W-3 may add
+    /// an atomic <c>ArchiveIfActiveSessionAsync</c> primitive when HumanAgent conversations
+    /// need the same auto-archive.
+    /// </para>
+    /// <para>
+    /// <strong>Always uses <see cref="CancellationToken.None"/></strong> — invoked from the
+    /// seal sites which themselves use <see cref="CancellationToken.None"/> for the seal write,
+    /// so caller cancellation cannot leak in and skip the archive after the session is sealed.
+    /// </para>
     /// </remarks>
-    private async Task ClearActiveSessionAsync(Conversation conversation, SessionId expectedSessionId, CancellationToken cancellationToken)
+    private async Task ArchiveOnExchangeEndAsync(Conversation conversation, SessionId expectedSessionId, CancellationToken cancellationToken)
     {
         try
         {
             var latest = await _conversationStore.GetAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
             if (latest is null)
                 return;
+            if (latest.Status == ConversationStatus.Archived)
+                return;
             if (latest.ActiveSessionId != expectedSessionId)
             {
                 _logger.LogDebug(
-                    "Skipping ActiveSessionId clear for conversation '{ConversationId}': pointer is now '{Current}', expected '{Expected}'.",
+                    "Skipping archive for conversation '{ConversationId}': ActiveSessionId is '{Current}', expected '{Expected}'.",
                     conversation.ConversationId, latest.ActiveSessionId, expectedSessionId);
                 return;
             }
-            latest.ActiveSessionId = null;
-            latest.UpdatedAt = DateTimeOffset.UtcNow;
-            await _conversationStore.SaveAsync(latest, cancellationToken).ConfigureAwait(false);
+            await _conversationStore.ArchiveAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            // ActiveSessionId is a derived diagnostic; failing to clear it must not propagate as a
-            // ConverseAsync failure — the conversation is still queryable through the session store.
+            // Archive is a derived state; failing must not propagate as a ConverseAsync failure —
+            // the session is already sealed by the caller and ListByConversationAsync still works.
             _logger.LogWarning(ex,
-                "Failed to clear ActiveSessionId on conversation '{ConversationId}' after exchange.",
+                "Failed to archive conversation '{ConversationId}' after exchange end.",
                 conversation.ConversationId);
         }
     }

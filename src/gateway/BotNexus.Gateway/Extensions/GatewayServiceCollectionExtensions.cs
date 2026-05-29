@@ -116,6 +116,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentExchangeService, AgentExchangeService>();
         services.AddSingleton<CrossWorldInboundAuthService>();
+        services.TryAddSingleton<IWorldContext, PlatformWorldContext>();
         services.TryAddSingleton<CrossWorldChannelOptions>();
         services.AddSingleton<CrossWorldChannelAdapter>(serviceProvider =>
             new CrossWorldChannelAdapter(
@@ -145,6 +146,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
+        services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
         services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
@@ -401,7 +403,13 @@ public static class GatewayServiceCollectionExtensions
 
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
-            services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
+            // Phase 9 / P9-B (#615): thread the conversation store so save-time legacy
+            // backfill applies in InMemory test/dev deployments too.
+            services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
+                new InMemorySessionStore(
+                    redactor: serviceProvider.GetService<ISecretRedactor>(),
+                    conversationStore: serviceProvider.GetService<IConversationStore>(),
+                    logger: serviceProvider.GetService<ILogger<InMemorySessionStore>>())));
             return;
         }
 
@@ -419,7 +427,9 @@ public static class GatewayServiceCollectionExtensions
                 return new FileSessionStore(
                     sessionsPath,
                     serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
-                    fs);
+                    fs,
+                    conversationStore: serviceProvider.GetService<IConversationStore>(),
+                    redactor: serviceProvider.GetService<ISecretRedactor>());
             }));
             return;
         }
@@ -473,7 +483,8 @@ public static class GatewayServiceCollectionExtensions
                 return new FileConversationStore(
                     conversationsPath,
                     serviceProvider.GetRequiredService<ILogger<FileConversationStore>>(),
-                    fs);
+                    fs,
+                    serviceProvider.GetService<IWorldContext>());
             }));
             return;
         }
@@ -487,7 +498,8 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<IConversationStore>(serviceProvider =>
                 new SqliteConversationStore(
                     connectionString,
-                    serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>())));
+                    serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
+                    serviceProvider.GetService<IWorldContext>())));
             return;
         }
 

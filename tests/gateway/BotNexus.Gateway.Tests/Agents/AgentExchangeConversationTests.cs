@@ -255,7 +255,7 @@ public sealed class AgentExchangeConversationTests
         sessions.ShouldHaveSingleItem();
         sessions[0].Status.ShouldBe(GatewaySessionStatus.Sealed,
             customMessage: "Failure path must still seal the session — no half-active orphans.");
-        sessions[0].Session.ConversationId.ShouldNotBeNull(
+        sessions[0].Session.ConversationId.IsInitialized().ShouldBeTrue(
             customMessage: "Even on failure the child session must carry its ConversationId, " +
                 "otherwise the bug is reintroduced behind the catch block.");
 
@@ -263,7 +263,7 @@ public sealed class AgentExchangeConversationTests
         conversations.ShouldHaveSingleItem(
             customMessage: "Conversation must persist on failure too — losing the convo on " +
                 "failure would mean the error transcript is unrecoverable.");
-        conversations[0].ConversationId.ShouldBe(sessions[0].Session.ConversationId!.Value);
+        conversations[0].ConversationId.ShouldBe(sessions[0].Session.ConversationId);
     }
 
     [Fact]
@@ -358,7 +358,7 @@ public sealed class AgentExchangeConversationTests
 
         var session = await sessionStore.GetAsync(result.SessionId);
         session.ShouldNotBeNull();
-        session!.Session.ConversationId!.Value.ShouldBe(result.ConversationId,
+        session!.Session.ConversationId.ShouldBe(result.ConversationId,
             customMessage: "result.ConversationId must match what was actually pinned — " +
                 "otherwise callers chase a phantom id that never lands in the store.");
     }

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -159,6 +160,23 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null)
             return NotFound();
 
+        // Security (#615 critique): refuse to modify resolver-owned legacy conversations
+        // through the public REST surface. These rows are created by
+        // LegacyConversationResolver to group orphan sessions and are injected into the
+        // agent's system prompt via SystemPromptBuilder. Allowing arbitrary REST callers
+        // to overwrite Title/Purpose/Instructions would let an attacker inject prompt
+        // content into the agent's trusted context (XPIA). The identifying signature is
+        // Title == "legacy:{agentId}" AND Initiator == CitizenId.Of(agentId) — only the
+        // resolver can produce that combination because POST /api/conversations leaves
+        // Initiator = null.
+        if (IsResolverOwnedLegacyConversation(conversation))
+        {
+            return BadRequest(new
+            {
+                error = "legacy conversations are managed by the system and cannot be modified."
+            });
+        }
+
         if (request.Title is not null)
             conversation.Title = request.Title;
         if (request.Purpose is not null)
@@ -169,6 +187,15 @@ public sealed class ConversationsController : ControllerBase
         await _conversations.SaveAsync(conversation, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return Ok(ToResponse(conversation));
+    }
+
+    private static bool IsResolverOwnedLegacyConversation(Conversation conversation)
+    {
+        if (!conversation.Title.StartsWith("legacy:", StringComparison.Ordinal))
+            return false;
+        if (conversation.Initiator is not { } initiator)
+            return false;
+        return initiator == CitizenId.Of(conversation.AgentId);
     }
 
     /// <summary>
@@ -361,8 +388,8 @@ public sealed class ConversationsController : ControllerBase
             if (virtualSession is null)
                 return NoContent();
 
-            if (virtualSession.ConversationId is { } linkedConversationId)
-                conversation = await _conversations.GetAsync(linkedConversationId, cancellationToken);
+            if (virtualSession.ConversationId.IsInitialized())
+                conversation = await _conversations.GetAsync(virtualSession.ConversationId, cancellationToken);
 
             if (conversation is null)
             {

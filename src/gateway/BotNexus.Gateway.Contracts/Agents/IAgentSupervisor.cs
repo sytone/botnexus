@@ -43,6 +43,11 @@ public interface IAgentSupervisor
     AgentInstance? GetInstance(AgentId agentId, SessionId sessionId);
 
     /// <summary>
+    /// Gets the live agent handle for the given session, or <c>null</c> if no instance is running.
+    /// </summary>
+    IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId);
+
+    /// <summary>
     /// Gets all active agent instances.
     /// </summary>
     IReadOnlyList<AgentInstance> GetAllInstances();

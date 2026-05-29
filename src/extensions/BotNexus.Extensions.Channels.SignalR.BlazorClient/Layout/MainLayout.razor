@@ -22,7 +22,7 @@
             </button>
             <span class="banner-logo">🤖</span>
             <span class="banner-title">BotNexus</span>
-            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings">x</button>
+            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;&#xFE0F;</button>
         </div>
     </header>
 
@@ -114,7 +114,7 @@
                                         .OrderByDescending(c => c.IsDefault)
                                         .ThenByDescending(c => c.UpdatedAt))
                                     {
-                                        <div class="conversation-list-item">
+                                        <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
                                             <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
                                                     @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
                                                 <span class="conversation-list-item-main">

@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
@@ -242,13 +243,14 @@ public sealed class SessionStoreExistenceQueryTests
     private sealed class SqliteHarness : IStoreHarness
     {
         private readonly string _directoryPath;
+        private readonly InMemoryConversationStore _conversations = new();
 
         public SqliteHarness()
         {
             _directoryPath = Path.Combine(AppContext.BaseDirectory, "SessionStoreExistenceQueryTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_directoryPath);
             var dbPath = Path.Combine(_directoryPath, "sessions.db");
-            Store = new SqliteSessionStore($"Data Source={dbPath};Pooling=False", NullLogger<SqliteSessionStore>.Instance);
+            Store = new SqliteSessionStore($"Data Source={dbPath};Pooling=False", NullLogger<SqliteSessionStore>.Instance, _conversations);
         }
 
         public ISessionStore Store { get; }

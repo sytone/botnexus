@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -14,17 +15,36 @@ namespace BotNexus.Gateway.Conversations;
 public sealed class InMemoryConversationStore : IConversationStore
 {
     private readonly ConcurrentDictionary<string, Conversation> _conversations = new(StringComparer.Ordinal);
+    private readonly IWorldContext? _worldContext;
+
+    /// <summary>Initialises a new <see cref="InMemoryConversationStore"/> without world stamping.</summary>
+    /// <remarks>
+    /// Kept for tests and bare wire-ups that don't have a world context available; production
+    /// callers should always provide <see cref="IWorldContext"/> via the world-aware overload so
+    /// <c>Conversation.WorldId</c> is stamped on persistence.
+    /// </remarks>
+    public InMemoryConversationStore() { }
+
+    /// <summary>Initialises a new <see cref="InMemoryConversationStore"/> that stamps the current world id.</summary>
+    /// <param name="worldContext">Resolves the gateway's current <see cref="WorldIdentity"/> for stamping.</param>
+    public InMemoryConversationStore(IWorldContext worldContext)
+    {
+        _worldContext = worldContext;
+    }
 
     /// <inheritdoc />
     public Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)
-        => Task.FromResult(_conversations.GetValueOrDefault(conversationId.Value));
+    {
+        var conversation = _conversations.GetValueOrDefault(conversationId.Value);
+        return Task.FromResult(BackfillWorldId(conversation));
+    }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
     {
         IReadOnlyList<Conversation> results = agentId is null
-            ? [.. _conversations.Values]
-            : [.. _conversations.Values.Where(c => c.AgentId == agentId.Value)];
+            ? [.. _conversations.Values.Select(c => BackfillWorldId(c)!)]
+            : [.. _conversations.Values.Where(c => c.AgentId == agentId.Value).Select(c => BackfillWorldId(c)!)];
         return Task.FromResult(results);
     }
 
@@ -34,7 +54,9 @@ public sealed class InMemoryConversationStore : IConversationStore
         if (!citizen.IsValid)
             throw new ArgumentException("Citizen must be a valid (non-default) CitizenId.", nameof(citizen));
 
-        IReadOnlyList<Conversation> results = [.. _conversations.Values.Where(c => MatchesCitizen(c, citizen))];
+        IReadOnlyList<Conversation> results = [.. _conversations.Values
+            .Where(c => MatchesCitizen(c, citizen))
+            .Select(c => BackfillWorldId(c)!)];
         return Task.FromResult(results);
     }
 
@@ -52,6 +74,7 @@ public sealed class InMemoryConversationStore : IConversationStore
 
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        StampWorldId(conversation);
         if (!_conversations.TryAdd(conversation.ConversationId.Value, conversation))
             throw new InvalidOperationException($"A conversation with id '{conversation.ConversationId}' already exists.");
         return Task.FromResult(conversation);
@@ -60,6 +83,7 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        StampWorldId(conversation);
         conversation = conversation with { UpdatedAt = DateTimeOffset.UtcNow };
         _conversations[conversation.ConversationId.Value] = conversation;
         return Task.CompletedTask;
@@ -92,7 +116,7 @@ public sealed class InMemoryConversationStore : IConversationStore
                 b.ChannelType == channelType &&
                 b.ChannelAddress == channelAddress));
 
-        return Task.FromResult(match);
+        return Task.FromResult(BackfillWorldId(match));
     }
 
     /// <inheritdoc />
@@ -109,6 +133,28 @@ public sealed class InMemoryConversationStore : IConversationStore
         return Task.FromResult(summaries);
     }
 
+    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
+    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
+    // can hold the source world's id even when this gateway is the receiver. No-op when no
+    // world context is wired (e.g. test setups using the parameterless ctor).
+    private void StampWorldId(Conversation conversation)
+    {
+        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+    }
+
+    // Read-time projection: any conversation stored before the world context was wired
+    // (e.g. via the parameterless ctor) carries an empty WorldId. This projects it to the
+    // current world on the way out. The in-memory dictionary itself is not mutated to
+    // "repair" the value — kept identical to the Sqlite/File semantics so the three stores
+    // behave the same way under tests and under the lazy upgrade path.
+    private Conversation? BackfillWorldId(Conversation? conversation)
+    {
+        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+        return conversation;
+    }
+
     private static ConversationSummary ToSummary(Conversation c) =>
         new(
             c.ConversationId.Value,
@@ -123,3 +169,4 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.Purpose,
             c.Kind.ToString());
 }
+

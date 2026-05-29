@@ -182,7 +182,7 @@ public sealed class PortalUserJourneyTests
             Timeout = 30_000,
         });
 
-        var composer = panel.Locator("[data-testid='chat-composer']");
+        var composer = panel.Locator("[data-testid='chat-input'], [data-testid='chat-composer']");
         await composer.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,

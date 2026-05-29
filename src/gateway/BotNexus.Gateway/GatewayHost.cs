@@ -61,6 +61,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly PendingAskUserInterceptor? _pendingAskUserInterceptor;
     private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
+    private readonly ISessionCompactionCoordinator _compactionCoordinator;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -79,7 +80,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IConversationRouter? conversationRouter = null,
         PendingAskUserInterceptor? pendingAskUserInterceptor = null,
         IPreCompactionMemoryFlusher? memoryFlusher = null,
-        IAgentRegistry? registry = null)
+        IAgentRegistry? registry = null,
+        ISessionCompactionCoordinator? compactionCoordinator = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -96,6 +98,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _pendingAskUserInterceptor = pendingAskUserInterceptor;
         _memoryFlusher = memoryFlusher;
         _registry = registry;
+        // The coordinator is the single source of truth for compaction (PR #602
+        // followup). Tests that construct GatewayHost directly may not provide
+        // one; build a fallback from the deps we already have so behaviour
+        // matches production.
+        _compactionCoordinator = compactionCoordinator
+            ?? new BotNexus.Gateway.Sessions.SessionCompactionCoordinator(
+                compactor,
+                sessions,
+                supervisor,
+                channelManager,
+                compactionOptions,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Sessions.SessionCompactionCoordinator>.Instance,
+                memoryFlusher);
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -414,12 +429,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             }
 
             if (_pendingAskUserInterceptor is not null &&
-                session.ConversationId is { } activeConversationId &&
-                _pendingAskUserInterceptor.TryIntercept(message, activeConversationId))
+                session.ConversationId.IsInitialized() &&
+                _pendingAskUserInterceptor.TryIntercept(message, session.ConversationId))
             {
                 _logger.LogInformation(
                     "Captured ask_user response for conversation {ConversationId}; skipping normal agent dispatch.",
-                    activeConversationId);
+                    session.ConversationId);
                 continue;
             }
 
@@ -454,43 +469,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
                 try
                 {
-                    if (_memoryFlusher is not null && _memoryFlusher.ShouldFlush(session.Session, _compactionOptions.CurrentValue))
+                    var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+                    if (outcome.Applied)
                     {
-                        try
-                        {
-                            await _memoryFlusher.FlushAsync(session.AgentId, session.Session, _compactionOptions.CurrentValue, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception flushEx)
-                        {
-                            _logger.LogWarning(flushEx, "Pre-compaction memory flush failed for session {SessionId}, compaction will proceed", sessionId);
-                        }
+                        await _compactionCoordinator.TrySendChannelNotificationAsync(
+                            outcome,
+                            message.ChannelType,
+                            message.ChannelAddress,
+                            sessionId,
+                            cancellationToken).ConfigureAwait(false);
                     }
-                    var result = await _compactor.CompactAsync(session, _compactionOptions.CurrentValue, cancellationToken);
-                    if (result.Succeeded && result.CompactedHistory is not null)
-                    {
-                        var outcome = session.TryApplyCompactionResult(result);
-                        switch (outcome)
-                        {
-                            case HistoryReplaceOutcome.Applied:
-                                session.UpdatedAt = DateTimeOffset.UtcNow;
-                                break;
-                            case HistoryReplaceOutcome.Rebased:
-                                session.UpdatedAt = DateTimeOffset.UtcNow;
-                                _logger.LogInformation(
-                                    "Session {SessionId} auto-compaction rebased over concurrent additions; " +
-                                    "TokensAfter is approximate.", sessionId);
-                                break;
-                            case HistoryReplaceOutcome.Aborted:
-                                _logger.LogWarning(
-                                    "Session {SessionId} auto-compaction aborted: history was destructively " +
-                                    "modified during the summary call. History is unchanged.", sessionId);
-                                break;
-                        }
-                    }
-                    await _sessions.SaveAsync(session, cancellationToken);
-                    _logger.LogInformation(
-                        "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
-                        sessionId, result.EntriesSummarized, result.EntriesPreserved);
                 }
                 catch (Exception ex)
                 {
@@ -849,45 +837,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         string sessionId,
         CancellationToken cancellationToken)
     {
-        var result = await _compactor.CompactAsync(session, _compactionOptions.CurrentValue, cancellationToken);
-        var outcome = HistoryReplaceOutcome.Applied;
-        if (result.Succeeded && result.CompactedHistory is not null)
-        {
-            outcome = session.TryApplyCompactionResult(result);
-            if (outcome != HistoryReplaceOutcome.Aborted)
-            {
-                session.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-        }
-        await _sessions.SaveAsync(session, cancellationToken);
-
-        string feedback;
-        if (!result.Succeeded)
-        {
-            feedback = "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
-        }
-        else if (outcome == HistoryReplaceOutcome.Aborted)
-        {
-            feedback = "Compaction conflicted with a concurrent change to the session. Session history was not modified — please try again.";
-        }
-        else
-        {
-            var rebasedNote = outcome == HistoryReplaceOutcome.Rebased
-                ? " (rebased over concurrent additions)"
-                : string.Empty;
-            feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved{rebasedNote}.";
-        }
-
-        if (ResolveChannelAdapter(message.ChannelType) is { } channel)
-        {
-            await channel.SendAsync(new OutboundMessage
-            {
-                ChannelType = message.ChannelType,
-                ChannelAddress = message.ChannelAddress,
-                Content = feedback,
-                SessionId = sessionId
-            }, cancellationToken);
-        }
+        var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+        // Always notify on this path — channel-driven /compact callers expect feedback
+        // even on failure so the user knows the command landed. Use the canonical
+        // text (including the FailureReason when applicable).
+        await _compactionCoordinator.TrySendChannelNotificationAsync(
+            outcome,
+            message.ChannelType,
+            message.ChannelAddress,
+            sessionId,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static bool TryGetControlCommand(InboundMessage message, out string? command)
@@ -1211,8 +1170,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
                         ex.BindingId, ex.ConversationId);
 
-                    if (session?.ConversationId is { } convId)
-                        await _conversationRouter.MuteBindingAsync(convId, ex.BindingId, cancellationToken);
+                    if (session is not null && session.ConversationId.IsInitialized())
+                        await _conversationRouter.MuteBindingAsync(session.ConversationId, ex.BindingId, cancellationToken);
                 }
                 catch (Exception ex)
                 {

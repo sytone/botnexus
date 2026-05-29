@@ -1135,8 +1135,8 @@ public sealed class SessionsControllerTests
 
         var okResult = actionResult.Result.ShouldBeOfType<OkObjectResult>();
         var result = okResult!.Value.ShouldBeOfType<GatewaySession>();
-        result.Session.ConversationId.ShouldNotBeNull("ConversationId must be set on the returned session");
-        result.Session.ConversationId!.Value.Value.ShouldBe("c_testconvid456");
+        result.Session.ConversationId.IsInitialized().ShouldBeTrue("ConversationId must be set on the returned session");
+        result.Session.ConversationId.Value.ShouldBe("c_testconvid456");
     }
 
     [Fact]

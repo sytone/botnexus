@@ -44,6 +44,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly IConversationResetService? _resetService;
+    private readonly ISessionCompactionCoordinator _compactionCoordinator;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -60,7 +61,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
-        IConversationResetService? resetService = null)
+        IConversationResetService? resetService = null,
+        ISessionCompactionCoordinator? compactionCoordinator = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -76,6 +78,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
+        // Required for the /compact RPC path. Tests constructing the hub directly
+        // must pass one (see SignalRHubTests.CreateHub which uses TestSessionCompactionCoordinator).
+        _compactionCoordinator = compactionCoordinator
+            ?? throw new ArgumentNullException(nameof(compactionCoordinator),
+                "ISessionCompactionCoordinator is required. Production hosts get it from DI; tests must inject one.");
     }
 
     /// <summary>
@@ -497,10 +504,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
 
-        if (gatewaySession?.ConversationId is { } conversationId && _resetService is not null)
+        if (gatewaySession is not null && gatewaySession.ConversationId.IsInitialized() && _resetService is not null)
         {
             await _resetService.ResetActiveSessionAsync(
-                conversationId,
+                gatewaySession.ConversationId,
                 expectedActiveSessionId: typedSessionId,
                 CancellationToken.None).ConfigureAwait(false);
         }
@@ -536,32 +543,24 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The compact session result.</returns>
     public async Task<CompactSessionResult> CompactSession(AgentId agentId, SessionId sessionId)
     {
-        _ = NormalizeAgentId(agentId);
+        var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
         if (session is null)
             throw new HubException($"Session '{typedSessionId.Value}' not found.");
 
+        // Resolve through the request services so test hosts can substitute the
+        // coordinator. Falls back to the singleton injected at hub construction.
         var requestServices = Context.GetHttpContext()?.RequestServices;
-        var compactor = requestServices?.GetService<ISessionCompactor>() ?? _compactor;
-        var options = requestServices?.GetService<IOptionsMonitor<CompactionOptions>>()?.CurrentValue ?? _compactionOptions.CurrentValue;
+        var coordinator = requestServices?.GetService<ISessionCompactionCoordinator>() ?? _compactionCoordinator;
 
-        var result = await compactor.CompactAsync(session, options, CancellationToken.None);
-        if (result.Succeeded && result.CompactedHistory is not null)
-        {
-            var outcome = session.TryApplyCompactionResult(result);
-            if (outcome != HistoryReplaceOutcome.Aborted)
-            {
-                session.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-        }
-        await _sessions.SaveAsync(session, CancellationToken.None);
+        var outcome = await coordinator.CompactAsync(typedAgentId, session, CancellationToken.None).ConfigureAwait(false);
 
         return new CompactSessionResult(
-            result.EntriesSummarized,
-            result.EntriesPreserved,
-            result.TokensBefore,
-            result.TokensAfter);
+            outcome.EntriesSummarized,
+            outcome.EntriesPreserved,
+            outcome.TokensBefore,
+            outcome.TokensAfter);
     }
 
     /// <summary>

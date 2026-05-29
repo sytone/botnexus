@@ -24,11 +24,11 @@
                         {
                             @if (IsReadOnly)
                             {
-                                <h3 class="conversation-title">@ActiveConversationTitle</h3>
+                                <h3 class="conversation-title" title="@ActiveConversationId">@ActiveConversationTitle</h3>
                             }
                             else
                             {
-                                <h3 class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</h3>
+                                <h3 class="conversation-title editable" @onclick="StartEditTitle" title="@($"{ActiveConversationId} - click to rename")">@ActiveConversationTitle</h3>
                             }
                             @if (ActiveConversation?.IsDefault == true)
                             {
@@ -140,7 +140,7 @@
         </div>
     }
 
-    <div class="messages-container" data-testid="messages" @ref="_messagesContainer">
+    <div class="messages-container" data-testid="chat-messages" @ref="_messagesContainer">
         @if (IsLoadingHistory)
         {
             <div class="history-loading">
@@ -168,7 +168,7 @@
             }
             else if (msg.Role == "System")
             {
-                <div class="system-message">@msg.Content</div>
+                <div class="system-message" data-testid="chat-system-message">@msg.Content</div>
             }
             else if (msg.IsToolCall)
             {
@@ -321,7 +321,7 @@
             @if (!IsReadOnly)
             {
                 <textarea class="chat-input @ExpandingInputClass"
-                          data-testid="chat-composer"
+                          data-testid="chat-input"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"

@@ -127,10 +127,10 @@ public sealed class SubAgentEagerConversationPinTests
 
         // Assert: the moment SpawnAsync returns, the child session must already be
         // pinned to the parent conversation. NO Task.Delay needed.
-        pinnedSession.Session.ConversationId.ShouldNotBeNull(
+        pinnedSession.Session.ConversationId.IsInitialized().ShouldBeTrue(
             "After SpawnAsync returns, the child session must already be bound to the parent conversation. " +
             "If you needed Task.Delay(...) here, pinning is still lazy and the orphan-window bug remains.");
-        pinnedSession.Session.ConversationId!.Value.Value.ShouldBe("conv-99");
+        pinnedSession.Session.ConversationId.Value.ShouldBe("conv-99");
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class SubAgentEagerConversationPinTests
         sessionStore
             .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
             .Callback<GatewaySession, CancellationToken>((sess, _) =>
-                events.Add($"pin:{sess.Session.ConversationId?.Value ?? "<null>"}"))
+                events.Add($"pin:{(sess.Session.ConversationId.IsInitialized() ? sess.Session.ConversationId.Value : "<unset>")}"))
             .Returns(Task.CompletedTask);
 
         var promptInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

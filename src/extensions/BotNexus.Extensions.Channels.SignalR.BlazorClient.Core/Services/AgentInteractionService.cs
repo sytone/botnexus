@@ -138,12 +138,16 @@ public sealed class AgentInteractionService : IAgentInteractionService
         try
         {
             var result = await _hub.CompactSessionAsync(agentId, agent.ActiveConversationSessionId!);
+            // Inject the canonical compaction notification locally so the user
+            // sees the same _[Session context compacted: ...]_ text regardless of
+            // which path (auto-compact via channel push, or this RPC) triggered
+            // compaction. The gateway no longer fans this out via the SignalR
+            // channel for hub-initiated compactions, so we render it here.
             var convId = agent.ActiveConversationId;
             if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
             {
                 conv.Messages.Add(new ChatMessage("System",
-                    $"Session compacted: {result.Summarized} messages summarized, {result.Preserved} preserved. " +
-                    $"Tokens: {result.TokensBefore} → {result.TokensAfter}",
+                    $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_",
                     DateTimeOffset.UtcNow));
                 _store.NotifyChanged();
             }

@@ -310,6 +310,8 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         public AgentInstance? GetInstance(AgentId requestedAgentId, SessionId requestedSessionId)
             => requestedAgentId == _instance.AgentId && requestedSessionId == _instance.SessionId ? _instance : null;
 
+        public IAgentHandle? GetHandle(AgentId requestedAgentId, SessionId requestedSessionId) => null;
+
         public IReadOnlyList<AgentInstance> GetAllInstances() => [_instance];
 
         public Task StopAllAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

@@ -69,7 +69,12 @@ public sealed class SessionsController : ControllerBase
             sessionId = s.SessionId.Value,
             agentId = s.AgentId.Value,
             channelType = s.ChannelType?.Value,
-            conversationId = s.ConversationId?.Value,
+            // Phase 9 / P9-B-2 (#627): defensive projection — `Session.ConversationId`
+            // is non-nullable, but the unset sentinel `default(ConversationId)` will
+            // throw on `.Value`. Project default → null so portal/REST clients still see
+            // a meaningful response if a session is read in the narrow window before
+            // save-time backfill stamps it.
+            conversationId = s.ConversationId.IsInitialized() ? s.ConversationId.Value : null,
             status = s.Status.ToString(),
             sessionType = s.SessionType.Value,
             isInteractive = s.IsInteractive,

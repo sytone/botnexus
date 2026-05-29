@@ -371,7 +371,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         return new SessionView(
             SessionId: snapshot.Session.SessionId.Value,
             AgentId: snapshot.AgentId.Value,
-            ConversationId: snapshot.Session.ConversationId?.Value,
+            ConversationId: snapshot.Session.ConversationId.IsInitialized() ? snapshot.Session.ConversationId.Value : null,
             Status: snapshot.Session.Status.ToString(),
             HistoryCount: snapshot.Session.History.Count);
     }

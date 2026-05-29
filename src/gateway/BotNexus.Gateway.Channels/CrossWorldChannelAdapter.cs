@@ -55,6 +55,10 @@ public sealed class CrossWorldChannelAdapter(
         var sourceSessionId = TryGetMetadata(message.Metadata, "sourceSessionId");
         var remoteSessionId = TryGetMetadata(message.Metadata, "remoteSessionId");
         var apiKey = TryGetMetadata(message.Metadata, "apiKey");
+        // P9-C: lift sender-determined finality signal off OutboundMessage.Metadata so the
+        // receiver can archive its conversation on the final turn even when the target agent
+        // never invokes finish_agent_exchange (single-shot + max-turns cases).
+        var closeAfterResponse = TryGetMetadataBool(message.Metadata, "closeAfterResponse");
 
         var requestUri = BuildRelayUri(endpoint);
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
@@ -67,7 +71,8 @@ public sealed class CrossWorldChannelAdapter(
                 Message = message.Content,
                 ConversationId = conversationId,
                 SourceSessionId = sourceSessionId,
-                RemoteSessionId = remoteSessionId
+                RemoteSessionId = remoteSessionId,
+                CloseAfterResponse = closeAfterResponse
             }, options: JsonOptions)
         };
 
@@ -110,6 +115,31 @@ public sealed class CrossWorldChannelAdapter(
             return null;
 
         return value.ToString();
+    }
+
+    // P9-C bool-metadata lift. Handles the in-process shape (raw `bool`) and the
+    // JsonElement shape that surfaces when OutboundMessage.Metadata round-trips through
+    // System.Text.Json (e.g. when the message originates from a stored session via
+    // SqliteSessionStore / FileSessionStore — see PR #549 critique fold on Session.Metadata).
+    // String-shaped truthy values are accepted defensively but never emitted by callers.
+    // Any unknown shape (or missing key) falls back to false, which reverts the receiver
+    // to pre-P9-C behaviour (archive only on ExchangeFinished) — a functional regression,
+    // not a correctness break.
+    private static bool TryGetMetadataBool(IReadOnlyDictionary<string, object?> metadata, string key)
+    {
+        if (!metadata.TryGetValue(key, out var value) || value is null)
+            return false;
+
+        return value switch
+        {
+            bool b => b,
+            JsonElement el when el.ValueKind == JsonValueKind.True => true,
+            JsonElement el when el.ValueKind == JsonValueKind.False => false,
+            JsonElement el when el.ValueKind == JsonValueKind.String
+                && bool.TryParse(el.GetString(), out var parsedEl) => parsedEl,
+            string s => bool.TryParse(s, out var parsed) && parsed,
+            _ => false
+        };
     }
 }
 

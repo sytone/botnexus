@@ -2,6 +2,7 @@ using System.IO.Abstractions;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,7 @@ public sealed class FileConversationStore : IConversationStore
     private readonly string _rootPath;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<FileConversationStore> _logger;
+    private readonly IWorldContext? _worldContext;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -30,16 +32,36 @@ public sealed class FileConversationStore : IConversationStore
     };
 
     /// <summary>
-    /// Initialises a new <see cref="FileConversationStore"/> with the given root path.
+    /// Initialises a new <see cref="FileConversationStore"/> with the given root path. No world
+    /// stamping — kept for tests and bare wire-ups; production callers should use the
+    /// world-aware overload.
     /// </summary>
     /// <param name="rootPath">Base directory under which <c>{agentId}/{conversationId}.json</c> files are stored.</param>
     /// <param name="logger">Logger.</param>
     /// <param name="fileSystem">Abstracted file system.</param>
     public FileConversationStore(string rootPath, ILogger<FileConversationStore> logger, IFileSystem fileSystem)
+        : this(rootPath, logger, fileSystem, worldContext: null)
+    {
+    }
+
+    /// <summary>
+    /// Initialises a new <see cref="FileConversationStore"/> that stamps and lazy-backfills the
+    /// current world id on <see cref="Conversation.WorldId"/>.
+    /// </summary>
+    /// <param name="rootPath">Base directory under which <c>{agentId}/{conversationId}.json</c> files are stored.</param>
+    /// <param name="logger">Logger.</param>
+    /// <param name="fileSystem">Abstracted file system.</param>
+    /// <param name="worldContext">Resolves the gateway's current world identity for stamping; <c>null</c> disables stamping.</param>
+    public FileConversationStore(
+        string rootPath,
+        ILogger<FileConversationStore> logger,
+        IFileSystem fileSystem,
+        IWorldContext? worldContext)
     {
         _rootPath = rootPath;
         _logger = logger;
         _fileSystem = fileSystem;
+        _worldContext = worldContext;
         _fileSystem.Directory.CreateDirectory(rootPath);
     }
 
@@ -47,7 +69,7 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
-        try { return await LoadFileAsync(conversationId, ct).ConfigureAwait(false); }
+        try { return BackfillWorldId(await LoadFileAsync(conversationId, ct).ConfigureAwait(false)); }
         finally { _lock.Release(); }
     }
 
@@ -93,6 +115,8 @@ public sealed class FileConversationStore : IConversationStore
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        StampWorldId(conversation);
+
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -108,6 +132,7 @@ public sealed class FileConversationStore : IConversationStore
     /// <inheritdoc />
     public async Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        StampWorldId(conversation);
         conversation = conversation with { UpdatedAt = DateTimeOffset.UtcNow };
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try { await WriteFileAsync(conversation, ct).ConfigureAwait(false); }
@@ -188,7 +213,10 @@ public sealed class FileConversationStore : IConversationStore
                     var json = await _fileSystem.File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
                     var conversation = JsonSerializer.Deserialize<Conversation>(json, JsonOptions);
                     if (conversation is not null)
+                    {
+                        BackfillWorldId(conversation);
                         results.Add(conversation);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -247,6 +275,28 @@ public sealed class FileConversationStore : IConversationStore
 
     private string GetPath(AgentId agentId, ConversationId conversationId)
         => Path.Combine(_rootPath, agentId.Value, $"{conversationId.Value}.json");
+
+    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
+    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
+    // can hold the source world's id even when this gateway is the receiver. No-op when no
+    // world context is wired (e.g. test setups using the parameterless ctor).
+    private void StampWorldId(Conversation conversation)
+    {
+        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+    }
+
+    // Read-time projection: legacy JSON sidecars persisted before #613 deserialise with an
+    // empty WorldId. This projects them to the current world on the way out. The file on
+    // disk is not rewritten — the next SaveAsync round-trip will durably persist via
+    // StampWorldId. Treating backfill as projection-only keeps the read path single-pass
+    // and avoids touching disk on every Get/List.
+    private Conversation? BackfillWorldId(Conversation? conversation)
+    {
+        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+        return conversation;
+    }
 
     private static ConversationSummary ToSummary(Conversation c) =>
         new(
