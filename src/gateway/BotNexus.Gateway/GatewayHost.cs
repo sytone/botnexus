@@ -429,12 +429,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             }
 
             if (_pendingAskUserInterceptor is not null &&
-                session.ConversationId is { } activeConversationId &&
-                _pendingAskUserInterceptor.TryIntercept(message, activeConversationId))
+                session.ConversationId.IsInitialized() &&
+                _pendingAskUserInterceptor.TryIntercept(message, session.ConversationId))
             {
                 _logger.LogInformation(
                     "Captured ask_user response for conversation {ConversationId}; skipping normal agent dispatch.",
-                    activeConversationId);
+                    session.ConversationId);
                 continue;
             }
 
@@ -1170,8 +1170,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
                         ex.BindingId, ex.ConversationId);
 
-                    if (session?.ConversationId is { } convId)
-                        await _conversationRouter.MuteBindingAsync(convId, ex.BindingId, cancellationToken);
+                    if (session is not null && session.ConversationId.IsInitialized())
+                        await _conversationRouter.MuteBindingAsync(session.ConversationId, ex.BindingId, cancellationToken);
                 }
                 catch (Exception ex)
                 {

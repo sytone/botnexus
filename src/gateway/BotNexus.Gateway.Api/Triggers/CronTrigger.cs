@@ -82,7 +82,7 @@ public sealed class CronTrigger(
         if (request is not null && request.ResolvedConversationId is null)
             request.ResolvedConversationId = conversation.ConversationId;
 
-        if (session.ConversationId is null || session.ConversationId != conversation.ConversationId)
+        if (session.ConversationId != conversation.ConversationId)
             session.ConversationId = conversation.ConversationId;
 
         // Update the conversation's active session to this run so history loads the latest.

@@ -577,8 +577,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (sessionStore is not null)
         {
             var session = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-            if (session?.ConversationId is { } conversationId)
-                return conversationId;
+            if (session is not null && session.ConversationId.IsInitialized())
+                return session.ConversationId;
         }
 
         var conversations = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);

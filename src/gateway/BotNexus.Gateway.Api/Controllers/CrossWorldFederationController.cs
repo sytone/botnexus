@@ -303,8 +303,9 @@ public sealed class CrossWorldFederationController(
             if (existing.Status == GatewaySessionStatus.Sealed)
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' is sealed and cannot be reused — start a new cross-world exchange." }));
 
-            if (existing.ConversationId is not { } existingConversationId)
+            if (!existing.ConversationId.IsInitialized())
                 return ResolveResult.Fail(Conflict(new { error = $"RemoteSessionId '{request.RemoteSessionId}' has no bound conversation — refuse to reuse." }));
+            var existingConversationId = existing.ConversationId;
 
             var existingConv = await conversationStore.GetAsync(existingConversationId, cancellationToken).ConfigureAwait(false);
             if (existingConv is null)

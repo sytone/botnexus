@@ -504,10 +504,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
 
-        if (gatewaySession?.ConversationId is { } conversationId && _resetService is not null)
+        if (gatewaySession is not null && gatewaySession.ConversationId.IsInitialized() && _resetService is not null)
         {
             await _resetService.ResetActiveSessionAsync(
-                conversationId,
+                gatewaySession.ConversationId,
                 expectedActiveSessionId: typedSessionId,
                 CancellationToken.None).ConfigureAwait(false);
         }
