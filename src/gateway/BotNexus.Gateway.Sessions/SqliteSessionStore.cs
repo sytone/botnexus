@@ -39,6 +39,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     };
 
     private readonly IConversationStore? _conversationStore;
+    private readonly LegacyConversationResolver? _legacyResolver;
     private readonly ILogger<SqliteSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
 
@@ -49,7 +50,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// <param name="logger">Logger for diagnostic output including migration summaries.</param>
     /// <param name="conversationStore">
     /// When provided, a startup migration links any orphaned sessions (those with no
-    /// <c>conversation_id</c>) to their agent's default conversation.
+    /// <c>conversation_id</c>) to their agent's <c>legacy:{agentId}</c> conversation,
+    /// and <see cref="SaveAsync"/> / <see cref="LoadSessionAsync(SessionId, CancellationToken)"/>
+    /// defensively backfill sessions that still arrive null after startup.
     /// </param>
     /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
     public SqliteSessionStore(
@@ -61,6 +64,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         _connectionString = connectionString;
         _logger = logger;
         _conversationStore = conversationStore;
+        _legacyResolver = conversationStore is not null
+            ? new LegacyConversationResolver(conversationStore, logger: null)
+            : null;
         _redactor = redactor;
     }
 
@@ -124,6 +130,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.agent.id", session.AgentId);
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        // Backfill before the per-session lock so the resolver's per-agent lock
+        // does not interleave with concurrent saves of the same session.
+        await EnsureConversationIdStampedAsync(session, cancellationToken).ConfigureAwait(false);
+
         var sessionLock = GetSessionLock(session.SessionId);
         await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -388,8 +399,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     /// <summary>
     /// Finds every session with no <c>conversation_id</c>, groups them by agent, and
-    /// links each group to the agent's default conversation.  The most recently updated
-    /// orphaned session becomes <see cref="Conversation.ActiveSessionId"/>.
+    /// links each group to the agent's legacy conversation via
+    /// <see cref="LegacyConversationResolver"/>. The most recently updated orphaned
+    /// session becomes <see cref="Conversation.ActiveSessionId"/>.
     /// Safe to run on every startup — no-op when there are no orphaned rows.
     /// </summary>
     private async Task MigrateOrphanedSessionsAsync(
@@ -416,27 +428,15 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (agents.Count == 0)
             return;
 
+        // Use the shared resolver so startup migration, save-time stamping, and
+        // load-time backfill all converge on the same legacy:{agentId} title/Initiator/Kind.
+        var resolver = _legacyResolver ?? new LegacyConversationResolver(conversationStore, logger: null);
         var totalMigrated = 0;
 
         foreach (var agentIdValue in agents)
         {
             var agentId = AgentId.From(agentIdValue);
-
-            // Find or create a named fallback conversation for orphaned sessions.
-            // Using a legacy-named conversation keeps these clearly separate from real conversations.
-            var existing = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
-            var legacyTitle = $"legacy:{agentIdValue}";
-            var conversation = existing.FirstOrDefault(c =>
-                    c.Title == legacyTitle &&
-                    c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
-                ?? await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
-                {
-                    ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(),
-                    AgentId = agentId,
-                    Title = legacyTitle,
-                    IsDefault = false
-                }, cancellationToken).ConfigureAwait(false);
-
+            var conversation = await resolver.ResolveAsync(agentId, cancellationToken).ConfigureAwait(false);
             var convIdValue = conversation.ConversationId.Value;
 
             // Find the most recently updated orphaned session for this agent.
@@ -475,15 +475,97 @@ public sealed class SqliteSessionStore : SessionStoreBase
         }
 
         _logger.LogInformation(
-            "Orphaned session migration: linked {Count} session(s) across {AgentCount} agent(s) to their default conversations.",
+            "Orphaned session migration: linked {Count} session(s) across {AgentCount} agent(s) to their legacy conversations.",
             totalMigrated, agents.Count);
+    }
+
+    /// <summary>
+    /// Defensively backfills a session whose <see cref="Session.ConversationId"/> is null
+    /// at save time by stamping it with the agent's legacy conversation. This catches the
+    /// narrow window between <see cref="EnsureCreatedAsync"/> startup migration completing
+    /// and a caller saving a fresh orphan-shaped session (e.g. a test fixture, a code path
+    /// that constructs a <see cref="Session"/> without binding it first). Without the
+    /// stamp the row would land as <c>conversation_id IS NULL</c> and only be caught on the
+    /// next process restart.
+    /// </summary>
+    /// <remarks>
+    /// Mutates <paramref name="session"/> in place so the caller observes the stamped
+    /// value and downstream readers see a consistent view. Returns silently when no
+    /// conversation store is configured (back-compat for test composition roots that
+    /// register a session store without a conversation store).
+    /// </remarks>
+    private async Task EnsureConversationIdStampedAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        if (session.ConversationId is not null)
+            return;
+        if (_legacyResolver is null)
+            return;
+
+        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+        session.ConversationId = legacy.ConversationId;
+
+        // If this is the current active session, also bind it as the conversation's
+        // active session pointer so the canonical reset path (DefaultConversationResetService)
+        // can find it. Sealed/Suspended/Expired sessions are not bound.
+        if (session.Status == SessionStatus.Active)
+        {
+            await _legacyResolver.BindActiveSessionIfNoneAsync(legacy, session.SessionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogWarning(
+            "Session {SessionId} for agent {AgentId} was saved with no ConversationId; stamped legacy conversation {LegacyConversationId}.",
+            session.SessionId, session.AgentId, legacy.ConversationId);
+    }
+
+    /// <summary>
+    /// Defensively backfills a session loaded from storage whose
+    /// <c>conversation_id</c> column is NULL. The startup migration sweeps all such rows
+    /// at <see cref="EnsureCreatedAsync"/>, so this path is reached only if a NULL row
+    /// was inserted concurrently by another process between startup and this read.
+    /// Persists the legacy stamp back to the row so subsequent indexed queries
+    /// (e.g. <see cref="ListByConversationAsync"/>) see the session.
+    /// </summary>
+    private async Task BackfillLoadedSessionAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        if (session.ConversationId is not null)
+            return;
+        if (_legacyResolver is null)
+            return;
+
+        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+        session.ConversationId = legacy.ConversationId;
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var updateCmd = connection.CreateCommand();
+        updateCmd.CommandText = """
+            UPDATE sessions
+            SET conversation_id = $convId
+            WHERE id = $sessionId
+              AND conversation_id IS NULL
+            """;
+        updateCmd.Parameters.AddWithValue("$convId", legacy.ConversationId.Value);
+        updateCmd.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
+        await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        if (session.Status == SessionStatus.Active)
+        {
+            await _legacyResolver.BindActiveSessionIfNoneAsync(legacy, session.SessionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogWarning(
+            "Backfilled orphan session {SessionId} for agent {AgentId} with legacy conversation {LegacyConversationId} on load.",
+            session.SessionId, session.AgentId, legacy.ConversationId);
     }
 
     private async Task<GatewaySession?> LoadSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        return await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
+        var loaded = await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
+        if (loaded is not null)
+            await BackfillLoadedSessionAsync(loaded, cancellationToken).ConfigureAwait(false);
+        return loaded;
     }
 
     private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, ISecretRedactor? redactor, CancellationToken cancellationToken)
