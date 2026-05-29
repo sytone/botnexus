@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
@@ -26,20 +27,60 @@ public sealed class SqliteConversationStore : IConversationStore
 
     private readonly string _connectionString;
     private readonly ILogger<SqliteConversationStore> _logger;
+    private readonly IWorldContext? _worldContext;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _conversationLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
     private bool _initialized;
 
     /// <summary>
-    /// Initialises a new instance of the <see cref="SqliteConversationStore"/> class.
+    /// Initialises a new instance of the <see cref="SqliteConversationStore"/> class without
+    /// world stamping. Kept for tests and bare wire-ups; production callers should use the
+    /// world-aware overload so <see cref="Conversation.WorldId"/> is stamped on persistence.
     /// </summary>
     /// <param name="connectionString">The SQLite connection string.</param>
     /// <param name="logger">Logger instance.</param>
     public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger)
+        : this(connectionString, logger, worldContext: null)
+    {
+    }
+
+    /// <summary>
+    /// Initialises a new instance of the <see cref="SqliteConversationStore"/> class that
+    /// stamps the current world id on persisted conversations and lazy-backfills the field for
+    /// pre-Phase-9 rows loaded with an empty <see cref="Conversation.WorldId"/>.
+    /// </summary>
+    /// <param name="connectionString">The SQLite connection string.</param>
+    /// <param name="logger">Logger instance.</param>
+    /// <param name="worldContext">Resolves the gateway's current world identity; <c>null</c> disables stamping.</param>
+    public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger, IWorldContext? worldContext)
     {
         _connectionString = connectionString;
         _logger = logger;
+        _worldContext = worldContext;
+    }
+
+    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
+    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
+    // can hold the source world's id even when this gateway is the receiver. No-op when no
+    // world context is wired (e.g. test setups using the parameterless ctor).
+    private void StampWorldId(Conversation conversation)
+    {
+        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+    }
+
+    // Read-time projection: legacy rows persisted before #613 carry empty WorldId from the
+    // schema default. This projects them as belonging to the current world on the way out.
+    // The disk row itself is not rewritten — the next SaveAsync (or any in-place mutation
+    // that round-trips through SaveConversationAsync) will durably persist via StampWorldId.
+    // Treating backfill as projection-only avoids touching disk on every read and keeps
+    // ArchiveAsync's lighter "status-only" persistence path simple.
+    private Conversation? BackfillWorldId(Conversation? conversation)
+    {
+        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
+            conversation.WorldId = _worldContext.CurrentWorldId;
+        return conversation;
     }
 
     /// <inheritdoc />
@@ -54,13 +95,13 @@ public sealed class SqliteConversationStore : IConversationStore
         try
         {
             if (_cache.TryGetValue(conversationId.Value, out var cached))
-                return CloneConversation(cached);
+                return BackfillWorldId(CloneConversation(cached));
 
             var loaded = await LoadConversationAsync(conversationId, ct).ConfigureAwait(false);
             if (loaded is not null)
                 _cache[conversationId.Value] = CloneConversation(loaded);
 
-            return loaded;
+            return BackfillWorldId(loaded);
         }
         finally
         {
@@ -103,7 +144,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 _cache[id] = CloneConversation(conversation);
             }
 
-            conversations.Add(conversation);
+            conversations.Add(BackfillWorldId(conversation)!);
         }
 
         return conversations;
@@ -154,7 +195,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 _cache[id] = CloneConversation(conversation);
             }
 
-            conversations.Add(conversation);
+            conversations.Add(BackfillWorldId(conversation)!);
         }
 
         return conversations;
@@ -174,6 +215,7 @@ public sealed class SqliteConversationStore : IConversationStore
             if (_cache.ContainsKey(conversation.ConversationId.Value))
                 throw new InvalidOperationException($"A conversation with id '{conversation.ConversationId}' already exists.");
 
+            StampWorldId(conversation);
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await SaveConversationAsync(connection, conversation, upsert: false, ct).ConfigureAwait(false);
@@ -200,6 +242,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var updated = CloneConversation(conversation);
             updated.UpdatedAt = DateTimeOffset.UtcNow;
+            StampWorldId(updated);
 
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -405,7 +448,8 @@ public sealed class SqliteConversationStore : IConversationStore
                     active_session_id TEXT,
                     metadata TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    world_id TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE TABLE IF NOT EXISTS conversation_bindings (
@@ -433,6 +477,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
             await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
@@ -601,6 +646,52 @@ public sealed class SqliteConversationStore : IConversationStore
         }
     }
 
+    // Adds the `world_id` column to existing databases for the Phase 9 / P9-A discriminator
+    // (issue #613). Pre-Phase-9 rows have empty-string here; the loader lazy-backfills empty
+    // values to the current world id via BackfillWorldId on read, so back-compat is automatic.
+    // The NOT NULL DEFAULT '' constraint keeps the column safe to leave unbound in legacy
+    // INSERT statements that haven't yet been migrated.
+    private static async Task EnsureWorldIdColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "world_id", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasColumn)
+            return;
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN world_id TEXT NOT NULL DEFAULT '';";
+        try
+        {
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
+                                         ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+        {
+            // Cross-process race: another gateway instance hit EnsureCreatedAsync between our
+            // PRAGMA-table_info read and our ALTER TABLE. _initLock only serialises within one
+            // process; the loser of the race observes the column missing, races to ALTER, and
+            // gets back SQLite generic error 1 with "duplicate column name: world_id". The
+            // column already exists with the schema we'd have created (NOT NULL DEFAULT ''),
+            // so swallow and continue. Same shape used by EnsureInitiatorColumnAsync should it
+            // ever hit the same race — kept inline (not extracted to a helper) because the
+            // duplicate-column tolerance is the only thing different from a plain ALTER.
+        }
+    }
+
     // Migrates legacy conversation_bindings rows with a thread_id column into the composite
     // channel_address scheme adopted in PR #512 (refactor: drop ThreadId from core contracts).
     // Idempotent: if the thread_id column has already been dropped, the method is a no-op.
@@ -731,7 +822,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id
             FROM conversations
             WHERE id = $id
             """;
@@ -755,7 +846,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Instructions = reader.IsDBNull(10) ? null : reader.GetString(10),
             CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
             Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null,
-            Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent
+            Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent,
+            WorldId = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : string.Empty
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -805,8 +897,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -820,11 +912,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     instructions = excluded.instructions,
                     canvas_html = excluded.canvas_html,
                     initiator = excluded.initiator,
-                    kind = excluded.kind
+                    kind = excluded.kind,
+                    world_id = excluded.world_id
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -840,6 +933,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$canvasHtml", conversation.CanvasHtml is null ? (object)DBNull.Value : conversation.CanvasHtml);
         conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
         conversationCommand.Parameters.AddWithValue("$kind", conversation.Kind.ToString());
+        conversationCommand.Parameters.AddWithValue("$worldId", conversation.WorldId ?? string.Empty);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -918,6 +1012,7 @@ public sealed class SqliteConversationStore : IConversationStore
             CanvasHtml = conversation.CanvasHtml,
             Initiator = conversation.Initiator,
             Kind = conversation.Kind,
+            WorldId = conversation.WorldId,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,
