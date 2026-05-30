@@ -62,9 +62,12 @@ public sealed class HeartbeatTrigger(
         InternalTriggerRequest? request,
         CancellationToken ct)
     {
+        // P9-E (#645): soul sessions no longer carry SessionType.Soul. Discovery uses
+        // the canonical Metadata["soulDate"] tag that SoulTrigger.InitializeSoulSession
+        // stamps on every soul session, gated on Active status.
         var allSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
         var soulSession = allSessions
-            .Where(s => s.SessionType == SessionType.Soul && s.Status == GatewaySessionStatus.Active)
+            .Where(s => s.Status == GatewaySessionStatus.Active && s.Metadata.ContainsKey("soulDate"))
             .OrderByDescending(s => s.UpdatedAt)
             .FirstOrDefault();
 
@@ -95,7 +98,9 @@ public sealed class HeartbeatTrigger(
 
         session.ChannelType = null;
         session.CallerId ??= $"heartbeat:{agentId.Value}";
-        session.SessionType = SessionType.Heartbeat;
+        // P9-E (#645): heartbeat is agent-self (the agent pings itself); the Heartbeat
+        // proxy-trigger kind lives on SessionEntry.Trigger below.
+        session.SessionType = SessionType.AgentSelf;
         session.ConversationId = conversation.ConversationId;
         session.Metadata["triggerType"] = Type.Value;
 
@@ -155,8 +160,17 @@ public sealed class HeartbeatTrigger(
         // The heartbeat path (RunInHeartbeatSessionAsync) mints a unique
         // sessionId per run so concurrent activity is impossible; the same
         // shared helper applies harmlessly stricter semantics there.
+        // P9-E (#645): stamp Heartbeat on the user entry. The Phase-2 ack prune
+        // removes both the user and assistant entries when the response is a
+        // pure heartbeat ack, so the Trigger stamp disappears together with the
+        // text — no audit residue, no observable change for ack-only ticks.
         var appendResult = session.AddEntryAndSnapshot(
-            new SessionEntry { Role = MessageRole.User, Content = prompt });
+            new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = prompt,
+                Trigger = TriggerType.Heartbeat
+            });
         var snapshotWithHeartbeat = appendResult.Snapshot;
         var preHeartbeatUpdatedAt = appendResult.PriorUpdatedAt;
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
