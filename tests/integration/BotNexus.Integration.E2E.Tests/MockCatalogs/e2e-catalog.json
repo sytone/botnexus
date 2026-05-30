@@ -125,6 +125,21 @@
       { "type": "done", "stopReason": "stop" }
     ],
 
+    "COMPACTION_TASK_SEED": [
+      { "type": "text_delta", "delta": "I am now monitoring", "delayMs": 30 },
+      { "type": "text_delta", "delta": " the pull request", "delayMs": 30 },
+      { "type": "text_delta", "delta": " for you.", "delayMs": 30 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
+    "COMPACTION_STOP_SIGNAL": [
+      { "type": "text_delta", "delta": "Understood, I have stopped", "delayMs": 30 },
+      { "type": "text_delta", "delta": " the task.", "delayMs": 30 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
     "MARKDOWN_RESPONSE": [
       { "type": "text_delta", "delta": "# Heading\n\n", "delayMs": 20 },
       { "type": "text_delta", "delta": "**Bold text** and _italic text_.\n\n", "delayMs": 20 },
