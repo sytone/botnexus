@@ -153,10 +153,13 @@ public sealed class PrimitiveBoundaryTests
     }
 
     [Fact]
-    public void SessionId_IsSoul_DetectsPattern()
+    public void SessionId_ForSoul_StillProducesStablePinnedFormat()
     {
-        var id = SessionId.ForSoul(AgentId.From("my-agent"), DateOnly.FromDateTime(DateTime.UtcNow));
-        id.IsSoul.ShouldBeTrue();
+        // P9-E (#645): the IsSoul substring predicate is deleted (directive G-4); the
+        // SessionId.ForSoul factory remains the canonical id mint and is still used by
+        // SoulTrigger to build today's soul session id deterministically.
+        var id = SessionId.ForSoul(AgentId.From("my-agent"), new DateOnly(2026, 3, 1));
+        id.Value.ShouldBe("my-agent::soul::2026-03-01");
         id.IsSubAgent.ShouldBeFalse();
         id.IsAgentConversation.ShouldBeFalse();
     }

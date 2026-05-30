@@ -69,8 +69,10 @@ public sealed class HeartbeatAction : ICronAction
                 new InternalTriggerRequest
                 {
                     CronJobId = context.Job.Id,
+                    JobName = context.Job.Name,
                     ModelOverride = context.Job.Model,
-                    ConversationId = context.Job.ConversationId
+                    ConversationId = context.Job.ConversationId,
+                    CreatedBy = context.Job.CreatedBy
                 })
             .ConfigureAwait(false);
 

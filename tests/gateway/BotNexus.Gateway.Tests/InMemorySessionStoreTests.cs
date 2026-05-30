@@ -162,7 +162,9 @@ public sealed class InMemorySessionStoreTests
         {
             SessionId = SessionId.From("participant"),
             AgentId = AgentId.From("agent-b"),
-            SessionType = SessionType.Cron,
+            // P9-E (#645): SessionType.Cron deleted; use AgentSubAgent so the TypeFilter
+            // still discriminates this row from the "owned" UserAgent row above.
+            SessionType = SessionType.AgentSubAgent,
             Participants =
             [
                 new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }
@@ -174,7 +176,7 @@ public sealed class InMemorySessionStoreTests
             AgentId.From("agent-a"),
             new ExistenceQuery
             {
-                TypeFilter = SessionType.Cron,
+                TypeFilter = SessionType.AgentSubAgent,
                 From = now.AddDays(-1.5),
                 Limit = 10
             });

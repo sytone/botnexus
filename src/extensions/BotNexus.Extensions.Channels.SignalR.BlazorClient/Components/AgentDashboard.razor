@@ -14,7 +14,10 @@
         <div class="agent-card-grid">
             @foreach (var (agentId, agent) in Store.Agents.Where(a => !a.Value.IsReadOnly))
             {
-                <div class="agent-card @(agent.IsStreaming ? "agent-card--active" : "")" @onclick="() => NavigateToAgent(agent)">
+                <div class="agent-card @(agent.IsStreaming ? "agent-card--active" : "")"
+                     data-testid="agent-card"
+                     data-agent-id="@agentId"
+                     @onclick="() => NavigateToAgent(agent)">
                     <div class="agent-card-header">
                         <span class="agent-card-emoji">@(agent.Emoji ?? "🤖")</span>
                         <div class="agent-card-identity">

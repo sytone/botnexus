@@ -481,9 +481,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
                 agent.SessionId = conv.ActiveSessionId;
         }
-        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound && IsVirtualCronConversation(conv))
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            Console.Error.WriteLine($"AgentInteractionService: Removed stale virtual cron conversation {conversationId} after history 404.");
+            Console.Error.WriteLine($"AgentInteractionService: History 404 for conversation {conversationId}: {ex.Message}");
             agent.Conversations.Remove(conversationId);
             if (agent.ActiveConversationId == conversationId)
             {
@@ -600,10 +600,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var list = listTask.Result;
             _store.SeedConversations(agentId, list);
 
-            var agent = _store.GetAgent(agentId);
-            if (agent is not null)
-                MergeVirtualCronSessions(agent, sessionsTask.Result);
-
             foreach (var session in sessionsTask.Result)
                 _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
 
@@ -646,82 +642,4 @@ public sealed class AgentInteractionService : IAgentInteractionService
         "system" => "System",
         _ => role
     };
-
-    private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
-    {
-        var stableCronConversationTitles = agent.Conversations.Values
-            .Where(conversation => !IsVirtualCronConversation(conversation))
-            .Select(conversation => conversation.Title)
-            .Where(title => !string.IsNullOrWhiteSpace(title) &&
-                            title.StartsWith("cron:", StringComparison.OrdinalIgnoreCase))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var cronSessions = sessions
-            .Where(s => string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
-            .Where(s =>
-            {
-                if (!TryGetCronConversationTitleFromSessionId(s.SessionId, out var cronConversationTitle))
-                    return true;
-
-                return !stableCronConversationTitles.Contains(cronConversationTitle);
-            })
-            .ToDictionary(s => $"cron-session:{s.SessionId}", s => s, StringComparer.Ordinal);
-
-        foreach (var key in agent.Conversations
-                     .Where(kv => IsVirtualCronConversation(kv.Value) && !cronSessions.ContainsKey(kv.Key))
-                     .Select(kv => kv.Key)
-                     .ToList())
-        {
-            agent.Conversations.Remove(key);
-        }
-
-        foreach (var (conversationId, session) in cronSessions)
-        {
-            var title = $"Cron · {session.SessionId[..Math.Min(8, session.SessionId.Length)]}";
-            if (agent.Conversations.TryGetValue(conversationId, out var existing))
-            {
-                existing.Title = title;
-                existing.ActiveSessionId = session.SessionId;
-                existing.Status = session.Status ?? "Active";
-                existing.UpdatedAt = session.UpdatedAt ?? existing.UpdatedAt;
-                existing.IsVirtualSession = true;
-                existing.VirtualSessionKind = "cron";
-                continue;
-            }
-
-            agent.Conversations[conversationId] = new ConversationState
-            {
-                ConversationId = conversationId,
-                Title = title,
-                Status = session.Status ?? "Active",
-                ActiveSessionId = session.SessionId,
-                CreatedAt = session.CreatedAt ?? DateTimeOffset.UtcNow,
-                UpdatedAt = session.UpdatedAt ?? DateTimeOffset.UtcNow,
-                IsVirtualSession = true,
-                VirtualSessionKind = "cron"
-            };
-        }
-    }
-
-    private static bool IsVirtualCronConversation(ConversationState conversation)
-        => (conversation.IsVirtualSession &&
-            string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase))
-           || conversation.ConversationId.StartsWith("cron-session:", StringComparison.Ordinal);
-
-    private static bool TryGetCronConversationTitleFromSessionId(string sessionId, out string title)
-    {
-        title = string.Empty;
-        if (string.IsNullOrWhiteSpace(sessionId) ||
-            !sessionId.StartsWith("cron:", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var segments = sessionId.Split(':', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 4)
-            return false;
-
-        // Expected cron run format: cron:{jobId}:{yyyyMMddHHmmss}:{guid}
-        // Job ids are sanitized to [a-zA-Z0-9_-], so they do not contain ':'.
-        title = $"cron:{segments[1]}";
-        return true;
-    }
 }

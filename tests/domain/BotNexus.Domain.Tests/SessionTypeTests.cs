@@ -36,8 +36,24 @@ public sealed class SessionTypeTests
     [Fact]
     public void SessionType_ImplicitConversion_WhenConvertedToString_ShouldReturnValue()
     {
-        string value = SessionType.Cron;
-        value.ShouldBe("cron");
+        string value = SessionType.AgentSelf;
+        value.ShouldBe("agent-self");
+    }
+
+    [Theory]
+    [InlineData("soul", "agent-self")]
+    [InlineData("SOUL", "agent-self")]
+    [InlineData("heartbeat", "agent-self")]
+    [InlineData("cron", "user-agent")]
+    public void SessionType_FromString_WhenValueIsLegacyTriggerName_ShouldMigrateToCanonical(string legacy, string canonical)
+    {
+        // P9-E (#645): the old SessionType.Soul/Cron/Heartbeat values were proxy-trigger
+        // discriminators; the registry now collapses them to the canonical session shape
+        // ("agent-self"/"agent-self"/"user-agent" respectively). The proxy origin lives
+        // on SessionEntry.Trigger. FromString carries the migration so every JSON path
+        // and string-keyed lookup benefits uniformly.
+        var migrated = SessionType.FromString(legacy);
+        migrated.Value.ShouldBe(canonical);
     }
 
     [Fact]

@@ -96,7 +96,9 @@ public sealed class SessionIdTests
         var sessionId = SessionId.ForSoul(AgentId.From("agent-a"), new DateOnly(2026, 1, 15));
 
         sessionId.Value.ShouldBe("agent-a::soul::2026-01-15");
-        sessionId.IsSoul.ShouldBeTrue();
+        // P9-E (#645): the IsSoul substring predicate is deleted per directive G-4 — callers
+        // must not sniff soul-ness off the session id. The canonical signal is now
+        // Session.Metadata["soulDate"] (set by SoulTrigger.InitializeSoulSession).
     }
 
     [Fact]

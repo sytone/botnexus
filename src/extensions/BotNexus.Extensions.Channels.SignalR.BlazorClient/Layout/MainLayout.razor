@@ -88,6 +88,8 @@
                                 @if (!activeAgent.IsReadOnly)
                                 {
                                     <button class="conversation-new-btn"
+                                            data-testid="conversation-new"
+                                            data-agent-id="@activeAgent.AgentId"
                                             @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
                                             title="Start a new conversation">
                                         <span class="conversation-new-btn-icon">+</span>

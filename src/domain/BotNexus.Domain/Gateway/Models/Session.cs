@@ -32,7 +32,25 @@ public sealed record Session
     /// </summary>
     public SessionStatus Status { get; set; } = SessionStatus.Active;
 
-    public bool IsInteractive => SessionType.Equals(SessionType.UserAgent);
+    /// <summary>
+    /// True for user-facing turns that should drive memory flushes, warmup
+    /// surfacing, and other interactive-only side-effects. Returns <c>false</c>
+    /// when:
+    /// <list type="bullet">
+    /// <item>The session is not a <see cref="SessionType.UserAgent"/> conversation
+    /// (agent-self / sub-agent / agent-agent are all considered non-interactive).</item>
+    /// <item>The session is routed through the <c>cron</c> channel — P9-E (#645)
+    /// collapses <c>SessionType.Cron</c> onto <see cref="SessionType.UserAgent"/>
+    /// (cron is a proxy for the citizen who scheduled the job, per directive W-2),
+    /// so the channel key is the durable cron-vs-interactive signal. Without this
+    /// exclusion <see cref="SessionEndMemoryFlusher"/>/<see cref="PreCompactionMemoryFlusher"/>
+    /// would start firing on every scheduled job.</item>
+    /// </list>
+    /// </summary>
+    public bool IsInteractive =>
+        SessionType.Equals(SessionType.UserAgent)
+        && (!ChannelType.HasValue
+            || !string.Equals(ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Gets or sets the participants.

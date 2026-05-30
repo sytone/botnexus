@@ -61,7 +61,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     next_run_at TEXT NULL,
                     last_run_status TEXT NULL,
                     last_run_error TEXT NULL,
-                    metadata_json TEXT NULL
+                    metadata_json TEXT NULL,
+                    conversation_id TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
@@ -123,6 +124,16 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateTemplateParameters.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add conversation_id column if missing (P9-D).
+            // CronJob.ConversationId is the canonical link from a cron job to its conversation;
+            // pre-P9-D rows stored the link only on the in-memory record and lost it on restart.
+            await using var migrateConversationId = connection.CreateCommand();
+            migrateConversationId.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN conversation_id TEXT NULL;
+                """;
+            try { await migrateConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -151,11 +162,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.CommandText = """
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
+                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson
+                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId
                 )
                 """;
             BindJob(command, created);
@@ -183,7 +194,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -204,7 +215,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -233,11 +244,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.CommandText = """
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
+                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson
+                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
@@ -259,7 +270,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     next_run_at = excluded.next_run_at,
                     last_run_status = excluded.last_run_status,
                     last_run_error = excluded.last_run_error,
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    conversation_id = excluded.conversation_id
                 """;
             BindJob(command, job);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -269,6 +281,57 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 job.ActionType,
                 job.Enabled);
             return job;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Atomically stamps <paramref name="conversationId"/> onto the job ONLY if the job's
+    /// <c>conversation_id</c> column is currently NULL. Returns the winning conversation
+    /// id (which may be a value pinned by a concurrent run). Returns <c>null</c> if the
+    /// job no longer exists.
+    /// </summary>
+    /// <remarks>
+    /// This is the CAS primitive that prevents the first-run race: two concurrent runs of
+    /// the same cron job can both create a Conversation, but only one wins the stamp. The
+    /// loser archives its own conversation and falls back to the winner. See
+    /// <see cref="CronScheduler.RunActionAsync"/> for the consumer.
+    /// </remarks>
+    public async Task<ConversationId?> TrySetConversationIdAsync(
+        JobId jobId,
+        ConversationId conversationId,
+        CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var cas = connection.CreateCommand();
+            cas.CommandText = """
+                UPDATE cron_jobs
+                SET conversation_id = $conversationId
+                WHERE id = $jobId AND conversation_id IS NULL
+                """;
+            cas.Parameters.AddWithValue("$conversationId", conversationId.Value);
+            cas.Parameters.AddWithValue("$jobId", jobId.Value);
+            await cas.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            await using var read = connection.CreateCommand();
+            read.CommandText = "SELECT conversation_id FROM cron_jobs WHERE id = $jobId";
+            read.Parameters.AddWithValue("$jobId", jobId.Value);
+            var result = await read.ExecuteScalarAsync(ct).ConfigureAwait(false);
+
+            if (result is null or DBNull)
+                return null;
+
+            return ConversationId.From((string)result);
         }
         finally
         {
@@ -445,6 +508,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$lastRunStatus", (object?)job.LastRunStatus ?? DBNull.Value);
         command.Parameters.AddWithValue("$lastRunError", (object?)job.LastRunError ?? DBNull.Value);
         command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
+        command.Parameters.AddWithValue("$conversationId", job.ConversationId.HasValue ? (object)job.ConversationId.Value.Value : DBNull.Value);
     }
 
     private static CronJob ReadJob(SqliteDataReader reader)
@@ -473,7 +537,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             NextRunAt = reader.IsDBNull(17) ? null : ParseDate(reader.GetString(17)),
             LastRunStatus = reader.IsDBNull(18) ? null : reader.GetString(18),
             LastRunError = reader.IsDBNull(19) ? null : reader.GetString(19),
-            Metadata = DeserializeMetadata(metadataJson)
+            Metadata = DeserializeMetadata(metadataJson),
+            ConversationId = reader.IsDBNull(21) ? null : ConversationId.From(reader.GetString(21))
         };
     }
 

@@ -34,9 +34,15 @@ public sealed record CronJob
     public string? LastRunStatus { get; init; }
     public string? LastRunError { get; init; }
     /// <summary>
-    /// Optional explicit conversation to route all runs of this job into.
-    /// When set, every run is linked to this conversation regardless of routing.
-    /// When null, a stable per-job conversation is created automatically using the job ID.
+    /// Canonical link from a cron job to its long-lived Conversation. P9-D inverts the
+    /// previous "composite-id key" model: the job owns the link, and every run lands in
+    /// that one conversation until the job is deleted.
+    ///
+    /// Null on creation. Stamped via CAS during the first run that requires a per-job
+    /// conversation (currently only the agent-prompt action routed through CronTrigger;
+    /// heartbeat and soul triggers manage their own per-agent conversations). Once
+    /// stamped, immutable for the life of the job — operators wanting a fresh
+    /// conversation thread delete the job and create a new one.
     /// </summary>
     public ConversationId? ConversationId { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }

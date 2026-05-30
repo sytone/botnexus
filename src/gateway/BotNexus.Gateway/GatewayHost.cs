@@ -43,9 +43,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private const string ControlSteer = "steer";
     private const string ControlCompact = "compact";
 
-    // Cached to avoid per-dispatch allocation in ResolveSessionType's hot path.
-    private static readonly ChannelKey CronChannelKey = ChannelKey.From("cron");
-
     private readonly IAgentSupervisor _supervisor;
     private readonly IMessageRouter _router;
     private readonly ISessionStore _sessions;
@@ -1093,12 +1090,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (!isNewSession && descriptor is null && session.SessionType == SessionType.AgentSubAgent)
             return SessionType.AgentSubAgent;
 
-        if (session.SessionId.IsSoul)
-            return SessionType.Soul;
-
-        if (message.ChannelType.Equals(CronChannelKey))
-            return SessionType.Cron;
-
+        // P9-E (#645): Soul/Cron/Heartbeat SessionType discriminators collapsed.
+        // The Soul/Cron channel and SessionId.IsSoul substring branches are deleted
+        // here too — triggers stamp their proxy origin on SessionEntry.Trigger, and
+        // Session.IsInteractive carries the cron-channel exclusion downstream.
         return SessionType.UserAgent;
     }
 

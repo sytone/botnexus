@@ -85,6 +85,16 @@ public sealed record InboundMessage
     /// when the consumer needs to default null to <see cref="InboundMessageRoutingHints.Empty"/>.
     /// </remarks>
     public InboundMessageRoutingHints? RoutingHints { get; init; }
+
+    /// <summary>
+    /// Optional proxy-trigger origin for this message. <c>null</c> for normal
+    /// channel-driven user messages (the default). Internal triggers stamp the
+    /// kind of proxy they are (<see cref="TriggerType.Cron"/>,
+    /// <see cref="TriggerType.Soul"/>, <see cref="TriggerType.Heartbeat"/>) so
+    /// downstream handlers can fan-out the same trigger onto the persisted
+    /// <see cref="SessionEntry.Trigger"/>. See P9-E (#645) / directive G-3.
+    /// </summary>
+    public TriggerType? Trigger { get; init; }
 }
 
 /// <summary>

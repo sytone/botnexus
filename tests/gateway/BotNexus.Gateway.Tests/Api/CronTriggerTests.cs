@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -11,6 +12,22 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests.Api;
 
+/// <summary>
+/// Tests for the P9-D <see cref="CronTrigger"/> contract.
+///
+/// Under P9-D the cron job owns its conversation (canonical link via
+/// <see cref="BotNexus.Cron.CronJob.ConversationId"/>). The trigger has two paths:
+///
+/// 1. Fast-path: scheduler passes <c>request.ConversationId</c> for a job already pinned →
+///    trigger looks up that conversation by id (un-archives if needed) and reuses it.
+///    No <see cref="IConversationStore.ListAsync"/> and no <see cref="IConversationStore.CreateAsync"/>.
+///
+/// 2. Slow-path: no pin (first run, or pinned conversation was hard-deleted) → trigger
+///    creates a fresh conversation with a random <c>conv:&lt;guid&gt;</c> id, titled after
+///    the job, with the initiator derived from <c>CreatedBy</c> via
+///    <see cref="CitizenId.TryParse"/> or falling back to the agent itself.
+///    Write-back of <c>ResolvedConversationId</c> lets the scheduler perform a CAS pinback.
+/// </summary>
 public sealed class CronTriggerTests
 {
     [Fact]
@@ -21,15 +38,11 @@ public sealed class CronTriggerTests
     }
 
     [Fact]
-    public async Task CreateSessionAsync_FirstRun_CreatesPerJobConversation()
+    public async Task CreateSessionAsync_FirstRun_NoPin_CreatesFreshConversation_WithJobNameTitle()
     {
-        // Arrange: no existing conversations
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
         Conversation? createdConversation = null;
 
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation>());
         conversationStore
             .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
             .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
@@ -37,26 +50,34 @@ public sealed class CronTriggerTests
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
-        // Act
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance", ModelOverride = "openai/gpt-4.1" });
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-1"),
+                JobName = "Scheduled Maintenance"
+            });
 
-        // Assert: conversation created with human-readable job name as title
         createdConversation.ShouldNotBeNull();
         createdConversation!.Title.ShouldBe("Scheduled Maintenance");
         createdConversation.AgentId.ShouldBe(AgentId.From("agent-a"));
         createdConversation.IsDefault.ShouldBeFalse();
+        createdConversation.ConversationId.Value.ShouldStartWith("conv:");
+
+        // Fast-path is bypassed (no pin given), so no per-agent enumeration.
+        conversationStore.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
 
-        // Session ID in expected format
         sessionId.Value.ShouldStartWith("cron:job-1:");
 
-        // Session metadata stamped correctly
+        // Cron metadata on the session.
         sessionStore.Verify(s => s.SaveAsync(
             It.Is<GatewaySession>(gs =>
-                gs.SessionType == SessionType.Cron &&
+                // P9-E (#645): cron sessions are now SessionType.UserAgent (proxy for the
+                // user who scheduled the job); the "cron" ChannelType + per-turn Trigger
+                // stamp carry the proxy-origin signal that used to live on SessionType.
+                gs.SessionType == SessionType.UserAgent &&
                 gs.ChannelType == ChannelKey.From("cron") &&
                 gs.Metadata.ContainsKey("cronJobId") &&
                 gs.Metadata["cronJobId"] != null &&
@@ -65,53 +86,33 @@ public sealed class CronTriggerTests
     }
 
     [Fact]
-    public async Task CreateSessionAsync_SecondRun_ReusesExistingJobConversation()
+    public async Task CreateSessionAsync_FirstRun_WithoutJobName_FallsBackToGenericTitle()
     {
-        // Arrange: conversation for this job already exists
-        var existingConversation = new Conversation
-        {
-            ConversationId = ConversationId.From("conv-job-1"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Scheduled Maintenance",
-            IsDefault = false,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
-            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
-        };
-
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
 
         conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation> { existingConversation });
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
-        // Act
-        var sessionId = await trigger.CreateSessionAsync(
+        await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
-            "Scheduled task run 2",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
+            "Run task",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1") });
 
-        // Assert: no new conversation created — existing one reused
-        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        // Existing conversation updated to point to new session
-        conversationStore.Verify(s => s.SaveAsync(
-            It.Is<Conversation>(c => c.ConversationId == ConversationId.From("conv-job-1")),
-            It.IsAny<CancellationToken>()), Times.Once);
-
-        // Fresh session ID per run
-        sessionId.Value.ShouldStartWith("cron:job-1:");
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Title.ShouldBe("Cron");
     }
 
     [Fact]
-    public async Task CreateSessionAsync_ExplicitConversationId_BypassesJobConversationLookup()
+    public async Task CreateSessionAsync_PinnedConversation_FastPath_ReusesPin_WithoutListOrCreate()
     {
-        // Arrange: job pinned to a specific existing conversation
         var pinnedConversation = new Conversation
         {
-            ConversationId = ConversationId.From("conv-pinned"),
+            ConversationId = ConversationId.From("conv:pinned-1"),
             AgentId = AgentId.From("agent-a"),
             Title = "My custom conversation",
             IsDefault = false,
@@ -123,247 +124,171 @@ public sealed class CronTriggerTests
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
 
         conversationStore
-            .Setup(s => s.GetAsync(ConversationId.From("conv-pinned"), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetAsync(ConversationId.From("conv:pinned-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(pinnedConversation);
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
-        // Act
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Pinned task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-2"), ConversationId = ConversationId.From("conv-pinned") });
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-2"),
+                ConversationId = ConversationId.From("conv:pinned-1")
+            });
 
-        // Assert: no ListAsync (bypassed), no CreateAsync
         conversationStore.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        // Pinned conversation updated
         conversationStore.Verify(s => s.SaveAsync(
-            It.Is<Conversation>(c => c.ConversationId == ConversationId.From("conv-pinned")),
+            It.Is<Conversation>(c => c.ConversationId == ConversationId.From("conv:pinned-1")),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_PinnedConversation_WhenArchived_ReactivatesItOnReuse()
+    {
+        var archivedPin = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:pinned-archived"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Archived pin",
+            IsDefault = false,
+            Status = ConversationStatus.Archived,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(archivedPin.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(archivedPin);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Run task",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-3"),
+                ConversationId = archivedPin.ConversationId
+            });
+
+        archivedPin.Status.ShouldBe(ConversationStatus.Active);
+        conversationStore.Verify(s => s.SaveAsync(
+            It.Is<Conversation>(c => c.ConversationId == archivedPin.ConversationId && c.Status == ConversationStatus.Active),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_PinnedConversation_WhenMissing_CreatesFreshConversation()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+
+        Conversation? createdConversation = null;
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Run task",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-4"),
+                JobName = "Recovered",
+                ConversationId = ConversationId.From("conv:gone")
+            });
+
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.ConversationId.Value.ShouldStartWith("conv:");
+        createdConversation.Title.ShouldBe("Recovered");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_NewConversation_WithUserCreatedBy_RecordsUserAsInitiator()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
+
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Scheduled by alice",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-5"),
+                JobName = "Alice's task",
+                CreatedBy = "user:alice"
+            });
+
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Initiator.ShouldBe(CitizenId.Of(UserId.From("alice")));
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_NewConversation_WithoutCreatedBy_FallsBackToAgentAsInitiator()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
+
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "System job",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-6"),
+                JobName = "Heartbeat",
+                CreatedBy = null
+            });
+
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Initiator.ShouldBe(CitizenId.Of(AgentId.From("agent-a")));
     }
 
     [Fact]
     public async Task CreateSessionAsync_EachRun_GetsDistinctSessionId()
     {
-        var jobConversation = new Conversation
-        {
-            ConversationId = ConversationId.From("conv-job"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Scheduled Maintenance",
-            IsDefault = false,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
-        var listCallCount = 0;
-
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                listCallCount++;
-                return listCallCount == 1
-                    ? new List<Conversation>()
-                    : new List<Conversation> { jobConversation };
-            });
-        conversationStore
-            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .Returns<Conversation, CancellationToken>((c, _) =>
-            {
-                jobConversation = c with { ConversationId = c.ConversationId };
-                return Task.FromResult(c);
-            });
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
         var first = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 1",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Maintenance" });
         var second = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 2",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Maintenance" });
 
-        // Different session IDs per run
         first.ShouldNotBe(second);
         first.Value.ShouldStartWith("cron:job-1:");
         second.Value.ShouldStartWith("cron:job-1:");
-
-        // First run created the conversation, second reused it
-        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task CreateSessionAsync_WhenCreateRaces_ReusesConversationCreatedByPeerRun()
+    public async Task CreateSessionAsync_AfterConversationResolved_WritesBackResolvedConversationId()
     {
-        var racedConversation = new Conversation
-        {
-            ConversationId = ConversationId.From("cronconv:agent-a:job-1"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Scheduled Maintenance",
-            IsDefault = false,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-
-        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
-        conversationStore
-            .SetupSequence(s => s.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null)
-            .ReturnsAsync(racedConversation);
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation>());
-        conversationStore
-            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Duplicate id"));
-
-        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
-
-        var sessionId = await trigger.CreateSessionAsync(
-            AgentId.From("agent-a"),
-            "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
-
-        sessionId.Value.ShouldStartWith("cron:job-1:");
-        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task CreateSessionAsync_WhenDuplicateActiveJobConversationsExist_NormalizesToSingleConversation()
-    {
-        var canonical = new Conversation
-        {
-            ConversationId = ConversationId.From("conv-job-1-new"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Scheduled Maintenance",
-            IsDefault = false,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow.AddHours(-2),
-            UpdatedAt = DateTimeOffset.UtcNow.AddHours(-1)
-        };
-
-        var duplicate = new Conversation
-        {
-            ConversationId = ConversationId.From("conv-job-1-old"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Scheduled Maintenance",
-            IsDefault = false,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
-            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
-        };
-
-        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
-        var legacySession = new GatewaySession
-        {
-            SessionId = SessionId.From("cron:job-1:legacy"),
-            AgentId = AgentId.From("agent-a"),
-            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
-        };
-        legacySession.Session.ConversationId = duplicate.ConversationId;
-
-        conversationStore
-            .Setup(s => s.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation> { canonical, duplicate });
-        sessionStore
-            .Setup(s => s.ListByConversationAsync(duplicate.ConversationId, It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<GatewaySession> { legacySession });
-        // After SaveAsync rewrites ConversationId, the canonical lookup should return the
-        // (now-rewritten) session so latestLinked is the legacy session.
-        sessionStore
-            .Setup(s => s.ListByConversationAsync(canonical.ConversationId, It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => legacySession.Session.ConversationId == canonical.ConversationId
-                ? new List<GatewaySession> { legacySession }
-                : new List<GatewaySession>());
-
-        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
-
-        await trigger.CreateSessionAsync(
-            AgentId.From("agent-a"),
-            "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
-
-        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
-        conversationStore.Verify(s => s.ArchiveAsync(duplicate.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
-        sessionStore.Verify(s => s.SaveAsync(
-            It.Is<GatewaySession>(gs => gs.SessionId == legacySession.SessionId &&
-                                        gs.Session.ConversationId == canonical.ConversationId),
-            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-    }
-
-
-    [Fact]
-    public async Task CreateSessionAsync_WithJobName_UsesJobNameAsConversationTitle()
-    {
-        // Arrange: no existing conversations
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
         Conversation? createdConversation = null;
 
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation>());
-        conversationStore
-            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
-            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
-
-        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
-
-        // Act
-        await trigger.CreateSessionAsync(
-            AgentId.From("agent-a"),
-            "Run task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-abc"), JobName = "Autonomous Issue and PR Maintenance" });
-
-        // Assert: conversation title is human-readable job name, not the job-id slug
-        createdConversation.ShouldNotBeNull();
-        createdConversation!.Title.ShouldBe("Autonomous Issue and PR Maintenance");
-    }
-
-    [Fact]
-    public async Task CreateSessionAsync_WithoutJobName_FallsBackToJobIdSlugTitle()
-    {
-        // Arrange: no existing conversations, no job name provided
-        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
-        Conversation? createdConversation = null;
-
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation>());
-        conversationStore
-            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
-            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
-
-        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
-
-        // Act
-        await trigger.CreateSessionAsync(
-            AgentId.From("agent-a"),
-            "Run task",
-            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1") });
-
-        // Assert: falls back to slug-based title
-        createdConversation.ShouldNotBeNull();
-        createdConversation!.Title.ShouldBe("cron:job-1");
-    }
-
-    [Fact]
-    public async Task CreateSessionAsync_AfterConversationResolved_SetsResolvedConversationIdOnRequest()
-    {
-        // Arrange: no existing conversations
-        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
-        Conversation? createdConversation = null;
-
-        conversationStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Conversation>());
         conversationStore
             .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
             .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
@@ -373,17 +298,48 @@ public sealed class CronTriggerTests
 
         var request = new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "My Job" };
 
-        // Act
-        await trigger.CreateSessionAsync(
-            AgentId.From("agent-a"),
-            "Run task",
-            request: request);
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run task", request: request);
 
-        // Assert: ResolvedConversationId is set so the scheduler can pin it back to the job
-        request.ResolvedConversationId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
         createdConversation.ShouldNotBeNull();
-        request.ResolvedConversationId!.Value.Value.ShouldBe(createdConversation!.ConversationId.Value);
+        request.ResolvedConversationId.ShouldNotBeNull();
+        request.ResolvedConversationId!.Value.ShouldBe(createdConversation!.ConversationId);
     }
+
+    [Fact]
+    public async Task CreateSessionAsync_PinnedFastPath_WritesBackPinnedConversationId()
+    {
+        var pinnedConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:pinned-write-back"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Pinned",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(pinnedConversation.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pinnedConversation);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        var request = new InternalTriggerRequest
+        {
+            CronJobId = JobId.From("job-7"),
+            ConversationId = pinnedConversation.ConversationId
+        };
+
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run", request: request);
+
+        // ResolvedConversationId reflects whatever conversation the trigger landed on. In the
+        // fast-path this is the pin itself — the scheduler reads this value and skips the
+        // CAS pinback if it already matches the value stored on the cron job.
+        request.ResolvedConversationId.ShouldBe(pinnedConversation.ConversationId);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildStandardMocks()

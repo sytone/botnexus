@@ -57,7 +57,8 @@ public sealed class AgentPromptAction : ICronAction
             CronJobId = context.Job.Id,
             JobName = context.Job.Name,
             ModelOverride = context.Job.Model,
-            ConversationId = context.Job.ConversationId
+            ConversationId = context.Job.ConversationId,
+            CreatedBy = context.Job.CreatedBy
         };
         var sessionId = await trigger
             .CreateSessionAsync(

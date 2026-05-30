@@ -474,7 +474,9 @@ public sealed class SqliteSessionStoreTests
         {
             SessionId = BotNexus.Domain.Primitives.SessionId.From("participant"),
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-b"),
-            SessionType = BotNexus.Domain.Primitives.SessionType.Cron,
+            // P9-E (#645): SessionType.Cron deleted; use AgentSubAgent so the TypeFilter
+            // discriminates this row from the "owned" UserAgent row above.
+            SessionType = BotNexus.Domain.Primitives.SessionType.AgentSubAgent,
             Participants =
             [
                 new BotNexus.Domain.Primitives.SessionParticipant { CitizenId = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("agent-a")) }
@@ -486,7 +488,7 @@ public sealed class SqliteSessionStoreTests
             BotNexus.Domain.Primitives.AgentId.From("agent-a"),
             new ExistenceQuery
             {
-                TypeFilter = BotNexus.Domain.Primitives.SessionType.Cron,
+                TypeFilter = BotNexus.Domain.Primitives.SessionType.AgentSubAgent,
                 From = now.AddDays(-1.5),
                 Limit = 10
             });
@@ -685,6 +687,105 @@ public sealed class SqliteSessionStoreTests
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-migrate"));
         reloaded.ShouldNotBeNull();
         reloaded!.History[0].ToolArgs.ShouldBe("{}");
+    }
+
+    [Fact]
+    public async Task SaveAsync_WithTriggerStampedEntries_RoundTripsTriggerAcrossReload()
+    {
+        // P9-E (#645) rubber-duck B1 regression: the new session_history.trigger_type
+        // column must persist + read back for every TriggerType value that triggers
+        // can stamp (Cron, Soul, Heartbeat). Without this pin, a future refactor of
+        // SqliteSessionStore's manual column mapping could silently drop the field —
+        // breaking soul-session discovery and per-entry origin attribution.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-trig"), AgentId.From("agent-a"));
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "cron run", Trigger = TriggerType.Cron });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "soul tick", Trigger = TriggerType.Soul });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "heartbeat", Trigger = TriggerType.Heartbeat });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "ack" }); // no trigger
+
+        await store.SaveAsync(session);
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-trig"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded!.History.Count.ShouldBe(4);
+
+        var byContent = reloaded.History.ToDictionary(e => e.Content!);
+        byContent["cron run"].Trigger.ShouldBe(TriggerType.Cron);
+        byContent["soul tick"].Trigger.ShouldBe(TriggerType.Soul);
+        byContent["heartbeat"].Trigger.ShouldBe(TriggerType.Heartbeat);
+        byContent["ack"].Trigger.ShouldBeNull(
+            "Entries without a stamped Trigger must round-trip as null — not coerce to a default.");
+    }
+
+    [Fact]
+    public async Task GetAsync_WithLegacySchema_MissingTriggerTypeColumn_ReadsNullTriggerWithoutThrowing()
+    {
+        // P9-E (#645) rubber-duck B1 regression: pre-P9-E databases do not have the
+        // session_history.trigger_type column. The store's MigrateAsync must add it
+        // idempotently, AND the SessionEntry projection must guard with FieldCount
+        // so older read paths cannot AV / IndexOutOfRange. Without this pin, a
+        // long-lived deployment upgrading from a pre-P9-E binary would fail to read
+        // existing sessions on the first dispatch after upgrade.
+        using var fixture = new StoreFixture();
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT,
+                    channel_type TEXT,
+                    caller_id TEXT,
+                    status TEXT,
+                    metadata TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp TEXT,
+                    tool_name TEXT,
+                    tool_call_id TEXT,
+                    is_compaction_summary INTEGER NOT NULL DEFAULT 0
+                );
+
+                INSERT INTO sessions (id, agent_id, status, created_at, updated_at)
+                VALUES ('s-legacy', 'agent-a', 'Active', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
+
+                INSERT INTO session_history (session_id, role, content, timestamp)
+                VALUES ('s-legacy', 'user', 'pre-p9e message', '2025-01-01T00:00:00Z');
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // Reading via the current store should silently migrate (add trigger_type column)
+        // AND project the missing column as a null Trigger — no throw, no data loss.
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-legacy"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded!.History.Count.ShouldBe(1);
+        reloaded.History[0].Content.ShouldBe("pre-p9e message");
+        reloaded.History[0].Trigger.ShouldBeNull(
+            "Pre-P9-E rows have no trigger value; the projection must yield null, not throw.");
+
+        // Verify the migration actually added the column.
+        await using var verifyConnection = new SqliteConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var colCmd = verifyConnection.CreateCommand();
+        colCmd.CommandText = "PRAGMA table_info(session_history)";
+        var columns = new List<string>();
+        await using var colReader = await colCmd.ExecuteReaderAsync();
+        while (await colReader.ReadAsync())
+            columns.Add(colReader.GetString(1));
+        columns.ShouldContain("trigger_type", "MigrateAsync must add session_history.trigger_type idempotently.");
     }
 
     // --- ListByConversationAsync: F-7 contract pins (SqliteSessionStore) ---

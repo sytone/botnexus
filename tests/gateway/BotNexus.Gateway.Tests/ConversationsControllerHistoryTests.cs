@@ -75,58 +75,6 @@ public sealed class ConversationsControllerHistoryTests
     }
 
     [Fact]
-    public async Task GetHistory_WithVirtualCronConversationId_UsesSessionHistory()
-    {
-        var sessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
-        var virtualConversationId = $"cron-session:{sessionId.Value}";
-        var sessions = new InMemorySessionStore();
-        var conversationStore = new InMemoryConversationStore();
-        var session = await sessions.GetOrCreateAsync(sessionId, AgentId.From("assistant"));
-        session.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.User,
-            Content = "cron-1",
-            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-2)
-        });
-        session.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.Assistant,
-            Content = "cron-2",
-            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
-        });
-        await sessions.SaveAsync(session);
-
-        var controller = new ConversationsController(conversationStore, sessions);
-        var actionResult = await controller.GetHistory(virtualConversationId, limit: 200, offset: 0, CancellationToken.None);
-
-        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
-        response.ShouldNotBeNull();
-        response!.ConversationId.ShouldBe(virtualConversationId);
-        response.TotalCount.ShouldBe(2);
-        response.Entries.Count.ShouldBe(2);
-        response.Entries[0].Kind.ShouldBe("message");
-        response.Entries[0].SessionId.ShouldBe(sessionId.Value);
-        response.Entries[0].Content.ShouldBe("cron-1");
-        response.Entries[1].Content.ShouldBe("cron-2");
-    }
-
-    [Fact]
-    public async Task GetHistory_WithVirtualCronConversationId_WhenSessionMissing_ReturnsEmpty()
-    {
-        var sessions = new InMemorySessionStore();
-        var controller = new ConversationsController(new InMemoryConversationStore(), sessions);
-        var virtualConversationId = "cron-session:cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
-
-        var actionResult = await controller.GetHistory(virtualConversationId, limit: 200, offset: 0, CancellationToken.None);
-
-        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
-        response.ShouldNotBeNull();
-        response!.ConversationId.ShouldBe(virtualConversationId);
-        response.TotalCount.ShouldBe(0);
-        response.Entries.ShouldBeEmpty();
-    }
-
-    [Fact]
     public async Task GetHistory_WithMissingRealConversation_ReturnsNotFound()
     {
         var sessions = new InMemorySessionStore();
@@ -168,85 +116,6 @@ public sealed class ConversationsControllerHistoryTests
         archivedConversation.ShouldNotBeNull();
         archivedConversation!.Status.ShouldBe(ConversationStatus.Archived);
         archivedConversation.ActiveSessionId.ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task Archive_WithVirtualCronConversationId_SealsRequestedSession_AndDistinctActiveSession()
-    {
-        var conversationId = ConversationId.From("c_cron_cleanup_seals_requested_and_active");
-        var requestedSessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
-        var activeSessionId = SessionId.From("cron:20260510001608:c7fe67628e3142a1894974d22bb998a8");
-        var virtualConversationId = $"cron-session:{requestedSessionId.Value}";
-        var sessions = new InMemorySessionStore();
-
-        var requestedSession = await sessions.GetOrCreateAsync(requestedSessionId, AgentId.From("assistant"));
-        requestedSession.Session.ConversationId = conversationId;
-        requestedSession.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.Assistant,
-            Content = "session-a-history",
-            Timestamp = DateTimeOffset.UtcNow
-        });
-        await sessions.SaveAsync(requestedSession);
-
-        var activeSession = await sessions.GetOrCreateAsync(activeSessionId, AgentId.From("assistant"));
-        activeSession.Session.ConversationId = conversationId;
-        activeSession.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.Assistant,
-            Content = "session-b-history",
-            Timestamp = DateTimeOffset.UtcNow
-        });
-        await sessions.SaveAsync(activeSession);
-
-        var conversationStore = new InMemoryConversationStore();
-        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", activeSessionId));
-        var controller = new ConversationsController(conversationStore, sessions);
-
-        var archiveResult = await controller.Archive(virtualConversationId, CancellationToken.None);
-
-        archiveResult.ShouldBeOfType<NoContentResult>();
-
-        var sealedRequestedSession = await sessions.GetAsync(requestedSessionId);
-        sealedRequestedSession.ShouldNotBeNull();
-        sealedRequestedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        sealedRequestedSession.History.ShouldContain(entry => entry.Content == "session-a-history");
-
-        var sealedActiveSession = await sessions.GetAsync(activeSessionId);
-        sealedActiveSession.ShouldNotBeNull();
-        sealedActiveSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        sealedActiveSession.History.ShouldContain(entry => entry.Content == "session-b-history");
-
-        var archivedConversation = await conversationStore.GetAsync(conversationId);
-        archivedConversation.ShouldNotBeNull();
-        archivedConversation!.Status.ShouldBe(ConversationStatus.Archived);
-        archivedConversation.ActiveSessionId.ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task Archive_WithVirtualCronConversationId_WithoutLinkedConversation_SealsSession_AndReturnsNoContent()
-    {
-        var orphanSessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
-        var virtualConversationId = $"cron-session:{orphanSessionId.Value}";
-        var sessions = new InMemorySessionStore();
-        var orphanSession = await sessions.GetOrCreateAsync(orphanSessionId, AgentId.From("assistant"));
-        orphanSession.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.User,
-            Content = "keep-history",
-            Timestamp = DateTimeOffset.UtcNow
-        });
-        await sessions.SaveAsync(orphanSession);
-
-        var controller = new ConversationsController(new InMemoryConversationStore(), sessions);
-
-        var archiveResult = await controller.Archive(virtualConversationId, CancellationToken.None);
-
-        archiveResult.ShouldBeOfType<NoContentResult>();
-        var sealedSession = await sessions.GetAsync(orphanSessionId);
-        sealedSession.ShouldNotBeNull();
-        sealedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        sealedSession.History.ShouldContain(entry => entry.Content == "keep-history");
     }
 
     [Fact]
@@ -292,63 +161,6 @@ public sealed class ConversationsControllerHistoryTests
         archivedConversation.ShouldNotBeNull();
         archivedConversation!.ActiveSessionId.ShouldBeNull();
         archivedConversation.Status.ShouldBe(ConversationStatus.Archived);
-    }
-
-    [Fact]
-    public async Task Archive_WithVirtualCronConversationId_WhenSessionMissing_ReturnsNoContent()
-    {
-        var sessions = new InMemorySessionStore();
-        var controller = new ConversationsController(new InMemoryConversationStore(), sessions);
-
-        var result = await controller.Archive(
-            "cron-session:cron:20260510001608:c7fe67628e3142a1894974d22bb998a8",
-            CancellationToken.None);
-
-        result.ShouldBeOfType<NoContentResult>();
-    }
-
-    [Fact]
-    public async Task Archive_WithVirtualCronConversationId_KeepsConversationArchivedAcrossListReload()
-    {
-        var conversationId = ConversationId.From("c_cron_archived_stays_hidden");
-        var requestedSessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
-        var sessions = new InMemorySessionStore();
-
-        var requestedSession = await sessions.GetOrCreateAsync(requestedSessionId, AgentId.From("assistant"));
-        requestedSession.Session.ConversationId = conversationId;
-        requestedSession.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.Assistant,
-            Content = "cron-history",
-            Timestamp = DateTimeOffset.UtcNow
-        });
-        await sessions.SaveAsync(requestedSession);
-
-        var conversationStore = new InMemoryConversationStore();
-        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", requestedSessionId));
-        var controller = new ConversationsController(conversationStore, sessions);
-
-        var archiveResult = await controller.Archive($"cron-session:{requestedSessionId.Value}", CancellationToken.None);
-
-        archiveResult.ShouldBeOfType<NoContentResult>();
-
-        var sealedRequestedSession = await sessions.GetAsync(requestedSessionId);
-        sealedRequestedSession.ShouldNotBeNull();
-        sealedRequestedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-
-        var listResult = await controller.List("assistant", CancellationToken.None);
-        var list = (listResult as OkObjectResult)?.Value as IReadOnlyList<ConversationSummary>;
-        list.ShouldNotBeNull();
-        list!.ShouldNotContain(summary => summary.ConversationId == conversationId.Value);
-
-        var sessionsController = new SessionsController(sessions);
-        var defaultSessionsResult = await sessionsController.List("assistant", cancellationToken: CancellationToken.None);
-        var defaultSessionIds = ExtractSessionIds(defaultSessionsResult.ShouldBeOfType<OkObjectResult>());
-        defaultSessionIds.ShouldNotContain(requestedSessionId.Value);
-
-        var includeInactiveResult = await sessionsController.List("assistant", includeInactive: true, cancellationToken: CancellationToken.None);
-        var includeInactiveSessionIds = ExtractSessionIds(includeInactiveResult.ShouldBeOfType<OkObjectResult>());
-        includeInactiveSessionIds.ShouldContain(requestedSessionId.Value);
     }
 
     private static IReadOnlyList<string> ExtractSessionIds(OkObjectResult result)
