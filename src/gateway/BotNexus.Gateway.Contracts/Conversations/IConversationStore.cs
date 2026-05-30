@@ -41,13 +41,47 @@ public interface IConversationStore
     ///     conversations <em>owned</em> by this agent. There is no symmetric owner relationship
     ///     for User citizens (owning-by-user is not modelled), which makes this method
     ///     intentionally asymmetric across species.</item>
+    ///   <item><b>Participant-match</b> (P9-F, issue #657): conversations whose
+    ///     <see cref="Conversation.Participants"/> include this citizen. Replaces the
+    ///     pre-P9-F per-session participant scan with a single indexed lookup against the
+    ///     conversation-level participant set, and is the channel-facing "what is this
+    ///     citizen in?" query.</item>
     /// </list>
-    /// <para>"Any session participant" semantics — which would require iterating each conversation's
-    /// active session participants — are not provided here; that query lives one layer up.</para>
+    /// <para>The union is materialised as a distinct-by-<see cref="ConversationId"/> set;
+    /// matching on more than one criterion does not produce duplicates.</para>
     /// </remarks>
     /// <param name="citizen">The citizen identity to query for; must be <see cref="CitizenId.IsValid"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically merges the supplied participants into the conversation's
+    /// <see cref="Conversation.Participants"/> set. The operation is idempotent: existing
+    /// participants (matched by <c>SessionParticipant.CitizenId</c>) are left untouched, and
+    /// re-supplying the same participant on a subsequent call is a no-op. The role on the
+    /// first add wins; later calls do not overwrite the role label.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the only sanctioned mutation path for
+    /// <see cref="Conversation.Participants"/>. <see cref="SaveAsync"/> does not persist
+    /// participant changes — implementations must treat the participant set as conversation
+    /// state that is mutated only through this method so concurrent producers (multiple
+    /// channels, agent exchanges, soul/cron triggers) cannot clobber each other or the
+    /// rest of the conversation row.
+    /// </para>
+    /// <para>
+    /// Each implementation is responsible for performing the merge atomically with respect
+    /// to its own concurrency model (SQLite transaction, file lock, in-memory lock).
+    /// </para>
+    /// </remarks>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="participants">Participants to add. Empty enumerables are valid and produce no work.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task AddParticipantsAsync(
+        ConversationId conversationId,
+        IEnumerable<SessionParticipant> participants,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Creates a new conversation. Throws if the ConversationId already exists.

@@ -205,6 +205,9 @@ public sealed class ConversationsControllerHistoryTests
         public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task AddParticipantsAsync(ConversationId conversationId, IEnumerable<SessionParticipant> participants, CancellationToken ct = default)
+            => Task.CompletedTask;
+
         public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
             => throw new NotSupportedException();
 

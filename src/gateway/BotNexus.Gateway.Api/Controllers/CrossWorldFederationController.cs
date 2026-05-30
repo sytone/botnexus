@@ -347,17 +347,27 @@ public sealed class CrossWorldFederationController(
         session.ChannelType = CrossWorldChannel;
         session.CallerId = null;
         session.Status = GatewaySessionStatus.Active;
-        session.Participants.Clear();
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(AgentId.From(request.SourceAgentId)),
-            Role = "initiator"
-        });
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(targetAgentId),
-            Role = "target"
-        });
+
+        // P9-F: Participants live on the Conversation, not the Session. Register the
+        // source-side initiator and the local target as conversation participants so the
+        // local IConversationStore.ListForCitizenAsync surfaces this exchange to both
+        // species.
+        await conversationStore.AddParticipantsAsync(
+            conversation.ConversationId,
+            [
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(AgentId.From(request.SourceAgentId)),
+                    Role = "initiator"
+                },
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(targetAgentId),
+                    Role = "target"
+                }
+            ],
+            cancellationToken).ConfigureAwait(false);
+
         session.Metadata["sourceWorldId"] = request.SourceWorldId;
         session.Metadata["sourceAgentId"] = request.SourceAgentId;
         session.Metadata["sourceConversationId"] = request.ConversationId;

@@ -6,9 +6,11 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -21,6 +23,9 @@ namespace BotNexus.Gateway.Tests;
 /// and species-correct participant tracking for User vs Agent senders (including the
 /// sub-agent wake-up case where the wire <c>SenderId</c> and typed <c>Sender</c>
 /// deliberately diverge).
+///
+/// P9-F (#657): participant assertions migrated from <c>Session.Participants</c> to
+/// <c>Conversation.Participants</c> via the shared conversation store.
 /// </summary>
 public sealed class SenderClassificationTests
 {
@@ -30,7 +35,9 @@ public sealed class SenderClassificationTests
     [Fact]
     public async Task DispatchAsync_DefaultSender_ThrowsArgumentException()
     {
-        await using var host = CreateHost(new InMemorySessionStore(), out _);
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore(redactor: null, conversationStore: conversations);
+        await using var host = CreateHost(sessions, conversations, out _);
 
         var message = new InboundMessage
         {
@@ -49,8 +56,9 @@ public sealed class SenderClassificationTests
     [Fact]
     public async Task DispatchAsync_UserSender_AddsUserParticipant()
     {
-        var sessions = new InMemorySessionStore();
-        await using var host = CreateHost(sessions, out _);
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore(redactor: null, conversationStore: conversations);
+        await using var host = CreateHost(sessions, conversations, out _);
 
         var senderId = UserId.From("alice");
         await host.DispatchAsync(new InboundMessage
@@ -68,7 +76,9 @@ public sealed class SenderClassificationTests
 
         var reloaded = await sessions.GetAsync(SessionId.From(SessionIdValue));
         reloaded.ShouldNotBeNull();
-        var participant = reloaded!.Participants.ShouldHaveSingleItem();
+        var conversation = await conversations.GetAsync(reloaded!.ConversationId);
+        conversation.ShouldNotBeNull();
+        var participant = conversation!.Participants.ShouldHaveSingleItem();
         participant.CitizenId.Kind.ShouldBe(CitizenKind.User);
         participant.CitizenId.AsUser.ShouldNotBeNull().ShouldBe(senderId);
     }
@@ -76,8 +86,9 @@ public sealed class SenderClassificationTests
     [Fact]
     public async Task DispatchAsync_AgentSender_AddsAgentParticipant_NotMisclassifiedAsUser()
     {
-        var sessions = new InMemorySessionStore();
-        await using var host = CreateHost(sessions, out _);
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore(redactor: null, conversationStore: conversations);
+        await using var host = CreateHost(sessions, conversations, out _);
 
         // The sub-agent wake-up case: wire token is "subagent:..." but the typed
         // Sender carries the child agent id. Phase 2c regression-guard for the
@@ -98,7 +109,9 @@ public sealed class SenderClassificationTests
 
         var reloaded = await sessions.GetAsync(SessionId.From(SessionIdValue));
         reloaded.ShouldNotBeNull();
-        var participant = reloaded!.Participants.ShouldHaveSingleItem();
+        var conversation = await conversations.GetAsync(reloaded!.ConversationId);
+        conversation.ShouldNotBeNull();
+        var participant = conversation!.Participants.ShouldHaveSingleItem();
         participant.CitizenId.Kind.ShouldBe(CitizenKind.Agent);
         participant.CitizenId.AsAgent.ShouldNotBeNull().ShouldBe(childAgentId);
     }
@@ -106,8 +119,9 @@ public sealed class SenderClassificationTests
     [Fact]
     public async Task DispatchAsync_SameCitizen_DoesNotAddDuplicateParticipant()
     {
-        var sessions = new InMemorySessionStore();
-        await using var host = CreateHost(sessions, out _);
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore(redactor: null, conversationStore: conversations);
+        await using var host = CreateHost(sessions, conversations, out _);
 
         var senderId = UserId.From("bob");
         var template = new InboundMessage
@@ -128,7 +142,9 @@ public sealed class SenderClassificationTests
 
         var reloaded = await sessions.GetAsync(SessionId.From(SessionIdValue));
         reloaded.ShouldNotBeNull();
-        reloaded!.Participants.Count.ShouldBe(1, "second dispatch from same citizen should not add a duplicate participant");
+        var conversation = await conversations.GetAsync(reloaded!.ConversationId);
+        conversation.ShouldNotBeNull();
+        conversation!.Participants.Count.ShouldBe(1, "second dispatch from same citizen should not add a duplicate participant");
     }
 
     [Fact]
@@ -138,8 +154,9 @@ public sealed class SenderClassificationTests
         // token (audit / allowlist / logging); Sender is the typed domain identity.
         // They are deliberately allowed to differ -- the sub-agent wake-up uses
         // "subagent:X" as the wire token while Sender carries the agent's id.
-        var sessions = new InMemorySessionStore();
-        await using var host = CreateHost(sessions, out _);
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore(redactor: null, conversationStore: conversations);
+        await using var host = CreateHost(sessions, conversations, out _);
 
         var childAgentId = AgentId.From("child-agent-y");
         await host.DispatchAsync(new InboundMessage
@@ -159,12 +176,17 @@ public sealed class SenderClassificationTests
         reloaded.ShouldNotBeNull();
         // Wire token survives on the session for audit/back-compat.
         reloaded!.CallerId.ShouldBe("subagent:wake-2");
+        var conversation = await conversations.GetAsync(reloaded.ConversationId);
+        conversation.ShouldNotBeNull();
         // Typed species is used for participant tracking.
-        var participant = reloaded.Participants.ShouldHaveSingleItem();
+        var participant = conversation!.Participants.ShouldHaveSingleItem();
         participant.CitizenId.AsAgent.ShouldNotBeNull().ShouldBe(childAgentId);
     }
 
-    private static GatewayHost CreateHost(InMemorySessionStore sessions, out Mock<IAgentSupervisor> supervisor)
+    private static GatewayHost CreateHost(
+        InMemorySessionStore sessions,
+        IConversationStore conversations,
+        out Mock<IAgentSupervisor> supervisor)
     {
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
@@ -200,6 +222,7 @@ public sealed class SenderClassificationTests
             channelManager.Object,
             Mock.Of<ISessionCompactor>(),
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHost>.Instance);
+            NullLogger<GatewayHost>.Instance,
+            conversationStore: conversations);
     }
 }

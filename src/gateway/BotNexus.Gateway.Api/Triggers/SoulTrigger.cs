@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
@@ -17,11 +18,13 @@ public sealed class SoulTrigger(
     IAgentRegistry registry,
     ISessionStore sessions,
     ILogger<SoulTrigger> logger,
-    TimeProvider? timeProvider = null) : IInternalTrigger
+    TimeProvider? timeProvider = null,
+    IConversationStore? conversationStore = null) : IInternalTrigger
 {
     private static readonly TimeSpan DefaultDayBoundary = TimeSpan.Zero;
     private static readonly TimeZoneInfo DefaultTimeZone = TimeZoneInfo.Utc;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly IConversationStore? _conversationStore = conversationStore;
 
     /// <summary>
     /// Gets the trigger type identifier.
@@ -59,6 +62,19 @@ public sealed class SoulTrigger(
 
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         InitializeSoulSession(session, agentId, soulDate);
+
+        // P9-F: Participants live on the Conversation, not the Session. Register the agent
+        // citizen against the conversation pinned to this soul session. Skipped when no
+        // conversation store is wired (legacy unit-test compositions) — the participant
+        // would have nowhere to live and the fence pins direct Session.Participants
+        // mutations as removed.
+        if (_conversationStore is not null && session.ConversationId.IsInitialized())
+        {
+            await _conversationStore.AddParticipantsAsync(
+                session.ConversationId,
+                [new SessionParticipant { CitizenId = CitizenId.Of(agentId) }],
+                ct).ConfigureAwait(false);
+        }
 
         if (string.IsNullOrWhiteSpace(request?.ModelOverride))
             session.Metadata.Remove("modelOverride");
@@ -141,15 +157,9 @@ public sealed class SoulTrigger(
         session.CallerId ??= $"soul:{agentId.Value}";
         session.Status = GatewaySessionStatus.Active;
         session.Metadata["soulDate"] = soulDate.ToString("yyyy-MM-dd");
-
-        var agentCitizenId = CitizenId.Of(agentId);
-        if (!session.Participants.Any(participant => participant.CitizenId == agentCitizenId))
-        {
-            session.Participants.Add(new SessionParticipant
-            {
-                CitizenId = agentCitizenId
-            });
-        }
+        // P9-F: participant registration moved to CreateSessionAsync (after this method) so it
+        // can be routed through IConversationStore.AddParticipantsAsync — Participants no
+        // longer live on Session.
     }
 
     private static bool TryGetSoulDate(GatewaySession session, out DateOnly soulDate)

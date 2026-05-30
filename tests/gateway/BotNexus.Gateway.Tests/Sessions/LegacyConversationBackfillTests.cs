@@ -746,6 +746,8 @@ public sealed class LegacyConversationBackfillTests
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default) => Inner.ListForCitizenAsync(citizen, ct);
         public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default) => Inner.CreateAsync(conversation, ct);
         public Task SaveAsync(Conversation conversation, CancellationToken ct = default) => Inner.SaveAsync(conversation, ct);
+        public Task AddParticipantsAsync(ConversationId conversationId, IEnumerable<SessionParticipant> participants, CancellationToken ct = default)
+            => Inner.AddParticipantsAsync(conversationId, participants, ct);
         public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default) => Inner.ArchiveAsync(conversationId, ct);
         public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
             => Inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);

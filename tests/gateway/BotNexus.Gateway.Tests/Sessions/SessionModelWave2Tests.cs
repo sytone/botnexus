@@ -136,26 +136,62 @@ public sealed class SessionModelWave2Tests
     }
 
     [Fact]
-    public void Participants_CallerAndParticipants_CoexistDuringMigration()
+    public async Task Participants_CallerAndConversationParticipants_CoexistAfterP9F()
     {
+        // P9-F (#657): participants moved from Session to Conversation. CallerId stays
+        // on the session (channel-native wire token + audit) while Participants are now
+        // mutated via IConversationStore.AddParticipantsAsync.
         var session = CreateSession();
+        session.ConversationId = ConversationId.From($"conv-{Guid.NewGuid():N}");
         session.CallerId = "user-123";
-        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("user-123")) });
-        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) });
+
+        var conversations = new BotNexus.Gateway.Conversations.InMemoryConversationStore();
+        var conversation = await conversations.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = session.ConversationId,
+            AgentId = session.AgentId,
+            Initiator = CitizenId.Of(UserId.From("user-123"))
+        });
+        await conversations.AddParticipantsAsync(
+            conversation.ConversationId,
+            [
+                new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("user-123")) },
+                new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }
+            ]);
+
+        var reloaded = await conversations.GetAsync(conversation.ConversationId);
+        reloaded.ShouldNotBeNull();
 
         session.CallerId.ShouldBe("user-123");
-        session.Participants.Count().ShouldBe(2);
+        reloaded!.Participants.Count().ShouldBe(2);
     }
 
     [Fact]
-    public void Participants_CallerId_MapsToFirstUserParticipant()
+    public async Task Participants_CallerId_MapsToFirstUserParticipant_OnConversation()
     {
+        // P9-F (#657): the "first User participant matches CallerId" invariant is now
+        // satisfied at the conversation level; Session.CallerId remains the audit token.
         var session = CreateSession();
+        session.ConversationId = ConversationId.From($"conv-{Guid.NewGuid():N}");
         session.CallerId = "caller-1";
-        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("caller-1")) });
-        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) });
 
-        var firstUser = session.Participants.First(p => p.CitizenId.Kind == CitizenKind.User);
+        var conversations = new BotNexus.Gateway.Conversations.InMemoryConversationStore();
+        var conversation = await conversations.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = session.ConversationId,
+            AgentId = session.AgentId,
+            Initiator = CitizenId.Of(UserId.From("caller-1"))
+        });
+        await conversations.AddParticipantsAsync(
+            conversation.ConversationId,
+            [
+                new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("caller-1")) },
+                new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }
+            ]);
+
+        var reloaded = await conversations.GetAsync(conversation.ConversationId);
+        reloaded.ShouldNotBeNull();
+        var firstUser = reloaded!.Participants.First(p => p.CitizenId.Kind == CitizenKind.User);
 
         firstUser.CitizenId.AsUser!.Value.Value.ShouldBe(session.CallerId);
     }

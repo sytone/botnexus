@@ -61,6 +61,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         ILogger<SqliteSessionStore> logger,
         IConversationStore? conversationStore = null,
         ISecretRedactor? redactor = null)
+        : base(conversationStore)
     {
         _connectionString = connectionString;
         _logger = logger;
@@ -344,6 +345,13 @@ public sealed class SqliteSessionStore : SessionStoreBase
             if (_conversationStore is not null)
                 await MigrateOrphanedSessionsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
 
+            // P9-F (#657): forward any legacy participants_json into the conversation
+            // store's normalised participant set. Idempotent (INSERT OR IGNORE inside
+            // AddParticipantsAsync). Runs on every startup; cheap when the legacy column
+            // has aged out across deployments.
+            if (_conversationStore is not null)
+                await BackfillParticipantsToConversationsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+
             _initialized = true;
         }
         finally { _initLock.Release(); }
@@ -489,6 +497,73 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <summary>
+    /// P9-F (#657): one-shot startup backfill that forwards legacy
+    /// <c>sessions.participants_json</c> entries into the conversation store's normalised
+    /// participant set. Sessions are grouped by <c>conversation_id</c> and each group is
+    /// dispatched to <see cref="IConversationStore.AddParticipantsAsync"/> — idempotent
+    /// (<c>INSERT OR IGNORE</c>) so safe to re-run on every startup. Sessions with a NULL
+    /// <c>conversation_id</c> are skipped here because the orphan migration immediately
+    /// preceding this call already stamps a legacy conversation onto them, so by the time
+    /// this scan runs every row that has participants has a destination.
+    /// </summary>
+    private async Task BackfillParticipantsToConversationsAsync(
+        SqliteConnection connection,
+        IConversationStore conversationStore,
+        CancellationToken cancellationToken)
+    {
+        await using var scanCmd = connection.CreateCommand();
+        scanCmd.CommandText = """
+            SELECT conversation_id, participants_json
+            FROM sessions
+            WHERE participants_json IS NOT NULL
+              AND participants_json != ''
+              AND participants_json != '[]'
+              AND conversation_id IS NOT NULL
+            """;
+
+        var byConversation = new Dictionary<string, List<SessionParticipant>>(StringComparer.Ordinal);
+        await using (var reader = await scanCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var convId = reader.GetString(0);
+                var json = reader.GetString(1);
+                var participants = DeserializeParticipants(json);
+                if (participants.Count == 0)
+                    continue;
+
+                if (!byConversation.TryGetValue(convId, out var list))
+                {
+                    list = [];
+                    byConversation[convId] = list;
+                }
+                list.AddRange(participants);
+            }
+        }
+
+        if (byConversation.Count == 0)
+            return;
+
+        var totalRows = 0;
+        foreach (var (convIdString, participants) in byConversation)
+        {
+            var convId = ConversationId.From(convIdString);
+            // Pre-dedupe by CitizenId. AddParticipantsAsync dedupes again, but a smaller
+            // payload keeps the conversation-store transaction lighter.
+            var deduped = participants
+                .GroupBy(p => p.CitizenId)
+                .Select(g => g.First())
+                .ToList();
+            await conversationStore.AddParticipantsAsync(convId, deduped, cancellationToken).ConfigureAwait(false);
+            totalRows += deduped.Count;
+        }
+
+        _logger.LogInformation(
+            "Participant backfill (Sqlite session store): forwarded {Count} participant entries across {ConvCount} conversation(s).",
+            totalRows, byConversation.Count);
+    }
+
+    /// <summary>
     /// Defensively backfills a session whose <see cref="Session.ConversationId"/> is null
     /// at save time by stamping it with the agent's legacy conversation. This catches the
     /// narrow window between <see cref="EnsureCreatedAsync"/> startup migration completing
@@ -599,7 +674,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (!reader.IsDBNull(2))
             channelType = ChannelKey.From(reader.GetString(2));
         var sessionType = ParseSessionType(reader.IsDBNull(4) ? null : reader.GetString(4), sessionId, channelType);
-        var participants = DeserializeParticipants(reader.IsDBNull(5) ? null : reader.GetString(5));
+        // P9-F (#657): participants_json column is intentionally read-and-discarded — the
+        // legacy column is preserved for the one-shot startup backfill into the
+        // conversation store (BackfillParticipantsToConversationsAsync) and as a rollback
+        // source. Participants are no longer persisted on Session.
         var agentIdValue = reader.IsDBNull(1) ? null : reader.GetString(1);
         if (string.IsNullOrWhiteSpace(agentIdValue))
             return null;
@@ -610,7 +688,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
             AgentId = AgentId.From(agentIdValue),
             ChannelType = channelType,
             SessionType = sessionType,
-            Participants = participants,
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
@@ -697,7 +774,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         command.Parameters.AddWithValue("$channelType", session.ChannelType.HasValue ? session.ChannelType.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$callerId", (object?)session.CallerId ?? DBNull.Value);
         command.Parameters.AddWithValue("$sessionType", session.SessionType.Value);
-        command.Parameters.AddWithValue("$participantsJson", JsonSerializer.Serialize(session.Participants, JsonOptions));
+        // P9-F (#657): write `[]` so the backfill scan's "non-empty" filter excludes
+        // new rows. The column is retained for one phase as a rollback source.
+        command.Parameters.AddWithValue("$participantsJson", "[]");
         command.Parameters.AddWithValue("$status", session.Status.ToString());
         command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));

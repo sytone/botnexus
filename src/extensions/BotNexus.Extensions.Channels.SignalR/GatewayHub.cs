@@ -145,18 +145,24 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         }
 
         session.SessionType = SessionType.UserAgent;
-        if (session.Participants.Count == 0)
-        {
-            session.Participants.Add(new SessionParticipant
-            {
-                CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
-            });
-            needsSave = true;
-        }
-
         if (needsSave)
         {
             await _sessions.SaveAsync(session, Context.ConnectionAborted);
+        }
+
+        // P9-F: Participants live on the Conversation, not the Session. The user-citizen
+        // for this SignalR connection is registered against the conversation pinned to the
+        // session. Skipped when the session has not yet been pinned (rare; resolution
+        // usually fires before JoinSession).
+        if (_conversationStore is not null && session.ConversationId.IsInitialized())
+        {
+            await _conversationStore.AddParticipantsAsync(
+                session.ConversationId,
+                [new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
+                }],
+                Context.ConnectionAborted);
         }
 
         return new JoinSessionResult(
@@ -749,17 +755,23 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             needsSave = true;
         }
 
-        if (session.Participants.Count == 0)
-        {
-            session.Participants.Add(new SessionParticipant
-            {
-                CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
-            });
-            needsSave = true;
-        }
-
         if (needsSave)
             await _sessions.SaveAsync(session, Context.ConnectionAborted);
+
+        // P9-F: Participants live on the Conversation, not the Session — register the
+        // user-citizen against the conversation pinned to this session. Skipped when the
+        // session has not yet been pinned or the conversation store isn't wired (legacy
+        // composition roots).
+        if (_conversationStore is not null && session.ConversationId.IsInitialized())
+        {
+            await _conversationStore.AddParticipantsAsync(
+                session.ConversationId,
+                [new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
+                }],
+                Context.ConnectionAborted);
+        }
 
         return session;
     }

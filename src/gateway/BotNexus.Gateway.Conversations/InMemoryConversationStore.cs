@@ -15,6 +15,7 @@ namespace BotNexus.Gateway.Conversations;
 public sealed class InMemoryConversationStore : IConversationStore
 {
     private readonly ConcurrentDictionary<string, Conversation> _conversations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _participantLocks = new(StringComparer.Ordinal);
     private readonly IWorldContext? _worldContext;
 
     /// <summary>Initialises a new <see cref="InMemoryConversationStore"/> without world stamping.</summary>
@@ -69,6 +70,11 @@ public sealed class InMemoryConversationStore : IConversationStore
         if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
             return true;
 
+        // Participant-match (P9-F): the conversation includes this citizen in its
+        // participant set.
+        if (conversation.Participants.Any(p => p.CitizenId == citizen))
+            return true;
+
         return false;
     }
 
@@ -101,6 +107,52 @@ public sealed class InMemoryConversationStore : IConversationStore
             };
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public async Task AddParticipantsAsync(
+        ConversationId conversationId,
+        IEnumerable<SessionParticipant> participants,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(participants);
+        var snapshot = participants as IReadOnlyCollection<SessionParticipant> ?? participants.ToArray();
+        if (snapshot.Count == 0)
+            return;
+
+        var conversationLock = GetParticipantLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_conversations.TryGetValue(conversationId.Value, out var existing))
+                return;
+
+            var byCitizen = new Dictionary<CitizenId, SessionParticipant>(existing.Participants.Count);
+            foreach (var p in existing.Participants)
+                byCitizen[p.CitizenId] = p;
+
+            foreach (var participant in snapshot)
+            {
+                if (!participant.CitizenId.IsValid)
+                    continue;
+                // First-add wins on role to match the SQLite semantics.
+                if (!byCitizen.ContainsKey(participant.CitizenId))
+                    byCitizen[participant.CitizenId] = new SessionParticipant
+                    {
+                        CitizenId = participant.CitizenId,
+                        Role = participant.Role
+                    };
+            }
+
+            existing.Participants = byCitizen.Values.ToList();
+        }
+        finally
+        {
+            conversationLock.Release();
+        }
+    }
+
+    private SemaphoreSlim GetParticipantLock(string conversationId)
+        => _participantLocks.GetOrAdd(conversationId, static _ => new SemaphoreSlim(1, 1));
 
     /// <inheritdoc />
     public Task<Conversation?> ResolveByBindingAsync(
