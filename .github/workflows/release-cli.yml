@@ -1,5 +1,5 @@
-name: Release
-run-name: "Release - ${{ inputs.release_type }}${{ inputs.prerelease && ' (pre-release)' || '' }}"
+name: "Release: CLI & NuGet"
+run-name: "Release: CLI & NuGet - ${{ inputs.release_type }}${{ inputs.prerelease && ' (pre-release)' || '' }}"
 
 on:
   workflow_dispatch:

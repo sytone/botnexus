@@ -1,4 +1,4 @@
-name: CI
+name: "CI: Build & Test"
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/docs.yml'
+      - '.github/workflows/deploy-docs.yml'
       - '.squad/**'
       - '.ai-team/**'
       - '.copilot/**'
@@ -23,7 +23,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/docs.yml'
+      - '.github/workflows/deploy-docs.yml'
       - '.squad/**'
       - '.ai-team/**'
       - '.copilot/**'
@@ -40,7 +40,35 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  # PRs: run only tests affected by the change (fast feedback)
+  impacted-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore tools and packages
+        run: |
+          dotnet tool restore
+          dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test (impacted only)
+        shell: pwsh
+        run: ./scripts/repo/test-impacted.ps1 -From origin/${{ github.base_ref }} -NoBuild
+
+  # Push to main: full test suite with coverage (safety net)
+  full-tests:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

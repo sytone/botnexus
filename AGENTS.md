@@ -9,6 +9,7 @@ BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentat
 - If this is a new install run `scripts/repo/init.ps1`
 - To build the solution, run `scripts/repo/build.ps1`
 - To run tests, run `scripts/repo/test.ps1`
+- To run only tests affected by your changes, run `scripts/repo/test-impacted.ps1`
 
 
 ## Document Ownership
@@ -64,13 +65,21 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    dotnet test BotNexus.slnx --nologo --tl:off
    ```
 
+   For faster iteration during development, run only impacted tests:
+
+   ```shell
+   scripts/repo/test-impacted.ps1
+   ```
+
+   This uses the project dependency graph to run only test projects affected by your changes, plus architecture and scenario tests as a safety net. Use `-DryRun` to preview which projects would run.
+
 3. **Zero failures required.** If any test fails, diagnose and fix the issue before proceeding. Do not commit code with failing tests.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 
 5. **Do not use `--no-verify`** for code changes. The pre-commit hook runs the test suite and must pass.
 
-6. **Do not use `--no-build` with `dotnet test` or `dotnet run`.** It causes stale-binary issues, silent skips when fixtures fail to rebuild, and confusing test-output gaps. Always let `dotnet test` rebuild — if the build is too slow, fix the build, don't bypass it.
+6. **Do not use `--no-build` with `dotnet test` or `dotnet run` during local development.** It causes stale-binary issues, silent skips when fixtures fail to rebuild, and confusing test-output gaps. Always let `dotnet test` rebuild — if the build is too slow, fix the build, don't bypass it. (The CI workflow and `test-impacted.ps1 -NoBuild` are exceptions — they build once upfront then test with `--no-build` for speed.)
 
 7. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
 
