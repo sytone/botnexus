@@ -407,60 +407,35 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.get_summaries", ActivityKind.Internal);
-        if (agentId is not null)
-            activity?.SetTag("botnexus.agent.id", agentId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = agentId is null
-            ? """
-                SELECT
-                    c.id,
-                    c.agent_id,
-                    c.title,
-                    c.purpose,
-                    c.is_default,
-                    c.status,
-                    c.active_session_id,
-                    c.created_at,
-                    c.updated_at,
-                    COUNT(b.binding_id),
-                    c.instructions,
-                    c.kind
-                FROM conversations c
-                LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
-                WHERE c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
-                ORDER BY c.updated_at DESC
-                """
-            : """
-                SELECT
-                    c.id,
-                    c.agent_id,
-                    c.title,
-                    c.purpose,
-                    c.is_default,
-                    c.status,
-                    c.active_session_id,
-                    c.created_at,
-                    c.updated_at,
-                    COUNT(b.binding_id),
-                    c.instructions,
-                    c.kind
-                FROM conversations c
-                LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
-                WHERE c.agent_id = $agentId AND c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
-                ORDER BY c.updated_at DESC
-                """;
-        if (agentId is not null)
-            command.Parameters.AddWithValue("$agentId", agentId.Value.Value);
+        command.CommandText = """
+            SELECT
+                c.id,
+                c.agent_id,
+                c.title,
+                c.purpose,
+                c.is_default,
+                c.status,
+                c.active_session_id,
+                c.created_at,
+                c.updated_at,
+                COUNT(b.binding_id),
+                c.instructions,
+                c.kind
+            FROM conversations c
+            LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
+            WHERE c.status = 'Active'
+            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
+            ORDER BY c.updated_at DESC
+            """;
 
         var summaries = new List<ConversationSummary>();
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);

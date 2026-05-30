@@ -226,8 +226,10 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
-    public async Task GetSummariesAsync_ReturnsSummariesForAgent()
+    public async Task ListForCitizenAsync_ReturnsOwnerMatchedConversationWithBindings()
     {
+        // Migrated from former GetSummariesAsync(agentId) test — P9-G dropped the per-agent
+        // overload; agent-relative listing is now ListForCitizenAsync + controller projection.
         var store = new InMemoryConversationStore();
         var agentId = Agent("summary-agent");
         var conv = MakeConversation(agentId) with
@@ -236,10 +238,10 @@ public sealed class InMemoryConversationStoreTests
         };
         await store.CreateAsync(conv);
 
-        var summaries = await store.GetSummariesAsync(agentId);
-        summaries.Count.ShouldBe(1);
-        summaries[0].BindingCount.ShouldBe(1);
-        summaries[0].AgentId.ShouldBe("summary-agent");
+        var relevant = await store.ListForCitizenAsync(CitizenId.Of(agentId));
+        relevant.Count.ShouldBe(1);
+        relevant[0].AgentId.ShouldBe(agentId);
+        relevant[0].ChannelBindings.Count.ShouldBe(1);
     }
 
     // ── Initiator + ListForCitizenAsync ────────────────────────────────────────

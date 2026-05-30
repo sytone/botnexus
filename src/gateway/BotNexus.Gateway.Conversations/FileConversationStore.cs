@@ -227,11 +227,13 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
     {
-        var all = await ListAsync(agentId, ct).ConfigureAwait(false);
+        var all = await ListAsync(null, ct).ConfigureAwait(false);
         return [.. all
             .Where(c => c.Status != ConversationStatus.Archived)
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
     }
 

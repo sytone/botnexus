@@ -124,9 +124,23 @@ public interface IConversationStore
         CancellationToken ct = default);
 
     /// <summary>
-    /// Returns lightweight summaries for all conversations, optionally filtered by agent.
+    /// Returns lightweight summaries for all <em>active</em> conversations across the world,
+    /// ordered most-recently-updated first.
     /// </summary>
-    /// <param name="agentId">If set, only returns summaries for this agent.</param>
+    /// <remarks>
+    /// <para>
+    /// This is the global admin/debug listing. For agent-relative listings (the
+    /// <c>GET /api/conversations?agentId=...</c> portal sidebar path), call
+    /// <see cref="ListForCitizenAsync"/> instead and project the result — that path returns
+    /// the union of owner-match and participant-match per W-1 (initiator + responder visibility),
+    /// whereas this method intentionally has no agent filter so an owner-only contract cannot
+    /// regress into the codebase by accident.
+    /// </para>
+    /// <para>
+    /// Only conversations with <see cref="ConversationStatus.Active"/> are returned. Archived
+    /// conversations are omitted.
+    /// </para>
+    /// </remarks>
     /// <param name="ct">Cancellation token.</param>
-    Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default);
+    Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default);
 }

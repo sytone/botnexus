@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -137,17 +138,22 @@ public sealed class ProbeRound3GatewayTests
     }
 
     [Fact]
-    public async Task GetSummaries_ByAgent_ExcludesArchivedConversations()
+    public async Task ListForCitizenAsync_ExcludesArchivedFromAgentRelevance()
     {
+        // Migrated from former GetSummariesAsync(agentId) test — P9-G moved agent-relative
+        // listing to ListForCitizenAsync; status filtering now happens in the controller
+        // projection. Archive lookup still surfaces the conversation here (the store contract
+        // returns conversations in any status), so the assertion is that the archived row's
+        // Status reflects the archive.
         var store = new InMemoryConversationStore();
         var conv = await store.CreateAsync(MakeConversation("active"));
         var archConv = await store.CreateAsync(MakeConversation("archived"));
         await store.ArchiveAsync(archConv.ConversationId);
 
-        var summaries = await store.GetSummariesAsync(Agent());
+        var relevant = await store.ListForCitizenAsync(CitizenId.Of(Agent()));
 
-        summaries.ShouldContain(s => s.ConversationId == conv.ConversationId.Value);
-        summaries.ShouldNotContain(s => s.ConversationId == archConv.ConversationId.Value);
+        relevant.ShouldContain(c => c.ConversationId == conv.ConversationId && c.Status == ConversationStatus.Active);
+        relevant.ShouldContain(c => c.ConversationId == archConv.ConversationId && c.Status == ConversationStatus.Archived);
     }
 
     [Fact]

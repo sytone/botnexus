@@ -11,7 +11,18 @@ public interface IGatewayRestClient
     /// <summary>GET /api/agents</summary>
     Task<IReadOnlyList<AgentSummary>> GetAgentsAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>GET /api/conversations?agentId={agentId}</summary>
+    /// <summary>
+    /// GET /api/conversations?agentId={agentId} — returns conversations <em>relevant to</em>
+    /// the agent: those it owns/initiated AND those where it appears as a participant
+    /// (W-1 responder-side visibility, shipped in P9-G / issue #661).
+    /// </summary>
+    /// <remarks>
+    /// The portal's <c>ClientStateStore.SeedConversations</c> filters returned summaries to
+    /// <c>Kind == "HumanAgent"</c> before populating the sidebar — AgentAgent and AgentSubAgent
+    /// kinds are intentionally hidden from the conversation drawer (they would clutter it and
+    /// can auto-hijack the active tab on updates). Use the REST API directly for admin / debug
+    /// views that need to see the full set.
+    /// </remarks>
     Task<IReadOnlyList<ConversationSummaryDto>> GetConversationsAsync(
         string agentId,
         CancellationToken cancellationToken = default);

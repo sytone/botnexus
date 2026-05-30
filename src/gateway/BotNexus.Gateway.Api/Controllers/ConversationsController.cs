@@ -58,9 +58,22 @@ public sealed class ConversationsController : ControllerBase
     }
 
     /// <summary>
-    /// Lists all conversations, optionally filtered by agent ID.
+    /// Lists conversations. With no <paramref name="agentId"/>, returns global active summaries
+    /// (admin/debug view). With <paramref name="agentId"/>, returns conversations <em>relevant
+    /// to</em> that agent: the union of (a) conversations the agent owns/initiated and (b)
+    /// conversations where the agent appears as a participant (W-1 responder-side visibility,
+    /// shipped in P9-G / issue #661). The union is materialised distinct-by-ConversationId so
+    /// owner-and-participant conversations appear exactly once.
     /// </summary>
-    /// <param name="agentId">If specified, returns only conversations for this agent.</param>
+    /// <remarks>
+    /// Only conversations with <see cref="ConversationStatus.Active"/> are returned in either
+    /// mode. The <paramref name="agentId"/> branch resolves the citizen through
+    /// <see cref="IConversationStore.ListForCitizenAsync"/> so the indexed participant lookup
+    /// (SQLite <c>idx_conversation_participants_citizen</c>) is used; the result is projected
+    /// to <see cref="ConversationSummary"/> in this controller. Results are ordered most
+    /// recently updated first, with a deterministic <see cref="ConversationId"/> tie-breaker.
+    /// </remarks>
+    /// <param name="agentId">Optional. Filter to conversations relevant to this agent.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Array of conversation summaries.</returns>
     [HttpGet]
@@ -69,10 +82,38 @@ public sealed class ConversationsController : ControllerBase
         [FromQuery] string? agentId,
         CancellationToken cancellationToken)
     {
-        AgentId? parsedAgentId = string.IsNullOrWhiteSpace(agentId) ? (AgentId?)null : AgentId.From(agentId);
-        var summaries = await _conversations.GetSummariesAsync(parsedAgentId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            var allSummaries = await _conversations.GetSummariesAsync(cancellationToken);
+            return Ok(allSummaries);
+        }
+
+        var citizen = CitizenId.Of(AgentId.From(agentId));
+        var relevant = await _conversations.ListForCitizenAsync(citizen, cancellationToken);
+
+        var summaries = relevant
+            .Where(c => c.Status == ConversationStatus.Active)
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
+            .Select(ToSummary)
+            .ToList();
+
         return Ok(summaries);
     }
+
+    private static ConversationSummary ToSummary(Conversation c) =>
+        new(
+            c.ConversationId.Value,
+            c.AgentId.Value,
+            c.Title,
+            c.IsDefault,
+            c.Status.ToString(),
+            c.ActiveSessionId?.Value,
+            c.ChannelBindings.Count,
+            c.CreatedAt,
+            c.UpdatedAt,
+            c.Purpose,
+            c.Kind.ToString());
 
     /// <summary>
     /// Gets a specific conversation by ID, including all channel bindings.

@@ -172,15 +172,13 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
     {
-        var source = agentId is null
-            ? _conversations.Values
-            : _conversations.Values.Where(c => c.AgentId == agentId.Value);
-
         // Archived conversations are excluded from the active list.
-        IReadOnlyList<ConversationSummary> summaries = [.. source
+        IReadOnlyList<ConversationSummary> summaries = [.. _conversations.Values
             .Where(c => c.Status != ConversationStatus.Archived)
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
         return Task.FromResult(summaries);
     }
