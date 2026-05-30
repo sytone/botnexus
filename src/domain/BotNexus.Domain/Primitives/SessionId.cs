@@ -76,11 +76,6 @@ public readonly partial struct SessionId
     /// </summary>
     public bool IsAgentConversation => Value.Contains("::agent-agent::", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// True when this id matches the <see cref="ForSoul(AgentId, DateOnly)"/> shape.
-    /// </summary>
-    public bool IsSoul => Value.Contains("::soul::", StringComparison.OrdinalIgnoreCase);
-
     private static Validation Validate(string value) =>
         string.IsNullOrWhiteSpace(value)
             ? Validation.Invalid("SessionId cannot be null, empty, or whitespace.")
