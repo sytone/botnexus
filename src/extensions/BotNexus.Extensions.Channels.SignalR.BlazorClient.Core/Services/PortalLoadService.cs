@@ -67,37 +67,6 @@ public sealed class PortalLoadService : IPortalLoadService
             foreach (var session in sessions)
                 _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
 
-            foreach (var group in sessions
-                         .Where(s => string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
-                         .GroupBy(s => s.AgentId))
-            {
-                var agent = _store.GetAgent(group.Key);
-                if (agent is null) continue;
-
-                foreach (var session in group)
-                {
-                    var conversationId = $"cron-session:{session.SessionId}";
-                    agent.Conversations[conversationId] = new ConversationState
-                    {
-                        ConversationId = conversationId,
-                        Title = $"Cron · {session.SessionId[..Math.Min(8, session.SessionId.Length)]}",
-                        Status = session.Status ?? "Active",
-                        ActiveSessionId = session.SessionId,
-                        CreatedAt = session.CreatedAt ?? DateTimeOffset.UtcNow,
-                        UpdatedAt = session.UpdatedAt ?? DateTimeOffset.UtcNow,
-                        IsVirtualSession = true,
-                        VirtualSessionKind = "cron"
-                    };
-                }
-            }
-
-            foreach (var agentSummary in agents)
-            {
-                var agent = _store.GetAgent(agentSummary.AgentId);
-                if (agent is not null)
-                    ReconcileVirtualCronConversations(agent, sessions);
-            }
-
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
             {
@@ -222,19 +191,9 @@ public sealed class PortalLoadService : IPortalLoadService
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            // Stale virtual cron projection — the backing session/conversation no longer exists.
-            // Remove the orphaned projection so it doesn't block other conversations.
-            if (IsVirtualCronConversation(conversation))
-            {
-                agent.Conversations.Remove(conversation.ConversationId);
-                Console.Error.WriteLine(
-                    $"[PortalLoadService] Removed stale virtual cron projection '{conversation.ConversationId}' (404 from gateway).");
-            }
-            else
-            {
-                Console.Error.WriteLine(
-                    $"[PortalLoadService] History 404 for conversation '{conversation.ConversationId}': {ex.Message}");
-            }
+            // Conversation no longer exists on the backend (e.g. archived/deleted concurrently).
+            Console.Error.WriteLine(
+                $"[PortalLoadService] History 404 for conversation '{conversation.ConversationId}': {ex.Message}");
         }
     }
 
@@ -247,28 +206,4 @@ public sealed class PortalLoadService : IPortalLoadService
         "system" => "System",
         _ => role
     };
-
-    private static bool IsVirtualCronConversation(ConversationState conversation)
-        => (conversation.IsVirtualSession &&
-            string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase))
-           || conversation.ConversationId.StartsWith("cron-session:", StringComparison.Ordinal);
-
-    private static void ReconcileVirtualCronConversations(AgentState agent, IReadOnlyList<SessionSummary> sessions)
-    {
-        var activeCronConversations = sessions
-            .Where(s => string.Equals(s.AgentId, agent.AgentId, StringComparison.Ordinal) &&
-                        string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
-            .Select(s => $"cron-session:{s.SessionId}")
-            .ToHashSet(StringComparer.Ordinal);
-
-        foreach (var staleConversationId in agent.Conversations
-                     .Where(kv => kv.Value.IsVirtualSession &&
-                                  string.Equals(kv.Value.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
-                                  !activeCronConversations.Contains(kv.Key))
-                     .Select(kv => kv.Key)
-                     .ToList())
-        {
-            agent.Conversations.Remove(staleConversationId);
-        }
-    }
 }

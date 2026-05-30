@@ -299,8 +299,6 @@ public sealed class ConversationsController : ControllerBase
             return BadRequest(new { error = "limit must be > 0." });
 
         var boundedLimit = Math.Min(limit, 200);
-        if (TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
-            return await GetVirtualCronHistoryAsync(conversationId, virtualSessionId.Value, boundedLimit, offset, cancellationToken);
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
@@ -379,30 +377,9 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> Archive(string conversationId, CancellationToken cancellationToken)
     {
-        SessionId? virtualCronSessionId = null;
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null && TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
-        {
-            virtualCronSessionId = virtualSessionId.Value;
-            var virtualSession = await _sessions.GetAsync(virtualSessionId.Value, cancellationToken);
-            if (virtualSession is null)
-                return NoContent();
-
-            if (virtualSession.ConversationId.IsInitialized())
-                conversation = await _conversations.GetAsync(virtualSession.ConversationId, cancellationToken);
-
-            if (conversation is null)
-            {
-                await SealSessionAsync(virtualSessionId.Value, cancellationToken);
-                return NoContent();
-            }
-        }
-
         if (conversation is null)
             return NotFound();
-
-        if (virtualCronSessionId.HasValue)
-            await SealSessionAsync(virtualCronSessionId.Value, cancellationToken);
 
         // Canonical reset of the active session (stop supervisor + flush memory bridge +
         // cancel pending ask_user prompts + seal via SaveAsync + clear ActiveSessionId).
@@ -415,8 +392,7 @@ public sealed class ConversationsController : ControllerBase
         {
             // Defensive fallback used only when DI omitted the service (legacy test harnesses).
             // Misses the memory-flush bridge, which is the F-2c bug — production DI must wire it.
-            if (conversation.ActiveSessionId is { } activeSessionId &&
-                (!virtualCronSessionId.HasValue || virtualCronSessionId.Value != activeSessionId))
+            if (conversation.ActiveSessionId is { } activeSessionId)
             {
                 await SealSessionAsync(activeSessionId, cancellationToken);
             }
@@ -530,47 +506,6 @@ public sealed class ConversationsController : ControllerBase
         await _sessions.SaveAsync(session, cancellationToken);
     }
 
-    private async Task<ActionResult> GetVirtualCronHistoryAsync(
-        string virtualConversationId,
-        SessionId virtualSessionId,
-        int limit,
-        int offset,
-        CancellationToken cancellationToken)
-    {
-        var session = await _sessions.GetAsync(virtualSessionId, cancellationToken);
-        if (session is null)
-        {
-            return Ok(new ConversationHistoryResponse(
-                ConversationId: virtualConversationId,
-                TotalCount: 0,
-                Offset: offset,
-                Limit: limit,
-                Entries: []));
-        }
-
-        var allEntries = session.GetHistorySnapshot()
-            .Select(entry => new ConversationHistoryEntry
-            {
-                Kind = "message",
-                SessionId = session.SessionId.Value,
-                Role = entry.Role.ToString().ToLowerInvariant(),
-                Content = entry.Content,
-                Timestamp = entry.Timestamp,
-                ToolName = entry.ToolName,
-                ToolCallId = entry.ToolCallId,
-                ToolArgs = entry.ToolArgs,
-                ToolIsError = entry.ToolIsError
-            })
-            .ToList();
-
-        return Ok(new ConversationHistoryResponse(
-            ConversationId: virtualConversationId,
-            TotalCount: allEntries.Count,
-            Offset: offset,
-            Limit: limit,
-            Entries: PageFromNewest(allEntries, limit, offset)));
-    }
-
     private static List<ConversationHistoryEntry> PageFromNewest(
         IReadOnlyList<ConversationHistoryEntry> allEntries,
         int limit,
@@ -616,20 +551,6 @@ public sealed class ConversationsController : ControllerBase
         conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
         await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
         return NoContent();
-    }
-
-    private static bool TryParseVirtualCronConversationId(string conversationId, [NotNullWhen(true)] out SessionId? sessionId)
-    {
-        const string prefix = "cron-session:";
-        if (conversationId.StartsWith(prefix, StringComparison.Ordinal) &&
-            conversationId.Length > prefix.Length)
-        {
-            sessionId = SessionId.From(conversationId[prefix.Length..]);
-            return true;
-        }
-
-        sessionId = null;
-        return false;
     }
 
 }
