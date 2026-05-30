@@ -149,7 +149,8 @@ public sealed class InMemorySessionStoreTests
     [Fact]
     public async Task GetExistenceAsync_ReturnsOwnedAndParticipantSessions_WithFiltersApplied()
     {
-        var store = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+        var store = new InMemorySessionStore(redactor: null, conversationStore: conversations);
         var now = DateTimeOffset.UtcNow;
         await store.SaveAsync(new GatewaySession
         {
@@ -158,17 +159,29 @@ public sealed class InMemorySessionStoreTests
             SessionType = SessionType.UserAgent,
             CreatedAt = now.AddDays(-2)
         });
+
+        // P9-F: Participants now live on Conversation. Create the shared conversation,
+        // add agent-a as a participant, then link the AgentSubAgent session to it.
+        var sharedConvoId = ConversationId.From("conv-shared");
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = sharedConvoId,
+            AgentId = AgentId.From("agent-b"),
+            CreatedAt = now.AddDays(-1),
+            UpdatedAt = now.AddDays(-1)
+        });
+        await conversations.AddParticipantsAsync(
+            sharedConvoId,
+            [new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }]);
+
         await store.SaveAsync(new GatewaySession
         {
             SessionId = SessionId.From("participant"),
             AgentId = AgentId.From("agent-b"),
+            ConversationId = sharedConvoId,
             // P9-E (#645): SessionType.Cron deleted; use AgentSubAgent so the TypeFilter
             // still discriminates this row from the "owned" UserAgent row above.
             SessionType = SessionType.AgentSubAgent,
-            Participants =
-            [
-                new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }
-            ],
             CreatedAt = now.AddDays(-1)
         });
 

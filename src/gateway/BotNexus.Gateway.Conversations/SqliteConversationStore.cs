@@ -165,18 +165,25 @@ public sealed class SqliteConversationStore : IConversationStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        // Union semantics: rows whose initiator matches, plus (only for Agent species) rows
-        // whose owning agent matches. The $isAgent flag short-circuits the owner-match for users.
+        // Union semantics (P9-F, issue #657): rows whose initiator matches, plus (only for
+        // Agent species) rows whose owning agent matches, plus rows where the citizen is in
+        // the conversation_participants set. The DISTINCT collapses duplicates when a citizen
+        // matches under more than one criterion (e.g. an agent that owns + participates).
         command.CommandText = """
-            SELECT id FROM conversations
-            WHERE initiator = $initiator
-               OR ($isAgent = 1 AND agent_id = $agentMatch)
-            ORDER BY updated_at DESC
+            SELECT DISTINCT c.id
+            FROM conversations c
+            LEFT JOIN conversation_participants p ON p.conversation_id = c.id
+            WHERE c.initiator = $initiator
+               OR ($isAgent = 1 AND c.agent_id = $agentMatch)
+               OR (p.citizen_kind = $citizenKind AND p.citizen_id = $citizenIdValue)
+            ORDER BY c.updated_at DESC
             """;
         command.Parameters.AddWithValue("$initiator", citizen.ToString());
         command.Parameters.AddWithValue("$isAgent", citizen.Kind == CitizenKind.Agent ? 1 : 0);
         command.Parameters.AddWithValue("$agentMatch",
             citizen.Kind == CitizenKind.Agent ? (object)citizen.AsAgent!.Value.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$citizenKind", citizen.Kind.ToString());
+        command.Parameters.AddWithValue("$citizenIdValue", citizen.Value);
 
         var conversations = new List<Conversation>();
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -199,6 +206,66 @@ public sealed class SqliteConversationStore : IConversationStore
         }
 
         return conversations;
+    }
+
+    /// <inheritdoc />
+    public async Task AddParticipantsAsync(
+        ConversationId conversationId,
+        IEnumerable<SessionParticipant> participants,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(participants);
+
+        // Snapshot once so a streaming enumerable isn't reread under the lock.
+        var snapshot = participants as IReadOnlyCollection<SessionParticipant> ?? participants.ToArray();
+        if (snapshot.Count == 0)
+            return;
+
+        using var activity = ActivitySource.StartActivity("conversation.add_participants", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        activity?.SetTag("botnexus.participants.count", snapshot.Count);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = GetConversationLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            foreach (var participant in snapshot)
+            {
+                if (!participant.CitizenId.IsValid)
+                    continue;
+
+                await using var insertCommand = connection.CreateCommand();
+                insertCommand.Transaction = transaction;
+                // INSERT OR IGNORE preserves the existing role label when a citizen is already
+                // registered as a participant (first-add wins). New citizens are inserted with
+                // the supplied role.
+                insertCommand.CommandText = """
+                    INSERT OR IGNORE INTO conversation_participants
+                        (conversation_id, citizen_kind, citizen_id, role)
+                    VALUES ($conversationId, $citizenKind, $citizenId, $role)
+                    """;
+                insertCommand.Parameters.AddWithValue("$conversationId", conversationId.Value);
+                insertCommand.Parameters.AddWithValue("$citizenKind", participant.CitizenId.Kind.ToString());
+                insertCommand.Parameters.AddWithValue("$citizenId", participant.CitizenId.Value);
+                insertCommand.Parameters.AddWithValue("$role", (object?)participant.Role ?? DBNull.Value);
+                await insertCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+            // Invalidate cache entry — the next read will repopulate Participants via the
+            // LoadParticipantsAsync join. Cheaper than mutating the cached list in place.
+            _cache.TryRemove(conversationId.Value, out _);
+        }
+        finally
+        {
+            conversationLock.Release();
+        }
     }
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
@@ -466,9 +533,19 @@ public sealed class SqliteConversationStore : IConversationStore
                     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS conversation_participants (
+                    conversation_id TEXT NOT NULL,
+                    citizen_kind TEXT NOT NULL,
+                    citizen_id TEXT NOT NULL,
+                    role TEXT,
+                    PRIMARY KEY (conversation_id, citizen_kind, citizen_id),
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_conversations_agent_id ON conversations(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_bindings_conversation_id ON conversation_bindings(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address);
+                CREATE INDEX IF NOT EXISTS idx_conversation_participants_citizen ON conversation_participants(citizen_kind, citizen_id);
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -854,7 +931,56 @@ public sealed class SqliteConversationStore : IConversationStore
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
+        conversation.Participants = await LoadParticipantsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
         return conversation;
+    }
+
+    private static async Task<List<SessionParticipant>> LoadParticipantsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT citizen_kind, citizen_id, role
+            FROM conversation_participants
+            WHERE conversation_id = $conversationId
+            ORDER BY citizen_kind ASC, citizen_id ASC
+            """;
+        command.Parameters.AddWithValue("$conversationId", conversationId.Value);
+
+        var participants = new List<SessionParticipant>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var kindRaw = reader.GetString(0);
+            var idValue = reader.GetString(1);
+            var role = reader.IsDBNull(2) ? null : reader.GetString(2);
+            if (!TryComposeCitizen(kindRaw, idValue, out var citizen))
+                continue;
+            participants.Add(new SessionParticipant
+            {
+                CitizenId = citizen,
+                Role = role
+            });
+        }
+
+        return participants;
+    }
+
+    private static bool TryComposeCitizen(string kindRaw, string idValue, out CitizenId citizen)
+    {
+        citizen = default;
+        if (!Enum.TryParse<CitizenKind>(kindRaw, ignoreCase: true, out var kind))
+            return false;
+        switch (kind)
+        {
+            case CitizenKind.User:
+                citizen = CitizenId.Of(UserId.From(idValue));
+                return true;
+            case CitizenKind.Agent:
+                citizen = CitizenId.Of(AgentId.From(idValue));
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static async Task<List<ChannelBinding>> LoadBindingsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
@@ -1030,6 +1156,14 @@ public sealed class SqliteConversationStore : IConversationStore
                 BoundAt = binding.BoundAt,
                 LastInboundAt = binding.LastInboundAt,
                 LastOutboundAt = binding.LastOutboundAt
-            }).ToList()
+            }).ToList(),
+            // Participants are conversation state but are mutated exclusively through
+            // AddParticipantsAsync — CloneConversation keeps the snapshot consistent so
+            // callers reading a clone see the loaded list, but SaveAsync intentionally does
+            // not write Participants back to disk (the conversation_participants table is the
+            // authoritative store for them).
+            Participants = conversation.Participants
+                .Select(p => new SessionParticipant { CitizenId = p.CitizenId, Role = p.Role })
+                .ToList()
         };
 }

@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -8,6 +9,20 @@ namespace BotNexus.Gateway.Sessions;
 
 public abstract class SessionStoreBase : ISessionStore
 {
+    private readonly IConversationStore? _conversationStoreForExistence;
+
+    /// <summary>
+    /// Initialises the base. Concrete subclasses pass through the optional
+    /// <see cref="IConversationStore"/> so <see cref="GetExistenceAsync"/> can resolve a
+    /// citizen's participation via the conversation-level Participants set instead of
+    /// scanning every session's legacy <c>Participants</c> field. When <c>null</c>, the
+    /// existence query falls back to an AgentId-owner match only.
+    /// </summary>
+    protected SessionStoreBase(IConversationStore? conversationStoreForExistence = null)
+    {
+        _conversationStoreForExistence = conversationStoreForExistence;
+    }
+
     public abstract Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     public abstract Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken cancellationToken = default);
@@ -78,9 +93,32 @@ public abstract class SessionStoreBase : ISessionStore
     {
         query ??= new ExistenceQuery();
 
+        // Conversation-first lookup (P9-F, #657): a citizen "exists" in a session if they
+        // own it (Session.AgentId match) OR if they participate in its Conversation
+        // (Conversation.Participants set). Pre-P9-F this used a per-session
+        // Session.Participants scan; the conversation-level set is the durable source of
+        // truth and is indexed in SqliteConversationStore. When no conversation store is
+        // wired (older test fixtures), participation falls back to owner-only.
+        HashSet<ConversationId>? participantConversationIds = null;
+        if (_conversationStoreForExistence is not null)
+        {
+            var citizen = CitizenId.Of(agentId);
+            var conversations = await _conversationStoreForExistence
+                .ListForCitizenAsync(citizen, cancellationToken)
+                .ConfigureAwait(false);
+            participantConversationIds = new HashSet<ConversationId>(
+                conversations
+                    .Select(c => c.ConversationId)
+                    .Where(id => id.IsInitialized()));
+        }
+
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
         IEnumerable<GatewaySession> result = sessions
-            .Where(session => session.AgentId == agentId || IsParticipant(session, agentId))
+            .Where(session =>
+                session.AgentId == agentId
+                || (participantConversationIds is not null
+                    && session.ConversationId.IsInitialized()
+                    && participantConversationIds.Contains(session.ConversationId)))
             .Where(session => !query.From.HasValue || session.CreatedAt >= query.From.Value)
             .Where(session => !query.To.HasValue || session.CreatedAt <= query.To.Value)
             .Where(session => query.TypeFilter is null || session.SessionType == query.TypeFilter)
@@ -121,10 +159,4 @@ public abstract class SessionStoreBase : ISessionStore
 
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);
-
-    private static bool IsParticipant(GatewaySession session, AgentId agentId)
-    {
-        var citizenId = CitizenId.Of(agentId);
-        return session.Participants.Any(participant => participant.CitizenId == citizenId);
-    }
 }

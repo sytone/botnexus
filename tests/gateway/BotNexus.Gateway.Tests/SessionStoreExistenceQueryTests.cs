@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Conversations;
@@ -25,7 +26,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(AgentId.From("agent-a"), new ExistenceQuery());
 
@@ -41,7 +42,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(AgentId.From("agent-a"), new ExistenceQuery());
 
@@ -57,7 +58,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(AgentId.From("agent-a"), new ExistenceQuery());
         var ids = sessions.Select(s => s.SessionId.Value).ToList();
@@ -75,7 +76,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        var now = await SeedExistenceDataAsync(harness.Store);
+        var now = await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(
             AgentId.From("agent-a"),
@@ -95,7 +96,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(
             AgentId.From("agent-a"),
@@ -117,7 +118,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(
             AgentId.From("agent-a"),
@@ -136,7 +137,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(AgentId.From("agent-unknown"), new ExistenceQuery());
 
@@ -150,7 +151,7 @@ public sealed class SessionStoreExistenceQueryTests
         Func<IStoreHarness> createHarness)
     {
         using var harness = createHarness();
-        await SeedExistenceDataAsync(harness.Store);
+        await SeedExistenceDataAsync(harness);
 
         var sessions = await harness.Store.GetExistenceAsync(AgentId.From("agent-a"), null!);
 
@@ -160,9 +161,38 @@ public sealed class SessionStoreExistenceQueryTests
         allIds.ShouldContain("both");
     }
 
-    private static async Task<DateTimeOffset> SeedExistenceDataAsync(ISessionStore store)
+    private static async Task<DateTimeOffset> SeedExistenceDataAsync(IStoreHarness harness)
     {
+        var store = harness.Store;
+        var conversations = harness.Conversations;
         var now = DateTimeOffset.UtcNow;
+
+        // P9-F: Participants live on Conversation now. Seed two participant conversations
+        // for agent-a, one owned by agent-b ("participant" session) and one owned by
+        // agent-a itself ("both" session).
+        var convParticipant = ConversationId.From("conv-participant");
+        var convBoth = ConversationId.From("conv-both");
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convParticipant,
+            AgentId = AgentId.From("agent-b"),
+            CreatedAt = now.AddDays(-2),
+            UpdatedAt = now.AddDays(-2)
+        });
+        await conversations.AddParticipantsAsync(
+            convParticipant,
+            [new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }]);
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convBoth,
+            AgentId = AgentId.From("agent-a"),
+            CreatedAt = now.AddDays(-1),
+            UpdatedAt = now.AddDays(-1)
+        });
+        await conversations.AddParticipantsAsync(
+            convBoth,
+            [new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }]);
+
         await store.SaveAsync(new GatewaySession
         {
             SessionId = SessionId.From("owned"),
@@ -175,17 +205,11 @@ public sealed class SessionStoreExistenceQueryTests
         {
             SessionId = SessionId.From("participant"),
             AgentId = AgentId.From("agent-b"),
+            ConversationId = convParticipant,
             // P9-E (#645): SessionType.Cron deleted. Use AgentAgent here — it's distinct
             // from "owned"/UserAgent and "both"/AgentSubAgent so the TypeFilter test
             // (which selects participant via SessionType) still isolates this row.
             SessionType = SessionType.AgentAgent,
-            Participants =
-            [
-                new SessionParticipant
-                {
-                    CitizenId = CitizenId.Of(AgentId.From("agent-a"))
-                }
-            ],
             CreatedAt = now.AddDays(-2),
             UpdatedAt = now.AddDays(-2)
         });
@@ -193,14 +217,8 @@ public sealed class SessionStoreExistenceQueryTests
         {
             SessionId = SessionId.From("both"),
             AgentId = AgentId.From("agent-a"),
+            ConversationId = convBoth,
             SessionType = SessionType.AgentSubAgent,
-            Participants =
-            [
-                new SessionParticipant
-                {
-                    CitizenId = CitizenId.Of(AgentId.From("agent-a"))
-                }
-            ],
             CreatedAt = now.AddDays(-1),
             UpdatedAt = now.AddDays(-1)
         });
@@ -218,11 +236,19 @@ public sealed class SessionStoreExistenceQueryTests
     public interface IStoreHarness : IDisposable
     {
         ISessionStore Store { get; }
+        IConversationStore Conversations { get; }
     }
 
     private sealed class InMemoryHarness : IStoreHarness
     {
-        public ISessionStore Store { get; } = new InMemorySessionStore();
+        public IConversationStore Conversations { get; } = new InMemoryConversationStore();
+        public ISessionStore Store { get; }
+
+        public InMemoryHarness()
+        {
+            Store = new InMemorySessionStore(redactor: null, conversationStore: Conversations);
+        }
+
         public void Dispose() { }
     }
 
@@ -234,9 +260,11 @@ public sealed class SessionStoreExistenceQueryTests
         public FileHarness()
         {
             _fileSystem.Directory.CreateDirectory(_storePath);
-            Store = new FileSessionStore(_storePath, NullLogger<FileSessionStore>.Instance, _fileSystem);
+            Conversations = new InMemoryConversationStore();
+            Store = new FileSessionStore(_storePath, NullLogger<FileSessionStore>.Instance, _fileSystem, Conversations);
         }
 
+        public IConversationStore Conversations { get; }
         public ISessionStore Store { get; }
 
         public void Dispose()
@@ -249,16 +277,17 @@ public sealed class SessionStoreExistenceQueryTests
     private sealed class SqliteHarness : IStoreHarness
     {
         private readonly string _directoryPath;
-        private readonly InMemoryConversationStore _conversations = new();
 
         public SqliteHarness()
         {
             _directoryPath = Path.Combine(AppContext.BaseDirectory, "SessionStoreExistenceQueryTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_directoryPath);
             var dbPath = Path.Combine(_directoryPath, "sessions.db");
-            Store = new SqliteSessionStore($"Data Source={dbPath};Pooling=False", NullLogger<SqliteSessionStore>.Instance, _conversations);
+            Conversations = new InMemoryConversationStore();
+            Store = new SqliteSessionStore($"Data Source={dbPath};Pooling=False", NullLogger<SqliteSessionStore>.Instance, Conversations);
         }
 
+        public IConversationStore Conversations { get; }
         public ISessionStore Store { get; }
 
         public void Dispose()

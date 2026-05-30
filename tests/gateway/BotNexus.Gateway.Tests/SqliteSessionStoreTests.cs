@@ -470,17 +470,29 @@ public sealed class SqliteSessionStoreTests
             SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
             CreatedAt = now.AddDays(-2)
         });
+
+        // P9-F: Participants now live on Conversation. Create the shared conversation,
+        // add agent-a as a participant, then link the AgentSubAgent session to it.
+        var sharedConvoId = ConversationId.From("conv-shared");
+        await fixture.Conversations.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = sharedConvoId,
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-b"),
+            CreatedAt = now.AddDays(-1),
+            UpdatedAt = now.AddDays(-1)
+        });
+        await fixture.Conversations.AddParticipantsAsync(
+            sharedConvoId,
+            [new BotNexus.Domain.Primitives.SessionParticipant { CitizenId = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("agent-a")) }]);
+
         await store.SaveAsync(new GatewaySession
         {
             SessionId = BotNexus.Domain.Primitives.SessionId.From("participant"),
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-b"),
+            ConversationId = sharedConvoId,
             // P9-E (#645): SessionType.Cron deleted; use AgentSubAgent so the TypeFilter
             // discriminates this row from the "owned" UserAgent row above.
             SessionType = BotNexus.Domain.Primitives.SessionType.AgentSubAgent,
-            Participants =
-            [
-                new BotNexus.Domain.Primitives.SessionParticipant { CitizenId = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("agent-a")) }
-            ],
             CreatedAt = now.AddDays(-1)
         });
 

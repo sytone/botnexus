@@ -26,7 +26,8 @@ public sealed class AgentExchangeServiceTests
         var initiator = AgentId.From("test-agent");
         var target = AgentId.From("agent-c");
         var registry = CreateRegistry(initiator, target, ["agent-c"]);
-        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore(redactor: null, conversationStore: conversationStore);
 
         var handle = new Mock<IAgentHandle>();
         handle.Setup(h => h.PromptAsync("Review this design", It.IsAny<CancellationToken>()))
@@ -39,7 +40,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
-            new InMemoryConversationStore(),
+            conversationStore,
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -60,8 +61,13 @@ public sealed class AgentExchangeServiceTests
         session.ShouldNotBeNull();
         session!.SessionType.ShouldBe(SessionType.AgentAgent);
         session.Status.ShouldBe(GatewaySessionStatus.Sealed);
-        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
+
+        // P9-F (#657): Participants now live on Conversation, not Session — assert via
+        // the conversation store using the session's ConversationId.
+        var conversation = await conversationStore.GetAsync(session.ConversationId);
+        conversation.ShouldNotBeNull();
+        conversation!.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
+        conversation.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
 
         var initiatorExistence = await sessionStore.GetExistenceAsync(initiator, new ExistenceQuery());
         var targetExistence = await sessionStore.GetExistenceAsync(target, new ExistenceQuery());
@@ -152,7 +158,8 @@ public sealed class AgentExchangeServiceTests
         var target = AgentId.From("world-b:agent-c");
         var registry = CreateRegistry(initiator, AgentId.From("agent-c"), ["world-b:agent-c"]);
         registry.Setup(r => r.Contains(target)).Returns(false);
-        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore(redactor: null, conversationStore: conversationStore);
 
         HttpRequestMessage? capturedRequest = null;
         var handler = new StubHttpMessageHandler((request, _) =>
@@ -177,7 +184,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             sessionStore,
-            new InMemoryConversationStore(),
+            conversationStore,
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance,
             Options.Create(new PlatformConfig
@@ -223,8 +230,12 @@ public sealed class AgentExchangeServiceTests
         var session = await sessionStore.GetAsync(result.SessionId);
         session.ShouldNotBeNull();
         session!.ChannelType.ShouldBe(ChannelKey.From("cross-world"));
-        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
+
+        // P9-F (#657): cross-world participants live on the conversation now.
+        var conversation = await conversationStore.GetAsync(session.ConversationId);
+        conversation.ShouldNotBeNull();
+        conversation!.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
+        conversation.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
         session.Metadata["sourceWorldId"].ShouldBe("world-a");
         session.Metadata["targetWorldId"].ShouldBe("world-b");
 
