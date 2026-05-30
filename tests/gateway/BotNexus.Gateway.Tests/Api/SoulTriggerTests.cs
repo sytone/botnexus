@@ -54,7 +54,12 @@ public sealed class SoulTriggerTests
 
         result.ShouldBe(expectedSessionId);
         savedSession.ShouldNotBeNull();
-        savedSession!.SessionType.ShouldBe(SessionType.Soul);
+        // P9-E (#645): soul sessions now carry SessionType.AgentSelf; the Soul proxy
+        // origin is stamped on the user entry's Trigger field instead.
+        savedSession!.SessionType.ShouldBe(SessionType.AgentSelf);
+        savedSession.GetHistorySnapshot()
+            .Any(e => e.Role == MessageRole.User && e.Trigger == TriggerType.Soul)
+            .ShouldBeTrue();
         savedSession.CallerId.ShouldBe("soul:agent-a");
         savedSession.Metadata["soulDate"].ShouldBe("2026-01-10");
     }
@@ -73,7 +78,9 @@ public sealed class SoulTriggerTests
         {
             SessionId = previousSessionId,
             AgentId = agentId,
-            SessionType = SessionType.Soul,
+            // P9-E (#645): soul sessions now carry SessionType.AgentSelf and are
+            // discovered via Metadata["soulDate"] rather than the deleted SessionType.Soul.
+            SessionType = SessionType.AgentSelf,
             Status = GatewaySessionStatus.Active,
             Metadata = new Dictionary<string, object?> { ["soulDate"] = "2026-01-09" }
         };

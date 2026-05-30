@@ -38,7 +38,23 @@ public sealed class PreCompactionMemoryFlusherTests
     [Fact]
     public void ShouldFlush_WhenNonInteractiveSession_ReturnsFalse()
     {
-        var session = BuildSession(SessionType.Heartbeat);
+        // P9-E (#645): SessionType.Heartbeat is collapsed onto AgentSelf; the
+        // non-interactive classification is unchanged.
+        var session = BuildSession(SessionType.AgentSelf);
+        var flusher = CreateFlusher();
+        var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
+
+        flusher.ShouldFlush(session, options).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldFlush_WhenUserAgentSessionDeliveredViaCronChannel_ReturnsFalse()
+    {
+        // P9-E (#645): cron sessions are now SessionType.UserAgent + ChannelType="cron".
+        // Session.IsInteractive's channel exclusion keeps them out of the pre-compaction
+        // memory-flush path.
+        var session = BuildSession(SessionType.UserAgent);
+        session.ChannelType = ChannelKey.From("cron");
         var flusher = CreateFlusher();
         var options = new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } };
 

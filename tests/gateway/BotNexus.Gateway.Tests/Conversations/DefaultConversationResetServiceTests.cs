@@ -225,7 +225,7 @@ public sealed class DefaultConversationResetServiceTests
     {
         var fixture = new Fixture();
         var conversation = new Conversation { ConversationId = TestConversation, AgentId = TestAgent, ActiveSessionId = TestSession };
-        var session = BuildSession(SessionType.Heartbeat); // ShouldFlush returns false.
+        var session = BuildSession(SessionType.AgentSelf); // P9-E (#645): SessionType.Heartbeat collapsed; AgentSelf is still non-interactive. ShouldFlush returns false.
         fixture.SetupConversation(conversation);
         fixture.SetupSession(session);
         // Default Flusher.ShouldFlush mock returns based on real semantics; for Heartbeat the

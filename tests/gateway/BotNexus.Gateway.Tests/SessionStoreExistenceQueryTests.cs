@@ -101,7 +101,10 @@ public sealed class SessionStoreExistenceQueryTests
             AgentId.From("agent-a"),
             new ExistenceQuery
             {
-                TypeFilter = SessionType.Cron
+                // P9-E (#645): SessionType.Cron deleted; the seeded "participant" row
+                // (line ~180) uses AgentAgent so the TypeFilter still isolates it
+                // (distinct from "owned"/UserAgent and "both"/AgentSubAgent).
+                TypeFilter = SessionType.AgentAgent
             });
 
         sessions.Select(s => s.SessionId.Value).ShouldHaveSingleItem().ShouldBe("participant");
@@ -172,7 +175,10 @@ public sealed class SessionStoreExistenceQueryTests
         {
             SessionId = SessionId.From("participant"),
             AgentId = AgentId.From("agent-b"),
-            SessionType = SessionType.Cron,
+            // P9-E (#645): SessionType.Cron deleted. Use AgentAgent here — it's distinct
+            // from "owned"/UserAgent and "both"/AgentSubAgent so the TypeFilter test
+            // (which selects participant via SessionType) still isolates this row.
+            SessionType = SessionType.AgentAgent,
             Participants =
             [
                 new SessionParticipant

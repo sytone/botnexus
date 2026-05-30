@@ -49,7 +49,10 @@ public sealed class HeartbeatTriggerTests
         var (trigger, mocks) = BuildTriggerWithMocks(soul: true);
 
         var existingSoulSession = new GatewaySession { SessionId = soulSessionId, AgentId = agentId, Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active, UpdatedAt = DateTimeOffset.UtcNow };
-        existingSoulSession.SessionType = SessionType.Soul;
+        // P9-E (#645): heartbeat discovers today's soul session via Metadata["soulDate"]
+        // rather than the deleted SessionType.Soul discriminator. The shape is AgentSelf.
+        existingSoulSession.SessionType = SessionType.AgentSelf;
+        existingSoulSession.Metadata["soulDate"] = "2026-05-18";
 
         mocks.Sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([existingSoulSession]);
@@ -162,7 +165,9 @@ public sealed class HeartbeatTriggerTests
             AgentId = agentId,
             Status = GatewaySessionStatus.Active,
             UpdatedAt = preHeartbeatTime,
-            SessionType = SessionType.Soul,
+            // P9-E (#645): soul sessions carry SessionType.AgentSelf + Metadata["soulDate"].
+            SessionType = SessionType.AgentSelf,
+            Metadata = new Dictionary<string, object?> { ["soulDate"] = "2026-05-31" }
         };
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a1" });
@@ -202,7 +207,8 @@ public sealed class HeartbeatTriggerTests
             AgentId = agentId,
             Status = GatewaySessionStatus.Active,
             UpdatedAt = preHeartbeatTime,
-            SessionType = SessionType.Soul,
+            SessionType = SessionType.AgentSelf,
+            Metadata = new Dictionary<string, object?> { ["soulDate"] = "2026-05-31" }
         };
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
         soulSession.UpdatedAt = preHeartbeatTime;
@@ -256,7 +262,8 @@ public sealed class HeartbeatTriggerTests
             AgentId = agentId,
             Status = GatewaySessionStatus.Active,
             UpdatedAt = DateTimeOffset.UtcNow,
-            SessionType = SessionType.Soul,
+            SessionType = SessionType.AgentSelf,
+            Metadata = new Dictionary<string, object?> { ["soulDate"] = "2026-05-31" }
         };
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u1" });
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a1" });

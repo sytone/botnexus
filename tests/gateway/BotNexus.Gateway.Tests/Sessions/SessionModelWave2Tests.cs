@@ -98,10 +98,15 @@ public sealed class SessionModelWave2Tests
     }
 
     [Fact]
-    public void SessionType_Cron_IsNonInteractive()
+    public void SessionType_CronChannel_IsNonInteractive()
     {
+        // P9-E (#645): cron sessions are now SessionType.UserAgent (proxy for the
+        // citizen who scheduled the job, per directive W-2). The non-interactive
+        // signal moved to the channel — Session.IsInteractive excludes the "cron"
+        // ChannelType so memory flushers / warmup still skip these sessions.
         var session = CreateSession();
-        session.SessionType = SessionType.Cron;
+        session.SessionType = SessionType.UserAgent;
+        session.ChannelType = ChannelKey.From("cron");
 
         session.IsInteractive.ShouldBeFalse();
     }
@@ -118,14 +123,16 @@ public sealed class SessionModelWave2Tests
     [Fact]
     public void SessionType_SetAtCreation_PersistsOnModel()
     {
+        // P9-E (#645): exercise AgentSubAgent here since SessionType.Cron was deleted.
+        // The intent is to prove the model round-trips a non-default SessionType.
         var session = new GatewaySession
         {
             SessionId = BotNexus.Domain.Primitives.SessionId.From("s-typed"),
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
-            SessionType = SessionType.Cron
+            SessionType = SessionType.AgentSubAgent
         };
 
-        session.SessionType.ShouldBe(SessionType.Cron);
+        session.SessionType.ShouldBe(SessionType.AgentSubAgent);
     }
 
     [Fact]

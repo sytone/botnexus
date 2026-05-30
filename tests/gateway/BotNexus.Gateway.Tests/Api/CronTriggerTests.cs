@@ -74,7 +74,10 @@ public sealed class CronTriggerTests
         // Cron metadata on the session.
         sessionStore.Verify(s => s.SaveAsync(
             It.Is<GatewaySession>(gs =>
-                gs.SessionType == SessionType.Cron &&
+                // P9-E (#645): cron sessions are now SessionType.UserAgent (proxy for the
+                // user who scheduled the job); the "cron" ChannelType + per-turn Trigger
+                // stamp carry the proxy-origin signal that used to live on SessionType.
+                gs.SessionType == SessionType.UserAgent &&
                 gs.ChannelType == ChannelKey.From("cron") &&
                 gs.Metadata.ContainsKey("cronJobId") &&
                 gs.Metadata["cronJobId"] != null &&

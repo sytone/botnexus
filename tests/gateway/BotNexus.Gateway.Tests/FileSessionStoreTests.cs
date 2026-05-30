@@ -495,7 +495,9 @@ public sealed class FileSessionStoreTests
         {
             SessionId = BotNexus.Domain.Primitives.SessionId.From("participant"),
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-b"),
-            SessionType = BotNexus.Domain.Primitives.SessionType.Cron,
+            // P9-E (#645): SessionType.Cron is deleted; the test uses AgentSubAgent so
+            // the TypeFilter still discriminates this row from the "owned" UserAgent row.
+            SessionType = BotNexus.Domain.Primitives.SessionType.AgentSubAgent,
             Participants =
             [
                 new BotNexus.Domain.Primitives.SessionParticipant { CitizenId = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("agent-a")) }
@@ -507,7 +509,7 @@ public sealed class FileSessionStoreTests
             BotNexus.Domain.Primitives.AgentId.From("agent-a"),
             new ExistenceQuery
             {
-                TypeFilter = BotNexus.Domain.Primitives.SessionType.Cron,
+                TypeFilter = BotNexus.Domain.Primitives.SessionType.AgentSubAgent,
                 From = now.AddDays(-1.5),
                 Limit = 10
             });
