@@ -66,6 +66,15 @@ public sealed class SessionConversationFilterArchitectureTests
         // ISessionStore.ListByConversationAsync. False positive at the file-grain because
         // the fence checks "any .ListAsync(" + ".Where(...ConversationId...)" in the same file.
         "CronTrigger.cs",
+        // CronScheduler.ReconcileJobLegacyConversationsAsync (P9-D one-shot legacy migration)
+        // walks every agent session by SessionId.StartsWith("cron:{jobIdSlug}:") prefix — this
+        // is the only viable index for "find the sessions that belong to this cron job" because
+        // legacy rows were spread across many per-agent legacy:* conversations after P9-B-1
+        // backfill. The .Where(...ConversationId...) calls in the same file operate on the
+        // conversations list returned by IConversationStore.ListAsync, NOT on the sessions
+        // list. ListByConversationAsync would loop one call per legacy conversation per job
+        // and still need a SessionId-prefix filter — strictly worse than the one-shot scan.
+        "CronScheduler.cs",
     };
 
     /// <summary>
