@@ -55,6 +55,21 @@
       { "type": "done", "stopReason": "stop" }
     ],
 
+    "SLOW_STREAM": [
+      { "type": "text_delta", "delta": "This",      "delayMs": 300 },
+      { "type": "text_delta", "delta": " is",       "delayMs": 300 },
+      { "type": "text_delta", "delta": " a",        "delayMs": 300 },
+      { "type": "text_delta", "delta": " very",     "delayMs": 300 },
+      { "type": "text_delta", "delta": " slow",     "delayMs": 300 },
+      { "type": "text_delta", "delta": " stream",   "delayMs": 300 },
+      { "type": "text_delta", "delta": " used",     "delayMs": 300 },
+      { "type": "text_delta", "delta": " for",      "delayMs": 300 },
+      { "type": "text_delta", "delta": " abort",    "delayMs": 300 },
+      { "type": "text_delta", "delta": " testing.", "delayMs": 300 },
+      { "type": "text_end" },
+      { "type": "done", "stopReason": "stop" }
+    ],
+
     "THINKING_BLOCK": [
       { "type": "thinking_delta", "delta": "Let me reason",  "delayMs": 40 },
       { "type": "thinking_delta", "delta": " about this...", "delayMs": 40 },

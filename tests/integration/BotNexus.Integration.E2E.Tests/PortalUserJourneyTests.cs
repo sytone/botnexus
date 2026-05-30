@@ -65,11 +65,10 @@ public sealed class PortalUserJourneyTests
         }
     }
 
-    /// <summary>
-    /// For each configured agent, open a fresh browser context, send HELLO_WORLD,
-    /// and assert the assistant emits "Hello, world!".
-    /// Regression for: portal multi-pane layout must handle per-agent conversations independently.
-    /// </summary>
+    // ─── Followup flows for issue #598 ─────────────────────────────────────
+    // These use stable data-testid selectors added to AgentDashboard, ChatPanel
+    // and MainLayout so the assertions don't churn with cosmetic UI changes.
+
     [SkippableFact]
     public async Task NewConversation_PerAgent_SendHelloWorld()
     {
@@ -84,16 +83,12 @@ public sealed class PortalUserJourneyTests
         {
             var context = await browser.NewContextAsync();
             var page = await context.NewPageAsync();
+
             await SendAndAwaitAsync(page, agentId, "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+
             await context.CloseAsync();
         }
     }
-
-    /// <summary>
-    /// Send MULTI_DELTA (a long streaming response with a sentinel) to all agents in
-    /// parallel from separate browser contexts and verify all complete independently.
-    /// Regression for: parallel streaming must not corrupt cross-agent state.
-    /// </summary>
     [SkippableFact]
     public async Task ParallelMultiDelta_AcrossAgents_AllCompleteIndependently()
     {
@@ -243,7 +238,6 @@ public sealed class PortalUserJourneyTests
         {
             Xunit.Assert.Fail($"Agent '{agentId}': completed message with '[LONG_RUNNING_COMPLETE]' not found after streaming indicator disappeared.");
         }
-
         await context.CloseAsync();
     }
 
@@ -261,18 +255,26 @@ public sealed class PortalUserJourneyTests
         Xunit.Assert.True(response!.Ok, $"GET {url} returned {response.Status}");
 
         // Scope to this agent's panel — all agents render concurrently in the
-        // multi-pane layout so a global data-testid match is ambiguous.
+        // multi-pane layout, so a global [data-testid] match is ambiguous.
         var panel = page.Locator($"#{agentId}-conversation-panel");
-        await panel.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 30_000 });
+        await panel.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Attached,
+            Timeout = 30_000,
+        });
 
-        var composer = panel.Locator("[data-testid='chat-composer']");
-        await composer.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 30_000 });
+        var composer = panel.Locator("[data-testid='chat-input'], [data-testid='chat-composer']");
+        await composer.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 30_000,
+        });
         await composer.FillAsync(message);
         await panel.Locator("[data-testid='chat-send']").ClickAsync();
 
         // Wait for an assistant message containing the expected fragment.
-        var assistantMatch = panel
-            .Locator("[data-testid='message'][data-message-role='Assistant'], [data-testid='streaming-message']")
+        var assistantMatch = panel.Locator(
+            "[data-testid='message'][data-message-role='Assistant'], [data-testid='streaming-message']")
             .Filter(new LocatorFilterOptions { HasTextString = expectedFragment });
 
         try
