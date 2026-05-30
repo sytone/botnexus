@@ -269,6 +269,20 @@ public sealed record SessionEntry
     /// <summary>When this entry was recorded.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Optional proxy-trigger origin for this entry. <c>null</c> for normal
+    /// channel-driven user turns (the default). Internal triggers stamp the
+    /// kind of proxy they are: <see cref="TriggerType.Cron"/> for scheduled
+    /// jobs (proxy for the citizen who scheduled them, per directive W-2),
+    /// <see cref="TriggerType.Soul"/> for daily reflection ticks,
+    /// <see cref="TriggerType.Heartbeat"/> for system liveness checks. The
+    /// trigger lives on the entry — not on the session — because directives
+    /// G-3/G-4 collapse <c>SessionType.Soul/Cron/Heartbeat</c> in P9-E; the
+    /// session is just "what kind of conversation" (AgentSelf, UserAgent,
+    /// AgentSubAgent, AgentAgent) and the trigger is per-turn metadata.
+    /// </summary>
+    public TriggerType? Trigger { get; init; }
+
     /// <summary>Tool name (when Role is <see cref="MessageRole.Tool"/>).</summary>
     public string? ToolName { get; init; }
 

@@ -56,8 +56,10 @@ public sealed class SessionWarmupServiceTests
     {
         var now = DateTimeOffset.UtcNow;
         var userAgent = CreateSession("user-agent", "agent-a", SessionStatus.Active, now, BotNexus.Domain.Primitives.SessionType.UserAgent);
-        var soul = CreateSession("soul", "agent-a", SessionStatus.Active, now.AddMinutes(-1), BotNexus.Domain.Primitives.SessionType.Soul);
-        var cron = CreateSession("cron", "agent-a", SessionStatus.Active, now.AddMinutes(-2), BotNexus.Domain.Primitives.SessionType.Cron);
+        // P9-E (#645): soul sessions now type-shape as AgentSelf; cron sessions are
+        // UserAgent + "cron" channel. Both must still be hidden by warmup.
+        var soul = CreateSession("soul", "agent-a", SessionStatus.Active, now.AddMinutes(-1), BotNexus.Domain.Primitives.SessionType.AgentSelf);
+        var cron = CreateSession("cron", "agent-a", SessionStatus.Active, now.AddMinutes(-2), BotNexus.Domain.Primitives.SessionType.UserAgent, BotNexus.Domain.Primitives.ChannelKey.From("cron"));
         var subAgent = CreateSession("sub-agent", "agent-a", SessionStatus.Active, now.AddMinutes(-3), BotNexus.Domain.Primitives.SessionType.AgentSubAgent);
         var agentSelf = CreateSession("agent-self", "agent-a", SessionStatus.Active, now.AddMinutes(-4), BotNexus.Domain.Primitives.SessionType.AgentSelf);
         var agentAgent = CreateSession("agent-agent", "agent-a", SessionStatus.Active, now.AddMinutes(-5), BotNexus.Domain.Primitives.SessionType.AgentAgent);
@@ -76,8 +78,9 @@ public sealed class SessionWarmupServiceTests
     {
         var now = DateTimeOffset.UtcNow;
         var userAgent = CreateSession("user-agent", "agent-a", SessionStatus.Active, now, BotNexus.Domain.Primitives.SessionType.UserAgent);
-        var soul = CreateSession("soul", "agent-a", SessionStatus.Active, now.AddMinutes(-1), BotNexus.Domain.Primitives.SessionType.Soul);
-        var cron = CreateSession("cron", "agent-a", SessionStatus.Active, now.AddMinutes(-2), BotNexus.Domain.Primitives.SessionType.Cron);
+        // P9-E (#645): same migration as above — soul → AgentSelf, cron → UserAgent + "cron" channel.
+        var soul = CreateSession("soul", "agent-a", SessionStatus.Active, now.AddMinutes(-1), BotNexus.Domain.Primitives.SessionType.AgentSelf);
+        var cron = CreateSession("cron", "agent-a", SessionStatus.Active, now.AddMinutes(-2), BotNexus.Domain.Primitives.SessionType.UserAgent, BotNexus.Domain.Primitives.ChannelKey.From("cron"));
         var subAgent = CreateSession("sub-agent", "agent-a", SessionStatus.Active, now.AddMinutes(-3), BotNexus.Domain.Primitives.SessionType.AgentSubAgent);
 
         var store = CreateSessionStore(userAgent, soul, cron, subAgent);

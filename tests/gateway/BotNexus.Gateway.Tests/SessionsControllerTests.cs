@@ -1005,14 +1005,14 @@ public sealed class SessionsControllerTests
     }
 
     [Fact]
-    public async Task Seal_WhenSessionTypeIsSoul_Returns400()
+    public async Task Seal_WhenSessionTypeIsAgentSelf_Returns400()
     {
-        // Regression pin: Soul sessions are not sealable. Pre-migration this was
-        // enforced by !IsSubAgent (Soul sessionIds don't contain "::subagent::").
-        // Post-migration this is enforced by SessionType != AgentSubAgent.
+        // P9-E (#645) migrated from Seal_WhenSessionTypeIsSoul_Returns400. SessionType.Soul
+        // is collapsed onto AgentSelf — the Seal control-plane operation rejects every
+        // non-AgentSubAgent SessionType, which still excludes the old soul shape.
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync(SessionId.From("soul-session"), AgentId.From("agent-a"));
-        session.SessionType = SessionType.Soul;
+        session.SessionType = SessionType.AgentSelf;
         session.Status = SessionStatus.Expired;
         await store.SaveAsync(session);
         var controller = new SessionsController(store);

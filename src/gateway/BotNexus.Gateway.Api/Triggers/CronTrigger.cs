@@ -63,7 +63,11 @@ public sealed class CronTrigger(
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         session.ChannelType ??= ChannelKey.From(Type.Value);
         session.CallerId ??= $"{Type.Value}:{agentId.Value}";
-        session.SessionType = SessionType.Cron;
+        // P9-E (#645): cron is a proxy for the citizen who scheduled it (directive W-2),
+        // so the session shape is UserAgent — the Cron trigger kind is per-turn and
+        // lives on SessionEntry.Trigger below. Session.IsInteractive excludes the
+        // "cron" channel so memory flushers / warmup still ignore cron sessions.
+        session.SessionType = SessionType.UserAgent;
         session.ConversationId = conversation.ConversationId;
         session.Metadata["triggerType"] = Type.Value;
 
@@ -84,7 +88,15 @@ public sealed class CronTrigger(
             await conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
         }
 
-        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+        // P9-E (#645): stamp Cron on the user entry. Cron is a proxy for the citizen
+        // who scheduled the job — the persisted trigger marks the originating proxy
+        // so audit/UI can render the right badge without sniffing SessionType.
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = prompt,
+            Trigger = TriggerType.Cron
+        });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);

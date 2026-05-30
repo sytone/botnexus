@@ -70,7 +70,15 @@ public sealed class SoulTrigger(
         else
             session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
-        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+        // P9-E (#645): stamp the proxy-trigger origin on the user entry instead of
+        // discriminating via SessionType — the session itself is AgentSelf because
+        // soul is an agent-talking-to-itself flow; the Soul trigger kind is per-turn.
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = prompt,
+            Trigger = TriggerType.Soul
+        });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
@@ -93,9 +101,12 @@ public sealed class SoulTrigger(
         SoulAgentConfig? soulConfig,
         CancellationToken ct)
     {
+        // P9-E (#645): soul sessions no longer carry SessionType.Soul. Discovery is now
+        // driven by the canonical Metadata["soulDate"] tag that InitializeSoulSession
+        // stamps on every soul session; status must still be Active.
         var agentSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
         var oldActiveSoulSessions = agentSessions
-            .Where(session => session.SessionType == SessionType.Soul && session.Status == GatewaySessionStatus.Active)
+            .Where(session => session.Status == GatewaySessionStatus.Active && session.Metadata.ContainsKey("soulDate"))
             .Where(session => TryGetSoulDate(session, out var soulDate) && soulDate < todaySoulDate)
             .ToArray();
 
@@ -123,7 +134,9 @@ public sealed class SoulTrigger(
 
     private static void InitializeSoulSession(GatewaySession session, AgentId agentId, DateOnly soulDate)
     {
-        session.SessionType = SessionType.Soul;
+        // P9-E (#645): soul is an agent-self conversation; the "Soul" proxy-trigger
+        // kind lives on SessionEntry.Trigger, not on the SessionType.
+        session.SessionType = SessionType.AgentSelf;
         session.ChannelType = null;
         session.CallerId ??= $"soul:{agentId.Value}";
         session.Status = GatewaySessionStatus.Active;

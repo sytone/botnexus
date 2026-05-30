@@ -16,9 +16,22 @@ public sealed class SessionType : IEquatable<SessionType>
     public static readonly SessionType AgentSelf = Register("agent-self");
     public static readonly SessionType AgentSubAgent = Register("agent-subagent");
     public static readonly SessionType AgentAgent = Register("agent-agent");
-    public static readonly SessionType Soul = Register("soul");
-    public static readonly SessionType Cron = Register("cron");
-    public static readonly SessionType Heartbeat = Register("heartbeat");
+
+    /// <summary>
+    /// P9-E (issue #645): legacy persisted values that get remapped at the registry
+    /// layer so <see cref="FromString"/> returns the canonical replacement uniformly
+    /// across every serializer path. <c>"soul"</c> and <c>"heartbeat"</c> were proxy
+    /// triggers stamped onto agent-self sessions; <c>"cron"</c> was a proxy trigger
+    /// for a user-scheduled job. The trigger kind now lives on
+    /// <see cref="BotNexus.Gateway.Abstractions.Models.SessionEntry.Trigger"/>; the
+    /// session itself is just the conversation kind.
+    /// </summary>
+    private static readonly Dictionary<string, SessionType> LegacyAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["soul"] = AgentSelf,
+        ["heartbeat"] = AgentSelf,
+        ["cron"] = UserAgent
+    };
 
     /// <summary>
     /// Gets the value.
@@ -37,7 +50,18 @@ public sealed class SessionType : IEquatable<SessionType>
         if (string.IsNullOrWhiteSpace(value))
             throw new ArgumentException("SessionType cannot be empty", nameof(value));
 
-        return Registry.GetOrAdd(value.Trim().ToLowerInvariant(), static v => new SessionType(v));
+        var normalized = value.Trim().ToLowerInvariant();
+
+        // P9-E (issue #645): transparent legacy-value migration. JSON deserialization,
+        // direct string -> SessionType conversion, and any other read path hit FromString,
+        // so applying the alias map here means every store benefits from the same migration
+        // without a per-store hook. Pre-collapse values "soul"/"heartbeat"/"cron" land on
+        // the canonical replacement (AgentSelf/AgentSelf/UserAgent); the proxy-trigger kind
+        // now lives on SessionEntry.Trigger.
+        if (LegacyAliases.TryGetValue(normalized, out var migrated))
+            return migrated;
+
+        return Registry.GetOrAdd(normalized, static v => new SessionType(v));
     }
 
     /// <summary>

@@ -37,7 +37,25 @@ public sealed class SessionEndMemoryFlusherTests
     [Fact]
     public void ShouldFlush_WhenNonInteractiveSession_ReturnsFalse()
     {
-        var session = BuildSession(SessionType.Heartbeat);
+        // P9-E (#645): SessionType.Heartbeat is gone; heartbeat sessions now carry
+        // SessionType.AgentSelf which is still classified as non-interactive by
+        // Session.IsInteractive. Migrated to AgentSelf to verify the same gate.
+        var session = BuildSession(SessionType.AgentSelf);
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
+        var flusher = CreateFlusher();
+        var options = EnabledOptions();
+
+        flusher.ShouldFlush(session, options).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldFlush_WhenUserAgentSessionDeliveredViaCronChannel_ReturnsFalse()
+    {
+        // P9-E (#645): cron sessions are now SessionType.UserAgent (proxy for the
+        // citizen who scheduled the job). The "cron" channel keeps them out of the
+        // interactive memory-flush path via Session.IsInteractive's channel exclusion.
+        var session = BuildSession(SessionType.UserAgent);
+        session.ChannelType = ChannelKey.From("cron");
         session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
         var flusher = CreateFlusher();
         var options = EnabledOptions();

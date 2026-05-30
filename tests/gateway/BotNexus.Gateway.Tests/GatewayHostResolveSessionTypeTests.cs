@@ -36,8 +36,11 @@ namespace BotNexus.Gateway.Tests;
 /// (4) a PERSISTED <see cref="SessionType.AgentSubAgent"/> session survives a
 /// transient registry-deregister / gateway restart and is not silently
 /// downgraded (defense against the bug-hunt HIGH finding);
-/// (5) <see cref="SessionType.Soul"/> and <see cref="SessionType.Cron"/>
-/// classifications remain intact (regression-pin for the other branches).
+/// (5) P9-E (#645): the legacy <c>SessionType.Soul</c>/<c>Cron</c> dispatch
+/// branches are gone — soul-shaped session ids that arrive through dispatch
+/// (rather than through <c>SoulTrigger</c>) and the "cron" channel both
+/// classify as <see cref="SessionType.UserAgent"/>. Internal triggers stamp
+/// the proxy origin on <c>SessionEntry.Trigger</c> instead.
 /// </para>
 /// </remarks>
 public sealed class GatewayHostResolveSessionTypeTests
@@ -123,11 +126,14 @@ public sealed class GatewayHostResolveSessionTypeTests
     }
 
     [Fact]
-    public async Task DispatchAsync_WhenSessionIdIsSoul_StampsAsSoul()
+    public async Task DispatchAsync_WhenSessionIdIsSoul_ClassifiesAsUserAgent_PostP9E()
     {
-        // Regression pin: Soul bucketing is preserved. The Soul predicate
-        // (SessionId.IsSoul) is unrelated to the AgentKind migration and
-        // remains in place.
+        // P9-E (#645) regression pin: dispatch ignores the soul-shaped session id
+        // and classifies as UserAgent. Soul sessions are created exclusively by
+        // SoulTrigger (which sets SessionType.AgentSelf + Metadata["soulDate"]);
+        // a soul-shaped id that somehow arrives via a channel falls through to
+        // the default UserAgent branch — proves the IsSoul substring back door
+        // is gone (directive G-4).
         var soulId = SessionId.ForSoul(AgentId.From(AgentIdValue), DateOnly.FromDateTime(DateTime.UtcNow));
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(AgentId.From(AgentIdValue)))
@@ -139,14 +145,16 @@ public sealed class GatewayHostResolveSessionTypeTests
 
         var reloaded = await sessions.GetAsync(soulId);
         reloaded.ShouldNotBeNull();
-        reloaded!.SessionType.ShouldBe(SessionType.Soul);
+        reloaded!.SessionType.ShouldBe(SessionType.UserAgent);
     }
 
     [Fact]
-    public async Task DispatchAsync_WhenChannelTypeIsCron_StampsAsCron()
+    public async Task DispatchAsync_WhenChannelTypeIsCron_ClassifiesAsUserAgent_PostP9E()
     {
-        // Regression pin: Cron bucketing is preserved (driven by channel type,
-        // not by the descriptor or the SessionId).
+        // P9-E (#645) regression pin: cron is a proxy for the citizen who scheduled
+        // the job (directive W-2), so the session shape is UserAgent. The non-
+        // interactive signal lives on the channel — Session.IsInteractive excludes
+        // the "cron" ChannelType so memory flushers / warmup still skip these.
         const string sessionIdValue = "cron-session-1";
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(AgentId.From(AgentIdValue)))
@@ -158,7 +166,8 @@ public sealed class GatewayHostResolveSessionTypeTests
 
         var reloaded = await sessions.GetAsync(SessionId.From(sessionIdValue));
         reloaded.ShouldNotBeNull();
-        reloaded!.SessionType.ShouldBe(SessionType.Cron);
+        reloaded!.SessionType.ShouldBe(SessionType.UserAgent);
+        reloaded.IsInteractive.ShouldBeFalse("cron-channel UserAgent sessions stay non-interactive — Session.IsInteractive enforces the channel exclusion (P9-E #645).");
     }
 
     [Fact]

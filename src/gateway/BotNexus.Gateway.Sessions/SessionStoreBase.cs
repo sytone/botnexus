@@ -103,17 +103,16 @@ public abstract class SessionStoreBase : ISessionStore
 
     protected static SessionType InferSessionType(SessionId sessionId, ChannelKey? channelType)
     {
+        // P9-E (#645): the legacy Soul/Cron/Heartbeat SessionType discriminators are
+        // collapsed. Triggers stamp the proxy origin onto SessionEntry.Trigger; here
+        // we classify the conversation shape only. Soul sessions become AgentSelf;
+        // cron sessions stay UserAgent (the cron channel keeps the interactive-gate
+        // exclusion via Session.IsInteractive — see Session.cs).
         if (sessionId.IsSubAgent)
             return SessionType.AgentSubAgent;
 
         if (sessionId.IsAgentConversation)
             return SessionType.AgentAgent;
-
-        if (sessionId.IsSoul)
-            return SessionType.Soul;
-
-        if (channelType.HasValue && string.Equals(channelType.Value, "cron", StringComparison.OrdinalIgnoreCase))
-            return SessionType.Cron;
 
         return SessionType.UserAgent;
     }
