@@ -144,7 +144,10 @@ public sealed class CronController(
     [HttpDelete("{jobId}")]
     public async Task<IActionResult> Delete(string jobId, CancellationToken cancellationToken)
     {
-        await store.DeleteAsync(JobId.From(jobId), cancellationToken);
+        // Route through the scheduler so the job's pinned conversation is archived
+        // alongside the job record (P9-D directive G-5: the conversation lives until
+        // the cron job is deleted).
+        await scheduler.DeleteJobAsync(JobId.From(jobId), cancellationToken);
         logger.LogInformation("Cron job deleted via API: {JobId}", jobId);
         return NoContent();
     }

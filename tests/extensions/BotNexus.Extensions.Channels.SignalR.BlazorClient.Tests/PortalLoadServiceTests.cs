@@ -84,63 +84,6 @@ public sealed class PortalLoadServiceTests
     }
 
     /// <summary>
-    /// Verifies that when a virtual cron session loads successfully, its history
-    /// uses the session history endpoint (not conversation history).
-    /// </summary>
-    [Fact]
-    public async Task InitializeAsync_virtual_cron_session_uses_session_history_endpoint()
-    {
-        var cronSessionId = "cron:20260510120000:abc123";
-
-        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>())
-            .Returns([new AgentSummary("agent-1", "Test Agent")]);
-
-        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
-            .Returns(new List<ConversationSummaryDto>());
-
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<SessionSummary>
-            {
-                new(
-                    SessionId: cronSessionId,
-                    AgentId: "agent-1",
-                    ChannelType: "cron",
-                    SessionType: "cron",
-                    Status: "Active",
-                    MessageCount: 0,
-                    CreatedAt: DateTimeOffset.UtcNow,
-                    UpdatedAt: DateTimeOffset.UtcNow)
-            });
-
-        _restClient.GetSessionHistoryAsync(cronSessionId, Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new SessionHistoryResponseDto(0, 200, 1,
-            [
-                new SessionHistoryEntryDto
-                {
-                    Role = "assistant",
-                    Content = "Cron executed successfully",
-                    Timestamp = DateTimeOffset.UtcNow
-                }
-            ]));
-
-        // Act
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-
-        // Assert: session history endpoint was called (not conversation history)
-        await _restClient.Received(1).GetSessionHistoryAsync(cronSessionId, Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
-        await _restClient.DidNotReceive().GetHistoryAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
-
-        // The conversation should have the loaded message
-        var agent = _store.GetAgent("agent-1");
-        var cronConvId = $"cron-session:{cronSessionId}";
-        Assert.True(agent!.Conversations.ContainsKey(cronConvId));
-        var conv = agent.Conversations[cronConvId];
-        Assert.True(conv.HistoryLoaded);
-        Assert.Single(conv.Messages);
-        Assert.Equal("Cron executed successfully", conv.Messages[0].Content);
-    }
-
-    /// <summary>
     /// Ensures that a real (non-virtual) conversation 404 during initial history load
     /// is also handled gracefully — logged but not fatal to initialization.
     /// </summary>

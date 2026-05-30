@@ -132,6 +132,11 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
     ///     on a session.</description>
     ///   </item>
     ///   <item>
+    ///     <description><b>SqliteCronStore.cs</b> — binds and reads <c>CronJob.ConversationId</c>
+    ///     (the <c>conversation_id</c> column added by P9-D). Same rationale as
+    ///     <c>CronScheduler.cs</c>: nullable on the job record by design, not on a session.</description>
+    ///   </item>
+    ///   <item>
     ///     <description><b>FileSessionStore.cs</b> — reads <c>SessionMeta.ConversationId</c>,
     ///     a JSON sidecar DTO that retains <c>ConversationId?</c> because pre-P9-B-1 sidecars
     ///     on disk may legitimately be missing the field. The eager startup sweep and
@@ -144,6 +149,7 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
     {
         Path.Combine("extensions", "BotNexus.Extensions.Channels.ServiceBus", "ServiceBusChannelAdapter.cs"),
         Path.Combine("gateway", "BotNexus.Cron", "CronScheduler.cs"),
+        Path.Combine("gateway", "BotNexus.Cron", "SqliteCronStore.cs"),
         Path.Combine("gateway", "BotNexus.Gateway.Sessions", "FileSessionStore.cs"),
     };
 

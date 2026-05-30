@@ -92,7 +92,7 @@ public sealed class ConversationsControllerResetTests
     }
 
     [Fact]
-    public async Task Archive_UnknownConversationAndNotVirtualCron_Returns404()
+    public async Task Archive_UnknownConversation_Returns404()
     {
         var conversationStore = new Mock<IConversationStore>();
         conversationStore.Setup(c => c.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>())).ReturnsAsync((Conversation?)null);
@@ -103,30 +103,6 @@ public sealed class ConversationsControllerResetTests
         var result = await controller.Archive("nope", CancellationToken.None);
 
         result.ShouldBeOfType<NotFoundResult>();
-        resetService.VerifyNoOtherCalls();
-    }
-
-    [Fact]
-    public async Task Archive_VirtualCronSessionWithoutLinkedConversation_SealsVirtualSession_AndDoesNotCallResetService()
-    {
-        var sessions = new InMemorySessionStore();
-        var virtualSessionId = SessionId.From("cron-session-1");
-        var virtualSession = await sessions.GetOrCreateAsync(virtualSessionId, TestAgent);
-        virtualSession.Session.SessionType = SessionType.Heartbeat;
-        await sessions.SaveAsync(virtualSession);
-
-        var conversationStore = new Mock<IConversationStore>();
-        conversationStore.Setup(c => c.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>())).ReturnsAsync((Conversation?)null);
-        var resetService = new Mock<IConversationResetService>(MockBehavior.Strict);
-
-        var controller = new ConversationsController(conversationStore.Object, sessions, resetService: resetService.Object);
-        // Virtual cron conversation ids are encoded as "cron-session:<sessionId>" — matches TryParseVirtualCronConversationId.
-        var result = await controller.Archive($"cron-session:{virtualSessionId.Value}", CancellationToken.None);
-
-        result.ShouldBeOfType<NoContentResult>();
-        var reloaded = await sessions.GetAsync(virtualSessionId);
-        reloaded.ShouldNotBeNull();
-        reloaded!.Status.ShouldBe(SessionStatus.Sealed);
         resetService.VerifyNoOtherCalls();
     }
 

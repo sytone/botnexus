@@ -11,6 +11,17 @@ namespace BotNexus.Gateway.Api.Triggers;
 
 /// <summary>
 /// Internal trigger used for cron-triggered sessions.
+///
+/// Conversation ownership is inverted under P9-D (directive G-5):
+/// • <see cref="BotNexus.Cron.CronJob.ConversationId"/> is the canonical link from a job to its long-lived conversation.
+/// • If <see cref="InternalTriggerRequest.ConversationId"/> is set (the scheduler loaded a pinned job), the trigger
+///   reuses that conversation verbatim — no per-agent enumeration, no title matching, no composite-id construction.
+/// • Otherwise the trigger creates a fresh conversation with a random GUID id, titled after the job, with the
+///   initiator derived from <see cref="InternalTriggerRequest.CreatedBy"/> (parsed via
+///   <see cref="CitizenId.TryParse"/>) or falling back to the agent itself for system-provisioned jobs.
+/// • Race safety: when two parallel runs create different conversations, the scheduler's CAS
+///   (<see cref="BotNexus.Cron.ICronStore.TrySetConversationIdAsync"/>) picks one winner; the loser archives its
+///   conversation and rebinds its session. See <see cref="BotNexus.Cron.CronScheduler"/>.
 /// </summary>
 public sealed class CronTrigger(
     IAgentSupervisor supervisor,
@@ -29,13 +40,12 @@ public sealed class CronTrigger(
     public string DisplayName => "Cron Scheduler";
 
     /// <summary>
-    /// Executes create session async.
+    /// Creates a fresh session for a single cron run and routes it into the job's conversation.
     /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="prompt">The prompt.</param>
-    /// <param name="ct">The ct.</param>
-    /// <param name="request">Optional trigger metadata such as cron job, conversation, and model override.</param>
-    /// <returns>The create session async result.</returns>
+    /// <param name="agentId">The agent the cron job belongs to.</param>
+    /// <param name="prompt">The cron-supplied prompt text.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="request">Trigger metadata including the job id, the optional pinned conversation, and the citizen who scheduled the job.</param>
     public async Task<SessionId> CreateSessionAsync(
         AgentId agentId,
         string prompt,
@@ -44,12 +54,17 @@ public sealed class CronTrigger(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
-        // Each cron run gets a fresh session ID so history entries are cleanly separated by run.
+        var conversation = await ResolveOrCreateConversationAsync(agentId, request, ct).ConfigureAwait(false);
+
+        if (request is not null && request.ResolvedConversationId is null)
+            request.ResolvedConversationId = conversation.ConversationId;
+
         var sessionId = BuildCronSessionId(request?.CronJobId);
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         session.ChannelType ??= ChannelKey.From(Type.Value);
         session.CallerId ??= $"{Type.Value}:{agentId.Value}";
         session.SessionType = SessionType.Cron;
+        session.ConversationId = conversation.ConversationId;
         session.Metadata["triggerType"] = Type.Value;
 
         if (string.IsNullOrWhiteSpace(request?.ModelOverride))
@@ -62,30 +77,6 @@ public sealed class CronTrigger(
         else
             session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
-        // Resolve the conversation for this run:
-        // 1. Explicit ConversationId on the job — always use that conversation
-        // 2. Otherwise find/create a stable per-job conversation keyed by job ID
-        //    so every run of the same job lands in the same conversation.
-        Conversation conversation;
-        if (request?.ConversationId is { } explicitConversationId)
-        {
-            conversation = await conversations.GetAsync(explicitConversationId, ct).ConfigureAwait(false)
-                ?? await GetOrCreateCronConversationAsync(agentId, request.CronJobId, request.JobName, ct).ConfigureAwait(false);
-        }
-        else
-        {
-            conversation = await GetOrCreateCronConversationAsync(agentId, request?.CronJobId, request?.JobName, ct).ConfigureAwait(false);
-        }
-
-        // Write back the resolved conversation ID so the caller (e.g. scheduler) can persist it to the job
-        // record, enabling subsequent runs to skip the lookup entirely.
-        if (request is not null && request.ResolvedConversationId is null)
-            request.ResolvedConversationId = conversation.ConversationId;
-
-        if (session.ConversationId != conversation.ConversationId)
-            session.ConversationId = conversation.ConversationId;
-
-        // Update the conversation's active session to this run so history loads the latest.
         if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
         {
             conversation.ActiveSessionId = sessionId;
@@ -103,163 +94,81 @@ public sealed class CronTrigger(
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
         logger.LogInformation(
-            "Cron trigger created session '{SessionId}' for agent '{AgentId}' (jobId: {JobId}, model: {ModelOverride}).",
+            "Cron trigger created session '{SessionId}' for agent '{AgentId}' in conversation '{ConversationId}' (jobId: {JobId}, model: {ModelOverride}).",
             sessionId,
             agentId,
+            conversation.ConversationId,
             request?.CronJobId,
             request?.ModelOverride);
 
         return sessionId;
     }
 
-    /// <summary>
-    /// Finds or creates a stable conversation for a cron job.
-    /// All runs of the same job land in the same conversation.
-    /// The conversation is identified by its title "cron:{jobId}" or "cron:unnamed" for jobs without an ID.
-    /// </summary>
-    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, JobId? jobId, string? jobName, CancellationToken ct)
+    private async Task<Conversation> ResolveOrCreateConversationAsync(
+        AgentId agentId,
+        InternalTriggerRequest? request,
+        CancellationToken ct)
     {
-        var jobIdString = jobId?.Value;
-        // Use human-readable job name as title when available; fall back to job-id slug.
-        var title = !string.IsNullOrWhiteSpace(jobName)
-            ? jobName
-            : string.IsNullOrWhiteSpace(jobIdString)
-                ? $"cron:{agentId.Value}"
-                : $"cron:{SanitizeSessionIdPart(jobIdString) ?? agentId.Value}";
-        var stableConversationId = BuildCronConversationId(agentId, jobId);
-
-        // Prefer deterministic lookup by stable conversation id.
-        var byStableId = await conversations.GetAsync(stableConversationId, ct).ConfigureAwait(false);
-        if (byStableId is not null)
+        // Fast path: scheduler passed in the conversation already pinned on the job.
+        if (request?.ConversationId is { } pinnedId)
         {
-            if (byStableId.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Archived)
+            var pinned = await conversations.GetAsync(pinnedId, ct).ConfigureAwait(false);
+            if (pinned is not null)
             {
-                byStableId.Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active;
-                byStableId.UpdatedAt = DateTimeOffset.UtcNow;
-                await conversations.SaveAsync(byStableId, ct).ConfigureAwait(false);
+                if (pinned.Status == ConversationStatus.Archived)
+                {
+                    pinned.Status = ConversationStatus.Active;
+                    pinned.UpdatedAt = DateTimeOffset.UtcNow;
+                    await conversations.SaveAsync(pinned, ct).ConfigureAwait(false);
+                }
+                return pinned;
             }
 
-            var conversationsForAgent = await conversations.ListAsync(agentId, ct).ConfigureAwait(false);
-            await NormalizeDuplicateCronConversationsAsync(agentId, title, byStableId, conversationsForAgent, ct).ConfigureAwait(false);
-            return byStableId;
+            logger.LogWarning(
+                "CronTrigger: pinned conversation '{ConversationId}' for job '{JobId}' was missing; creating a fresh one. The scheduler's CAS will reconcile.",
+                pinnedId,
+                request.CronJobId);
         }
 
-        // Backward-compatible lookup by title for legacy records created before stable IDs.
-        var existing = await conversations.ListAsync(agentId, ct).ConfigureAwait(false);
-        var titleMatches = existing
-            .Where(c => string.Equals(c.Title, title, StringComparison.Ordinal))
-            .ToList();
+        // No pin (first run) or pinned conversation was hard-deleted out from under us.
+        // Create a fresh per-run conversation; the scheduler's CAS decides whether ours wins.
+        var initiator = ResolveInitiator(request?.CreatedBy, agentId);
+        var title = !string.IsNullOrWhiteSpace(request?.JobName)
+            ? request!.JobName!
+            : "Cron";
 
-        var canonical = titleMatches
-            .Where(c => c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
-            .OrderByDescending(c => c.UpdatedAt)
-            .FirstOrDefault()
-            ?? titleMatches.OrderByDescending(c => c.UpdatedAt).FirstOrDefault();
-
-        if (canonical is not null)
-        {
-            if (canonical.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Archived)
-            {
-                canonical.Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active;
-                canonical.UpdatedAt = DateTimeOffset.UtcNow;
-                await conversations.SaveAsync(canonical, ct).ConfigureAwait(false);
-            }
-
-            await NormalizeDuplicateCronConversationsAsync(agentId, title, canonical, existing, ct).ConfigureAwait(false);
-            return canonical;
-        }
-
-        // Create a new stable conversation for this job.
         var conversation = new Conversation
         {
-            ConversationId = stableConversationId,
+            ConversationId = ConversationId.From($"conv:{Guid.NewGuid():N}"),
             AgentId = agentId,
             Title = title,
             IsDefault = false,
-            // Cron triggers schedule work for the target agent on its own behalf, so the
-            // initiating citizen is that agent.
-            Initiator = CitizenId.Of(agentId)
+            Initiator = initiator
         };
-        try
-        {
-            await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
-            logger.LogInformation("CronTrigger: created conversation '{Title}' ({ConversationId}) for job '{JobId}'.",
-                title, conversation.ConversationId, jobId);
-            return conversation;
-        }
-        catch (Exception ex)
-        {
-            // If another concurrent run created it first, re-resolve and continue.
-            logger.LogDebug(ex, "CronTrigger: create race for conversation '{ConversationId}', retrying lookup.", stableConversationId);
-            var resolved = await conversations.GetAsync(stableConversationId, ct).ConfigureAwait(false);
-            if (resolved is not null)
-                return resolved;
 
-            var fallback = (await conversations.ListAsync(agentId, ct).ConfigureAwait(false))
-                .FirstOrDefault(c =>
-                    string.Equals(c.Title, title, StringComparison.Ordinal) &&
-                    c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active);
-            if (fallback is not null)
-                return fallback;
+        await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
+        logger.LogInformation(
+            "CronTrigger: created conversation '{ConversationId}' titled '{Title}' for job '{JobId}' (initiator={Initiator}).",
+            conversation.ConversationId,
+            title,
+            request?.CronJobId,
+            initiator);
 
-            throw;
-        }
+        return conversation;
     }
 
-    private async Task NormalizeDuplicateCronConversationsAsync(
-        AgentId agentId,
-        string title,
-        Conversation canonical,
-        IReadOnlyList<Conversation> conversationsForAgent,
-        CancellationToken ct)
+    /// <summary>
+    /// Resolves the citizen who scheduled the cron job. Per directive G-5, a cron run is "a
+    /// proxy message for the citizen who scheduled it so they did not have to do it manually".
+    /// Falls back to the target agent itself for system-provisioned jobs (heartbeat, soul, etc.)
+    /// where <c>CreatedBy</c> is null or holds a legacy free-form string.
+    /// </summary>
+    private static CitizenId ResolveInitiator(string? createdBy, AgentId agentId)
     {
-        var duplicateActive = conversationsForAgent
-            .Where(c => c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
-            .Where(c => c.ConversationId != canonical.ConversationId)
-            .Where(c => string.Equals(c.Title, title, StringComparison.Ordinal))
-            .ToList();
+        if (!string.IsNullOrWhiteSpace(createdBy) && CitizenId.TryParse(createdBy, out var parsed))
+            return parsed;
 
-        if (duplicateActive.Count == 0)
-            return;
-
-        // Per-duplicate: only fetch sessions in that conversation -- avoids loading the full
-        // agent-scoped session table just to filter it down to one conversation (F-7).
-        foreach (var duplicate in duplicateActive)
-        {
-            var duplicateSessions = await sessions
-                .ListByConversationAsync(duplicate.ConversationId, agentId, ct)
-                .ConfigureAwait(false);
-            foreach (var session in duplicateSessions)
-            {
-                session.ConversationId = canonical.ConversationId;
-                await sessions.SaveAsync(session, ct).ConfigureAwait(false);
-            }
-
-            await conversations.ArchiveAsync(duplicate.ConversationId, ct).ConfigureAwait(false);
-        }
-
-        // After rewriting, find the newest session linked to canonical to pin ActiveSessionId.
-        // ListByConversationAsync orders ASC by CreatedAt; we want the latest by UpdatedAt
-        // (sessions may have been re-pointed; CreatedAt won't necessarily match recency).
-        var canonicalSessions = await sessions
-            .ListByConversationAsync(canonical.ConversationId, agentId, ct)
-            .ConfigureAwait(false);
-        var latestLinked = canonicalSessions
-            .OrderByDescending(s => s.UpdatedAt)
-            .FirstOrDefault();
-
-        if (latestLinked is not null && canonical.ActiveSessionId != latestLinked.SessionId)
-        {
-            canonical.ActiveSessionId = latestLinked.SessionId;
-            canonical.UpdatedAt = DateTimeOffset.UtcNow;
-            await conversations.SaveAsync(canonical, ct).ConfigureAwait(false);
-        }
-
-        logger.LogInformation(
-            "CronTrigger: normalized {DuplicateCount} duplicate conversation(s) for '{Title}' under canonical {ConversationId}.",
-            duplicateActive.Count,
-            title,
-            canonical.ConversationId);
+        return CitizenId.Of(agentId);
     }
 
     private static SessionId BuildCronSessionId(JobId? jobId)
@@ -294,12 +203,5 @@ public sealed class CronTrigger(
         }
 
         return new string(buffer[..length]).Trim('-');
-    }
-
-    private static ConversationId BuildCronConversationId(AgentId agentId, JobId? jobId)
-    {
-        var safeAgentId = SanitizeSessionIdPart(agentId.Value) ?? "agent";
-        var safeJobId = SanitizeSessionIdPart(jobId?.Value) ?? safeAgentId;
-        return ConversationId.From($"cronconv:{safeAgentId}:{safeJobId}");
     }
 }

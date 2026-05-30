@@ -60,4 +60,16 @@ public sealed record InternalTriggerRequest
     /// Callers can read this value to persist the conversation ID for fast-path reuse on subsequent runs.
     /// </summary>
     public ConversationId? ResolvedConversationId { get; set; }
+
+    /// <summary>
+    /// Identifier (raw string from <see cref="BotNexus.Cron.CronJob.CreatedBy"/>) of the
+    /// citizen who scheduled this trigger. Used by triggers that create a fresh conversation
+    /// to record the proxy initiator — per directive G-5, a cron run is "a proxy message
+    /// for the citizen who scheduled it so they did not have to do it manually".
+    ///
+    /// Parsed via <see cref="BotNexus.Domain.World.CitizenId.TryParse(string?, out BotNexus.Domain.World.CitizenId)"/>.
+    /// When null or unparseable, triggers fall back to <c>CitizenId.Of(agentId)</c> for
+    /// system-provisioned jobs (heartbeat, etc).
+    /// </summary>
+    public string? CreatedBy { get; init; }
 }
