@@ -40,7 +40,33 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  # PRs: run only tests affected by the change (fast feedback)
+  impacted-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test (impacted only)
+        shell: pwsh
+        run: ./scripts/repo/test-impacted.ps1 -BaseBranch origin/${{ github.base_ref }} -NoBuild
+
+  # Push to main: full test suite with coverage (safety net)
+  full-tests:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

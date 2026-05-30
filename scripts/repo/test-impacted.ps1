@@ -39,6 +39,7 @@ param(
     [string]$BaseBranch = 'origin/main',
     [string]$Configuration = 'Debug',
     [switch]$All,
+    [switch]$NoBuild,
     [switch]$DryRun
 )
 
@@ -56,7 +57,8 @@ $alwaysRunPatterns = @(
 
 if ($All) {
     Write-Host "Running full test suite (--All specified)" -ForegroundColor Cyan
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration
+    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
+    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
     exit $LASTEXITCODE
 }
 
@@ -66,7 +68,8 @@ Write-Host "Comparing against: $BaseBranch" -ForegroundColor Cyan
 $changedFiles = git -C $repoRoot diff --name-only $BaseBranch -- 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "git diff failed — falling back to full test suite"
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration
+    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
+    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
     exit $LASTEXITCODE
 }
 
@@ -211,7 +214,8 @@ if ($infraChanged) {
         Write-Host "[DRY RUN] Would run: dotnet test $slnxPath" -ForegroundColor Yellow
         exit 0
     }
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration
+    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
+    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
     exit $LASTEXITCODE
 }
 
@@ -237,10 +241,11 @@ if ($DryRun) {
 
 Write-Host ""
 $failed = $false
+$noBuildArg = if ($NoBuild) { '--no-build' } else { '--no-restore' }
 foreach ($proj in $sortedProjects) {
     $projFullPath = Join-Path $repoRoot ($proj -replace '/', [IO.Path]::DirectorySeparatorChar)
     Write-Host "Testing: $proj" -ForegroundColor White
-    dotnet test $projFullPath --nologo --tl:off -c $Configuration --no-restore
+    dotnet test $projFullPath --nologo --tl:off -c $Configuration $noBuildArg
     if ($LASTEXITCODE -ne 0) { $failed = $true }
 }
 
