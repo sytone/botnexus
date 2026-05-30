@@ -3,14 +3,16 @@
     Runs only the test projects affected by changes since a given git ref.
 
 .DESCRIPTION
-    Uses the MSBuild project dependency graph to determine which test projects
-    transitively depend on changed source projects. Only those tests are run,
-    plus architecture and scenario tests which always run as a safety net.
+    Uses dotnet-affected (which leverages MSBuild's ProjectGraph) to determine
+    which projects are transitively affected by changes. Only affected test
+    projects are run, plus architecture and scenario tests as a safety net.
 
     This provides Test Impact Analysis (TIA) without requiring prior coverage
     data — it works on fresh worktrees and build agents from the first run.
 
-.PARAMETER BaseBranch
+    Requires: dotnet tool restore (installs dotnet-affected from dotnet-tools.json)
+
+.PARAMETER From
     The git ref to diff against. Defaults to 'origin/main'.
 
 .PARAMETER Configuration
@@ -18,6 +20,9 @@
 
 .PARAMETER All
     If set, skips impact analysis and runs the full test suite (same as test.ps1).
+
+.PARAMETER NoBuild
+    If set, passes --no-build to dotnet test (use when already built).
 
 .PARAMETER DryRun
     If set, prints which test projects would run without executing them.
@@ -28,7 +33,7 @@
 
 .EXAMPLE
     # Diff against a specific commit
-    .\scripts\repo\test-impacted.ps1 -BaseBranch "HEAD~3"
+    .\scripts\repo\test-impacted.ps1 -From "HEAD~3"
 
 .EXAMPLE
     # See what would run without executing
@@ -36,7 +41,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$BaseBranch = 'origin/main',
+    [string]$From = 'origin/main',
     [string]$Configuration = 'Debug',
     [switch]$All,
     [switch]$NoBuild,
@@ -51,203 +56,132 @@ $slnxPath = Join-Path $repoRoot 'BotNexus.slnx'
 
 # Projects that always run regardless of what changed (cross-cutting safety net)
 $alwaysRunPatterns = @(
-    'BotNexus.Architecture.Tests'
-    'BotNexus.Scenarios.Tests'
+    '\.Architecture\.Tests'
+    '\.Scenarios\.Tests'
 )
 
 if ($All) {
     Write-Host "Running full test suite (--All specified)" -ForegroundColor Cyan
-    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
+    $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
+    $args = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
+    if ($buildFlag) { $args += $buildFlag }
+    & dotnet @args
     exit $LASTEXITCODE
 }
 
-# --- Step 1: Determine changed files ---
-Write-Host "Comparing against: $BaseBranch" -ForegroundColor Cyan
+# --- Step 1: Ensure dotnet-affected is available ---
+Write-Host "Restoring dotnet tools..." -ForegroundColor DarkGray
+dotnet tool restore --nologo 2>&1 | Out-Null
 
-$changedFiles = git -C $repoRoot diff --name-only $BaseBranch -- 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "git diff failed — falling back to full test suite"
-    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
+# --- Step 2: Run dotnet-affected to get affected project list ---
+# Run for committed changes (branch diff) AND uncommitted changes (working dir)
+Write-Host "Analyzing affected projects (comparing against: $From)..." -ForegroundColor Cyan
+
+$outputDir = Join-Path $repoRoot '.affected'
+if (Test-Path $outputDir) { Remove-Item $outputDir -Recurse -Force }
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+$affectedProjects = @()
+
+# Check committed changes against base ref
+$affectedOutput = dotnet affected --from $From -f text --output-dir $outputDir --output-name affected-branch 2>&1
+$branchExitCode = $LASTEXITCODE
+
+if ($branchExitCode -eq 0) {
+    $branchFile = Join-Path $outputDir 'affected-branch.txt'
+    if (Test-Path $branchFile) {
+        $affectedProjects += @(Get-Content $branchFile | Where-Object { $_ })
+    }
+}
+elseif ($branchExitCode -ne 166) {
+    Write-Warning "dotnet-affected failed (exit $branchExitCode) — falling back to full test suite"
+    Write-Host ($affectedOutput -join "`n") -ForegroundColor DarkGray
+    $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
+    $testArgs = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
+    if ($buildFlag) { $testArgs += $buildFlag }
+    & dotnet @testArgs
     exit $LASTEXITCODE
 }
 
-# Include uncommitted changes
-$uncommitted = git -C $repoRoot diff --name-only 2>$null
-$staged = git -C $repoRoot diff --name-only --cached 2>$null
-$changedFiles = @($changedFiles) + @($uncommitted) + @($staged) | Sort-Object -Unique | Where-Object { $_ }
-$changedFiles = @($changedFiles)
+# Also check uncommitted/staged changes (HEAD vs working directory)
+$uncommittedOutput = dotnet affected -f text --output-dir $outputDir --output-name affected-local 2>&1
+$localExitCode = $LASTEXITCODE
 
-if ($changedFiles.Count -eq 0) {
-    Write-Host "No changes detected — nothing to test." -ForegroundColor Green
-    exit 0
-}
-
-Write-Host "Changed files: $($changedFiles.Count)" -ForegroundColor Cyan
-
-# --- Step 2: Identify changed source projects ---
-# Parse the slnx to get all project paths
-[xml]$slnx = Get-Content $slnxPath -Raw
-$allProjects = @()
-$projectNodes = $slnx.SelectNodes('//Project[@Path]')
-foreach ($node in $projectNodes) {
-    $allProjects += ($node.Path -replace '\\', '/')
-}
-
-# Find source projects whose directory contains a changed file
-$changedSourceProjects = @()
-foreach ($proj in $allProjects) {
-    if ($proj -match '^tests/') { continue }
-    $projDir = ($proj | Split-Path -Parent) -replace '\\', '/'
-    foreach ($file in $changedFiles) {
-        $normalizedFile = $file -replace '\\', '/'
-        if ($normalizedFile.StartsWith("$projDir/")) {
-            $changedSourceProjects += $proj
-            break
-        }
+if ($localExitCode -eq 0) {
+    $localFile = Join-Path $outputDir 'affected-local.txt'
+    if (Test-Path $localFile) {
+        $affectedProjects += @(Get-Content $localFile | Where-Object { $_ })
     }
 }
 
-# Also detect changes to test projects themselves (new tests, refactored tests)
-$changedTestProjects = @()
-foreach ($proj in $allProjects) {
-    if ($proj -notmatch '^tests/') { continue }
-    $projDir = ($proj | Split-Path -Parent) -replace '\\', '/'
-    foreach ($file in $changedFiles) {
-        $normalizedFile = $file -replace '\\', '/'
-        if ($normalizedFile.StartsWith("$projDir/")) {
-            $changedTestProjects += $proj
-            break
-        }
-    }
+# Deduplicate
+$affectedProjects = @($affectedProjects | Sort-Object -Unique)
+
+if ($affectedProjects.Count -eq 0) {
+    Write-Host "No projects affected by changes." -ForegroundColor Green
+    Write-Host "Running safety-net tests only..." -ForegroundColor Cyan
 }
 
-Write-Host "Changed source projects: $($changedSourceProjects.Count)" -ForegroundColor Cyan
-foreach ($p in $changedSourceProjects) { Write-Host "  - $p" -ForegroundColor DarkGray }
-
-# --- Step 3: Build dependency map (test project → source project references) ---
-# Walk ProjectReference chains to find which test projects depend on changed source projects
-
-function Get-TransitiveDependencies {
-    param([string]$CsprojPath, [hashtable]$Cache)
-
-    $fullPath = Join-Path $repoRoot ($CsprojPath -replace '/', [IO.Path]::DirectorySeparatorChar)
-    if ($Cache.ContainsKey($fullPath)) { return ,$Cache[$fullPath] }
-
-    $deps = [System.Collections.Generic.HashSet[string]]::new()
-    $Cache[$fullPath] = $deps
-
-    if (-not (Test-Path $fullPath)) { return ,$deps }
-
-    $content = Get-Content $fullPath -Raw
-    $regex = [regex]'<ProjectReference\s+Include="([^"]+)"'
-    $refMatches = $regex.Matches($content)
-
-    foreach ($m in $refMatches) {
-        $refRelative = $m.Groups[1].Value
-        $refAbsolute = [IO.Path]::GetFullPath(
-            (Join-Path (Split-Path $fullPath) $refRelative)
-        )
-        # Normalize to repo-relative with forward slashes
-        $repoRelative = $refAbsolute.Substring($repoRoot.Length + 1) -replace '\\', '/'
-        [void]$deps.Add($repoRelative)
-
-        # Recurse into transitive deps
-        $transitive = Get-TransitiveDependencies -CsprojPath $repoRelative -Cache $Cache
-        if ($null -ne $transitive) {
-            foreach ($t in $transitive) { [void]$deps.Add($t) }
-        }
-    }
-
-    return ,$deps
-}
-
-$depCache = @{}
-$impactedTestProjects = [System.Collections.Generic.HashSet[string]]::new()
-
-# All test projects from the solution (exclude harness/helper libraries)
-$testProjects = $allProjects | Where-Object { $_ -match '^tests/' -and $_ -match '\.Tests\.csproj$' }
-
-foreach ($testProj in $testProjects) {
-    # Check if this test project directly changed
-    if ($changedTestProjects -contains $testProj) {
-        [void]$impactedTestProjects.Add($testProj)
-        continue
-    }
-
-    # Check if any transitive dependency is a changed source project
-    $deps = Get-TransitiveDependencies -CsprojPath $testProj -Cache $depCache
-    if ($null -ne $deps) {
-        foreach ($changedSrc in $changedSourceProjects) {
-            if ($deps.Contains($changedSrc)) {
-                [void]$impactedTestProjects.Add($testProj)
-                break
-            }
-        }
-    }
-}
+# Filter to only test projects
+$affectedTestProjects = @($affectedProjects | Where-Object { $_ -match '\.Tests[/\\]' -or $_ -match '\.Tests\.csproj$' })
 
 # --- Step 4: Always include safety-net projects ---
-foreach ($testProj in $testProjects) {
+# Find all test projects in the solution matching safety-net patterns
+[xml]$slnx = Get-Content $slnxPath -Raw
+$allTestProjects = @()
+$projectNodes = $slnx.SelectNodes('//Project[@Path]')
+foreach ($node in $projectNodes) {
+    $path = $node.Path -replace '\\', '/'
+    if ($path -match '\.Tests\.csproj$') {
+        $allTestProjects += (Join-Path $repoRoot ($path -replace '/', [IO.Path]::DirectorySeparatorChar))
+    }
+}
+
+$safetyNetProjects = @()
+foreach ($proj in $allTestProjects) {
     foreach ($pattern in $alwaysRunPatterns) {
-        if ($testProj -match [regex]::Escape($pattern)) {
-            [void]$impactedTestProjects.Add($testProj)
+        if ($proj -match $pattern) {
+            $safetyNetProjects += $proj
             break
         }
     }
 }
 
-# --- Step 5: Handle shared infrastructure changes ---
-# If Directory.Build.props, Directory.Packages.props, or global.json changed, run everything
-$infrastructureFiles = @(
-    'Directory.Build.props'
-    'Directory.Packages.props'
-    'global.json'
-    'tests/Directory.Build.props'
-    'tests/Directory.Build.targets'
-)
-$infraChanged = $changedFiles | Where-Object { ($_ -replace '\\', '/') -in $infrastructureFiles }
-if ($infraChanged) {
-    Write-Host "Build infrastructure changed — running full test suite" -ForegroundColor Yellow
-    if ($DryRun) {
-        Write-Host "[DRY RUN] Would run: dotnet test $slnxPath" -ForegroundColor Yellow
-        exit 0
-    }
-    $buildFlag = if ($NoBuild) { '--no-build' } else { '' }
-    dotnet test $slnxPath --nologo --tl:off -c $Configuration $buildFlag
-    exit $LASTEXITCODE
-}
+# Merge affected test projects with safety-net (deduplicated)
+$projectsToTest = @($affectedTestProjects + $safetyNetProjects | Sort-Object -Unique)
 
-# --- Step 6: Run impacted tests ---
-$sortedProjects = $impactedTestProjects | Sort-Object
-
-if ($sortedProjects.Count -eq 0) {
-    Write-Host "No test projects impacted by changes." -ForegroundColor Green
+# --- Step 5: Report and execute ---
+if ($projectsToTest.Count -eq 0) {
+    Write-Host "No test projects to run." -ForegroundColor Green
     exit 0
 }
 
-Write-Host "`nTest projects to run ($($sortedProjects.Count) of $($testProjects.Count) total):" -ForegroundColor Cyan
-foreach ($p in $sortedProjects) {
-    $isSafetyNet = $alwaysRunPatterns | Where-Object { $p -match [regex]::Escape($_) }
+Write-Host "`nTest projects to run ($($projectsToTest.Count) of $($allTestProjects.Count) total):" -ForegroundColor Cyan
+foreach ($p in $projectsToTest) {
+    $name = [IO.Path]::GetFileNameWithoutExtension($p)
+    $isSafetyNet = $alwaysRunPatterns | Where-Object { $p -match $_ }
     $label = if ($isSafetyNet) { " (always-run)" } else { "" }
-    Write-Host "  - $p$label" -ForegroundColor DarkGray
+    Write-Host "  - $name$label" -ForegroundColor DarkGray
 }
 
 if ($DryRun) {
-    Write-Host "`n[DRY RUN] Would run $($sortedProjects.Count) test projects." -ForegroundColor Yellow
+    Write-Host "`n[DRY RUN] Would run $($projectsToTest.Count) test projects." -ForegroundColor Yellow
     exit 0
 }
 
+# Run tests
 Write-Host ""
+$buildFlag = if ($NoBuild) { '--no-build' } else { '--no-restore' }
 $failed = $false
-$noBuildArg = if ($NoBuild) { '--no-build' } else { '--no-restore' }
-foreach ($proj in $sortedProjects) {
-    $projFullPath = Join-Path $repoRoot ($proj -replace '/', [IO.Path]::DirectorySeparatorChar)
-    Write-Host "Testing: $proj" -ForegroundColor White
-    dotnet test $projFullPath --nologo --tl:off -c $Configuration $noBuildArg
+foreach ($proj in $projectsToTest) {
+    $name = [IO.Path]::GetFileNameWithoutExtension($proj)
+    Write-Host "Testing: $name" -ForegroundColor White
+    dotnet test $proj --nologo --tl:off -c $Configuration $buildFlag
     if ($LASTEXITCODE -ne 0) { $failed = $true }
 }
+
+# Cleanup
+if (Test-Path $outputDir) { Remove-Item $outputDir -Recurse -Force }
 
 if ($failed) {
     Write-Host "`nSome tests failed." -ForegroundColor Red

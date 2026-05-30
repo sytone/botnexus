@@ -54,15 +54,17 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore
+      - name: Restore tools and packages
+        run: |
+          dotnet tool restore
+          dotnet restore
 
       - name: Build
         run: dotnet build --no-restore
 
       - name: Test (impacted only)
         shell: pwsh
-        run: ./scripts/repo/test-impacted.ps1 -BaseBranch origin/${{ github.base_ref }} -NoBuild
+        run: ./scripts/repo/test-impacted.ps1 -From origin/${{ github.base_ref }} -NoBuild
 
   # Push to main: full test suite with coverage (safety net)
   full-tests:

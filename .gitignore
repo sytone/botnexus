@@ -71,3 +71,6 @@ site/**/*
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 cognitive-coverage/
+
+# dotnet-affected output
+.affected/
