@@ -568,6 +568,8 @@ public sealed class AgentExchangeArchiveTests
             => _inner.CreateAsync(conversation, ct);
         public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
             => _inner.SaveAsync(conversation, ct);
+        public Task AddParticipantsAsync(ConversationId conversationId, IEnumerable<SessionParticipant> participants, CancellationToken ct = default)
+            => _inner.AddParticipantsAsync(conversationId, participants, ct);
         public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
         {
             ArchiveCallCount++;

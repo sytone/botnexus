@@ -59,6 +59,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly PendingAskUserInterceptor? _pendingAskUserInterceptor;
     private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
     private readonly ISessionCompactionCoordinator _compactionCoordinator;
+    private readonly IConversationStore? _conversationStore;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -78,7 +79,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         PendingAskUserInterceptor? pendingAskUserInterceptor = null,
         IPreCompactionMemoryFlusher? memoryFlusher = null,
         IAgentRegistry? registry = null,
-        ISessionCompactionCoordinator? compactionCoordinator = null)
+        ISessionCompactionCoordinator? compactionCoordinator = null,
+        IConversationStore? conversationStore = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -95,6 +97,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _pendingAskUserInterceptor = pendingAskUserInterceptor;
         _memoryFlusher = memoryFlusher;
         _registry = registry;
+        _conversationStore = conversationStore;
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
         // one; build a fallback from the deps we already have so behaviour
@@ -386,7 +389,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message, isNewSession: createdSession);
-            EnsureCallerParticipant(session, message.Sender);
+            // P9-F (#657): participant add must run AFTER SaveAsync below so that the
+            // legacy-conversation resolver inside SaveAsync has stamped session.ConversationId
+            // (and CreateAsync'd the row in the conversation store). Adding before save would
+            // race the orphan-stamp and silently no-op when the dispatcher hasn't resolved a
+            // conversation up front.
             if (ShouldInitializeSystemPrompt(session))
             {
                 // Force fresh handle creation so isolation strategy rebuilds system prompt from workspace files.
@@ -460,6 +467,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             // Write-ahead Layer 1: persist user message before starting the LLM call.
             // Ensures user input survives a gateway restart mid-turn (#363).
             await _sessions.SaveAsync(session, cancellationToken);
+
+            // P9-F (#657): now that SaveAsync has run the legacy resolver and stamped
+            // session.ConversationId (creating the row in the conversation store if needed),
+            // it is safe to add the caller participant. AddParticipantsAsync no-ops when the
+            // target conversation doesn't exist, so this MUST follow the first SaveAsync.
+            await EnsureCallerParticipantAsync(session, message.Sender, cancellationToken).ConfigureAwait(false);
 
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
@@ -1053,18 +1066,23 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         base.Dispose();
     }
 
-    private static void EnsureCallerParticipant(GatewaySession session, CitizenId callerCitizenId)
+    private async Task EnsureCallerParticipantAsync(GatewaySession session, CitizenId callerCitizenId, CancellationToken cancellationToken)
     {
         if (!callerCitizenId.IsValid)
             return;
 
-        if (session.Participants.Any(p => p.CitizenId == callerCitizenId))
+        // Skip when the conversation has not yet been pinned to the session (legacy/dispatch
+        // races) — without a ConversationId we have nothing to merge against. Skip when no
+        // conversation store is wired (legacy unit-test compositions); the architecture fence
+        // pins direct Session.Participants mutations as removed, so the no-store path simply
+        // becomes a no-op rather than reaching back into the deleted field.
+        if (!session.ConversationId.IsInitialized() || _conversationStore is null)
             return;
 
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = callerCitizenId
-        });
+        await _conversationStore.AddParticipantsAsync(
+            session.ConversationId,
+            [new SessionParticipant { CitizenId = callerCitizenId }],
+            cancellationToken).ConfigureAwait(false);
     }
 
     private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)

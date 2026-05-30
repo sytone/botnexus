@@ -42,6 +42,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
         ISecretRedactor? redactor,
         IConversationStore? conversationStore,
         ILogger<InMemorySessionStore>? logger = null)
+        : base(conversationStore)
     {
         _redactor = redactor;
         _legacyResolver = conversationStore is not null

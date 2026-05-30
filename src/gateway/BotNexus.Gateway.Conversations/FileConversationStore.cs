@@ -87,15 +87,14 @@ public sealed class FileConversationStore : IConversationStore
         if (!citizen.IsValid)
             throw new ArgumentException("Citizen must be a valid (non-default) CitizenId.", nameof(citizen));
 
-        // Scope: when the citizen is an Agent we can narrow the enumeration to that agent's
-        // directory because owner-match guarantees AgentId == citizen.AsAgent. For User citizens
-        // we have to scan everything since they could have initiated conversations under any agent.
-        AgentId? scope = citizen.Kind == CitizenKind.Agent ? citizen.AsAgent : null;
-
+        // P9-F: cannot scope-narrow by agent dir even when citizen is an Agent. Participant
+        // matches can land on conversations owned by *another* agent, so the pre-P9-F
+        // narrowing (scope = citizen.AsAgent) would silently drop them. The optimisation
+        // is gone until/unless an index supplements the scan.
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var all = await EnumerateAsync(scope, ct).ConfigureAwait(false);
+            var all = await EnumerateAsync(agentId: null, ct).ConfigureAwait(false);
             IReadOnlyList<Conversation> filtered = [.. all.Where(c => MatchesCitizen(c, citizen))];
             return filtered;
         }
@@ -108,6 +107,11 @@ public sealed class FileConversationStore : IConversationStore
             return true;
 
         if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
+            return true;
+
+        // Participant-match (P9-F): the conversation includes this citizen in its
+        // participant set persisted in the JSON sidecar.
+        if (conversation.Participants.Any(p => p.CitizenId == citizen))
             return true;
 
         return false;
@@ -151,6 +155,53 @@ public sealed class FileConversationStore : IConversationStore
             await WriteFileAsync(
                 conversation with { Status = ConversationStatus.Archived, ActiveSessionId = null, UpdatedAt = DateTimeOffset.UtcNow },
                 ct).ConfigureAwait(false);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task AddParticipantsAsync(
+        ConversationId conversationId,
+        IEnumerable<SessionParticipant> participants,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(participants);
+        var snapshot = participants as IReadOnlyCollection<SessionParticipant> ?? participants.ToArray();
+        if (snapshot.Count == 0)
+            return;
+
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var existing = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (existing is null)
+                return;
+
+            var byCitizen = new Dictionary<CitizenId, SessionParticipant>(existing.Participants.Count);
+            foreach (var p in existing.Participants)
+                byCitizen[p.CitizenId] = p;
+
+            var changed = false;
+            foreach (var participant in snapshot)
+            {
+                if (!participant.CitizenId.IsValid)
+                    continue;
+                // First-add wins on role.
+                if (byCitizen.ContainsKey(participant.CitizenId))
+                    continue;
+                byCitizen[participant.CitizenId] = new SessionParticipant
+                {
+                    CitizenId = participant.CitizenId,
+                    Role = participant.Role
+                };
+                changed = true;
+            }
+
+            if (!changed)
+                return;
+
+            existing.Participants = byCitizen.Values.ToList();
+            await WriteFileAsync(existing, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }

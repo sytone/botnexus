@@ -95,12 +95,9 @@ public sealed class GatewaySession
     /// <summary>Computed interactivity marker.</summary>
     public bool IsInteractive => Session.IsInteractive;
 
-    /// <summary>Participants in this session.</summary>
-    public List<SessionParticipant> Participants
-    {
-        get => Session.Participants;
-        init => Session.Participants = value;
-    }
+    // P9-F (#657): GatewaySession.Participants facade was deleted along with the
+    // underlying Session.Participants field. Participants now live on Conversation; see
+    // IConversationStore.AddParticipantsAsync and ListForCitizenAsync for the new APIs.
 
     /// <summary>When the session was created.</summary>
     public DateTimeOffset CreatedAt

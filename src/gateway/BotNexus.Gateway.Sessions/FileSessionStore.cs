@@ -44,6 +44,7 @@ public sealed class FileSessionStore : SessionStoreBase
     private readonly ILogger<FileSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
     private readonly LegacyConversationResolver? _legacyResolver;
+    private readonly IConversationStore? _conversationStore;
 
     // Phase 9 / P9-B-2 (#627): eager startup sweep mirrors
     // SqliteSessionStore.MigrateOrphanedSessionsAsync. A SemaphoreSlim + bool flag
@@ -94,11 +95,13 @@ public sealed class FileSessionStore : SessionStoreBase
         IFileSystem fileSystem,
         IConversationStore? conversationStore,
         ISecretRedactor? redactor = null)
+        : base(conversationStore)
     {
         _storePath = storePath;
         _logger = logger;
         _fileSystem = fileSystem;
         _redactor = redactor;
+        _conversationStore = conversationStore;
         _legacyResolver = conversationStore is not null
             ? new LegacyConversationResolver(conversationStore, logger: null)
             : null;
@@ -262,6 +265,11 @@ public sealed class FileSessionStore : SessionStoreBase
             {
                 Interlocked.Increment(ref _migrationInvocationCount);
                 await MigrateOrphanedSessionsAsync(cancellationToken).ConfigureAwait(false);
+                // P9-F (#657): forward legacy sidecar Participants entries into the
+                // conversation store's normalised participant set. Idempotent — runs once
+                // per process, mirrors the Sqlite-side backfill.
+                if (_conversationStore is not null)
+                    await BackfillParticipantsToConversationsAsync(_conversationStore, cancellationToken).ConfigureAwait(false);
                 _migrated = true;
             }
             catch (OperationCanceledException)
@@ -404,6 +412,68 @@ public sealed class FileSessionStore : SessionStoreBase
             totalMigrated, orphans.Select(o => o.AgentId).Distinct().Count());
     }
 
+    /// <summary>
+    /// P9-F (#657): one-shot startup backfill that forwards legacy sidecar
+    /// <c>SessionMeta.Participants</c> entries into the conversation store's normalised
+    /// participant set. Mirrors the SqliteSessionStore-side scan; reads each sidecar,
+    /// groups by ConversationId and dispatches to
+    /// <see cref="IConversationStore.AddParticipantsAsync"/>. Idempotent — safe to re-run.
+    /// Sidecars with no <c>ConversationId</c> are skipped here because the orphan
+    /// migration immediately preceding this call already stamps a legacy conversation
+    /// onto them.
+    /// </summary>
+    private async Task BackfillParticipantsToConversationsAsync(
+        IConversationStore conversationStore,
+        CancellationToken cancellationToken)
+    {
+        var byConversation = new Dictionary<string, List<SessionParticipant>>(StringComparer.Ordinal);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            foreach (var metaFile in _fileSystem.Directory.GetFiles(_storePath, "*.meta.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var meta = await SessionMetadataSidecar.ReadAsync<SessionMeta>(
+                    _fileSystem,
+                    metaFile,
+                    JsonOptions,
+                    cancellationToken).ConfigureAwait(false);
+                if (meta is null) continue;
+                if (meta.ConversationId is null) continue;
+                if (meta.Participants is null || meta.Participants.Count == 0) continue;
+
+                var key = meta.ConversationId.Value.Value;
+                if (!byConversation.TryGetValue(key, out var list))
+                {
+                    list = [];
+                    byConversation[key] = list;
+                }
+                list.AddRange(meta.Participants);
+            }
+        }
+        finally { _lock.Release(); }
+
+        if (byConversation.Count == 0)
+            return;
+
+        var totalRows = 0;
+        foreach (var (convIdString, participants) in byConversation)
+        {
+            var convId = ConversationId.From(convIdString);
+            var deduped = participants
+                .GroupBy(p => p.CitizenId)
+                .Select(g => g.First())
+                .ToList();
+            await conversationStore.AddParticipantsAsync(convId, deduped, cancellationToken).ConfigureAwait(false);
+            totalRows += deduped.Count;
+        }
+
+        _logger.LogInformation(
+            "Participant backfill (file session store): forwarded {Count} participant entries across {ConvCount} conversation(s).",
+            totalRows, byConversation.Count);
+    }
+
     private async Task<GatewaySession?> LoadFromFileAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         var metaPath = GetMetaPath(sessionId);
@@ -420,7 +490,9 @@ public sealed class FileSessionStore : SessionStoreBase
             AgentId = meta.AgentId,
             ChannelType = meta.ChannelType,
             SessionType = meta.SessionType ?? InferSessionType(sessionId, meta.ChannelType),
-            Participants = meta.Participants ?? [],
+            // P9-F (#657): meta.Participants is read-and-discarded. The legacy field is
+            // retained on SessionMeta for the one-shot backfill into the conversation
+            // store; participants are no longer assigned to Session.
             CreatedAt = meta.CreatedAt,
             UpdatedAt = meta.UpdatedAt,
             Status = meta.Status,
@@ -531,7 +603,11 @@ public sealed class FileSessionStore : SessionStoreBase
             session.ChannelType,
             session.CallerId,
             session.SessionType,
-            session.Participants,
+            // P9-F (#657): never write Participants on new sidecars — the legacy field is
+            // retained on the record for back-compat reads (and the backfill scan) but
+            // not populated. Sending `null` preserves the JSON shape without re-emitting
+            // stale data on every save.
+            null,
             session.CreatedAt,
             session.UpdatedAt,
             session.Status,

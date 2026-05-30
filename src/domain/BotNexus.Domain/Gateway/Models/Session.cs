@@ -52,10 +52,11 @@ public sealed record Session
         && (!ChannelType.HasValue
             || !string.Equals(ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>
-    /// Gets or sets the participants.
-    /// </summary>
-    public List<SessionParticipant> Participants { get; set; } = [];
+    // P9-F (#657): Session.Participants was deleted. Participants are now durably owned
+    // by the parent Conversation (Conversation.Participants), mutated only via
+    // IConversationStore.AddParticipantsAsync, and queried via
+    // IConversationStore.ListForCitizenAsync. This eliminates the duplicated ownership
+    // that made channel-side "what conversations is this citizen in?" queries quadratic.
 
     /// <summary>
     /// Gets or sets the created at.

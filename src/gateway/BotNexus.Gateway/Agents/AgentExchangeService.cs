@@ -103,17 +103,26 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.ChannelType = null;
         session.CallerId = null;
         session.Status = GatewaySessionStatus.Active;
-        session.Participants.Clear();
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(request.InitiatorId),
-            Role = "initiator"
-        });
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(request.TargetId),
-            Role = "target"
-        });
+
+        // P9-F: Participants live on the Conversation, not the Session. The agent-exchange
+        // handshake pre-registers the initiator + target so any later participant-based
+        // query (e.g. portal's responder-side inbox via IConversationStore.ListForCitizenAsync)
+        // resolves the conversation for both citizens.
+        await _conversationStore.AddParticipantsAsync(
+            conversation.ConversationId,
+            [
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(request.InitiatorId),
+                    Role = "initiator"
+                },
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(request.TargetId),
+                    Role = "target"
+                }
+            ],
+            cancellationToken).ConfigureAwait(false);
 
         session.Metadata["callChain"] = normalizedChain
             .Select(id => id.Value)
@@ -267,17 +276,25 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.ChannelType = ChannelKey.From("cross-world");
         session.CallerId = null;
         session.Status = GatewaySessionStatus.Active;
-        session.Participants.Clear();
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(request.InitiatorId),
-            Role = "initiator"
-        });
-        session.Participants.Add(new SessionParticipant
-        {
-            CitizenId = CitizenId.Of(resolvedTarget.AgentId),
-            Role = "target"
-        });
+
+        // P9-F: Participants live on the Conversation (cross-world variant). The remote
+        // target is identified by its in-world AgentId so the local
+        // IConversationStore.ListForCitizenAsync lookup works without cross-world plumbing.
+        await _conversationStore.AddParticipantsAsync(
+            conversation.ConversationId,
+            [
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(request.InitiatorId),
+                    Role = "initiator"
+                },
+                new SessionParticipant
+                {
+                    CitizenId = CitizenId.Of(resolvedTarget.AgentId),
+                    Role = "target"
+                }
+            ],
+            cancellationToken).ConfigureAwait(false);
 
         session.Metadata["callChain"] = normalizedChain
             .Select(id => id.Value)

@@ -92,4 +92,29 @@ public sealed record Conversation
     /// ids.
     /// </remarks>
     public ConversationKind Kind { get; set; } = ConversationKind.HumanAgent;
+
+    /// <summary>
+    /// Gets or sets the citizens currently participating in this conversation. Populated as
+    /// a side effect of inbound message routing and the agent-exchange handshake — see
+    /// <c>IConversationStore.AddParticipantsAsync</c>, which is the only sanctioned mutation
+    /// path (the <c>ConversationParticipantsMutationArchitectureTests</c> fence bans direct
+    /// list mutation outside of conversation-store implementations and the one-shot backfill
+    /// migration). Direct read access is fine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Replaces the pre-P9-F <c>Session.Participants</c> field. The conversation is the
+    /// durable owner of the participant set; a session is just a bounded transcript window
+    /// inside it. Storing the set on the conversation means a citizen's "what am I in?"
+    /// query (used by channels for inbox-style views) is one indexed lookup against this
+    /// list rather than a fan-out scan over every session.
+    /// </para>
+    /// <para>
+    /// The list deduplicates by <c>SessionParticipant.CitizenId</c>; the role on the first
+    /// add for a given citizen is the role that wins (subsequent adds for the same citizen
+    /// are merged-as-no-op so concurrent producers don't fight over a role label). See
+    /// <c>SqliteConversationStore.AddParticipantsAsync</c> for the canonical implementation.
+    /// </para>
+    /// </remarks>
+    public List<SessionParticipant> Participants { get; set; } = [];
 }
