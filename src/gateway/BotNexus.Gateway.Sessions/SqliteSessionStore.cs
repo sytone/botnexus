@@ -7,6 +7,7 @@ using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
+using TriggerType = BotNexus.Domain.Primitives.TriggerType;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Security;
@@ -319,7 +320,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     tool_call_id TEXT,
                     is_compaction_summary INTEGER NOT NULL DEFAULT 0,
                     is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
-                    is_history INTEGER NOT NULL DEFAULT 0
+                    is_history INTEGER NOT NULL DEFAULT 0,
+                    trigger_type TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
@@ -360,7 +362,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      ("tool_args", "TEXT"),
                      ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0"),
-                     ("is_history", "INTEGER NOT NULL DEFAULT 0")
+                     ("is_history", "INTEGER NOT NULL DEFAULT 0"),
+                     // P9-E (#645): trigger_type captures the proxy origin of a turn
+                     // (Cron/Soul/Heartbeat/Memory). Idempotent ALTER guarantees existing
+                     // pre-P9-E DBs gain the column on the first post-upgrade open.
+                     ("trigger_type", "TEXT")
                  })
         {
             try
@@ -625,7 +631,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -647,7 +653,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 ToolArgs = historyReader.FieldCount > 6 && !historyReader.IsDBNull(6) ? historyReader.GetString(6) : null,
                 ToolIsError = historyReader.FieldCount > 7 && !historyReader.IsDBNull(7) && historyReader.GetInt64(7) != 0,
                 IsCrashSentinel = historyReader.FieldCount > 8 && !historyReader.IsDBNull(8) && historyReader.GetInt64(8) != 0,
-                IsHistory = historyReader.FieldCount > 9 && !historyReader.IsDBNull(9) && historyReader.GetInt64(9) != 0
+                IsHistory = historyReader.FieldCount > 9 && !historyReader.IsDBNull(9) && historyReader.GetInt64(9) != 0,
+                Trigger = historyReader.FieldCount > 10 && !historyReader.IsDBNull(10)
+                    ? TriggerType.FromString(historyReader.GetString(10))
+                    : null
             });
         }
 
@@ -725,8 +734,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
             insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
@@ -739,6 +748,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             insertCommand.Parameters.AddWithValue("$toolIsError", entry.ToolIsError ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$triggerType", (object?)entry.Trigger?.Value ?? DBNull.Value);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
