@@ -1,4 +1,4 @@
-name: CI
+name: "CI: Build & Test"
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/docs.yml'
+      - '.github/workflows/deploy-docs.yml'
       - '.squad/**'
       - '.ai-team/**'
       - '.copilot/**'
@@ -23,7 +23,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/docs.yml'
+      - '.github/workflows/deploy-docs.yml'
       - '.squad/**'
       - '.ai-team/**'
       - '.copilot/**'

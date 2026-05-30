@@ -1,4 +1,4 @@
-name: Container Integration Tests
+name: "CI: Container Integration"
 
 on:
   workflow_dispatch:
