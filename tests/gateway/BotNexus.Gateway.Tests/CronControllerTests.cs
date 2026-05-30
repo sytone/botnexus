@@ -212,6 +212,20 @@ public sealed class CronControllerTests
             return Task.CompletedTask;
         }
 
+        public Task<ConversationId?> TrySetConversationIdAsync(JobId jobId, ConversationId conversationId, CancellationToken ct = default)
+        {
+            if (!_jobs.TryGetValue(jobId.Value, out var job))
+                return Task.FromResult<ConversationId?>(null);
+
+            if (!job.ConversationId.HasValue)
+            {
+                _jobs[jobId.Value] = job with { ConversationId = conversationId };
+                return Task.FromResult<ConversationId?>(conversationId);
+            }
+
+            return Task.FromResult<ConversationId?>(job.ConversationId);
+        }
+
         public Task<CronRun> RecordRunStartAsync(JobId jobId, CancellationToken ct = default)
         {
             var run = new CronRun
