@@ -577,7 +577,7 @@ public sealed class AgentExchangeArchiveTests
         }
         public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
             => _inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
-        public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
-            => _inner.GetSummariesAsync(agentId, ct);
+        public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
+            => _inner.GetSummariesAsync(ct);
     }
 }

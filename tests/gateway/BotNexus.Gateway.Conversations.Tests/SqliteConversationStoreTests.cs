@@ -202,7 +202,7 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task GetSummariesAsync_ReturnsBindingCountCorrectly()
+    public async Task GetSummariesAsync_ReturnsAllActiveSummariesWithBindingCounts()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
@@ -213,7 +213,7 @@ public sealed class SqliteConversationStoreTests
             CreateBinding("teams", "abc/topic:thread-1"));
         await store.CreateAsync(conversation);
 
-        var summaries = await fixture.CreateStore().GetSummariesAsync(Agent("agent-a"));
+        var summaries = await fixture.CreateStore().GetSummariesAsync();
 
         summaries.Count.ShouldBe(1);
         summaries[0].ConversationId.ShouldBe(conversation.ConversationId.Value);
