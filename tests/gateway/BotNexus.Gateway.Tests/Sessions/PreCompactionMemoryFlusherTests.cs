@@ -190,7 +190,6 @@ public sealed class PreCompactionMemoryFlusherTests
     private static Session BuildSession(SessionType type) => new()
     {
         SessionId = TestSessionId,
-        AgentId = TestAgent,
         SessionType = type
     };
 }

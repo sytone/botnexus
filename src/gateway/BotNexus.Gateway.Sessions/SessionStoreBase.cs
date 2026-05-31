@@ -131,13 +131,17 @@ public abstract class SessionStoreBase : ISessionStore
     }
 
     protected static GatewaySession CreateSession(SessionId sessionId, AgentId agentId, ChannelKey? channelType, ISecretRedactor? redactor = null)
-        => new(new Session
+        => new(
+            new Session
+            {
+                SessionId = sessionId,
+                ChannelType = channelType,
+                SessionType = InferSessionType(sessionId, channelType)
+            },
+            redactor)
         {
-            SessionId = sessionId,
-            AgentId = agentId,
-            ChannelType = channelType,
-            SessionType = InferSessionType(sessionId, channelType)
-        }, redactor);
+            AgentId = agentId
+        };
 
     protected static SessionType InferSessionType(SessionId sessionId, ChannelKey? channelType)
     {

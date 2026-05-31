@@ -14,6 +14,7 @@ public sealed class GatewaySession
     private GatewaySessionRuntime? _runtime;
     private string? _callerId;
     private readonly ISecretRedactor? _redactor;
+    private AgentId _agentId;
 
     public GatewaySession()
         : this(new Session(), null)
@@ -49,12 +50,32 @@ public sealed class GatewaySession
         init => Session.SessionId = value;
     }
 
-    /// <summary>The agent this session is bound to.</summary>
+    /// <summary>
+    /// The agent that owns the parent <see cref="Conversation"/> this session belongs to.
+    /// Hydrated at construction time by <see cref="ISessionStore"/> implementations from
+    /// <c>Conversation.AgentId</c> — the conversation is the durable owner of the agent
+    /// binding (P9-H, issue #662, directive W-4). The value is immutable post-construction:
+    /// <c>Conversation.AgentId</c> is itself <c>init</c>-only so a hydrated AgentId cannot
+    /// drift for the lifetime of the session. Callers that need to resolve the AgentId
+    /// for a session they do not yet have an instance of must inject
+    /// <see cref="IAgentIdentityResolver"/>.
+    /// </summary>
     public AgentId AgentId
     {
-        get => Session.AgentId;
-        set => Session.AgentId = value;
+        get => _agentId;
+        init => _agentId = value;
     }
+
+    /// <summary>
+    /// Hydrates the derived <see cref="AgentId"/> for an instance produced outside an
+    /// object initializer (e.g. by <see cref="FromSession"/> and store load paths that
+    /// build the wrapper first and look up the conversation second). This is the only
+    /// sanctioned mutation path; the architecture fence pins it (
+    /// <c>SessionAgentIdRemovedArchitectureTests</c>) so nothing outside the gateway
+    /// session-store assembly can re-introduce a write-through facade.
+    /// </summary>
+    /// <param name="agentId">The resolved owning agent id.</param>
+    public void HydrateAgentId(AgentId agentId) => _agentId = agentId;
 
     /// <summary>The channel this session originated from (e.g., "signalr", "telegram").</summary>
     public ChannelKey? ChannelType

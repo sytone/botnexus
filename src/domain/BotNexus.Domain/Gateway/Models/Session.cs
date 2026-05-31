@@ -12,10 +12,12 @@ public sealed record Session
     /// </summary>
     public SessionId SessionId { get; set; }
 
-    /// <summary>
-    /// Gets or sets the agent id.
-    /// </summary>
-    public AgentId AgentId { get; set; }
+    // P9-H (#662): Session.AgentId was deleted. Agent ownership is durably owned by the
+    // parent Conversation (Conversation.AgentId, init-only post P9-H). Resolve the owning
+    // agent via IAgentIdentityResolver, or for store-backed reads via the hydrated
+    // GatewaySession.AgentId (populated at construction by ISessionStore implementations
+    // from Conversation.AgentId). This eliminates the duplicated ownership that allowed
+    // a session's agent and its conversation's agent to drift, per directive W-4.
 
     /// <summary>
     /// Gets or sets the channel type.
