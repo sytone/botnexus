@@ -25,7 +25,7 @@ public sealed class SignalRChannelAdapterTests
         var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
         var streamEvent = new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "delta" };
 
-        await adapter.SendStreamEventAsync("  session-1  ", streamEvent, CancellationToken.None);
+        await adapter.SendStreamEventAsync(StreamTargets.For("  session-1  "), streamEvent, CancellationToken.None);
 
         clients.Verify(value => value.Group("session:session-1"), Times.Once);
         clientProxy.Verify(proxy => proxy.ContentDelta(
@@ -62,7 +62,7 @@ public sealed class SignalRChannelAdapterTests
             }
         };
 
-        await adapter.SendStreamEventAsync("session-2", streamEvent, CancellationToken.None);
+        await adapter.SendStreamEventAsync(StreamTargets.For("session-2"), streamEvent, CancellationToken.None);
 
         clientProxy.Verify(proxy => proxy.UserInputRequired(
                 It.Is<AgentStreamEvent>(evt => evt.Type == AgentStreamEventType.UserInputRequired)),

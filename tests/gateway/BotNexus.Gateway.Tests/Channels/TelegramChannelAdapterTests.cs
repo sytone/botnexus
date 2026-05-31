@@ -10,6 +10,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Channels;
 
 public sealed class TelegramChannelAdapterTests
@@ -315,9 +317,9 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60000
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('a', 101) });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('b', 101) });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('a', 101) });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('b', 101) });
 
         calls.Count(c => c.MethodName == "sendMessage").ShouldBe(1);
         calls.Count(c => c.MethodName == "editMessageText").ShouldBeGreaterThan(0);
@@ -358,8 +360,8 @@ public sealed class TelegramChannelAdapterTests
         // Composite address — adapter must decode "/topic:42" and route the initial
         // streaming sendMessage to the originating forum topic.
         const string compositeAddress = "42/topic:42";
-        await adapter.SendStreamEventAsync(compositeAddress, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync(compositeAddress, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('x', 101) });
+        await adapter.SendStreamEventAsync(StreamTargets.For(compositeAddress), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For(compositeAddress), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('x', 101) });
 
         var firstSend = calls.FirstOrDefault(c => c.MethodName == "sendMessage");
         firstSend.ShouldNotBeNull("streaming flow must issue exactly one initial sendMessage");
@@ -393,7 +395,7 @@ public sealed class TelegramChannelAdapterTests
         }, handler);
 
         // Send a delta large enough to cross the flush threshold and force a sendMessage.
-        await adapter.SendStreamDeltaAsync("42/topic:67", new string('y', 200));
+        await adapter.SendStreamDeltaAsync(StreamTargets.For("42/topic:67"), new string('y', 200));
 
         var firstSend = calls.FirstOrDefault(c => c.MethodName == "sendMessage");
         firstSend.ShouldNotBeNull();
@@ -605,10 +607,10 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60_000
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "first" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "second" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "first" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "second" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCalls.Count.ShouldBe(1);
         sendCalls[0].Text.ShouldNotBeNull();
@@ -1614,9 +1616,9 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60_000 // prevent time-based flush during test
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**hello**" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**hello**" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCall.ShouldNotBeNull();
         // Raw markdown **hello** must be converted to MarkdownV2 *hello* at flush time.
@@ -1646,11 +1648,11 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60_000 // prevent time-based flush; only flush at MessageEnd
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
         // Simulate streaming where **bold** arrives split across two deltas
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**bol" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "d**" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**bol" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "d**" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
@@ -1677,7 +1679,7 @@ public sealed class TelegramChannelAdapterTests
         // Send 100 chars of markdown — this hits the StreamingFlushThresholdChars (100) and triggers flush.
         var boldContent = new string('x', 96);
         var delta = $"**{boldContent}**"; // 100 chars total: 2 + 96 + 2
-        await adapter.SendStreamDeltaAsync("42", delta);
+        await adapter.SendStreamDeltaAsync(StreamTargets.For("42"), delta);
 
         sendCall.ShouldNotBeNull();
         // The raw ** must be converted to * (Telegram bold) at flush time, not escaped as \*.
@@ -1708,9 +1710,9 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60_000
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "memory_save" });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "memory_save" });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
@@ -1737,14 +1739,14 @@ public sealed class TelegramChannelAdapterTests
             StreamingBufferMs = 60_000
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ToolEnd,
             ToolName = "read_file",
             ToolIsError = true
         });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
@@ -1772,13 +1774,13 @@ public sealed class TelegramChannelAdapterTests
             ErrorCooldownMs = 0
         }, handler);
 
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent
         {
             Type = AgentStreamEventType.Error,
             ErrorMessage = "Connection failed. Retry 1/3"
         });
-        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");

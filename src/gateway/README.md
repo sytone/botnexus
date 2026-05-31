@@ -94,9 +94,16 @@ public interface IChannelAdapter
     Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
     Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default);
-    Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default);
+    Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default);
 }
 ```
+
+`ChannelStreamTarget` is a typed record (`SessionId`, `ChannelAddress`, optional `BindingId`) that mirrors the addressing fields on `OutboundMessage`. Each adapter consumes whichever field matches its native routing model:
+
+- **SignalR** keys outbound by `target.SessionId` (clients are grouped per session)
+- **Telegram** keys by `target.ChannelAddress` (chat id, optionally with a `/topic:NN` suffix)
+- **TUI** uses `target.SessionId` purely as a display label
+- **InternalChannelAdapter** resolves the parent's originating adapter via `target.SessionId`
 
 #### Channel Capability Flags
 

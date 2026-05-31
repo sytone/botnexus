@@ -97,11 +97,11 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
     /// <summary>
     /// Sends a streaming delta to the terminal without appending a newline.
     /// </summary>
-    /// <param name="conversationId">Target conversation identifier.</param>
+    /// <param name="target">Typed stream target — TUI uses <c>target.SessionId</c> only as a display label.</param>
     /// <param name="delta">Streaming text delta.</param>
     /// <param name="cancellationToken">Cancellation token for send operations.</param>
     /// <returns>A task that completes when the delta has been written.</returns>
-    public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public override Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -116,29 +116,30 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
     /// <summary>
     /// Sends a structured stream event to the terminal.
     /// </summary>
-    /// <param name="conversationId">Target conversation identifier.</param>
+    /// <param name="target">Typed stream target — TUI uses <c>target.SessionId</c> only as a display label.</param>
     /// <param name="streamEvent">Structured stream event payload.</param>
     /// <param name="cancellationToken">Cancellation token for send operations.</param>
     /// <returns>A task that completes when the event has been rendered.</returns>
     public Task SendStreamEventAsync(
-        string conversationId,
+        ChannelStreamTarget target,
         AgentStreamEvent streamEvent,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var label = target.SessionId.Value;
         return streamEvent.Type switch
         {
             AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is not null
-                => SendStreamDeltaAsync(conversationId, streamEvent.ContentDelta, cancellationToken),
+                => SendStreamDeltaAsync(target, streamEvent.ContentDelta, cancellationToken),
             AgentStreamEventType.ThinkingDelta when streamEvent.ThinkingContent is not null
                 => Console.Out.WriteAsync($"\n💭 {streamEvent.ThinkingContent}"),
             AgentStreamEventType.ToolStart when streamEvent.ToolName is not null
-                => Console.Out.WriteLineAsync($"\n🔧 [{DisplayName}:{conversationId}] Tool start: {streamEvent.ToolName}"),
+                => Console.Out.WriteLineAsync($"\n🔧 [{DisplayName}:{label}] Tool start: {streamEvent.ToolName}"),
             AgentStreamEventType.ToolEnd
-                => Console.Out.WriteLineAsync($"\n✅ [{DisplayName}:{conversationId}] Tool complete: {streamEvent.ToolCallId ?? "unknown"}"),
+                => Console.Out.WriteLineAsync($"\n✅ [{DisplayName}:{label}] Tool complete: {streamEvent.ToolCallId ?? "unknown"}"),
             AgentStreamEventType.Error when streamEvent.ErrorMessage is not null
-                => Console.Out.WriteLineAsync($"\n❌ [{DisplayName}:{conversationId}] {streamEvent.ErrorMessage}"),
+                => Console.Out.WriteLineAsync($"\n❌ [{DisplayName}:{label}] {streamEvent.ErrorMessage}"),
             _ => Task.CompletedTask
         };
     }

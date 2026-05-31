@@ -124,7 +124,7 @@ public sealed class StreamingPipelineTests
         channel.SetupGet(c => c.ChannelType).Returns(ChannelKey.From("web"));
         channel.SetupGet(c => c.DisplayName).Returns("Web");
         channel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        channel.Setup(c => c.SendStreamDeltaAsync("conv-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        channel.Setup(c => c.SendStreamDeltaAsync(StreamTargets.For("conv-1"), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return channel;
     }

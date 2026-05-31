@@ -119,9 +119,9 @@ public sealed class VirtualChannelAdapterConformance
     public async Task SendStreamDelta_GroupsDeltas_ByConversationRoutingKey()
     {
         var adapter = new VirtualChannelAdapter();
-        await adapter.SendStreamDeltaAsync("conv-a", "Hel");
-        await adapter.SendStreamDeltaAsync("conv-a", "lo");
-        await adapter.SendStreamDeltaAsync("conv-b", "Hi");
+        await adapter.SendStreamDeltaAsync(Target("conv-a"), "Hel");
+        await adapter.SendStreamDeltaAsync(Target("conv-a"), "lo");
+        await adapter.SendStreamDeltaAsync(Target("conv-b"), "Hi");
 
         adapter.StreamDeltas["conv-a"].ShouldBe(["Hel", "lo"]);
         adapter.StreamDeltas["conv-b"].ShouldBe(["Hi"]);
@@ -137,9 +137,9 @@ public sealed class VirtualChannelAdapterConformance
         var delta = new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Hi" };
         var end = new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd };
 
-        await contract.SendStreamEventAsync("conv-a", start);
-        await contract.SendStreamEventAsync("conv-a", delta);
-        await contract.SendStreamEventAsync("conv-b", end);
+        await contract.SendStreamEventAsync(Target("conv-a"), start);
+        await contract.SendStreamEventAsync(Target("conv-a"), delta);
+        await contract.SendStreamEventAsync(Target("conv-b"), end);
 
         adapter.StreamEvents["conv-a"].Select(e => e.Type)
             .ShouldBe([AgentStreamEventType.MessageStart, AgentStreamEventType.ContentDelta]);
@@ -180,7 +180,7 @@ public sealed class VirtualChannelAdapterConformance
 
         await adapter.SimulateInboundAsync(NewInbound("in"));
         await adapter.SendAsync(NewOutbound("out"));
-        await adapter.SendStreamDeltaAsync("conv-a", "delta");
+        await adapter.SendStreamDeltaAsync(Target("conv-a"), "delta");
 
         adapter.Reset();
 
@@ -189,6 +189,9 @@ public sealed class VirtualChannelAdapterConformance
         adapter.StreamDeltas.ShouldBeEmpty();
         adapter.InboundDispatchCount.ShouldBe(0);
     }
+
+    private static ChannelStreamTarget Target(string addressAndSessionKey) =>
+        new(SessionId.From(addressAndSessionKey), ChannelAddress.From(addressAndSessionKey), null);
 
     private static InboundMessage NewInbound(string content) => new()
     {

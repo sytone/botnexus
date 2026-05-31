@@ -538,7 +538,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     // When the originating channel is not SignalR (e.g. Telegram), any SignalR
                     // bindings on the conversation receive stream events so connected web
                     // clients update in real-time without a page reload.
-                    IReadOnlyList<(IStreamEventChannelAdapter Adapter, string SessionAddress)> signalRObservers = [];
+                    IReadOnlyList<(IStreamEventChannelAdapter Adapter, ChannelStreamTarget Target)> signalRObservers = [];
                     if (_conversationRouter is not null && message.ChannelType.Value != "signalr")
                     {
                         try
@@ -553,7 +553,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 .Select(b =>
                                 {
                                     var adapter = ResolveChannelAdapter(b.ChannelType) as IStreamEventChannelAdapter;
-                                    return (Adapter: adapter!, Address: b.ChannelAddress.Value);
+                                    var observerTarget = new ChannelStreamTarget(
+                                        Domain.Primitives.SessionId.From(sessionId),
+                                        b.ChannelAddress,
+                                        b.BindingId);
+                                    return (Adapter: adapter!, Target: observerTarget);
                                 })
                                 .Where(x => x.Adapter is not null)
                                 .ToList();
@@ -583,11 +587,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                     }
                                     : evt;
 
-                                // Build the conversationId that the channel adapter uses to
-                                // route the stream. The address is opaque to the gateway —
-                                // adapters encode native sub-addresses (e.g. Telegram forum
-                                // topics) into it themselves.
-                                var streamConversationId = message.ChannelAddress.Value;
+                                // Build the typed stream target the channel adapter uses to
+                                // route this delta or event. Each adapter consumes the field
+                                // that matches its routing semantics — see ChannelStreamTarget.
+                                var streamTarget = new ChannelStreamTarget(
+                                    Domain.Primitives.SessionId.From(sessionId),
+                                    message.ChannelAddress,
+                                    message.BindingId);
 
                                 if (enriched.Type == AgentStreamEventType.UserInputRequired)
                                 {
@@ -601,22 +607,22 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 }
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    await streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct);
+                                    await streamEventChannel.SendStreamEventAsync(streamTarget, enriched, ct);
                                 else if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    await channel.SendStreamDeltaAsync(streamConversationId, evt.ContentDelta, ct);
+                                    await channel.SendStreamDeltaAsync(streamTarget, evt.ContentDelta, ct);
 
                                 // Fan-out stream events to SignalR observer bindings (#332).
-                                // Each observer gets the event keyed by its own channel address
-                                // (SignalR connection/session ID) so the portal can route it correctly.
-                                foreach (var (observerAdapter, observerAddress) in signalRObservers)
+                                // Each observer gets the event keyed by its own typed target so the
+                                // portal can route it correctly and exclude its own originating binding.
+                                foreach (var (observerAdapter, observerTarget) in signalRObservers)
                                 {
                                     try
                                     {
-                                        await observerAdapter.SendStreamEventAsync(observerAddress, enriched, ct);
+                                        await observerAdapter.SendStreamEventAsync(observerTarget, enriched, ct);
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogWarning(ex, "SignalR observer fan-out failed for address {Address}. Skipping.", observerAddress);
+                                        _logger.LogWarning(ex, "SignalR observer fan-out failed for address {Address}. Skipping.", observerTarget.ChannelAddress);
                                     }
                                 }
                             }),
@@ -913,10 +919,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         CancellationToken cancellationToken)
     {
         var request = streamEvent.UserInputRequest;
-        var sourceConversationId = message.ChannelAddress.Value;
 
         if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
-            await SendAskUserToBindingAsync(sourceAdapter, sourceConversationId, source, sessionId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(sourceAdapter, source, sessionId, streamEvent, request, cancellationToken);
 
         if (_conversationRouter is null)
             return;
@@ -932,20 +937,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             if (adapter is null)
                 continue;
 
-            var bindingConversationId = binding.ChannelAddress.Value;
             var bindingSource = new ChannelSource(
                 binding.ChannelType,
                 binding.ChannelAddress,
                 message.SenderId,
                 binding.BindingId,
                 binding.DisplayPrefix);
-            await SendAskUserToBindingAsync(adapter, bindingConversationId, bindingSource, sessionId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(adapter, bindingSource, sessionId, streamEvent, request, cancellationToken);
         }
     }
 
     private static async Task SendAskUserToBindingAsync(
         IChannelAdapter adapter,
-        string conversationId,
         ChannelSource source,
         string sessionId,
         AgentStreamEvent streamEvent,
@@ -954,7 +957,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     {
         if (adapter is IStreamEventChannelAdapter streamAdapter)
         {
-            await streamAdapter.SendStreamEventAsync(conversationId, streamEvent, cancellationToken);
+            var target = new ChannelStreamTarget(
+                SessionId.From(sessionId),
+                source.ChannelAddress,
+                source.BindingId);
+            await streamAdapter.SendStreamEventAsync(target, streamEvent, cancellationToken);
             return;
         }
 

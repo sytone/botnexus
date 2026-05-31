@@ -86,10 +86,15 @@ public interface IChannelAdapter
     /// Sends a streaming delta to a conversation on this channel.
     /// Only called if <see cref="SupportsStreaming"/> is <c>true</c>.
     /// </summary>
-    /// <param name="conversationId">The target conversation.</param>
+    /// <param name="target">
+    /// Typed routing target identifying the session, channel address, and originating
+    /// binding for this stream. Each adapter consumes the field that matches its
+    /// routing semantics — see <see cref="ChannelStreamTarget"/> for the per-channel
+    /// contract.
+    /// </param>
     /// <param name="delta">The incremental content.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default);
+    Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -114,5 +119,12 @@ public interface IStreamEventChannelAdapter
     /// <summary>
     /// Sends a structured stream event to a target conversation.
     /// </summary>
-    Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default);
+    /// <param name="target">
+    /// Typed routing target identifying the session, channel address, and originating
+    /// binding for this stream. See <see cref="ChannelStreamTarget"/> for the
+    /// per-channel contract.
+    /// </param>
+    /// <param name="streamEvent">The stream event to deliver.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default);
 }

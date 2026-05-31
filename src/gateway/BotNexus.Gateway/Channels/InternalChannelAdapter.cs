@@ -55,13 +55,13 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventCha
         await targetAdapter.SendAsync(remapped, cancellationToken);
     }
 
-    public override async Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public override async Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
-        var targetAdapter = await ResolveTargetAdapterForConversationAsync(conversationId, cancellationToken);
+        var targetAdapter = await ResolveTargetAdapterForSessionAsync(target.SessionId, cancellationToken);
         if (targetAdapter is null)
             return;
 
-        await targetAdapter.SendStreamDeltaAsync(conversationId, delta, cancellationToken);
+        await targetAdapter.SendStreamDeltaAsync(target, delta, cancellationToken);
     }
 
     /// <summary>
@@ -69,34 +69,34 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventCha
     /// lifecycle events (start/end, thinking, and tool notifications) are preserved when parent agents are resumed.
     /// If the target channel only supports plain deltas, content events degrade gracefully to delta forwarding.
     /// </summary>
-    /// <param name="conversationId">The target conversation or session identifier.</param>
+    /// <param name="target">Typed stream target — the parent session and its originating address.</param>
     /// <param name="streamEvent">The structured stream event to deliver to the resolved channel.</param>
     /// <param name="cancellationToken">Cancellation token for the async send operation.</param>
     public async Task SendStreamEventAsync(
-        string conversationId,
+        ChannelStreamTarget target,
         AgentStreamEvent streamEvent,
         CancellationToken cancellationToken = default)
     {
-        var targetAdapter = await ResolveTargetAdapterForConversationAsync(conversationId, cancellationToken);
+        var targetAdapter = await ResolveTargetAdapterForSessionAsync(target.SessionId, cancellationToken);
         if (targetAdapter is null)
         {
             Logger.LogWarning(
-                "Internal adapter: no target channel resolved for conversation '{ConversationId}'. Stream event '{EventType}' was not delivered.",
-                conversationId,
+                "Internal adapter: no target channel resolved for session '{SessionId}'. Stream event '{EventType}' was not delivered.",
+                target.SessionId,
                 streamEvent.Type);
             return;
         }
 
         if (targetAdapter is IStreamEventChannelAdapter streamTarget)
         {
-            await streamTarget.SendStreamEventAsync(conversationId, streamEvent, cancellationToken);
+            await streamTarget.SendStreamEventAsync(target, streamEvent, cancellationToken);
             return;
         }
 
         if (streamEvent.Type == AgentStreamEventType.ContentDelta
             && streamEvent.ContentDelta is not null)
         {
-            await targetAdapter.SendStreamDeltaAsync(conversationId, streamEvent.ContentDelta, cancellationToken);
+            await targetAdapter.SendStreamDeltaAsync(target, streamEvent.ContentDelta, cancellationToken);
         }
     }
 
@@ -128,24 +128,21 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventCha
         return null;
     }
 
-    private async Task<IChannelAdapter?> ResolveTargetAdapterForConversationAsync(string conversationId, CancellationToken cancellationToken)
+    private async Task<IChannelAdapter?> ResolveTargetAdapterForSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(conversationId))
+        try
         {
-            try
+            var session = await _sessionStore.GetAsync(sessionId, cancellationToken);
+            if (session?.ChannelType is { } channelType)
             {
-                var session = await _sessionStore.GetAsync(SessionId.From(conversationId), cancellationToken);
-                if (session?.ChannelType is { } channelType)
-                {
-                    var adapter = GetChannelManager().Get(channelType);
-                    if (adapter is not null && !adapter.ChannelType.Equals(ChannelType))
-                        return adapter;
-                }
+                var adapter = GetChannelManager().Get(channelType);
+                if (adapter is not null && !adapter.ChannelType.Equals(ChannelType))
+                    return adapter;
             }
-            catch
-            {
-                // Best effort — fall through to signalr.
-            }
+        }
+        catch
+        {
+            // Best effort — fall through to signalr.
         }
 
         var fallback = GetChannelManager().Get(ChannelKey.From("signalr"));

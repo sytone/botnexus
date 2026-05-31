@@ -119,6 +119,6 @@ public sealed class ChannelManagerTests
         public Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

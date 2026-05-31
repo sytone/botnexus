@@ -21,6 +21,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Sessions;
 
 [Trait("Category", "Integration")]
@@ -56,7 +58,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         });
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(oldSession, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(oldSession), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "old-session-event"
@@ -65,7 +67,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         await Task.Delay(250, cts.Token);
         oldSessionEventReceived.ShouldBeFalse();
 
-        await adapter.SendStreamEventAsync(newSession, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(newSession), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "new-session-event"
@@ -89,7 +91,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload => eventReceived.TrySetResult(payload));
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionId, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionId), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "new-group-event"
@@ -144,12 +146,12 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         using var ____ = connectionB.On<AgentStreamEvent>("ToolStart", _ => bReceived = true);
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "session-a-delta"
         }, cts.Token);
-        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ToolStart,
             ToolCallId = "tool-1",
