@@ -60,7 +60,10 @@ public sealed class SessionAgentIdColumnRemovedArchitectureTests
 
         foreach (var relative in s_allowlist)
         {
-            var full = Path.Combine(srcRoot, relative);
+            // Allowlist is stored with forward slashes (portable); convert to the
+            // platform separator before resolving against the filesystem.
+            var platformRelative = relative.Replace('/', Path.DirectorySeparatorChar);
+            var full = Path.Combine(srcRoot, platformRelative);
             if (!File.Exists(full))
             {
                 stale.Add($"{relative} — file does not exist (delete this allowlist entry)");
@@ -175,12 +178,14 @@ public sealed class SessionAgentIdColumnRemovedArchitectureTests
     // The migration helpers in SqliteSessionStore.cs are the only production code permitted
     // to reference the legacy column / indexes. Everything else must use the post-P9-I
     // shape (Conversation.AgentId via HydrateAgentIdAsync; idx_sessions_conversation_created).
+    // Paths use forward-slash separators for cross-platform stability (Linux CI vs Windows
+    // dev). ToRelative normalises filesystem paths to the same shape before lookup.
     private static readonly HashSet<string> s_allowlist = new(StringComparer.OrdinalIgnoreCase)
     {
         // MigrateOrphanedSessionsAsync reads agent_id from legacy rows to find the owner;
         // DropLegacyAgentIdColumnAsync drops both legacy indexes then the column itself;
         // VerifyAgentIdColumnConsistencyAsync logs any pre-existing data corruption.
-        @"gateway\BotNexus.Gateway.Sessions\SqliteSessionStore.cs",
+        "gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs",
     };
 
     private static IEnumerable<string> EnumerateProductionCsFiles(string srcRoot)
@@ -195,9 +200,13 @@ public sealed class SessionAgentIdColumnRemovedArchitectureTests
     {
         var full = Path.GetFullPath(fullPath);
         var root = Path.GetFullPath(srcRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return full.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+        var relative = full.StartsWith(root, StringComparison.OrdinalIgnoreCase)
             ? full.Substring(root.Length)
             : full;
+        // Normalise to forward slashes so the allowlist (and any string comparisons) are
+        // stable across Linux CI and Windows dev. Backslash is not legal in Linux paths,
+        // so the substitution is a one-way no-op on Linux and a portability fix on Windows.
+        return relative.Replace('\\', '/');
     }
 
     private static string FindSourceRoot()
