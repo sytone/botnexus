@@ -39,8 +39,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private readonly IConversationStore? _conversationStore;
-    private readonly LegacyConversationResolver? _legacyResolver;
+    private readonly IConversationStore _conversationStore;
+    private readonly LegacyConversationResolver _legacyResolver;
+    private readonly ConcurrentDictionary<ConversationId, AgentId> _agentIdCache = new();
     private readonly ILogger<SqliteSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
 
@@ -50,25 +51,27 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// <param name="connectionString">SQLite connection string for the sessions database.</param>
     /// <param name="logger">Logger for diagnostic output including migration summaries.</param>
     /// <param name="conversationStore">
-    /// When provided, a startup migration links any orphaned sessions (those with no
-    /// <c>conversation_id</c>) to their agent's <c>legacy:{agentId}</c> conversation,
-    /// and <see cref="SaveAsync"/> / <see cref="LoadSessionAsync(SessionId, CancellationToken)"/>
-    /// defensively backfill sessions that still arrive null after startup.
+    /// Mandatory post-P9-I (issue #674): durable agent ownership lives on
+    /// <see cref="Conversation.AgentId"/>, and the SQLite session row no longer carries an
+    /// <c>agent_id</c> column. The store uses the conversation store to (a) link orphaned
+    /// sessions to their agent's legacy conversation at startup, (b) hydrate
+    /// <see cref="GatewaySession.AgentId"/> on every load from <see cref="Conversation.AgentId"/>
+    /// (cached per <see cref="ConversationId"/>; safe because <c>Conversation.AgentId</c> is
+    /// init-only per <c>ConversationAgentIdImmutabilityArchitectureTests</c>), and (c) stamp
+    /// <see cref="Session.ConversationId"/> defensively at save time.
     /// </param>
     /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
     public SqliteSessionStore(
         string connectionString,
         ILogger<SqliteSessionStore> logger,
-        IConversationStore? conversationStore = null,
+        IConversationStore conversationStore,
         ISecretRedactor? redactor = null)
         : base(conversationStore)
     {
         _connectionString = connectionString;
         _logger = logger;
-        _conversationStore = conversationStore;
-        _legacyResolver = conversationStore is not null
-            ? new LegacyConversationResolver(conversationStore, logger: null)
-            : null;
+        _conversationStore = conversationStore ?? throw new ArgumentNullException(nameof(conversationStore));
+        _legacyResolver = new LegacyConversationResolver(conversationStore, logger: null);
         _redactor = redactor;
     }
 
@@ -225,7 +228,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         {
             var sessionId = SessionId.From(reader.GetString(0));
             var session = _cache.GetValueOrDefault(sessionId)
-                ?? await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
+                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
                 _cache[sessionId] = session;
@@ -238,7 +241,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     /// <summary>
     /// Returns sessions for a single conversation, using the
-    /// <c>idx_sessions_conversation_agent</c> index to avoid loading the
+    /// <c>idx_sessions_conversation_created</c> index to avoid loading the
     /// full session table. Honours the same chronological-ascending /
     /// SessionId-tiebreaker contract as <see cref="SessionStoreBase.ListByConversationAsync"/>.
     /// </summary>
@@ -252,15 +255,21 @@ public sealed class SqliteSessionStore : SessionStoreBase
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
+        // P9-I (#674): agent_id predicate removed — column is dropped post-migration.
+        // The agentId argument is applied post-hydration via the inherited
+        // SessionStoreBase contract: the hydrated AgentId comes from Conversation.AgentId
+        // (resolved by HydrateAgentIdAsync) and is the authoritative owner. Note that
+        // every session in a conversation has the same AgentId by construction
+        // (Conversation.AgentId is init-only and shared across all its sessions), so
+        // the agentId filter is effectively an assertion that the conversation belongs
+        // to the requested agent — and is preserved here for API contract continuity.
         command.CommandText = """
             SELECT id
             FROM sessions
             WHERE conversation_id = $conversationId
-              AND ($agentId IS NULL OR agent_id = $agentId)
             ORDER BY created_at ASC, id ASC
             """;
         command.Parameters.AddWithValue("$conversationId", conversationId.Value);
-        command.Parameters.AddWithValue("$agentId", (object?)agentId?.Value ?? DBNull.Value);
 
         var sessions = new List<GatewaySession>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -268,11 +277,12 @@ public sealed class SqliteSessionStore : SessionStoreBase
         {
             var sessionId = SessionId.From(reader.GetString(0));
             var session = _cache.GetValueOrDefault(sessionId)
-                ?? await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
+                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
                 _cache[sessionId] = session;
-                sessions.Add(session);
+                if (agentId is null || session.AgentId == agentId)
+                    sessions.Add(session);
             }
         }
 
@@ -299,7 +309,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
             command.CommandText = """
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
-                    agent_id TEXT,
                     channel_type TEXT,
                     caller_id TEXT,
                     session_type TEXT,
@@ -326,7 +335,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
-                CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -334,23 +342,41 @@ public sealed class SqliteSessionStore : SessionStoreBase
             // Migrate: add tool columns to existing databases
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
 
-            // Conversation-routing index. MUST run AFTER MigrateAsync because legacy
-            // schemas may lack the conversation_id column until migration adds it.
+            // P9-I (#674): the legacy idx_sessions_conversation_agent index referenced
+            // the (now-dropped) agent_id column. Migration below drops the old shape
+            // and recreates as (conversation_id, created_at, id). For fresh DBs this
+            // CREATE INDEX IF NOT EXISTS catches the new shape immediately.
             await using var convIndexCmd = connection.CreateCommand();
             convIndexCmd.CommandText =
-                "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_agent ON sessions(conversation_id, agent_id, created_at);";
+                "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_created ON sessions(conversation_id, created_at, id);";
             await convIndexCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            // Migrate: link orphaned sessions to their agent's default conversation
-            if (_conversationStore is not null)
+            // P9-I (#674): orphan migration runs BEFORE the column drop because it
+            // reads the legacy agent_id column. Gated on column existence so fresh DBs
+            // skip the scan entirely.
+            var hasAgentIdColumn = await HasColumnAsync(connection, "sessions", "agent_id", cancellationToken).ConfigureAwait(false);
+            if (hasAgentIdColumn)
+            {
                 await MigrateOrphanedSessionsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+            }
 
             // P9-F (#657): forward any legacy participants_json into the conversation
             // store's normalised participant set. Idempotent (INSERT OR IGNORE inside
             // AddParticipantsAsync). Runs on every startup; cheap when the legacy column
             // has aged out across deployments.
-            if (_conversationStore is not null)
-                await BackfillParticipantsToConversationsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+            await BackfillParticipantsToConversationsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+
+            // P9-I (#674): drop the legacy agent_id column and its indexes once orphan
+            // migration has completed. The column is no longer the source of truth —
+            // Conversation.AgentId via IAgentIdentityResolver is. We log a verification
+            // summary of any row whose agent_id column disagrees with the conversation's
+            // AgentId so operators can spot pre-existing data corruption. SQLite >= 3.35
+            // supports ALTER TABLE DROP COLUMN directly. Microsoft.Data.Sqlite ships
+            // 3.46+ so this is unconditionally available.
+            if (hasAgentIdColumn)
+            {
+                await DropLegacyAgentIdColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+            }
 
             _initialized = true;
         }
@@ -359,6 +385,145 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     private SemaphoreSlim GetSessionLock(SessionId sessionId)
         => _sessionLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>
+    /// Returns <c>true</c> when the named column exists on the given SQLite table.
+    /// Implemented via <c>PRAGMA table_info(<paramref name="table"/>)</c> which is the
+    /// portable, schema-version-independent way to introspect SQLite. Used by P9-I
+    /// migration paths to gate legacy <c>agent_id</c> reads/writes/drops so fresh DBs
+    /// skip the entire orphan-migration + column-drop dance.
+    /// </summary>
+    private static async Task<bool> HasColumnAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        CancellationToken cancellationToken)
+    {
+        await using var cmd = connection.CreateCommand();
+        // PRAGMA does not support parameter binding for the table name in older SQLite
+        // versions; interpolation is safe here because `table` is a hardcoded literal
+        // controlled by callers (not user input).
+        cmd.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // table_info columns: cid, name, type, notnull, dflt_value, pk
+            var name = reader.IsDBNull(1) ? null : reader.GetString(1);
+            if (string.Equals(name, column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// P9-I (#674): drops the legacy <c>sessions.agent_id</c> column and the two
+    /// indexes that referenced it. SQLite refuses <c>DROP COLUMN</c> on a column that
+    /// is part of any index, so the dependent <c>idx_sessions_agent_id</c> and
+    /// <c>idx_sessions_conversation_agent</c> indexes are dropped first. After the
+    /// column drop the new conversation-routing index <c>idx_sessions_conversation_created</c>
+    /// is created (the fresh-DB shape — it may already exist from the prior CREATE INDEX
+    /// IF NOT EXISTS in EnsureCreatedAsync, in which case this is a no-op).
+    /// </summary>
+    /// <remarks>
+    /// A verification scan runs first: any session whose stamped <c>conversation_id</c>
+    /// resolves to a different <see cref="Conversation.AgentId"/> than the row's
+    /// legacy <c>agent_id</c> column is logged as a warning. We log-and-proceed rather
+    /// than fail because the new source of truth (Conversation.AgentId) is the
+    /// authoritative durable value post-P9-H; the legacy column was effectively
+    /// read-only and may contain stale data from pre-migration writes.
+    /// </remarks>
+    private async Task DropLegacyAgentIdColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await VerifyAgentIdColumnConsistencyAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        await using (var dropAgentIndex = connection.CreateCommand())
+        {
+            dropAgentIndex.CommandText = "DROP INDEX IF EXISTS idx_sessions_agent_id;";
+            await dropAgentIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (var dropConvIndex = connection.CreateCommand())
+        {
+            dropConvIndex.CommandText = "DROP INDEX IF EXISTS idx_sessions_conversation_agent;";
+            await dropConvIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (var dropColumn = connection.CreateCommand())
+        {
+            dropColumn.CommandText = "ALTER TABLE sessions DROP COLUMN agent_id;";
+            await dropColumn.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // Recreate the conversation-routing index in its new (no agent_id) shape.
+        // EnsureCreatedAsync ran CREATE INDEX IF NOT EXISTS earlier; that statement is
+        // a no-op when the index already exists, so we run it explicitly here too in
+        // case the database had only the old shape and nothing else.
+        await using (var newIndex = connection.CreateCommand())
+        {
+            newIndex.CommandText =
+                "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_created ON sessions(conversation_id, created_at, id);";
+            await newIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation(
+            "P9-I: dropped legacy 'sessions.agent_id' column and dependent indexes. " +
+            "AgentId is now hydrated from Conversation.AgentId via IAgentIdentityResolver.");
+    }
+
+    /// <summary>
+    /// Logs a warning for every row whose legacy <c>agent_id</c> column disagrees
+    /// with the owning <see cref="Conversation.AgentId"/>. Read-only — never mutates
+    /// rows. Skipped (and logged) when a row has a non-null <c>agent_id</c> but no
+    /// resolvable conversation, which indicates pre-existing orphan data the migration
+    /// could not link.
+    /// </summary>
+    private async Task VerifyAgentIdColumnConsistencyAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var scanCmd = connection.CreateCommand();
+        scanCmd.CommandText = """
+            SELECT id, agent_id, conversation_id
+            FROM sessions
+            WHERE agent_id IS NOT NULL
+            """;
+
+        var mismatches = 0;
+        var unresolvable = 0;
+        await using var reader = await scanCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sessionId = reader.GetString(0);
+            var legacyAgentId = reader.GetString(1);
+            var convIdValue = reader.IsDBNull(2) ? null : reader.GetString(2);
+
+            if (convIdValue is null)
+            {
+                unresolvable++;
+                continue;
+            }
+
+            var conv = await _conversationStore.GetAsync(ConversationId.From(convIdValue), cancellationToken).ConfigureAwait(false);
+            if (conv is null)
+            {
+                unresolvable++;
+                continue;
+            }
+
+            if (!string.Equals(conv.AgentId.Value, legacyAgentId, StringComparison.Ordinal))
+            {
+                mismatches++;
+                _logger.LogWarning(
+                    "P9-I verification: session {SessionId} legacy agent_id={LegacyAgentId} disagrees with Conversation.AgentId={ConversationAgentId} on {ConversationId}. Conversation.AgentId wins.",
+                    sessionId, legacyAgentId, conv.AgentId.Value, convIdValue);
+            }
+        }
+
+        if (mismatches > 0 || unresolvable > 0)
+        {
+            _logger.LogWarning(
+                "P9-I verification summary: {Mismatches} session(s) had a legacy agent_id that disagreed with the conversation, {Unresolvable} session(s) had no resolvable conversation. Authoritative AgentId is the conversation's.",
+                mismatches, unresolvable);
+        }
+    }
 
     private static async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -602,61 +767,68 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <summary>
-    /// Defensively backfills a session loaded from storage whose
-    /// <c>conversation_id</c> column is NULL. The startup migration sweeps all such rows
-    /// at <see cref="EnsureCreatedAsync"/>, so this path is reached only if a NULL row
-    /// was inserted concurrently by another process between startup and this read.
-    /// Persists the legacy stamp back to the row so subsequent indexed queries
-    /// (e.g. <see cref="ListByConversationAsync"/>) see the session.
+    /// P9-I (#674): hydrates <see cref="GatewaySession.AgentId"/> on a loaded session
+    /// from <see cref="Conversation.AgentId"/>. Replaces the deleted load-time read of
+    /// the legacy <c>sessions.agent_id</c> column. Throws <see cref="InvalidOperationException"/>
+    /// when <c>ConversationId</c> is unset (data corruption — the orphan migration should
+    /// have stamped every row) or the conversation does not exist in the conversation
+    /// store (also corruption — the conversation row was deleted out from under the
+    /// session).
     /// </summary>
-    private async Task BackfillLoadedSessionAsync(GatewaySession session, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Uses a positive-only <see cref="ConcurrentDictionary{TKey,TValue}"/> cache keyed by
+    /// <see cref="ConversationId"/>. The cache is safe because <see cref="Conversation.AgentId"/>
+    /// is init-only (verified by <c>ConversationAgentIdImmutabilityArchitectureTests</c>).
+    /// Negative results are not cached so a create-then-resolve race never observes a
+    /// sticky null.
+    /// </remarks>
+    private async Task HydrateAgentIdAsync(GatewaySession session, CancellationToken cancellationToken)
     {
-        if (session.ConversationId.IsInitialized())
-            return;
-        if (_legacyResolver is null)
-            return;
-
-        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
-        session.ConversationId = legacy.ConversationId;
-
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var updateCmd = connection.CreateCommand();
-        updateCmd.CommandText = """
-            UPDATE sessions
-            SET conversation_id = $convId
-            WHERE id = $sessionId
-              AND conversation_id IS NULL
-            """;
-        updateCmd.Parameters.AddWithValue("$convId", legacy.ConversationId.Value);
-        updateCmd.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
-        await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        if (session.Status == SessionStatus.Active)
+        if (!session.ConversationId.IsInitialized())
         {
-            await _legacyResolver.BindActiveSessionIfNoneAsync(legacy, session.SessionId, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(
+                $"Session '{session.SessionId.Value}' has an unset ConversationId after load. " +
+                "Post-P9-I, every session row is guaranteed to carry a non-null conversation_id " +
+                "(the orphan migration runs on every startup before this load could be served). " +
+                "Either the database was modified externally or the migration failed silently — " +
+                "inspect SqliteSessionStore logs at startup.");
         }
 
-        _logger.LogWarning(
-            "Backfilled orphan session {SessionId} for agent {AgentId} with legacy conversation {LegacyConversationId} on load.",
-            session.SessionId, session.AgentId, legacy.ConversationId);
+        if (_agentIdCache.TryGetValue(session.ConversationId, out var cached))
+        {
+            session.HydrateAgentId(cached);
+            return;
+        }
+
+        var conversation = await _conversationStore.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+        {
+            throw new InvalidOperationException(
+                $"Session '{session.SessionId.Value}' references conversation '{session.ConversationId.Value}' " +
+                "which does not exist in the conversation store. AgentId cannot be hydrated. " +
+                "This indicates that the conversation was deleted while the session row remained — " +
+                "the session is unrecoverable.");
+        }
+
+        _agentIdCache[session.ConversationId] = conversation.AgentId;
+        session.HydrateAgentId(conversation.AgentId);
     }
 
     private async Task<GatewaySession?> LoadSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        var loaded = await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
-        if (loaded is not null)
-            await BackfillLoadedSessionAsync(loaded, cancellationToken).ConfigureAwait(false);
-        return loaded;
+        return await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, ISecretRedactor? redactor, CancellationToken cancellationToken)
+    private async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken)
     {
         await using var sessionCommand = connection.CreateCommand();
+        // P9-I (#674): agent_id column removed from SELECT — AgentId is hydrated via
+        // HydrateAgentIdAsync below from Conversation.AgentId. The column itself is
+        // dropped from the schema by DropLegacyAgentIdColumnAsync at startup.
         sessionCommand.CommandText = """
-            SELECT id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id
+            SELECT id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id
             FROM sessions
             WHERE id = $sessionId
             """;
@@ -666,21 +838,18 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        var createdAt = ParseTimestamp(reader.GetString(8));
-        var updatedAt = ParseTimestamp(reader.GetString(9));
-        var metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7));
-        var status = ParseStatus(reader.IsDBNull(6) ? null : reader.GetString(6));
+        var createdAt = ParseTimestamp(reader.GetString(7));
+        var updatedAt = ParseTimestamp(reader.GetString(8));
+        var metadata = DeserializeMetadata(reader.IsDBNull(6) ? null : reader.GetString(6));
+        var status = ParseStatus(reader.IsDBNull(5) ? null : reader.GetString(5));
         ChannelKey? channelType = default;
-        if (!reader.IsDBNull(2))
-            channelType = ChannelKey.From(reader.GetString(2));
-        var sessionType = ParseSessionType(reader.IsDBNull(4) ? null : reader.GetString(4), sessionId, channelType);
+        if (!reader.IsDBNull(1))
+            channelType = ChannelKey.From(reader.GetString(1));
+        var sessionType = ParseSessionType(reader.IsDBNull(3) ? null : reader.GetString(3), sessionId, channelType);
         // P9-F (#657): participants_json column is intentionally read-and-discarded — the
         // legacy column is preserved for the one-shot startup backfill into the
         // conversation store (BackfillParticipantsToConversationsAsync) and as a rollback
         // source. Participants are no longer persisted on Session.
-        var agentIdValue = reader.IsDBNull(1) ? null : reader.GetString(1);
-        if (string.IsNullOrWhiteSpace(agentIdValue))
-            return null;
 
         var domainSession = new Session
         {
@@ -693,20 +862,18 @@ public sealed class SqliteSessionStore : SessionStoreBase
             Metadata = metadata
             // ConversationId is intentionally omitted when the column is NULL --
             // the property defaults to an uninitialized ConversationId (the "unset" sentinel)
-            // and BackfillLoadedSessionAsync fires on it below. Writing `default(ConversationId)`
+            // and HydrateAgentIdAsync throws on it below. Writing `default(ConversationId)`
             // explicitly is prohibited by Vogen analyzer VOG009.
         };
-        if (reader.FieldCount > 10 && !reader.IsDBNull(10))
-            domainSession.ConversationId = ConversationId.From(reader.GetString(10));
-        var session = new GatewaySession(domainSession, redactor)
+        if (!reader.IsDBNull(9))
+            domainSession.ConversationId = ConversationId.From(reader.GetString(9));
+        var session = new GatewaySession(domainSession, _redactor)
         {
-            // P9-H (#662): Session.AgentId was deleted; AgentId is hydrated on the runtime
-            // wrapper. We still source the value from the legacy `agent_id` column for
-            // backwards-compatible loads — agent ownership lives on Conversation.AgentId
-            // post P9-H and a future migration can switch this to a JOIN against the
-            // conversation store.
-            AgentId = AgentId.From(agentIdValue),
-            CallerId = reader.IsDBNull(3) ? null : reader.GetString(3)
+            // P9-I (#674): AgentId is no longer sourced from a legacy column on the
+            // session row — it's hydrated immediately below via HydrateAgentIdAsync
+            // from Conversation.AgentId. We construct GatewaySession with the
+            // CallerId from the row and leave AgentId to HydrateAgentId(...).
+            CallerId = reader.IsDBNull(2) ? null : reader.GetString(2)
         };
 
         await reader.DisposeAsync().ConfigureAwait(false);
@@ -753,17 +920,25 @@ public sealed class SqliteSessionStore : SessionStoreBase
             session.AddEntries(entries);
 
         session.UpdatedAt = updatedAt;
+
+        // P9-I (#674): hydrate AgentId from Conversation.AgentId before returning. Every
+        // load path (GetAsync, GetOrCreateAsync, EnumerateSessionsAsync, ListByConversationAsync)
+        // routes through this method so callers always observe a hydrated AgentId.
+        await HydrateAgentIdAsync(session, cancellationToken).ConfigureAwait(false);
+
         return session;
     }
 
-    private static async Task UpsertSessionAsync(SqliteConnection connection, GatewaySession session, CancellationToken cancellationToken)
+    private async Task UpsertSessionAsync(SqliteConnection connection, GatewaySession session, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        // P9-I (#674): agent_id column removed — AgentId lives on Conversation.AgentId
+        // and is hydrated on load via IAgentIdentityResolver. Writing it here is a no-op
+        // post-migration because the column has been ALTER TABLE DROP COLUMN'd.
         command.CommandText = """
-            INSERT INTO sessions (id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
-            VALUES ($id, $agentId, $channelType, $callerId, $sessionType, $participantsJson, $status, $metadata, $createdAt, $updatedAt, $conversationId)
+            INSERT INTO sessions (id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
+            VALUES ($id, $channelType, $callerId, $sessionType, $participantsJson, $status, $metadata, $createdAt, $updatedAt, $conversationId)
             ON CONFLICT(id) DO UPDATE SET
-                agent_id = excluded.agent_id,
                 channel_type = excluded.channel_type,
                 caller_id = excluded.caller_id,
                 session_type = excluded.session_type,
@@ -775,7 +950,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 conversation_id = excluded.conversation_id
             """;
         command.Parameters.AddWithValue("$id", session.SessionId.Value);
-        command.Parameters.AddWithValue("$agentId", session.AgentId.Value);
         command.Parameters.AddWithValue("$channelType", session.ChannelType.HasValue ? session.ChannelType.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$callerId", (object?)session.CallerId ?? DBNull.Value);
         command.Parameters.AddWithValue("$sessionType", session.SessionType.Value);

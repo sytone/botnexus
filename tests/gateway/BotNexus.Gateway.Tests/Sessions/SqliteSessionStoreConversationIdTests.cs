@@ -67,6 +67,12 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
         var sessionId = SessionId.From("test-session-persist-conv");
         var agentId = AgentId.From("agent-persist-test");
         var conversationId = ConversationId.Create();
+        // P9-I (#674): the conversation must exist before AgentId hydration runs on reload.
+        await _conversations.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = agentId
+        });
 
         // Save a session with ConversationId stamped
         var store1 = CreateStore();
@@ -110,6 +116,12 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
         var sessionId = SessionId.From("test-session-enumerate-conv");
         var agentId = AgentId.From("agent-enumerate");
         var conversationId = ConversationId.Create();
+        // P9-I (#674): the conversation must exist before AgentId hydration runs on reload.
+        await _conversations.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = agentId
+        });
 
         var store1 = CreateStore();
         var session = await store1.GetOrCreateAsync(sessionId, agentId);

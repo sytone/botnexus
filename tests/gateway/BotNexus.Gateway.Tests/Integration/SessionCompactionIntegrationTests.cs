@@ -99,7 +99,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     {
         var storePath = CreateStorePath();
         var sessionId = "raw-disk";
-        var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
+        var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem(), new InMemoryConversationStore());
         var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
 
         for (var i = 0; i < 6; i++)
@@ -323,7 +323,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var storePath = CreateStorePath();
         const string sessionId = "compact-archive";
         var encodedSessionId = Uri.EscapeDataString(sessionId);
-        var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
+        var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem(), new InMemoryConversationStore());
         var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         session.AddEntries(
         [
@@ -557,9 +557,14 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         public MockFileSystem FileSystem { get; }
         public string StorePath { get; }
+        // P9-I (#674): share the conversation store across CreateStore() calls so
+        // legacy conversations created by one store instance survive simulated
+        // "restart" by a second store instance opening the same disk path.
+        // In production this is the role of the persistent ConversationStore.
+        public InMemoryConversationStore Conversations { get; } = new();
 
         public FileSessionStore CreateStore()
-            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem);
+            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, Conversations);
 
         public void Dispose()
         {

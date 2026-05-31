@@ -1,7 +1,9 @@
 using System.CommandLine;
 using System.IO.Abstractions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Memory;
 using Microsoft.Extensions.Logging;
@@ -62,6 +64,7 @@ internal sealed class MemoryCommands
                 : "InMemory";
 
         Gateway.Abstractions.Sessions.ISessionStore store;
+        IConversationStore conversationStore;
 
         if (resolvedType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
@@ -72,9 +75,15 @@ internal sealed class MemoryCommands
                 return 1;
             }
 
+            // P9-I (#674): IConversationStore is mandatory on SqliteSessionStore.
+            // The conversation store shares the same SQLite database (separate tables).
+            conversationStore = new SqliteConversationStore(
+                connectionString,
+                NullLoggerFactory.Instance.CreateLogger<SqliteConversationStore>());
             store = new SqliteSessionStore(
                 connectionString,
-                NullLoggerFactory.Instance.CreateLogger<SqliteSessionStore>());
+                NullLoggerFactory.Instance.CreateLogger<SqliteSessionStore>(),
+                conversationStore);
         }
         else if (resolvedType.Equals("File", StringComparison.OrdinalIgnoreCase))
         {
@@ -89,10 +98,20 @@ internal sealed class MemoryCommands
                 ? configuredPath
                 : Path.Combine(home.RootPath, configuredPath);
 
+            // P9-I (#674): IConversationStore is mandatory on FileSessionStore.
+            // Mirror the wiring in GatewayServiceCollectionExtensions: conversations live
+            // in a `conversations/` subdirectory of the configured sessions path.
+            var conversationsPath = Path.Combine(sessionsPath, "conversations");
+            fileSystem.Directory.CreateDirectory(conversationsPath);
+            conversationStore = new FileConversationStore(
+                conversationsPath,
+                NullLoggerFactory.Instance.CreateLogger<FileConversationStore>(),
+                fileSystem);
             store = new FileSessionStore(
                 sessionsPath,
                 NullLoggerFactory.Instance.CreateLogger<FileSessionStore>(),
-                fileSystem);
+                fileSystem,
+                conversationStore);
         }
         else
         {

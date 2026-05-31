@@ -48,6 +48,8 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
     /// <summary>
     /// Inserts a session row directly, bypassing the store so we can set
     /// <c>conversation_id</c> to NULL (simulating a pre-conversation-model row).
+    /// Also bootstraps the pre-P9-I schema with the legacy <c>agent_id</c> column so
+    /// the orphan-migration code path in <c>EnsureCreatedAsync</c> has work to find.
     /// </summary>
     private static async Task InsertOrphanedSessionAsync(
         string connectionString,
@@ -58,9 +60,29 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
         await using var conn = new SqliteConnection(connectionString);
         await conn.OpenAsync();
 
-        // Ensure schema exists first by opening the store (which runs EnsureCreatedAsync).
-        // We skip that here because we call InsertOrphanedSessionAsync only after the store
-        // has been initialised at least once (via a prior store operation).
+        // P9-I (#674): bootstrap the legacy schema (with agent_id) before inserting.
+        // The post-P9-I CREATE TABLE IF NOT EXISTS DDL has no agent_id column, so a
+        // fresh table makes this INSERT fail. By creating the legacy shape here we
+        // simulate the pre-P9-I-on-disk state that migration is meant to upgrade.
+        await using var schemaCmd = conn.CreateCommand();
+        schemaCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT,
+                channel_type TEXT,
+                caller_id TEXT,
+                session_type TEXT,
+                participants_json TEXT,
+                status TEXT,
+                metadata TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                conversation_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_conversation_agent ON sessions(conversation_id, agent_id);
+            """;
+        await schemaCmd.ExecuteNonQueryAsync();
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -96,12 +118,9 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
     {
         var agentId = AgentId.From("agent-orphan");
 
-        // Arrange: bootstrap the schema, then poke in orphaned rows.
-        var convStore = CreateConversationStore();
-        var sessionStore = CreateSessionStore(convStore);
-        // Prime the schema by doing one store operation.
-        _ = await sessionStore.GetAsync(SessionId.From("probe"), CancellationToken.None);
-
+        // P9-I (#674): seed legacy-schema orphans BEFORE opening the store. Opening the
+        // store now runs the post-P9-I EnsureCreatedAsync which would drop agent_id on a
+        // fresh DB, leaving InsertOrphanedSessionAsync unable to write to that column.
         var t1 = DateTimeOffset.UtcNow.AddMinutes(-10);
         var t2 = DateTimeOffset.UtcNow.AddMinutes(-5);
         await InsertOrphanedSessionAsync(
@@ -109,15 +128,16 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
         await InsertOrphanedSessionAsync(
             $"Data Source={_sessionDbPath};Pooling=False", "s-orphan-2", agentId.Value, t2);
 
-        // Act: create a fresh store; the migration runs during initialisation.
-        var convStore2 = CreateConversationStore();
-        var sessionStore2 = CreateSessionStore(convStore2);
+        // Act: create a store; the migration runs during initialisation, stamps a legacy
+        // conversation, then DropLegacyAgentIdColumnAsync removes the column.
+        var convStore = CreateConversationStore();
+        var sessionStore = CreateSessionStore(convStore);
         // Trigger init by loading a session (any operation calls EnsureCreatedAsync).
-        _ = await sessionStore2.GetAsync(SessionId.From("probe"), CancellationToken.None);
+        _ = await sessionStore.GetAsync(SessionId.From("probe"), CancellationToken.None);
 
         // Assert: both orphaned sessions now have the legacy conversation id.
         // The migration creates a "legacy:{agentId}" conversation for orphaned sessions.
-        var allConvs = await convStore2.ListAsync(agentId);
+        var allConvs = await convStore.ListAsync(agentId);
         var conv = allConvs.FirstOrDefault(c => c.Title == $"legacy:{agentId.Value}");
         conv.ShouldNotBeNull("Migration should have created a legacy conversation for orphaned sessions");
         var cid1 = await ReadConversationIdAsync($"Data Source={_sessionDbPath};Pooling=False", "s-orphan-1");
@@ -171,25 +191,24 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
     {
         var agentId = AgentId.From("agent-idem");
 
-        // Arrange: orphaned sessions in the DB.
-        var convStore = CreateConversationStore();
-        var sessionStore = CreateSessionStore(convStore);
-        _ = await sessionStore.GetAsync(SessionId.From("probe"), CancellationToken.None);
-
+        // P9-I (#674): seed legacy-schema orphan BEFORE opening the store (same reason as
+        // Migration_OrphanedSessions_LinkedToDefaultConversation above).
         await InsertOrphanedSessionAsync(
             $"Data Source={_sessionDbPath};Pooling=False", "s-idem-1", agentId.Value,
             DateTimeOffset.UtcNow.AddMinutes(-10));
 
         // First migration run.
-        var convStore2 = CreateConversationStore();
-        var sessionStore2 = CreateSessionStore(convStore2);
-        _ = await sessionStore2.GetAsync(SessionId.From("probe"), CancellationToken.None);
+        var convStore = CreateConversationStore();
+        var sessionStore = CreateSessionStore(convStore);
+        _ = await sessionStore.GetAsync(SessionId.From("probe"), CancellationToken.None);
 
         var cidAfterFirst = await ReadConversationIdAsync(
             $"Data Source={_sessionDbPath};Pooling=False", "s-idem-1");
-        var convsAfterFirst = await convStore2.ListAsync(agentId);
+        var convsAfterFirst = await convStore.ListAsync(agentId);
 
         // Second migration run (new store instance, _initialized is false again).
+        // The agent_id column was dropped by the first run, so the second run's
+        // migration scan is a no-op — but we still verify post-state.
         var convStore3 = CreateConversationStore();
         var sessionStore3 = CreateSessionStore(convStore3);
         _ = await sessionStore3.GetAsync(SessionId.From("probe"), CancellationToken.None);

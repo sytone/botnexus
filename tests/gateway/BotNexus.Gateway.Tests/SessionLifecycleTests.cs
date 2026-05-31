@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -151,9 +152,12 @@ public sealed class SessionLifecycleTests
         }
 
         public string StorePath { get; }
+        // P9-I (#674): shared across CreateStore() calls so legacy conversations
+        // survive simulated restart by a second store on the same disk path.
+        public InMemoryConversationStore Conversations { get; } = new();
 
         public FileSessionStore CreateStore()
-            => new(StorePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
+            => new(StorePath, NullLogger<FileSessionStore>.Instance, new FileSystem(), Conversations);
 
         public void Dispose()
         {

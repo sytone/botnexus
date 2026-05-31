@@ -429,7 +429,7 @@ public static class GatewayServiceCollectionExtensions
                     sessionsPath,
                     serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
                     fs,
-                    conversationStore: serviceProvider.GetService<IConversationStore>(),
+                    conversationStore: serviceProvider.GetRequiredService<IConversationStore>(),
                     redactor: serviceProvider.GetService<ISecretRedactor>());
             }));
             return;

@@ -135,53 +135,52 @@ public sealed class LegacyConversationBackfillTests
     [Fact]
     public async Task File_LoadFromFile_OrphanSidecar_BackfillsAndRewritesSidecar()
     {
-        // Simulate a pre-Phase-9 sidecar: save the session with NO conversation store
-        // (so no stamp), then reload with a resolver and confirm the sidecar gets
-        // durably rewritten with the legacy conversation id.
+        // Simulates a pre-Phase-9 sidecar (agentId set, conversationId null) via the
+        // SeedOrphanSidecarAsync raw-write helper, then reloads through a Phase-9-aware
+        // store and confirms the sidecar gets durably rewritten with the legacy
+        // conversation id.
         using var fixture = new FileFixture();
         var conversations = new InMemoryConversationStore();
         var agentId = AgentId.From("agent-orphan-sidecar");
+        var sessionId = SessionId.From("s-orphan-side");
 
-        var preStore = fixture.CreateStore(conversationStore: null);
-        var prePhase9 = await preStore.GetOrCreateAsync(SessionId.From("s-orphan-side"), agentId);
-        await preStore.SaveAsync(prePhase9);
-        prePhase9.ConversationId.IsInitialized().ShouldBeFalse();
+        await fixture.SeedOrphanSidecarAsync(sessionId, agentId);
 
-        // Now load through a Phase-9-aware store; the load path must backfill.
+        // Load through a Phase-9-aware store; the load path must backfill.
         var loadStore = fixture.CreateStore(conversations);
-        var loaded = await loadStore.GetAsync(SessionId.From("s-orphan-side"));
+        var loaded = await loadStore.GetAsync(sessionId);
         loaded.ShouldNotBeNull();
         loaded!.ConversationId.IsInitialized().ShouldBeTrue();
         var legacy = (await conversations.ListAsync(agentId))
             .Single(c => c.Title == $"legacy:{agentId.Value}");
         loaded.ConversationId.ShouldBe(legacy.ConversationId);
 
-        // A third store instance (no cache; no resolver) must still see the durable stamp
-        // — proves the load path rewrote the sidecar, not just the in-memory projection.
-        var verifyStore = fixture.CreateStore(conversationStore: null);
-        var reverified = await verifyStore.GetAsync(SessionId.From("s-orphan-side"));
+        // A second store instance (no cache; the SAME conversation store) must still
+        // see the durable stamp — proves the load path rewrote the sidecar, not just
+        // the in-memory projection.
+        var verifyStore = fixture.CreateStore(conversations);
+        var reverified = await verifyStore.GetAsync(sessionId);
         reverified.ShouldNotBeNull();
         reverified!.ConversationId.IsInitialized().ShouldBeTrue(
-            "Load-time backfill must rewrite the sidecar so a resolver-less store " +
-            "still observes the stamp — otherwise every load round-trips through the " +
-            "conversation store.");
+            "Load-time backfill must rewrite the sidecar so subsequent loads observe " +
+            "the stamp without re-resolving — otherwise every load round-trips through " +
+            "the conversation store.");
         reverified.ConversationId.ShouldBe(legacy.ConversationId);
     }
 
     [Fact]
-    public async Task File_SaveAsync_NoResolver_PreservesUnsetConversationId()
+    public void File_Ctor_NullConversationStore_Throws_ArgumentNullException()
     {
-        // Back-compat for test composition roots / older deployments that don't wire an
-        // IConversationStore into the File session store. Without a resolver, orphan
-        // sessions stay unset. (SQLite fails loud in the same scenario — see
-        // Sqlite_SaveAsync_NoResolver_ThrowsInvalidOperation.)
+        // P9-I (#674): IConversationStore is mandatory on FileSessionStore.
+        // Construction with a null conversation store must throw immediately rather
+        // than silently degrading to a no-op resolver path at runtime.
         using var fixture = new FileFixture();
-        var store = fixture.CreateStore(conversationStore: null);
-        var session = await store.GetOrCreateAsync(SessionId.From("s-no-conv"), AgentId.From("a"));
-        await store.SaveAsync(session);
-
-        var reloaded = await fixture.CreateStore(conversationStore: null).GetAsync(SessionId.From("s-no-conv"));
-        reloaded!.ConversationId.IsInitialized().ShouldBeFalse();
+        Should.Throw<ArgumentNullException>(() =>
+            new FileSessionStore(
+                fixture.StorePath,
+                NullLogger<FileSessionStore>.Instance,
+                fixture.FileSystem,
+                conversationStore: null!));
     }
 
     // --- SqliteSessionStore (save-time + load-time + UPDATE row) ---
@@ -202,7 +201,8 @@ public sealed class LegacyConversationBackfillTests
             .Single(c => c.Title == $"legacy:{agentId.Value}");
 
         // Brand-new store (no cache) — the stamp must be persisted at the row level.
-        var verifyStore = fixture.CreateStore(conversationStore: null);
+        // Same conversation store; post-P9-I a null conversationStore is no longer accepted.
+        var verifyStore = fixture.CreateStore(conversations);
         var reloaded = await verifyStore.GetAsync(SessionId.From("s-sqlite-orphan"));
         reloaded!.ConversationId.ShouldBe(legacy.ConversationId);
     }
@@ -221,8 +221,10 @@ public sealed class LegacyConversationBackfillTests
         // the post-P9-B-2 fail-loud writer that would refuse to persist an unset row).
         await fixture.SeedOrphanRowAsync(SessionId.From("s-orphan-row"), agentId);
 
-        // 2) Reload through a Phase-9-aware store. The instance LoadSessionAsync path
-        // must call BackfillLoadedSessionAsync which UPDATEs the row.
+        // 2) Open a Phase-9-aware store. EnsureCreatedAsync's MigrateOrphanedSessionsAsync
+        // sweep stamps the orphan row, binds the legacy conversation's ActiveSessionId,
+        // then drops the legacy agent_id column. Subsequent calls find the row via the
+        // conversation_id index.
         var phase9Store = fixture.CreateStore(conversations);
         var reloaded = await phase9Store.GetAsync(SessionId.From("s-orphan-row"));
         reloaded.ShouldNotBeNull();
@@ -231,8 +233,9 @@ public sealed class LegacyConversationBackfillTests
             .Single(c => c.Title == $"legacy:{agentId.Value}");
 
         // 3) The indexed ListByConversationAsync query must now find the backfilled row
-        // in a fresh store (no cache pollution).
-        var queryStore = fixture.CreateStore(conversationStore: null);
+        // in a fresh store (no cache pollution). Same conversation store — post-P9-I
+        // a null conversationStore is no longer accepted.
+        var queryStore = fixture.CreateStore(conversations);
         var matched = await queryStore.ListByConversationAsync(legacy.ConversationId);
         matched.ShouldContain(s => s.SessionId == SessionId.From("s-orphan-row"),
             "Load-time backfill must persist via UPDATE so ListByConversationAsync " +
@@ -259,21 +262,19 @@ public sealed class LegacyConversationBackfillTests
     }
 
     [Fact]
-    public async Task Sqlite_SaveAsync_NoResolver_ThrowsInvalidOperation()
+    public void Sqlite_Ctor_NullConversationStore_Throws_ArgumentNullException()
     {
-        // Phase 9 / P9-B-2 (#627): the SQLite writer is the durable backstop and must
-        // fail loud when no resolver is configured and the session has no ConversationId.
-        // Silently writing NULL would re-introduce the orphan condition the non-nullable
-        // flip is supposed to prevent. (InMemory + File still tolerate this because they
-        // are typically used in tests / lightweight composition roots where missing
-        // ConversationIds are surfaced elsewhere.)
+        // P9-I (#674): IConversationStore is mandatory on SqliteSessionStore. The
+        // store needs the conversation store at construction-time both for the
+        // EnsureCreatedAsync orphan-migration sweep AND for the per-load AgentId
+        // hydration that replaces the deleted agent_id column. A null conversation
+        // store cannot silently degrade — the ctor must fail loud.
         using var fixture = new SqliteFixture();
-        var store = fixture.CreateStore(conversationStore: null);
-        var session = await store.GetOrCreateAsync(SessionId.From("s-sq-no-resolver"), AgentId.From("a"));
-
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() => store.SaveAsync(session));
-        ex.Message.ShouldContain("ConversationId");
-        ex.Message.ShouldContain("s-sq-no-resolver");
+        Should.Throw<ArgumentNullException>(() =>
+            new SqliteSessionStore(
+                "Data Source=:memory:",
+                NullLogger<SqliteSessionStore>.Instance,
+                conversationStore: null!));
     }
 
     // --- Cross-store parity ---
@@ -440,8 +441,50 @@ public sealed class LegacyConversationBackfillTests
         public string StorePath { get; }
         public MockFileSystem FileSystem { get; }
 
-        public FileSessionStore CreateStore(IConversationStore? conversationStore)
-            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, conversationStore: conversationStore);
+        /// <summary>
+        /// P9-I (#674): <see cref="IConversationStore"/> is mandatory on
+        /// <see cref="FileSessionStore"/>. Tests pass a per-test
+        /// <see cref="InMemoryConversationStore"/> (or a shared one for cross-store
+        /// parity assertions).
+        /// </summary>
+        public FileSessionStore CreateStore(IConversationStore conversationStore)
+            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, conversationStore);
+
+        /// <summary>
+        /// Writes a raw pre-P9 sidecar JSON directly to <see cref="MockFileSystem"/>,
+        /// bypassing the post-P9-I write path that always stamps a ConversationId.
+        /// Simulates the state of a sidecar persisted by an older deployment so the
+        /// legacy-orphan recovery code in <see cref="FileSessionStore"/>.LoadFromFileAsync
+        /// has something to repair. (Post-P9-I, the public store API can no longer
+        /// produce orphan sidecars.)
+        /// </summary>
+        public async Task SeedOrphanSidecarAsync(
+            SessionId sessionId,
+            AgentId agentId,
+            BotNexus.Gateway.Abstractions.Models.SessionStatus status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active,
+            DateTimeOffset? updatedAt = null)
+        {
+            var now = updatedAt ?? DateTimeOffset.UtcNow;
+            var json = $$"""
+                {
+                  "agentId": "{{agentId.Value}}",
+                  "channelType": null,
+                  "callerId": null,
+                  "sessionType": "UserAgent",
+                  "participants": null,
+                  "createdAt": "{{now:O}}",
+                  "updatedAt": "{{now:O}}",
+                  "status": "{{status}}",
+                  "expiresAt": null,
+                  "nextSequenceId": 1,
+                  "streamEvents": null,
+                  "conversationId": null,
+                  "metadata": null
+                }
+                """;
+            var sidecarPath = Path.Combine(StorePath, $"{sessionId.Value}.meta.json");
+            await FileSystem.File.WriteAllTextAsync(sidecarPath, json);
+        }
 
         public void Dispose()
         {
@@ -461,38 +504,60 @@ public sealed class LegacyConversationBackfillTests
             _connectionString = new SqliteConnectionStringBuilder { DataSource = _dbPath, Pooling = false }.ToString();
         }
 
-        public SqliteSessionStore CreateStore(IConversationStore? conversationStore)
+        /// <summary>
+        /// P9-I (#674): <see cref="IConversationStore"/> is mandatory on
+        /// <see cref="SqliteSessionStore"/>.
+        /// </summary>
+        public SqliteSessionStore CreateStore(IConversationStore conversationStore)
             => new(_connectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore);
 
         /// <summary>
-        /// Seeds an orphan session row (conversation_id = NULL) by writing directly via
-        /// raw SQL. Post-P9-B-2, the SqliteSessionStore writer fails loud on unset
-        /// ConversationId — but the load-time backfill path must still handle pre-Phase-9
-        /// rows that already exist on disk. Use this helper to construct the pre-existing
-        /// orphan state that the backfill is designed to repair.
+        /// P9-I (#674) revision: previously this method bootstrapped the schema via
+        /// <see cref="CreateStore"/> then inserted a row directly. Post-P9-I,
+        /// <see cref="SqliteSessionStore"/> drops the legacy <c>agent_id</c> column
+        /// during EnsureCreatedAsync — so bootstrapping via the public ctor would leave
+        /// no column to seed into. Instead we create the pre-P9 schema by hand,
+        /// INSERT the orphan row, and let the subsequent P9-I store open trigger the
+        /// MigrateOrphanedSessionsAsync sweep + column drop.
         /// </summary>
         public async Task SeedOrphanRowAsync(SessionId sessionId, AgentId agentId)
         {
-            // Ensure schema exists by spinning up a normal store (ListAsync triggers
-            // EnsureCreatedAsync). SqliteSessionStore holds no per-instance disposable
-            // state — the schema lives on disk and connections come from the pool.
-            var bootstrap = CreateStore(conversationStore: null);
-            _ = await bootstrap.ListAsync();
-
             await using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
-            await using var cmd = connection.CreateCommand();
-            cmd.CommandText = """
+
+            // Pre-P9 schema (includes legacy agent_id column).
+            await using var schemaCmd = connection.CreateCommand();
+            schemaCmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    channel_type TEXT,
+                    caller_id TEXT,
+                    session_type TEXT,
+                    participants_json TEXT,
+                    status TEXT NOT NULL,
+                    metadata TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    conversation_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_conversation_agent ON sessions(conversation_id, agent_id, updated_at DESC, id);
+                """;
+            await schemaCmd.ExecuteNonQueryAsync();
+
+            await using var insertCmd = connection.CreateCommand();
+            insertCmd.CommandText = """
                 INSERT INTO sessions (id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
                 VALUES ($id, $agentId, NULL, NULL, $sessionType, '[]', $status, '{}', $createdAt, $updatedAt, NULL)
                 """;
-            cmd.Parameters.AddWithValue("$id", sessionId.Value);
-            cmd.Parameters.AddWithValue("$agentId", agentId.Value);
-            cmd.Parameters.AddWithValue("$sessionType", SessionType.UserAgent.Value);
-            cmd.Parameters.AddWithValue("$status", SessionStatus.Active.ToString());
-            cmd.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
-            cmd.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
-            await cmd.ExecuteNonQueryAsync();
+            insertCmd.Parameters.AddWithValue("$id", sessionId.Value);
+            insertCmd.Parameters.AddWithValue("$agentId", agentId.Value);
+            insertCmd.Parameters.AddWithValue("$sessionType", SessionType.UserAgent.Value);
+            insertCmd.Parameters.AddWithValue("$status", SessionStatus.Active.ToString());
+            insertCmd.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            insertCmd.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            await insertCmd.ExecuteNonQueryAsync();
         }
 
         public void Dispose()
@@ -526,29 +591,17 @@ public sealed class LegacyConversationBackfillTests
     public async Task File_EagerSweep_BindsMostRecentlyUpdatedActiveOrphan_AsConversationActiveSession()
     {
         // Seed three orphan sidecars for the same agent at distinct UpdatedAt timestamps
-        // (no conversation store wired, so no stamping happens). Then open a fresh store
-        // WITH a resolver; the first GetAsync triggers EnsureMigratedAsync which must
-        // pick the most-recently-updated Active orphan as the bound ActiveSessionId.
+        // via direct file manipulation (the public store API can no longer produce
+        // orphan sidecars post-P9-I). Then open a fresh store WITH a resolver; the first
+        // GetAsync triggers EnsureMigratedAsync which must pick the most-recently-updated
+        // Active orphan as the bound ActiveSessionId.
         using var fixture = new FileFixture();
         var agentId = AgentId.From("agent-eager-bind");
 
-        var preStore = fixture.CreateStore(conversationStore: null);
-        var oldest = await preStore.GetOrCreateAsync(SessionId.From("s-old"), agentId);
-        oldest.UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-30);
-        await preStore.SaveAsync(oldest);
-
-        var middle = await preStore.GetOrCreateAsync(SessionId.From("s-mid"), agentId);
-        middle.UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-15);
-        await preStore.SaveAsync(middle);
-
-        var newest = await preStore.GetOrCreateAsync(SessionId.From("s-new"), agentId);
-        newest.UpdatedAt = DateTimeOffset.UtcNow;
-        await preStore.SaveAsync(newest);
-
-        // Sanity: all three sidecars are orphans on disk before sweep.
-        oldest.ConversationId.IsInitialized().ShouldBeFalse();
-        middle.ConversationId.IsInitialized().ShouldBeFalse();
-        newest.ConversationId.IsInitialized().ShouldBeFalse();
+        var now = DateTimeOffset.UtcNow;
+        await fixture.SeedOrphanSidecarAsync(SessionId.From("s-old"), agentId, updatedAt: now.AddMinutes(-30));
+        await fixture.SeedOrphanSidecarAsync(SessionId.From("s-mid"), agentId, updatedAt: now.AddMinutes(-15));
+        await fixture.SeedOrphanSidecarAsync(SessionId.From("s-new"), agentId, updatedAt: now);
 
         var conversations = new InMemoryConversationStore();
         var sweepStore = fixture.CreateStore(conversations);
@@ -564,7 +617,9 @@ public sealed class LegacyConversationBackfillTests
             "conversation's ActiveSessionId — mirrors SqliteSessionStore semantics.");
 
         // All three sidecars must also be stamped (regardless of which was bound).
-        var verifyStore = fixture.CreateStore(conversationStore: null);
+        // Use the same conversation store — post-P9-I a null conversationStore is no
+        // longer accepted.
+        var verifyStore = fixture.CreateStore(conversations);
         var reloadedOld = await verifyStore.GetAsync(SessionId.From("s-old"));
         var reloadedMid = await verifyStore.GetAsync(SessionId.From("s-mid"));
         var reloadedNew = await verifyStore.GetAsync(SessionId.From("s-new"));
@@ -584,17 +639,14 @@ public sealed class LegacyConversationBackfillTests
         using var fixture = new FileFixture();
         var agentId = AgentId.From("agent-eager-status");
 
-        var preStore = fixture.CreateStore(conversationStore: null);
-
-        var olderActive = await preStore.GetOrCreateAsync(SessionId.From("s-active-old"), agentId);
-        olderActive.UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-20);
-        // Status defaults to Active.
-        await preStore.SaveAsync(olderActive);
-
-        var newerSealed = await preStore.GetOrCreateAsync(SessionId.From("s-sealed-new"), agentId);
-        newerSealed.UpdatedAt = DateTimeOffset.UtcNow;
-        newerSealed.Status = SessionStatus.Sealed;
-        await preStore.SaveAsync(newerSealed);
+        var now = DateTimeOffset.UtcNow;
+        await fixture.SeedOrphanSidecarAsync(
+            SessionId.From("s-active-old"), agentId,
+            updatedAt: now.AddMinutes(-20));
+        await fixture.SeedOrphanSidecarAsync(
+            SessionId.From("s-sealed-new"), agentId,
+            status: BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed,
+            updatedAt: now);
 
         var conversations = new InMemoryConversationStore();
         var sweepStore = fixture.CreateStore(conversations);
@@ -609,7 +661,7 @@ public sealed class LegacyConversationBackfillTests
 
         // Stamping still applies to the Sealed sidecar — it's part of the conversation
         // history; the bind decision is independent of the stamp decision.
-        var verifyStore = fixture.CreateStore(conversationStore: null);
+        var verifyStore = fixture.CreateStore(conversations);
         var reloadedSealed = await verifyStore.GetAsync(SessionId.From("s-sealed-new"));
         reloadedSealed!.ConversationId.ShouldBe(
             legacy.ConversationId,
@@ -630,11 +682,9 @@ public sealed class LegacyConversationBackfillTests
         using var fixture = new FileFixture();
         var agentId = AgentId.From("agent-eager-concurrent");
 
-        // Seed one orphan so the sweep has work to do (otherwise it would short-circuit
-        // before invoking the resolver and the migration would be vacuous).
-        var preStore = fixture.CreateStore(conversationStore: null);
-        var orphan = await preStore.GetOrCreateAsync(SessionId.From("s-concurrent-orphan"), agentId);
-        await preStore.SaveAsync(orphan);
+        // Seed one orphan sidecar so the sweep has work to do (otherwise it would
+        // short-circuit before invoking the resolver and the migration would be vacuous).
+        await fixture.SeedOrphanSidecarAsync(SessionId.From("s-concurrent-orphan"), agentId);
 
         var conversations = new InMemoryConversationStore();
         var sweepStore = fixture.CreateStore(conversations);
@@ -669,10 +719,8 @@ public sealed class LegacyConversationBackfillTests
         using var fixture = new FileFixture();
         var agentId = AgentId.From("agent-eager-cancel");
 
-        // Seed one orphan so the sweep has work to do.
-        var preStore = fixture.CreateStore(conversationStore: null);
-        var orphan = await preStore.GetOrCreateAsync(SessionId.From("s-cancel-orphan"), agentId);
-        await preStore.SaveAsync(orphan);
+        // Seed one orphan sidecar so the sweep has work to do.
+        await fixture.SeedOrphanSidecarAsync(SessionId.From("s-cancel-orphan"), agentId);
 
         var gate = new DelayableConversationStore(new InMemoryConversationStore());
         var sweepStore = fixture.CreateStore(gate);

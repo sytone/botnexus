@@ -22,6 +22,12 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var conversationId = ConversationId.Create();
+        // P9-I (#674): pre-register the conversation so AgentId hydration on reload succeeds.
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = AgentId.From("agent-a")
+        });
 
         var session = await store.GetOrCreateAsync(SessionId.From("s-with-conv"), AgentId.From("agent-a"));
         session.Session.ConversationId = conversationId;
@@ -375,11 +381,32 @@ public sealed class FileSessionStoreTests
     // the on-disk round-trip (which is exactly where F-7 originated). Two-store-reload
     // pattern proves the invariants survive a process restart.
 
-    private static async Task SeedConversationFixtureAsync(FileSessionStore store, DateTimeOffset baseTime)
+    private static async Task SeedConversationFixtureAsync(StoreFixture fixture, DateTimeOffset baseTime)
     {
         var convA = ConversationId.From("conv-a");
         var convB = ConversationId.From("conv-b");
 
+        // P9-I (#674): conversations must exist before sessions reference them — the
+        // load-time AgentId hydration resolves AgentId from Conversation.AgentId, so a
+        // dangling Session.ConversationId is treated as data corruption and throws.
+        // conv-a is owned by agent-x (s-a-other-agent participates but does not own).
+        // conv-b is owned by agent-x.
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convA,
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            UpdatedAt = baseTime
+        });
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convB,
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            UpdatedAt = baseTime
+        });
+
+        var store = fixture.CreateStore();
         await store.SaveAsync(new GatewaySession
         {
             SessionId = SessionId.From("s-a-active"),
@@ -428,7 +455,7 @@ public sealed class FileSessionStoreTests
         // survives a full second-store reload (the F-7 originating scenario).
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedConversationFixtureAsync(fixture, baseTime);
 
         var reloadedStore = fixture.CreateStore();
         var sessions = await reloadedStore.ListByConversationAsync(ConversationId.From("conv-a"));
@@ -443,7 +470,7 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedConversationFixtureAsync(fixture, baseTime);
 
         var sessions = await fixture.CreateStore()
             .ListByConversationAsync(ConversationId.From("conv-a"));
@@ -469,13 +496,22 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedConversationFixtureAsync(fixture, baseTime);
 
-        var sessions = await fixture.CreateStore()
+        // P9-I (#674): agent_id column dropped from sessions. AgentId is hydrated from
+        // Conversation.AgentId, so passing the conversation's owning agent returns ALL
+        // sessions in that conversation (the agentId arg is now a defensive assertion
+        // that the conversation belongs to the caller's agent). Passing a different
+        // agent returns an empty set.
+        var matched = await fixture.CreateStore()
             .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-x"));
+        matched.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-other-agent", "s-a-active" }, ignoreOrder: false);
 
-        sessions.Select(s => s.SessionId.Value)
-            .ShouldBe(new[] { "s-a-sealed", "s-a-active" }, ignoreOrder: false);
+        var mismatched = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-y"));
+        mismatched.ShouldBeEmpty(
+            "Post-P9-I: passing a non-owner agent must return empty — Conversation.AgentId is the source of truth.");
     }
 
     [Fact]

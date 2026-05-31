@@ -43,8 +43,9 @@ public sealed class FileSessionStore : SessionStoreBase
     private readonly Dictionary<SessionId, GatewaySession> _cache = [];
     private readonly ILogger<FileSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
-    private readonly LegacyConversationResolver? _legacyResolver;
-    private readonly IConversationStore? _conversationStore;
+    private readonly LegacyConversationResolver _legacyResolver;
+    private readonly IConversationStore _conversationStore;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ConversationId, AgentId> _agentIdCache = new();
 
     // Phase 9 / P9-B-2 (#627): eager startup sweep mirrors
     // SqliteSessionStore.MigrateOrphanedSessionsAsync. A SemaphoreSlim + bool flag
@@ -70,11 +71,6 @@ public sealed class FileSessionStore : SessionStoreBase
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public FileSessionStore(string storePath, ILogger<FileSessionStore> logger, IFileSystem fileSystem, ISecretRedactor? redactor = null)
-        : this(storePath, logger, fileSystem, conversationStore: null, redactor: redactor)
-    {
-    }
-
     /// <summary>
     /// Initialises a new <see cref="FileSessionStore"/>.
     /// </summary>
@@ -82,18 +78,22 @@ public sealed class FileSessionStore : SessionStoreBase
     /// <param name="logger">Logger for diagnostic output.</param>
     /// <param name="fileSystem">Abstracted file system (real or mocked).</param>
     /// <param name="conversationStore">
-    /// When provided, sessions loaded with a null <see cref="Session.ConversationId"/> are
-    /// backfilled to the agent's <c>legacy:{agentId}</c> conversation via
-    /// <see cref="LegacyConversationResolver"/> and the sidecar is rewritten so the
-    /// stamp persists across restarts (Phase 9 / P9-B; issue #615). Save-time stamping
-    /// also defends against fresh sessions being persisted with no conversation bound.
+    /// Mandatory post-P9-I (issue #674): durable agent ownership lives on
+    /// <see cref="Conversation.AgentId"/>, and sidecar JSON no longer carries an
+    /// <c>agentId</c> field for new writes. The store uses the conversation store to
+    /// (a) backfill any legacy orphan sidecars to the agent's <c>legacy:{agentId}</c>
+    /// conversation, (b) hydrate <see cref="GatewaySession.AgentId"/> on every load
+    /// from <see cref="Conversation.AgentId"/> (cached per <see cref="ConversationId"/>;
+    /// safe because <c>Conversation.AgentId</c> is init-only per
+    /// <c>ConversationAgentIdImmutabilityArchitectureTests</c>), and (c) stamp
+    /// <see cref="Session.ConversationId"/> defensively at save time.
     /// </param>
     /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
     public FileSessionStore(
         string storePath,
         ILogger<FileSessionStore> logger,
         IFileSystem fileSystem,
-        IConversationStore? conversationStore,
+        IConversationStore conversationStore,
         ISecretRedactor? redactor = null)
         : base(conversationStore)
     {
@@ -101,10 +101,8 @@ public sealed class FileSessionStore : SessionStoreBase
         _logger = logger;
         _fileSystem = fileSystem;
         _redactor = redactor;
-        _conversationStore = conversationStore;
-        _legacyResolver = conversationStore is not null
-            ? new LegacyConversationResolver(conversationStore, logger: null)
-            : null;
+        _conversationStore = conversationStore ?? throw new ArgumentNullException(nameof(conversationStore));
+        _legacyResolver = new LegacyConversationResolver(conversationStore, logger: null);
         _fileSystem.Directory.CreateDirectory(storePath);
     }
 
@@ -291,8 +289,7 @@ public sealed class FileSessionStore : SessionStoreBase
     /// </summary>
     private async Task MigrateOrphanedSessionsAsync(CancellationToken cancellationToken)
     {
-        if (_legacyResolver is null) return;
-
+        // P9-I (#674): _legacyResolver is non-null post-P9-I (conversationStore is mandatory).
         // Pass 1: enumerate orphan sidecars (ConversationId is null or absent on disk).
         // Hold the read lock briefly to avoid racing with concurrent SaveAsync writes.
         var orphans = new List<(SessionId SessionId, AgentId AgentId, SessionStatus Status, DateTimeOffset UpdatedAt)>();
@@ -326,8 +323,20 @@ public sealed class FileSessionStore : SessionStoreBase
                 if (meta is null) continue;
                 if (meta.ConversationId is not null) continue;
 
+                // P9-I (#674): post-P9-I sidecars write AgentId=null. An orphan with no
+                // AgentId is unrecoverable here (no anchor to find a legacy conversation).
+                // Skip — LoadFromFileAsync will throw a precise error if the session is
+                // ever requested.
+                if (meta.AgentId is null)
+                {
+                    _logger.LogWarning(
+                        "Skipping sidecar {SidecarPath} during orphan sweep: ConversationId is null AND AgentId is null (unrecoverable).",
+                        metaFile);
+                    continue;
+                }
+
                 var sessionId = SessionId.From(Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(metaFile)));
-                orphans.Add((sessionId, meta.AgentId, meta.Status, meta.UpdatedAt));
+                orphans.Add((sessionId, meta.AgentId.Value, meta.Status, meta.UpdatedAt));
             }
         }
         finally { _lock.Release(); }
@@ -474,6 +483,45 @@ public sealed class FileSessionStore : SessionStoreBase
             totalRows, byConversation.Count);
     }
 
+    /// <summary>
+    /// P9-I (#674): hydrates <see cref="GatewaySession.AgentId"/> on a loaded session
+    /// from <see cref="Conversation.AgentId"/>. Uses a positive-only
+    /// <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/>
+    /// cache keyed by <see cref="ConversationId"/>; safe because
+    /// <c>Conversation.AgentId</c> is init-only.
+    /// </summary>
+    private async Task HydrateAgentIdAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        if (!session.ConversationId.IsInitialized())
+        {
+            throw new InvalidOperationException(
+                $"Session '{session.SessionId.Value}' has an unset ConversationId after load. " +
+                "Post-P9-I, every session sidecar is guaranteed to carry a non-null conversationId " +
+                "(the eager startup sweep runs before this load could be served). " +
+                "Either the sidecar was modified externally or the migration failed silently — " +
+                "inspect FileSessionStore logs at startup.");
+        }
+
+        if (_agentIdCache.TryGetValue(session.ConversationId, out var cached))
+        {
+            session.HydrateAgentId(cached);
+            return;
+        }
+
+        var conversation = await _conversationStore.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+        {
+            throw new InvalidOperationException(
+                $"Session '{session.SessionId.Value}' references conversation '{session.ConversationId.Value}' " +
+                "which does not exist in the conversation store. AgentId cannot be hydrated. " +
+                "This indicates that the conversation was deleted while the sidecar remained — " +
+                "the session is unrecoverable.");
+        }
+
+        _agentIdCache[session.ConversationId] = conversation.AgentId;
+        session.HydrateAgentId(conversation.AgentId);
+    }
+
     private async Task<GatewaySession?> LoadFromFileAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         var metaPath = GetMetaPath(sessionId);
@@ -498,15 +546,12 @@ public sealed class FileSessionStore : SessionStoreBase
             ExpiresAt = meta.ExpiresAt
             // ConversationId is intentionally omitted when meta.ConversationId is null --
             // the property defaults to an uninitialized ConversationId (the "unset" sentinel)
-            // and the load-time backfill below fires on it. Writing `default(ConversationId)`
-            // explicitly is prohibited by Vogen analyzer VOG009.
+            // and the legacy-orphan recovery below fires on it. Writing
+            // `default(ConversationId)` explicitly is prohibited by Vogen analyzer VOG009.
         }, _redactor)
         {
-            // P9-H (#662): Session.AgentId was deleted; AgentId is now a hydrated derived
-            // value on the runtime wrapper. For File-store load we still read the legacy
-            // `meta.AgentId` JSON field; agent ownership lives on Conversation.AgentId post
-            // P9-H so future loads will derive from the conversation store at hydration.
-            AgentId = meta.AgentId,
+            // P9-I (#674): CallerId is the only sidecar-sourced runtime field. AgentId is
+            // hydrated below (post legacy-orphan recovery) from Conversation.AgentId.
             CallerId = meta.CallerId
         };
         if (meta.ConversationId is not null)
@@ -537,14 +582,20 @@ public sealed class FileSessionStore : SessionStoreBase
             session.UpdatedAt = meta.UpdatedAt;
         }
 
-        // Phase 9 / P9-B (#615, #627): if this session was persisted before
-        // Session.ConversationId was always populated, durably backfill the legacy
-        // conversation. The sidecar is rewritten so subsequent loads — and any reader
-        // that joins on ConversationId — observe the stamp without another resolution
-        // round trip.
-        if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
+        // P9-I (#674): legacy-orphan recovery — pre-Phase-9 sidecars carried `agentId` but
+        // no `conversationId`. Stamp the legacy conversation using the sidecar's recorded
+        // AgentId (the ONLY legitimate read of meta.AgentId post-P9-I) and rewrite the
+        // sidecar so subsequent loads observe the stamp.
+        if (!session.ConversationId.IsInitialized())
         {
-            var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+            if (meta.AgentId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Session sidecar '{metaPath}' has neither ConversationId nor AgentId — " +
+                    "unrecoverable orphan. Inspect the sidecar manually or delete it.");
+            }
+
+            var legacy = await _legacyResolver.ResolveAsync(meta.AgentId.Value, cancellationToken).ConfigureAwait(false);
             session.ConversationId = legacy.ConversationId;
 
             if (session.Status == SessionStatus.Active)
@@ -554,9 +605,15 @@ public sealed class FileSessionStore : SessionStoreBase
 
             await WriteToFileAsync(session, cancellationToken).ConfigureAwait(false);
             _logger.LogWarning(
-                "Backfilled orphan session {SessionId} for agent {AgentId} with legacy conversation {LegacyConversationId} on load (sidecar rewritten).",
-                session.SessionId, session.AgentId, legacy.ConversationId);
+                "Backfilled orphan sidecar for session {SessionId} (legacy AgentId {AgentId}) with conversation {LegacyConversationId} (sidecar rewritten).",
+                session.SessionId, meta.AgentId.Value, legacy.ConversationId);
         }
+
+        // P9-I (#674): hydrate AgentId from Conversation.AgentId after any legacy-orphan
+        // recovery. Every load path (GetAsync, GetOrCreateAsync, EnumerateSessionsAsync,
+        // ListByConversationAsync) routes through LoadFromFileAsync so callers always
+        // observe a hydrated AgentId.
+        await HydrateAgentIdAsync(session, cancellationToken).ConfigureAwait(false);
 
         return session;
     }
@@ -565,14 +622,11 @@ public sealed class FileSessionStore : SessionStoreBase
     /// Defensively stamps a session whose <see cref="Session.ConversationId"/> is unset
     /// (<c>default(ConversationId)</c>) at save time with the agent's
     /// <c>legacy:{agentId}</c> conversation, persisting the stamp before the sidecar is
-    /// written so subsequent reads see a consistent view. No-op when no conversation
-    /// store was registered (back-compat for test composition roots).
+    /// written so subsequent reads see a consistent view.
     /// </summary>
     private async Task EnsureConversationIdStampedAsync(GatewaySession session, CancellationToken cancellationToken)
     {
         if (session.ConversationId.IsInitialized())
-            return;
-        if (_legacyResolver is null)
             return;
 
         var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
@@ -603,7 +657,11 @@ public sealed class FileSessionStore : SessionStoreBase
 
         var metaPath = GetMetaPath(session.SessionId);
         var meta = new SessionMeta(
-            session.AgentId,
+            // P9-I (#674): never write AgentId on new sidecars. Agent ownership is hydrated
+            // from Conversation.AgentId on load. Pre-existing sidecars that still carry it
+            // are read by LoadFromFileAsync's legacy-orphan recovery path; subsequent
+            // saves (e.g. after backfill rewrites the sidecar) drop the field.
+            null,
             session.ChannelType,
             session.CallerId,
             session.SessionType,
@@ -638,7 +696,12 @@ public sealed class FileSessionStore : SessionStoreBase
     private string GetMetaPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.MetadataFileName(sessionId.Value));
 
     private sealed record SessionMeta(
-        AgentId AgentId,
+        // P9-I (#674): AgentId is now NULLABLE. New writes ALWAYS pass null — durable
+        // agent ownership lives on Conversation.AgentId post-P9-I and is hydrated on
+        // load via Conversation.AgentId. The legacy field is retained for back-compat
+        // reads (pre-P9 orphan-sidecar recovery in LoadFromFileAsync) and for the
+        // one-shot orphan-migration scan in MigrateOrphanedSessionsAsync only.
+        AgentId? AgentId,
         ChannelKey? ChannelType,
         string? CallerId,
         SessionType? SessionType,
