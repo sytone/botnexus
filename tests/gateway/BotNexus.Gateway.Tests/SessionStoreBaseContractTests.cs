@@ -188,7 +188,7 @@ public sealed class SessionStoreBaseContractTests
         public FileHarness()
         {
             _fileSystem.Directory.CreateDirectory(_storePath);
-            Store = new FileSessionStore(_storePath, NullLogger<FileSessionStore>.Instance, _fileSystem);
+            Store = new FileSessionStore(_storePath, NullLogger<FileSessionStore>.Instance, _fileSystem, new InMemoryConversationStore());
         }
 
         public ISessionStore Store { get; }

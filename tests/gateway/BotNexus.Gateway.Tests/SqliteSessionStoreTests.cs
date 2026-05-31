@@ -808,11 +808,28 @@ public sealed class SqliteSessionStoreTests
     //     a full-scan plan would require EXPLAIN QUERY PLAN; we settle for "returns
     //     the right rows" + "index is present" which is what regression would catch).
 
-    private static async Task SeedSqliteConversationFixtureAsync(SqliteSessionStore store, DateTimeOffset baseTime)
+    private static async Task SeedSqliteConversationFixtureAsync(StoreFixture fixture, DateTimeOffset baseTime)
     {
         var convA = ConversationId.From("conv-a");
         var convB = ConversationId.From("conv-b");
 
+        // P9-I (#674): pre-register conversations so AgentId hydration succeeds on reload.
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convA,
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            UpdatedAt = baseTime
+        });
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convB,
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            UpdatedAt = baseTime
+        });
+
+        var store = fixture.CreateStore();
         await store.SaveAsync(new GatewaySession
         {
             SessionId = SessionId.From("s-a-active"),
@@ -855,9 +872,13 @@ public sealed class SqliteSessionStoreTests
     }
 
     [Fact]
-    public async Task EnsureCreatedAsync_CreatesConversationAgentIndex_ForListByConversationLookups()
+    public async Task EnsureCreatedAsync_CreatesConversationCreatedIndex_ForListByConversationLookups()
     {
         // Pin the index exists. If a future schema change removes it, this fails first.
+        // P9-I (#674): replaces idx_sessions_conversation_agent (composite was dropped
+        // alongside the agent_id column) with idx_sessions_conversation_created.
+        // The new index serves ListByConversationAsync's (conversation_id, created_at, id)
+        // ordering contract.
         using var fixture = new StoreFixture();
         // Trigger schema creation by a no-op read.
         _ = await fixture.CreateStore().GetAsync(SessionId.From("warm"));
@@ -873,8 +894,12 @@ public sealed class SqliteSessionStoreTests
             indexes.Add(reader.GetString(0));
 
         indexes.ShouldContain(
-            "idx_sessions_conversation_agent",
+            "idx_sessions_conversation_created",
             "Missing index — ListByConversationAsync degrades to a full table scan");
+        // Pin removal of the dead composite that referenced agent_id (dropped with the column).
+        indexes.ShouldNotContain(
+            "idx_sessions_conversation_agent",
+            "Stale index references the removed agent_id column");
     }
 
     [Fact]
@@ -882,7 +907,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedSqliteConversationFixtureAsync(fixture, baseTime);
 
         var sessions = await fixture.CreateStore()
             .ListByConversationAsync(ConversationId.From("conv-a"));
@@ -896,7 +921,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedSqliteConversationFixtureAsync(fixture, baseTime);
 
         var sessions = await fixture.CreateStore()
             .ListByConversationAsync(ConversationId.From("conv-a"));
@@ -922,13 +947,22 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+        await SeedSqliteConversationFixtureAsync(fixture, baseTime);
 
-        var sessions = await fixture.CreateStore()
+        // P9-I (#674): agent_id column dropped from sessions. AgentId is hydrated from
+        // Conversation.AgentId, so passing the conversation's owning agent returns ALL
+        // sessions in that conversation (the agentId arg is now a defensive assertion
+        // that the conversation belongs to the caller's agent). Passing a different
+        // agent returns an empty set.
+        var matched = await fixture.CreateStore()
             .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-x"));
+        matched.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-other-agent", "s-a-active" }, ignoreOrder: false);
 
-        sessions.Select(s => s.SessionId.Value)
-            .ShouldBe(new[] { "s-a-sealed", "s-a-active" }, ignoreOrder: false);
+        var mismatched = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-y"));
+        mismatched.ShouldBeEmpty(
+            "Post-P9-I: passing a non-owner agent must return empty — Conversation.AgentId is the source of truth.");
     }
 
     [Fact]
@@ -937,6 +971,14 @@ public sealed class SqliteSessionStoreTests
         using var fixture = new StoreFixture();
         var same = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
         var convId = ConversationId.From("conv-tie");
+        // P9-I (#674): pre-register the conversation so AgentId hydration succeeds.
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = convId,
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = same,
+            UpdatedAt = same
+        });
         var store = fixture.CreateStore();
 
         await store.SaveAsync(new GatewaySession

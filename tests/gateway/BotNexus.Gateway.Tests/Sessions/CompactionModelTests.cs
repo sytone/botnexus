@@ -3,6 +3,7 @@ using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -209,9 +210,12 @@ public sealed class CompactionModelTests
 
         public MockFileSystem FileSystem { get; }
         public string StorePath { get; }
+        // P9-I (#674): shared across CreateStore() calls so legacy conversations
+        // survive simulated restart by a second store on the same disk path.
+        public InMemoryConversationStore Conversations { get; } = new();
 
         public FileSessionStore CreateStore()
-            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem);
+            => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, Conversations);
 
         public void Dispose()
         {

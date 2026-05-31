@@ -50,14 +50,14 @@ public sealed class SqliteSessionStoreSessionParticipantBackCompatTests
         {
             await connection.OpenAsync();
             await using var insert = connection.CreateCommand();
+            // P9-I (#674): agent_id column dropped post-bootstrap; INSERT omits it.
             insert.CommandText = """
                 INSERT INTO sessions
-                  (id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
+                  (id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
                 VALUES
-                  ($id, $agentId, NULL, NULL, $sessionType, $participants, $status, '{}', $createdAt, $updatedAt, $convId)
+                  ($id, NULL, NULL, $sessionType, $participants, $status, '{}', $createdAt, $updatedAt, $convId)
                 """;
             insert.Parameters.AddWithValue("$id", "legacy-session");
-            insert.Parameters.AddWithValue("$agentId", "agent-a");
             insert.Parameters.AddWithValue("$sessionType", SessionType.UserAgent.Value);
             insert.Parameters.AddWithValue("$participants", legacyParticipantsJson);
             insert.Parameters.AddWithValue("$status", SessionStatus.Active.ToString());
@@ -151,14 +151,14 @@ public sealed class SqliteSessionStoreSessionParticipantBackCompatTests
         {
             await connection.OpenAsync();
             await using var insert = connection.CreateCommand();
+            // P9-I (#674): agent_id column dropped post-bootstrap; INSERT omits it.
             insert.CommandText = """
                 INSERT INTO sessions
-                  (id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
+                  (id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
                 VALUES
-                  ($id, $agentId, NULL, NULL, $sessionType, $participants, $status, '{}', $createdAt, $updatedAt, $convId)
+                  ($id, NULL, NULL, $sessionType, $participants, $status, '{}', $createdAt, $updatedAt, $convId)
                 """;
             insert.Parameters.AddWithValue("$id", "legacy-session");
-            insert.Parameters.AddWithValue("$agentId", "agent-a");
             insert.Parameters.AddWithValue("$sessionType", SessionType.UserAgent.Value);
             insert.Parameters.AddWithValue("$participants", legacyParticipantsJson);
             insert.Parameters.AddWithValue("$status", SessionStatus.Active.ToString());
@@ -209,6 +209,8 @@ public sealed class SqliteSessionStoreSessionParticipantBackCompatTests
         public InMemoryConversationStore Conversations { get; }
 
         public SqliteSessionStore CreateStore(IConversationStore? conversationStore = null)
+            // P9-I (#674): conversationStore is mandatory on SqliteSessionStore. Default
+            // to the fixture's per-test InMemoryConversationStore when not overridden.
             => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? Conversations);
 
         public void Dispose()

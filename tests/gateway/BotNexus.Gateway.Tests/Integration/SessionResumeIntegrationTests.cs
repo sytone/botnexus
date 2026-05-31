@@ -5,7 +5,9 @@ using System.Text.Json;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Api;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -367,8 +369,18 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         return path;
     }
 
+    // P9-I (#674): share the conversation store across multiple CreateFileStore() calls
+    // on the same storePath so legacy conversations created by the "first" store survive
+    // simulated "restart" by the "second" store. In production the persistent
+    // ConversationStore plays this role; in MockFileSystem tests we use a per-path
+    // InMemoryConversationStore registry.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InMemoryConversationStore> _conversationsByPath = new();
+
     private static FileSessionStore CreateFileStore(string storePath)
-        => new(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
+    {
+        var conversations = _conversationsByPath.GetOrAdd(storePath, _ => new InMemoryConversationStore());
+        return new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem(), conversations);
+    }
 
     private static WebApplicationFactory<Program> CreateTestFactory(string storePath)
         => new WebApplicationFactory<Program>()
@@ -386,12 +398,21 @@ public sealed class SessionResumeIntegrationTests : IDisposable
 
                     services.AddSignalRChannelForTests();
 
+                    // P9-I (#674): replace IConversationStore with the per-path shared
+                    // registry so the legacy conversation seeded by CreateFileStore() in
+                    // the seed phase is visible to the FileSessionStore that this factory
+                    // constructs in the resume phase.
+                    var conversations = _conversationsByPath.GetOrAdd(storePath, _ => new InMemoryConversationStore());
+                    services.RemoveAll<IConversationStore>();
+                    services.AddSingleton<IConversationStore>(conversations);
+
                     services.RemoveAll<ISessionStore>();
                     services.AddSingleton<ISessionStore>(sp =>
                         new FileSessionStore(
                             storePath,
                             sp.GetRequiredService<ILogger<FileSessionStore>>(),
-                            new FileSystem()));
+                            new FileSystem(),
+                            sp.GetRequiredService<IConversationStore>()));
                 });
             });
 
