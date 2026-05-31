@@ -145,11 +145,13 @@ public sealed class FinishAgentExchangeToolTests
         new Session
         {
             SessionId = sid,
-            AgentId = AgentId.From("test-agent"),
             ChannelType = ChannelKey.From("test"),
             SessionType = SessionType.AgentAgent,
             Status = GatewaySessionStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
-        });
+        })
+    {
+        AgentId = AgentId.From("test-agent")
+    };
 }

@@ -27,8 +27,14 @@ public sealed record Conversation
     /// </remarks>
     public string WorldId { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the agent that owns this conversation.</summary>
-    public AgentId AgentId { get; set; }
+    /// <summary>
+    /// Gets the agent that owns this conversation. Write-once on construction — the
+    /// <c>ConversationAgentIdImmutabilityArchitectureTests</c> fence pins this so a
+    /// conversation's owning agent cannot drift after the row is persisted. This is the
+    /// invariant that lets <see cref="IAgentIdentityResolver"/> cache the resolved
+    /// value for the lifetime of the conversation (P9-H, issue #662, directive W-4).
+    /// </summary>
+    public AgentId AgentId { get; init; }
 
     /// <summary>Gets or sets the human-readable title of this conversation.</summary>
     public string Title { get; set; } = "New conversation";

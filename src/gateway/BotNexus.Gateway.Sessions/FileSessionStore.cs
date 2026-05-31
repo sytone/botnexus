@@ -487,7 +487,6 @@ public sealed class FileSessionStore : SessionStoreBase
         var session = new GatewaySession(new Session
         {
             SessionId = sessionId,
-            AgentId = meta.AgentId,
             ChannelType = meta.ChannelType,
             SessionType = meta.SessionType ?? InferSessionType(sessionId, meta.ChannelType),
             // P9-F (#657): meta.Participants is read-and-discarded. The legacy field is
@@ -503,6 +502,11 @@ public sealed class FileSessionStore : SessionStoreBase
             // explicitly is prohibited by Vogen analyzer VOG009.
         }, _redactor)
         {
+            // P9-H (#662): Session.AgentId was deleted; AgentId is now a hydrated derived
+            // value on the runtime wrapper. For File-store load we still read the legacy
+            // `meta.AgentId` JSON field; agent ownership lives on Conversation.AgentId post
+            // P9-H so future loads will derive from the conversation store at hydration.
+            AgentId = meta.AgentId,
             CallerId = meta.CallerId
         };
         if (meta.ConversationId is not null)

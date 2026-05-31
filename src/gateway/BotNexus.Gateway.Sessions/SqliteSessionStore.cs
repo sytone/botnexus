@@ -685,7 +685,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
         var domainSession = new Session
         {
             SessionId = SessionId.From(reader.GetString(0)),
-            AgentId = AgentId.From(agentIdValue),
             ChannelType = channelType,
             SessionType = sessionType,
             Status = status,
@@ -701,6 +700,12 @@ public sealed class SqliteSessionStore : SessionStoreBase
             domainSession.ConversationId = ConversationId.From(reader.GetString(10));
         var session = new GatewaySession(domainSession, redactor)
         {
+            // P9-H (#662): Session.AgentId was deleted; AgentId is hydrated on the runtime
+            // wrapper. We still source the value from the legacy `agent_id` column for
+            // backwards-compatible loads — agent ownership lives on Conversation.AgentId
+            // post P9-H and a future migration can switch this to a JOIN against the
+            // conversation store.
+            AgentId = AgentId.From(agentIdValue),
             CallerId = reader.IsDBNull(3) ? null : reader.GetString(3)
         };
 

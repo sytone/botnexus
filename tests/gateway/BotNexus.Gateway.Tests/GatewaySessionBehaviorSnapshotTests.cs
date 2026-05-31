@@ -125,10 +125,10 @@ public sealed class GatewaySessionBehaviorSnapshotTests
     {
         var domainSession = new Session
         {
-            SessionId = SessionId.From("domain-session"),
-            AgentId = AgentId.From("agent-snapshot")
+            SessionId = SessionId.From("domain-session")
         };
         var gatewaySession = GatewaySession.FromSession(domainSession);
+        gatewaySession.HydrateAgentId(AgentId.From("agent-snapshot"));
 
         gatewaySession.Runtime.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "from-runtime" });
         gatewaySession.Session.History.Where(entry => entry.Content == "from-runtime").ShouldHaveSingleItem();
