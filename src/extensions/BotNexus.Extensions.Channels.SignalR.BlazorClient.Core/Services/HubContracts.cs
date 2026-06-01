@@ -158,7 +158,8 @@ public sealed record SessionSummary(
     [property: JsonPropertyName("messageCount")] int MessageCount,
     [property: JsonPropertyName("isInteractive")] bool IsInteractive = true,
     [property: JsonPropertyName("createdAt")] DateTimeOffset? CreatedAt = null,
-    [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null);
+    [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null,
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 /// <summary>Result returned by <c>CompactSession</c>.</summary>
 public sealed record CompactSessionResult(

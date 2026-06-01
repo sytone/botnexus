@@ -86,25 +86,45 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
-    /// Executes subscribe all.
+    /// Subscribes the connection to every conversation it currently has access to, so it
+    /// receives streaming and event payloads for any session in those conversations —
+    /// including sessions that are created later (e.g. after compaction within the
+    /// conversation). Conversation-keyed groups are stable across compaction; the
+    /// previous session-keyed groups dropped post-compaction deliveries (#682).
     /// </summary>
-    /// <returns>The subscribe all result.</returns>
+    /// <returns>The available sessions at subscribe time, for UI initialisation.</returns>
     public async Task<SubscribeAllResult> SubscribeAll()
     {
         var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
 
+        // Distinct conversation group keys across the returned sessions. Each session
+        // contributes:
+        //   1) the real "conversation:{conversationId}" group (production routing key —
+        //      the conversation survives compaction so the connection keeps receiving),
+        //   2) a back-compat "conversation:{sessionId}" synonym, so any caller that
+        //      builds a ChannelStreamTarget from the sessionId only (legacy code paths,
+        //      tests, the obsolete JoinSession helper) still reaches the connection.
+        var groupKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var session in sessions)
+        {
+            if (!string.IsNullOrWhiteSpace(session.ConversationId))
+                groupKeys.Add(SignalRChannelAdapter.GetConversationGroup(session.ConversationId));
+            groupKeys.Add(SignalRChannelAdapter.GetConversationGroup(session.SessionId));
+        }
+
+        foreach (var groupKey in groupKeys)
         {
             await Groups.AddToGroupAsync(
                 Context.ConnectionId,
-                GetSessionGroup(SessionId.From(session.SessionId)),
+                groupKey,
                 Context.ConnectionAborted);
         }
 
         _logger.LogInformation(
-            "Hub SubscribeAll: connection={ConnectionId} sessions={Count}",
+            "Hub SubscribeAll: connection={ConnectionId} sessions={SessionCount} groups={GroupCount}",
             Context.ConnectionId,
-            sessions.Count);
+            sessions.Count,
+            groupKeys.Count);
 
         return new SubscribeAllResult(sessions);
     }
@@ -123,11 +143,28 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             ? SessionId.Create()
             : ParseSessionId(sessionId);
 
-        _logger.LogInformation("Hub JoinSession: agent={AgentId} session={SessionId} connection={ConnectionId} group={Group}",
-            typedAgentId, typedSessionId, Context.ConnectionId, GetSessionGroup(typedSessionId));
-        await Groups.AddToGroupAsync(Context.ConnectionId, GetSessionGroup(typedSessionId), Context.ConnectionAborted);
+        _logger.LogInformation("Hub JoinSession: agent={AgentId} session={SessionId} connection={ConnectionId}",
+            typedAgentId, typedSessionId, Context.ConnectionId);
 
         var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, Context.ConnectionAborted);
+
+        // After Phase 10 PR1.5 (#682) the adapter routes by conversation group. Join both:
+        //   1) the real "conversation:{conversationId}" group (production routing key,
+        //      survives compaction), and
+        //   2) the "conversation:{sessionId}" synonym so callers that build a
+        //      ChannelStreamTarget from the sessionId only (legacy paths, tests, the
+        //      obsolete JoinSession contract itself) still reach the connection.
+        if (session.ConversationId.IsInitialized())
+        {
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value),
+                Context.ConnectionAborted);
+        }
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value),
+            Context.ConnectionAborted);
 
         var needsSave = false;
         if (session.Status == SessionStatus.Expired)
@@ -183,11 +220,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="sessionId">The session id.</param>
     /// <returns>The leave session result.</returns>
     [Obsolete("LeaveSession is deprecated. Clients remain subscribed via SubscribeAll.")]
-    public Task LeaveSession(string sessionId)
-        => Groups.RemoveFromGroupAsync(
-            Context.ConnectionId,
-            GetSessionGroup(ParseSessionId(sessionId)),
-            Context.ConnectionAborted);
+    public async Task LeaveSession(string sessionId)
+    {
+        var typedSessionId = ParseSessionId(sessionId);
+        var session = await _sessions.GetAsync(typedSessionId, Context.ConnectionAborted);
+        var groupKey = session is not null && session.ConversationId.IsInitialized()
+            ? SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value)
+            : SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupKey, Context.ConnectionAborted);
+    }
 
     /// <summary>
     /// Sends a message to an agent, optionally routing into a specific conversation.
@@ -215,7 +256,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Resolve/create the session using the same conversation context as the inbound message
         // so non-default conversations stay aligned between hub subscriptions and gateway routing.
         var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
-        await SubscribeInternalAsync(session.SessionId);
+        // SaveAsync inside ResolveOrCreateSessionAsync pins session.ConversationId; subscribe by
+        // conversation so streams emitted into this conversation reach this connection even if
+        // the active session id later changes (compaction). #682
+        await SubscribeConversationInternalAsync(session.ConversationId);
 
         var connectionId = Context.ConnectionId;
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
@@ -297,7 +341,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
-        await SubscribeInternalAsync(session.SessionId);
+        await SubscribeConversationInternalAsync(session.ConversationId);
 
         _logger.LogInformation(
             "Hub SendMessageWithMedia: agent={AgentId} channel={ChannelType} session={SessionId} parts={PartCount}",
@@ -418,7 +462,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         // Steering must target the caller-provided session so the control message
-        // reaches the active conversation the user is currently steering.
+        // reaches the active conversation the user is currently steering. Subscribe
+        // by conversation so post-compaction streams continue to arrive. #682
         await SubscribeInternalAsync(typedSessionId);
 
         var connectionId = Context.ConnectionId;
@@ -464,7 +509,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, typedSessionId, content, "message", connectionId),
+            async () =>
+            {
+                // Late-subscribe by conversation so stream events emitted by the
+                // follow-up reach the connection even if SubscribeAll has not been
+                // invoked recently. #682
+                await SubscribeInternalAsync(typedSessionId);
+                await DispatchMessageAsync(typedAgentId, typedSessionId, content, "message", connectionId);
+            },
             typedAgentId,
             typedSessionId);
         return Task.CompletedTask;
@@ -538,7 +590,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             await _sessions.SaveAsync(gatewaySession, CancellationToken.None).ConfigureAwait(false);
         }
 
-        await Clients.Caller.SessionReset(new SessionResetPayload(typedAgentId.Value, typedSessionId.Value));
+        await Clients.Caller.SessionReset(new SessionResetPayload(
+            typedAgentId.Value,
+            typedSessionId.Value,
+            gatewaySession is not null && gatewaySession.ConversationId.IsInitialized()
+                ? gatewaySession.ConversationId.Value
+                : null));
     }
 
     /// <summary>
@@ -643,7 +700,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await base.OnDisconnectedAsync(exception);
     }
 
-    private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
+    // GetSessionGroup is gone — the hub now subscribes/unsubscribes via SignalRChannelAdapter.GetConversationGroup.
+    // Removing this prevents future regressions back to session-keyed routing (#682).
 
     private static AgentId ParseAgentId(string agentId)
     {
@@ -690,11 +748,32 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         }
     }
 
+    /// <summary>
+    /// Adds the connection to the conversation group for the given session, looking up the
+    /// session's conversation id if needed. Conversation-keyed groups survive session
+    /// compaction; the previous session-keyed equivalent did not (#682).
+    /// </summary>
     private async Task SubscribeInternalAsync(SessionId sessionId)
     {
+        var session = await _sessions.GetAsync(sessionId, Context.ConnectionAborted);
+        if (session is null)
+            return;
+
+        await SubscribeConversationInternalAsync(session.ConversationId);
+    }
+
+    /// <summary>
+    /// Adds the connection to the conversation group when the conversation id is already
+    /// resolved. No-op when the conversation id is not initialised (legacy/orphan path).
+    /// </summary>
+    private async Task SubscribeConversationInternalAsync(ConversationId conversationId)
+    {
+        if (!conversationId.IsInitialized())
+            return;
+
         await Groups.AddToGroupAsync(
             Context.ConnectionId,
-            GetSessionGroup(sessionId),
+            SignalRChannelAdapter.GetConversationGroup(conversationId.Value),
             Context.ConnectionAborted);
     }
 

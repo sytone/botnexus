@@ -16,4 +16,5 @@ public sealed record SessionSummary(
     bool IsInteractive,
     int MessageCount,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? ConversationId = null);

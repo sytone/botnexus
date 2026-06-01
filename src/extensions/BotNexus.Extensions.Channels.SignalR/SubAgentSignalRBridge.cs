@@ -70,7 +70,14 @@ public sealed class SubAgentSignalRBridge(
         }
 
         var parentSessionId = evt.SessionId;
-        var group = $"session:{parentSessionId}";
+        // PR1.5 (#682): route by conversation so the connection's subscription survives
+        // post-compaction session swaps. Activity emitters that haven't been updated yet
+        // (no ConversationId on the activity) fall back to "conversation:{sessionId}" —
+        // the same back-compat synonym the hub uses for legacy JoinSession/SubscribeAll.
+        var conversationKey = !string.IsNullOrWhiteSpace(evt.ConversationId)
+            ? evt.ConversationId
+            : parentSessionId;
+        var group = SignalRChannelAdapter.GetConversationGroup(conversationKey);
 
         var taskSummary = subAgent.Task.Length > 120
             ? subAgent.Task[..120].TrimEnd() + "\u2026"
@@ -89,7 +96,8 @@ public sealed class SubAgentSignalRBridge(
             subAgent.TurnsUsed,
             subAgent.ResultSummary,
             subAgent.Status == SubAgentStatus.TimedOut,
-            subAgent.ChildSessionId.Value);
+            subAgent.ChildSessionId.Value,
+            evt.ConversationId);
 
         logger.LogDebug("Forwarding {EventType} for sub-agent '{SubAgentId}' to group '{Group}'.",
             evt.Type, subAgent.SubAgentId, group);

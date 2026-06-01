@@ -168,7 +168,8 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
                 session.IsInteractive,
                 session.MessageCount,
                 session.CreatedAt,
-                session.UpdatedAt))
+                session.UpdatedAt,
+                session.ConversationId.IsInitialized() ? session.ConversationId.Value : null))
             .ToList();
 
         _logger.LogDebug("Session warmup cache refreshed for agent {AgentId}: {Count} sessions", agentId, summaries.Count);

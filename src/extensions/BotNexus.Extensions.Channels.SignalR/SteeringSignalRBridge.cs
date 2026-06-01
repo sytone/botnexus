@@ -59,8 +59,14 @@ public sealed class SteeringSignalRBridge(
             ? SteeringFeedbackKind.Injected
             : SteeringFeedbackKind.Queued;
 
-        var payload = new SteeringFeedbackPayload(evt.AgentId, evt.SessionId, kind);
-        var group = $"session:{evt.SessionId}";
+        var payload = new SteeringFeedbackPayload(evt.AgentId, evt.SessionId, kind, evt.ConversationId);
+        // PR1.5 (#682): route by conversation so feedback continues to reach connections
+        // after compaction. Activity emitters that haven't been updated yet fall back to
+        // "conversation:{sessionId}" — the same back-compat synonym used elsewhere.
+        var conversationKey = !string.IsNullOrWhiteSpace(evt.ConversationId)
+            ? evt.ConversationId
+            : evt.SessionId;
+        var group = SignalRChannelAdapter.GetConversationGroup(conversationKey);
 
         logger.LogDebug("Forwarding {EventType} for session '{SessionId}' to group '{Group}'.",
             evt.Type, evt.SessionId, group);

@@ -94,7 +94,7 @@ public sealed class SignalRHubTests
     {
         // Wave 2: conversation routing always creates/resolves a session.
         var groups = new Mock<IGroupManager>();
-        groups.Setup(value => value.AddToGroupAsync("conn-1", It.Is<string>(g => g.StartsWith("session:")), It.IsAny<CancellationToken>()))
+        groups.Setup(value => value.AddToGroupAsync("conn-1", It.Is<string>(g => g.StartsWith("conversation:")), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         InboundMessage? dispatched = null;
@@ -109,7 +109,8 @@ public sealed class SignalRHubTests
 
         result.SessionId.ShouldNotBeNullOrWhiteSpace();
         result.ChannelType.ShouldBe("signalr");
-        groups.Verify(value => value.AddToGroupAsync("conn-1", It.Is<string>(g => g.StartsWith("session:")), It.IsAny<CancellationToken>()), Times.Once);
+        // PR1.5 (#682): connection now subscribes to the conversation group, not the session group.
+        groups.Verify(value => value.AddToGroupAsync("conn-1", It.Is<string>(g => g.StartsWith("conversation:")), It.IsAny<CancellationToken>()), Times.Once);
         dispatched.ShouldNotBeNull();
         dispatched!.RoutingHints.ShouldNotBeNull();
         dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("agent-a");
