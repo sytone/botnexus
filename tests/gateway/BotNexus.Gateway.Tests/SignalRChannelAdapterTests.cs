@@ -10,14 +10,17 @@ namespace BotNexus.Gateway.Tests;
 public sealed class SignalRChannelAdapterTests
 {
     [Fact]
-    public async Task SendStreamEventAsync_WhitespaceSessionId_UsesNormalizedGroupAndPayload()
+    public async Task SendStreamEventAsync_RoutesByConversationGroup_AndSurfacesSessionOnPayload()
     {
+        // After #682, SignalRChannelAdapter routes to "conversation:{id}" groups so the
+        // subscription survives session compaction. The session id still appears on the
+        // payload for provenance.
         var clientProxy = new Mock<IGatewayHubClient>();
         clientProxy.Setup(proxy => proxy.ContentDelta(It.IsAny<object>()))
             .Returns(Task.CompletedTask);
 
         var clients = new Mock<IHubClients<IGatewayHubClient>>();
-        clients.Setup(value => value.Group("session:session-1")).Returns(clientProxy.Object);
+        clients.Setup(value => value.Group("conversation:conv-1")).Returns(clientProxy.Object);
 
         var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
         hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
@@ -25,13 +28,19 @@ public sealed class SignalRChannelAdapterTests
         var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
         var streamEvent = new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "delta" };
 
-        await adapter.SendStreamEventAsync(StreamTargets.For("  session-1  "), streamEvent, CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-1"),
+            SessionId.From("session-1"),
+            ChannelAddress.From("addr-1"),
+            null);
+        await adapter.SendStreamEventAsync(target, streamEvent, CancellationToken.None);
 
-        clients.Verify(value => value.Group("session:session-1"), Times.Once);
+        clients.Verify(value => value.Group("conversation:conv-1"), Times.Once);
         clientProxy.Verify(proxy => proxy.ContentDelta(
                 It.Is<object>(arg =>
                     arg is AgentStreamEvent &&
-                    ((AgentStreamEvent)arg).SessionId == SessionId.From("session-1"))),
+                    ((AgentStreamEvent)arg).SessionId == SessionId.From("session-1") &&
+                    ((AgentStreamEvent)arg).ConversationId == ConversationId.From("conv-1"))),
             Times.Once);
     }
 
@@ -43,7 +52,7 @@ public sealed class SignalRChannelAdapterTests
             .Returns(Task.CompletedTask);
 
         var clients = new Mock<IHubClients<IGatewayHubClient>>();
-        clients.Setup(value => value.Group("session:session-2")).Returns(clientProxy.Object);
+        clients.Setup(value => value.Group("conversation:conv-2")).Returns(clientProxy.Object);
 
         var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
         hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
@@ -57,12 +66,17 @@ public sealed class SignalRChannelAdapterTests
                 RequestId = "request-1",
                 AgentId = AgentId.From("agent-a"),
                 SessionId = SessionId.From("session-2"),
-                ConversationId = ConversationId.From("conversation-2"),
+                ConversationId = ConversationId.From("conv-2"),
                 Prompt = "Pick one"
             }
         };
 
-        await adapter.SendStreamEventAsync(StreamTargets.For("session-2"), streamEvent, CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-2"),
+            SessionId.From("session-2"),
+            ChannelAddress.From("addr-2"),
+            null);
+        await adapter.SendStreamEventAsync(target, streamEvent, CancellationToken.None);
 
         clientProxy.Verify(proxy => proxy.UserInputRequired(
                 It.Is<AgentStreamEvent>(evt => evt.Type == AgentStreamEventType.UserInputRequired)),

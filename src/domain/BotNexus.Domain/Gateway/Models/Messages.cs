@@ -115,6 +115,14 @@ public sealed record OutboundMessage
     public string? SessionId { get; init; }
 
     /// <summary>
+    /// The conversation this message belongs to. Optional for back-compat, but channel
+    /// adapters that group by conversation (e.g. SignalR) prefer this over
+    /// <see cref="SessionId"/> so the same group continues to receive deliveries across
+    /// session compaction within the conversation.
+    /// </summary>
+    public string? ConversationId { get; init; }
+
+    /// <summary>
     /// Stable identifier of the channel binding that this message is being sent to.
     /// Populated during fan-out to allow adapters and logging to correlate delivery.
     /// </summary>

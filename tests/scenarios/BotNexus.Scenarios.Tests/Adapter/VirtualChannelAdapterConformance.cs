@@ -191,7 +191,7 @@ public sealed class VirtualChannelAdapterConformance
     }
 
     private static ChannelStreamTarget Target(string addressAndSessionKey) =>
-        new(SessionId.From(addressAndSessionKey), ChannelAddress.From(addressAndSessionKey), null);
+        new(ConversationId.From(addressAndSessionKey), SessionId.From(addressAndSessionKey), ChannelAddress.From(addressAndSessionKey), null);
 
     private static InboundMessage NewInbound(string content) => new()
     {

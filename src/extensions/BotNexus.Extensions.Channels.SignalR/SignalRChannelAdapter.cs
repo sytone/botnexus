@@ -36,11 +36,12 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
         => Task.CompletedTask;
 
     /// <summary>
-    /// Executes send async.
+    /// Sends a non-streaming message to the SignalR group for the target conversation.
     /// </summary>
-    /// <param name="message">The message.</param>
+    /// <param name="message">The message — <see cref="OutboundMessage.ConversationId"/>
+    /// is the preferred routing key. <see cref="OutboundMessage.SessionId"/> is used as
+    /// a fallback for callers that have not yet adopted the typed conversation field.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The send async result.</returns>
     public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
         if (string.Equals(message.Content?.Trim(), NoReplySentinel, StringComparison.Ordinal))
@@ -50,42 +51,55 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
         }
 
         var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ChannelAddress.Value);
-        return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
-            .ContentDelta(new ContentDeltaPayload(normalizedSessionId, message.Content));
+        // Prefer the conversation when present; otherwise fall back to "conversation:{sessionId}"
+        // as a back-compat synonym so callers that have not yet populated ConversationId still
+        // reach the connection (which subscribed via the same fallback in JoinSession/SubscribeAll).
+        var groupKey = message.ConversationId is { Length: > 0 } conv
+            ? GetConversationGroup(conv)
+            : GetConversationGroup(normalizedSessionId);
+        return _hubContext.Clients.Group(groupKey)
+            .ContentDelta(new ContentDeltaPayload(normalizedSessionId, message.Content, message.ConversationId));
     }
 
     /// <summary>
-    /// Sends a streaming delta to the SignalR group for the target session.
+    /// Sends a streaming delta to the SignalR group for the target conversation.
     /// </summary>
-    /// <param name="target">Typed stream target — SignalR routes by <c>target.SessionId</c>.</param>
+    /// <param name="target">Typed stream target — SignalR routes by
+    /// <see cref="ChannelStreamTarget.ConversationId"/> so the group survives compaction.</param>
     /// <param name="delta">The delta.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The send stream delta async result.</returns>
     public override Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
+        var conversationIdValue = target.ConversationId.Value;
         var sessionIdValue = target.SessionId.Value;
-        return _hubContext.Clients.Group(GetSessionGroup(sessionIdValue))
-            .ContentDelta(new ContentDeltaPayload(sessionIdValue, delta));
+        return _hubContext.Clients.Group(GetConversationGroup(conversationIdValue))
+            .ContentDelta(new ContentDeltaPayload(sessionIdValue, delta, conversationIdValue));
     }
 
     /// <summary>
-    /// Sends a structured stream event to the SignalR group for the target session.
+    /// Sends a structured stream event to the SignalR group for the target conversation.
     /// </summary>
-    /// <param name="target">Typed stream target — SignalR routes by <c>target.SessionId</c>.</param>
+    /// <param name="target">Typed stream target — SignalR routes by
+    /// <see cref="ChannelStreamTarget.ConversationId"/> so the group survives compaction.</param>
     /// <param name="streamEvent">The stream event.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The send stream event async result.</returns>
     public Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
-        // Prefer the session ID stamped on the event (set by GatewayHost) over the target,
-        // so observer fan-out — which addresses each observer by their own binding — still
-        // surfaces the originating session id to the client.
+        // Prefer the session and conversation ids stamped on the event (set by GatewayHost)
+        // over the target, so observer fan-out — which addresses each observer by their own
+        // binding — still surfaces the originating ids to the client.
         var typedSessionId = streamEvent.SessionId ?? target.SessionId;
+        var typedConversationId = streamEvent.ConversationId ?? target.ConversationId;
         var sessionIdStr = typedSessionId.Value;
+        var conversationIdStr = typedConversationId.Value;
 
-        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", sessionIdStr, streamEvent.Type);
-        var enrichedEvent = streamEvent with { SessionId = typedSessionId };
-        var client = _hubContext.Clients.Group(GetSessionGroup(sessionIdStr));
+        logger.LogInformation(
+            "SignalR → group conversation:{ConversationId} (session:{SessionId}) method {Method}",
+            conversationIdStr,
+            sessionIdStr,
+            streamEvent.Type);
+        var enrichedEvent = streamEvent with { SessionId = typedSessionId, ConversationId = typedConversationId };
+        var client = _hubContext.Clients.Group(GetConversationGroup(conversationIdStr));
 
         return streamEvent.Type switch
         {
@@ -101,7 +115,11 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
         };
     }
 
-    private static string GetSessionGroup(string sessionId) => $"session:{sessionId}";
+    internal static string GetConversationGroup(string conversationId) => $"conversation:{conversationId}";
+
+    // Retained for the back-compat fallback path in SendAsync (until every caller stamps
+    // ConversationId) and for tests that pin the legacy group naming.
+    internal static string GetSessionGroup(string sessionId) => $"session:{sessionId}";
 
     private static string NormalizeSessionId(string sessionId)
     {

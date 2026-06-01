@@ -83,8 +83,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleMessageStart(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId);
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -100,8 +100,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleContentDelta(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId);
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -114,8 +114,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleThinkingDelta(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId);
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -128,8 +128,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleToolStart(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -166,8 +166,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleToolEnd(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -230,8 +230,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleMessageEnd(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -276,8 +276,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleError(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
 
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -303,7 +303,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleUserInputRequired(AgentStreamEvent evt)
     {
-        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent))
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId))
             return;
 
         if (!TryBuildAskUserPrompt(evt, out var prompt))
@@ -311,7 +311,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         var resolvedConversationId = prompt.ConversationId;
         if (string.IsNullOrWhiteSpace(resolvedConversationId))
-            resolvedConversationId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+            resolvedConversationId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
         if (string.IsNullOrWhiteSpace(resolvedConversationId))
             return;
 
@@ -356,8 +356,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentSpawned(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
-        var convId = ResolveConversationId(agentId!, agent!, payload.SessionId);
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent, payload.ConversationId)) return;
+        // PR1.5 (#682): SubAgentSignalRBridge stamps payload.ConversationId — prefer it.
+        var convId = ResolveConversationId(agentId!, agent!, payload.SessionId, payload.ConversationId);
 
         agent.SubAgents[payload.SubAgentId] = new SubAgentInfo
         {
@@ -388,7 +389,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentCompleted(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent, payload.ConversationId)) return;
         var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
@@ -411,7 +412,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentFailed(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent, payload.ConversationId)) return;
         var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
@@ -434,7 +435,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentKilled(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent, payload.ConversationId)) return;
         var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
@@ -565,18 +566,36 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     private bool ResolveAgent(
         string? sessionId,
         [NotNullWhen(true)] out string? agentId,
-        [NotNullWhen(true)] out AgentState? agent)
+        [NotNullWhen(true)] out AgentState? agent,
+        string? conversationIdHint = null)
     {
         agentId = null;
         agent = null;
-        if (!_store.TryResolveAgentBySession(sessionId, out agentId) || agentId is null)
-            return false;
-        agent = _store.GetAgent(agentId);
-        return agent is not null;
+        if (_store.TryResolveAgentBySession(sessionId, out agentId) && agentId is not null)
+        {
+            agent = _store.GetAgent(agentId);
+            return agent is not null;
+        }
+        // PR1.5 (#682): post-compaction events arrive with a new sessionId the client
+        // has not yet registered, but the conversation survives. Use the conversation
+        // hint to find the owning agent so the routing still lands.
+        if (!string.IsNullOrWhiteSpace(conversationIdHint)
+            && _store.TryResolveAgentByConversation(conversationIdHint, out agentId)
+            && agentId is not null)
+        {
+            agent = _store.GetAgent(agentId);
+            return agent is not null;
+        }
+        return false;
     }
 
-    private string? ResolveConversationId(string agentId, AgentState agent, string? sessionId)
+    private string? ResolveConversationId(string agentId, AgentState agent, string? sessionId, string? conversationIdHint = null)
     {
+        // PR1.5 (#682): SignalR stamps ConversationId on stream payloads so the client
+        // does not need a session→conversation lookup at all. Prefer the hint when set;
+        // fall back to the legacy resolver for events that have not yet been updated.
+        if (!string.IsNullOrWhiteSpace(conversationIdHint))
+            return conversationIdHint;
         if (_store.TryResolveConversationBySession(agentId, sessionId, out var convId))
             return convId;
         return agent.ActiveConversationId;
@@ -584,6 +603,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private string? ResolveSubAgentConversationId(string agentId, AgentState agent, SubAgentEventPayload payload)
     {
+        // PR1.5 (#682): SubAgentSignalRBridge stamps payload.ConversationId on every
+        // event. Prefer it over the session-bound lookup so post-compaction sub-agent
+        // events still route to the surviving conversation state.
+        if (!string.IsNullOrWhiteSpace(payload.ConversationId))
+            return payload.ConversationId;
+
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var subAgent) &&
             !string.IsNullOrWhiteSpace(subAgent.OriginConversationId))
         {

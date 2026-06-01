@@ -524,7 +524,89 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         }
     }
 
-    // ── #383 — Canvas persistence across reconnect (still open) ────────────
+    // ── #682 — Stream deltas after compaction must reach the same connection ──
+
+    /// <summary>
+    /// Pins <see href="https://github.com/sytone/botnexus/issues/682">#682</see>: when
+    /// <see cref="GatewayHub.CompactSession"/> creates a new session within the same
+    /// conversation, the connection's existing subscription must continue to receive
+    /// stream deltas. Today's session-keyed group routing drops the deltas because the
+    /// new session id was never added to the connection's group list. The fix moves
+    /// SignalR group routing from <c>session:{id}</c> to <c>conversation:{id}</c> so
+    /// the subscription survives compaction.
+    /// </summary>
+    [Fact]
+    public async Task SubscribedClient_ReceivesStreamDelta_FromNewSessionWithinSameConversation_AfterCompaction()
+    {
+        await using var factory = CreateTestFactory();
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+
+        // Establish a session + conversation by sending one real message through the hub.
+        var firstResult = await connection.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "establish-conversation", (string?)null, cts.Token);
+        var firstSessionId = firstResult.GetProperty("sessionId").GetString()!;
+
+        // Resolve the conversation the first session lives in.
+        var sessionStore = factory.Services.GetRequiredService<ISessionStore>();
+        var firstSession = await sessionStore.GetAsync(SessionId.From(firstSessionId), cts.Token);
+        firstSession.ShouldNotBeNull();
+        firstSession!.Session.ConversationId.IsInitialized().ShouldBeTrue();
+        var conversationId = firstSession.Session.ConversationId;
+
+        // Refresh the subscription so the connection is joined to the up-to-date set of
+        // groups for this conversation. This is the operation a real browser performs after
+        // mounting a chat view.
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
+
+        // Simulate compaction: create a brand-new session within the same conversation.
+        // The new session id was never seen at connect-time, so a session-keyed group
+        // router cannot deliver to it.
+        var channelAddress = ChannelAddress.From(TestAgentId);
+        var newSession = new GatewaySession
+        {
+            SessionId = SessionId.From($"post-compact-{Guid.NewGuid():N}"),
+            AgentId = AgentId.From(TestAgentId),
+            ChannelType = ChannelKey.From("signalr"),
+            ConversationId = conversationId
+        };
+        await sessionStore.SaveAsync(newSession, cts.Token);
+
+        // Capture the next ContentDelta the connection receives.
+        var deltaReceived = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload =>
+        {
+            if (payload.ContentDelta == "post-compact-token")
+                deltaReceived.TrySetResult(payload);
+        });
+
+        // Push a delta directly through the adapter, targeted at the NEW session inside
+        // the SAME conversation. This is exactly what GatewayHost does on the next user
+        // turn after compaction.
+        var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
+        var target = new ChannelStreamTarget(
+            conversationId,
+            newSession.SessionId,
+            channelAddress,
+            null);
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "post-compact-token",
+            SessionId = newSession.SessionId,
+            ConversationId = conversationId,
+            AgentId = AgentId.From(TestAgentId)
+        }, cts.Token);
+
+        var received = await deltaReceived.Task.WaitAsync(cts.Token);
+        received.ContentDelta.ShouldBe("post-compact-token");
+        received.SessionId.ShouldBe(newSession.SessionId,
+            "client must see the new (post-compaction) session id on the payload so per-session UI affordances update; #682");
+    }
+
+
 
     /// <summary>
     /// Placeholder for <see href="https://github.com/sytone/botnexus/issues/383">#383</see>:

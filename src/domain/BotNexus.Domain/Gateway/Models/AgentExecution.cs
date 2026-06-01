@@ -70,6 +70,14 @@ public sealed record AgentStreamEvent
     public SessionId? SessionId { get; init; }
     /// <summary>Agent identifier for client-side routing when session is not yet registered.</summary>
     public AgentId? AgentId { get; init; }
+    /// <summary>
+    /// Conversation identifier — the persistent user-facing thread. Stable across compaction:
+    /// when a session is compacted and a new session is created within the same conversation,
+    /// stream events emitted by the new session carry the same <c>ConversationId</c>. This is
+    /// the primary client-side routing key; <see cref="SessionId"/> remains useful for
+    /// provenance and per-session UI affordances.
+    /// </summary>
+    public ConversationId? ConversationId { get; init; }
     /// <summary>When this event was emitted.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     /// <summary>

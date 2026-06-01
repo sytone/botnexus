@@ -71,6 +71,14 @@ public interface IClientStateStore
     bool TryResolveAgentBySession(string? sessionId, out string? agentId);
 
     /// <summary>
+    /// Resolve a conversation ID to the agent ID that owns it (the agent whose
+    /// <c>Conversations</c> dictionary contains the conversation). Returns false if unknown.
+    /// PR1.5 (#682): post-compaction stream events carry a new sessionId the client has not
+    /// yet registered; this fallback lets the handler still route by the surviving conversation.
+    /// </summary>
+    bool TryResolveAgentByConversation(string? conversationId, out string? agentId);
+
+    /// <summary>
     /// Resolve a session ID to the conversation ID on the given agent whose
     /// <c>ActiveSessionId</c> matches.
     /// </summary>
