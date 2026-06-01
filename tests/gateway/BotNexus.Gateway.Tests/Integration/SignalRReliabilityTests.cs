@@ -24,6 +24,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Integration;
 
 /// <summary>
@@ -505,7 +507,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
         for (var i = 0; i < burstCount; i++)
         {
-            await adapter.SendStreamEventAsync(sessionId, new AgentStreamEvent
+            await adapter.SendStreamEventAsync(StreamTargets.For(sessionId), new AgentStreamEvent
             {
                 Type = AgentStreamEventType.ContentDelta,
                 ContentDelta = $"delta-{i:D2}"

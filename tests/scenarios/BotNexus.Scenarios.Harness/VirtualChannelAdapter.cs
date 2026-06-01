@@ -52,6 +52,7 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
     private readonly ConcurrentQueue<InboundMessage> _inbound = new();
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _streamDeltas = new();
     private readonly ConcurrentDictionary<string, ConcurrentQueue<AgentStreamEvent>> _streamEvents = new();
+    private readonly ConcurrentQueue<ChannelStreamTarget> _streamTargets = new();
     private readonly VirtualChannelAdapterOptions _options;
     private int _dispatchCount;
 
@@ -114,13 +115,16 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
     /// <summary>The total number of times <see cref="SimulateInboundAsync"/> reached the gateway dispatcher.</summary>
     public int InboundDispatchCount => Volatile.Read(ref _dispatchCount);
 
-    /// <summary>Stream deltas grouped by the channel-level conversation routing key the gateway used.</summary>
+    /// <summary>Stream deltas grouped by the channel-level routing key the gateway used (the target's <see cref="ChannelAddress"/>).</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<string>> StreamDeltas
         => _streamDeltas.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value.ToArray());
 
-    /// <summary>Structured stream events grouped by the channel-level conversation routing key the gateway used.</summary>
+    /// <summary>Structured stream events grouped by the channel-level routing key the gateway used (the target's <see cref="ChannelAddress"/>).</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<AgentStreamEvent>> StreamEvents
         => _streamEvents.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<AgentStreamEvent>)kvp.Value.ToArray());
+
+    /// <summary>Ordered snapshot of every <see cref="ChannelStreamTarget"/> the gateway routed through this adapter (deltas and events).</summary>
+    public IReadOnlyList<ChannelStreamTarget> StreamTargets => [.. _streamTargets];
 
     /// <summary>
     /// Drives <paramref name="message"/> through the gateway's <see cref="IChannelDispatcher"/>
@@ -169,13 +173,14 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
             $"No outbound message matching predicate observed within {timeout.TotalMilliseconds:F0}ms (observed {_outbound.Count}).");
     }
 
-    /// <summary>Clears every captured outbound, inbound, stream-delta and stream-event log.</summary>
+    /// <summary>Clears every captured outbound, inbound, stream-delta, stream-event log, and stream-target list.</summary>
     public void Reset()
     {
         _outbound.Clear();
         _inbound.Clear();
         _streamDeltas.Clear();
         _streamEvents.Clear();
+        _streamTargets.Clear();
         Interlocked.Exchange(ref _dispatchCount, 0);
     }
 
@@ -194,20 +199,22 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
     }
 
     /// <inheritdoc />
-    public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public override Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(conversationId);
+        ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(delta);
-        _streamDeltas.GetOrAdd(conversationId, _ => new ConcurrentQueue<string>()).Enqueue(delta);
+        _streamTargets.Enqueue(target);
+        _streamDeltas.GetOrAdd(target.ChannelAddress.Value, _ => new ConcurrentQueue<string>()).Enqueue(delta);
         return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    public Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
+    public Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(conversationId);
+        ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(streamEvent);
-        _streamEvents.GetOrAdd(conversationId, _ => new ConcurrentQueue<AgentStreamEvent>()).Enqueue(streamEvent);
+        _streamTargets.Enqueue(target);
+        _streamEvents.GetOrAdd(target.ChannelAddress.Value, _ => new ConcurrentQueue<AgentStreamEvent>()).Enqueue(streamEvent);
         return Task.CompletedTask;
     }
 }

@@ -385,7 +385,7 @@ public sealed class MultiChannelFanOutTests
         adapter.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
             .Callback<OutboundMessage, CancellationToken>((m, _) => messages.Add(m))
             .Returns(Task.CompletedTask);
-        adapter.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        adapter.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return new ChannelRecorder(adapter, messages);
     }

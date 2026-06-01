@@ -172,16 +172,17 @@ public sealed class TelegramChannelAdapter(
     }
 
     /// <inheritdoc />
-    public override async Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public override async Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
-        if (string.IsNullOrEmpty(delta) || !TelegramChannelAddress.TryDecode(ChannelAddress.From(conversationId), out var chatId, out var messageThreadId))
+        if (string.IsNullOrEmpty(delta) || !TelegramChannelAddress.TryDecode(target.ChannelAddress, out var chatId, out var messageThreadId))
             return;
 
         var runtime = ResolveSingleConfiguredBot();
         EnsureChatAllowed(runtime.Config, chatId);
-        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId, messageThreadId));
+        var stateKey = target.ChannelAddress.Value;
+        var state = runtime.StreamingStates.GetOrAdd(stateKey, _ => new StreamingState(chatId, messageThreadId));
 
         await state.Lock.WaitAsync(cancellationToken);
         try
@@ -200,16 +201,17 @@ public sealed class TelegramChannelAdapter(
     }
 
     /// <inheritdoc />
-    public async Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
+    public async Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
-        if (!TelegramChannelAddress.TryDecode(ChannelAddress.From(conversationId), out var chatId, out var messageThreadId))
+        if (!TelegramChannelAddress.TryDecode(target.ChannelAddress, out var chatId, out var messageThreadId))
             return;
 
         var runtime = ResolveSingleConfiguredBot();
         EnsureChatAllowed(runtime.Config, chatId);
-        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId, messageThreadId));
+        var stateKey = target.ChannelAddress.Value;
+        var state = runtime.StreamingStates.GetOrAdd(stateKey, _ => new StreamingState(chatId, messageThreadId));
 
         await state.Lock.WaitAsync(cancellationToken);
         try

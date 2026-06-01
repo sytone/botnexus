@@ -43,9 +43,11 @@ public sealed class DiscordChannelAdapter(ILogger<DiscordChannelAdapter> logger)
     }
 
     public override async Task SendStreamDeltaAsync(
-        string conversationId, string delta, CancellationToken cancellationToken = default)
+        ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
-        // Edit the last message to append the delta (Discord supports message editing)
+        // Edit the last message to append the delta (Discord supports message editing).
+        // Use target.ChannelAddress for the chat lookup; target.SessionId is available
+        // if your channel needs to disambiguate concurrent sessions on the same chat.
     }
 }
 ```

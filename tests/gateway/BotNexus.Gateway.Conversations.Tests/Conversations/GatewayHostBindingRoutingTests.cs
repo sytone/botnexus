@@ -165,8 +165,8 @@ public sealed class GatewayHostBindingRoutingTests
         channel.SetupGet(c => c.ChannelType).Returns(ChannelKey.From("telegram"));
         channel.SetupGet(c => c.DisplayName).Returns("telegram");
         channel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((cid, _, _) => capturedStreamConversationIds.Add(cid))
+        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<ChannelStreamTarget, string, CancellationToken>((target, _, _) => capturedStreamConversationIds.Add(target.ChannelAddress.Value))
             .Returns(Task.CompletedTask);
 
         await using var host = CreateHost(supervisor.Object, sessions, convRouter.Object, CreateChannelManager(channel.Object));
@@ -182,11 +182,11 @@ public sealed class GatewayHostBindingRoutingTests
         });
 
         capturedStreamConversationIds.ShouldNotBeEmpty("SendStreamDeltaAsync must be called");
-        // The conversationId is the composite ChannelAddress verbatim — adapters fold the
-        // topic suffix into it themselves before the gateway ever sees it.
+        // The ChannelAddress on the stream target is the composite ChannelAddress verbatim —
+        // adapters fold the topic suffix into it themselves before the gateway ever sees it.
         capturedStreamConversationIds.ShouldAllBe(
             cid => cid == "chat-200/topic:99",
-            "Streaming conversationId must be the composite ChannelAddress so the adapter can route to the correct topic");
+            "Streaming target's ChannelAddress must be the composite address so the adapter can route to the correct topic");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -281,7 +281,7 @@ public sealed class GatewayHostBindingRoutingTests
         channel.SetupGet(c => c.DisplayName).Returns(channelType);
         channel.SetupGet(c => c.SupportsStreaming).Returns(supportsStreaming);
         channel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         return channel;
     }
 

@@ -433,7 +433,7 @@ public sealed class CopilotIntegrationTests
             return Task.CompletedTask;
         }
 
-        public Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+        public Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
         {
             StreamDeltas.Add(delta);
             return Task.CompletedTask;

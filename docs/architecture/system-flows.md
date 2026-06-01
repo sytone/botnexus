@@ -209,7 +209,8 @@ AgentHandle → ChannelAdapter.SendAsync(OutboundMessage) → SignalR Group Broa
 
 1. **Agent emits `AgentEvent`** (e.g., `ContentDelta`, `ToolStart`, `MessageEnd`)
 2. **Handle wraps as `AgentStreamEvent`** with sessionId
-3. **Channel adapter receives event**: `IChannelAdapter.SendStreamDeltaAsync(conversationId, delta, ct)`
+3. **Channel adapter receives event**: `IChannelAdapter.SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken ct)`
+   The `ChannelStreamTarget` carries the typed `SessionId`, `ChannelAddress`, and optional `BindingId` the adapter needs to route delivery — each adapter consumes whichever field matches its native routing model (SignalR groups by `SessionId`, Telegram looks up by `ChannelAddress`, etc.).
 4. **Adapter broadcasts to session group**: `Clients.Group("session:{sessionId}").SendAsync(method, data)`
 5. **All clients in group receive event** in real-time
 

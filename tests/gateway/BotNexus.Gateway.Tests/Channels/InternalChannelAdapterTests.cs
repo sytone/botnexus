@@ -6,6 +6,8 @@ using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Moq;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Channels;
 
 public sealed class InternalChannelAdapterTests
@@ -168,7 +170,7 @@ public sealed class InternalChannelAdapterTests
 
         var signalrAdapter = new Mock<IChannelAdapter>();
         signalrAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("signalr"));
-        signalrAdapter.Setup(a => a.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        signalrAdapter.Setup(a => a.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var channelManager = new Mock<IChannelManager>();
@@ -176,9 +178,64 @@ public sealed class InternalChannelAdapterTests
 
         var sut = CreateAdapter(channelManager.Object, sessionStore.Object);
 
-        await sut.SendStreamDeltaAsync("session-1", "delta-text", CancellationToken.None);
+        await sut.SendStreamDeltaAsync(StreamTargets.For("session-1"), "delta-text", CancellationToken.None);
 
-        signalrAdapter.Verify(a => a.SendStreamDeltaAsync("session-1", "delta-text", CancellationToken.None), Times.Once);
+        signalrAdapter.Verify(a => a.SendStreamDeltaAsync(StreamTargets.For("session-1"), "delta-text", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_ResolvesByTypedSessionId_AndRoutesToParentsNonSignalRChannel()
+    {
+        // Behaviour fix introduced with ChannelStreamTarget (#677): the resolver now uses the
+        // typed SessionId from the stream target instead of trying to parse the previous
+        // string "conversationId" parameter (which was actually a ChannelAddress). The old code
+        // silently fell through to the SignalR fallback for any non-SignalR parent session,
+        // so a sub-agent wake-up event for a Telegram-rooted session would have been
+        // misdelivered to SignalR. This test pins the correct typed-resolution behaviour.
+        var parentSession = SessionId.From("parent-session-telegram");
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(s => s.GetAsync(parentSession, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = parentSession,
+                AgentId = AgentId.From("agent-a"),
+                ChannelType = ChannelKey.From("telegram")
+            });
+
+        var telegramAdapter = new Mock<IChannelAdapter>();
+        telegramAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("telegram"));
+        var telegramStream = telegramAdapter.As<IStreamEventChannelAdapter>();
+        telegramStream.Setup(a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // SignalR fallback adapter — it must NOT be called for a Telegram-rooted parent session.
+        var signalrAdapter = new Mock<IChannelAdapter>();
+        signalrAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("signalr"));
+        var signalrStream = signalrAdapter.As<IStreamEventChannelAdapter>();
+        signalrStream.Setup(a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.Setup(m => m.Get(ChannelKey.From("telegram"))).Returns(telegramAdapter.Object);
+        channelManager.Setup(m => m.Get(ChannelKey.From("signalr"))).Returns(signalrAdapter.Object);
+
+        var sut = CreateAdapter(channelManager.Object, sessionStore.Object);
+        var target = new ChannelStreamTarget(
+            parentSession,
+            ChannelAddress.From("telegram-chat-99"),
+            null);
+        var wakeEvent = new AgentStreamEvent { Type = AgentStreamEventType.MessageStart };
+
+        await sut.SendStreamEventAsync(target, wakeEvent, CancellationToken.None);
+
+        telegramStream.Verify(
+            a => a.SendStreamEventAsync(target, wakeEvent, CancellationToken.None),
+            Times.Once,
+            "wake-up stream event must be delivered to the parent's true channel (Telegram), not the SignalR fallback");
+        signalrStream.Verify(
+            a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "SignalR fallback must not receive the event when the parent session has a non-SignalR channel");
     }
 
     [Fact]

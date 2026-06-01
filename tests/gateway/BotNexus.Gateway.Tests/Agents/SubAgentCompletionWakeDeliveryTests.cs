@@ -11,6 +11,8 @@ using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Agents;
 
 public sealed class SubAgentCompletionWakeDeliveryTests
@@ -34,7 +36,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         targetAdapter.SetupGet(a => a.SupportsStreaming).Returns(true);
         var targetStreamAdapter = targetAdapter.As<IStreamEventChannelAdapter>();
         targetStreamAdapter
-            .Setup(a => a.SendStreamEventAsync("parent-session", It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(a => a.SendStreamEventAsync(StreamTargets.For("parent-session"), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var channelManager = new Mock<IChannelManager>();
@@ -47,14 +49,12 @@ public sealed class SubAgentCompletionWakeDeliveryTests
 
         streamAdapter.ShouldNotBeNull();
 
-        await streamAdapter!.SendStreamEventAsync(
-            "parent-session",
+        await streamAdapter!.SendStreamEventAsync(StreamTargets.For("parent-session"),
             new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
             CancellationToken.None);
 
         targetStreamAdapter.Verify(
-            a => a.SendStreamEventAsync(
-                "parent-session",
+            a => a.SendStreamEventAsync(StreamTargets.For("parent-session"),
                 It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageStart),
                 CancellationToken.None),
             Times.Once);

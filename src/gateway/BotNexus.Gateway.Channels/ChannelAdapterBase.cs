@@ -86,7 +86,7 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     public abstract Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default);
 
     /// <inheritdoc />
-    public virtual Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public virtual Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
     /// <summary>

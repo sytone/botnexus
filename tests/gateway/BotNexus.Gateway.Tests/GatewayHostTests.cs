@@ -85,8 +85,20 @@ public sealed class GatewayHostTests
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
         session.History.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "hello world");
-        channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "hello ", It.IsAny<CancellationToken>()), Times.Once);
-        channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "world", It.IsAny<CancellationToken>()), Times.Once);
+        channel.Verify(c => c.SendStreamDeltaAsync(
+            It.Is<ChannelStreamTarget>(t =>
+                t.SessionId == SessionId.From("session-1") &&
+                t.ChannelAddress == ChannelAddress.From("conv-1")),
+            "hello ",
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        channel.Verify(c => c.SendStreamDeltaAsync(
+            It.Is<ChannelStreamTarget>(t =>
+                t.SessionId == SessionId.From("session-1") &&
+                t.ChannelAddress == ChannelAddress.From("conv-1")),
+            "world",
+            It.IsAny<CancellationToken>()),
+            Times.Once);
         // Write-ahead (user msg + sentinel) + ProcessAndSaveAsync final = at least 3 saves
         sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.AtLeast(1));
     }
@@ -1543,7 +1555,7 @@ public sealed class GatewayHostTests
         channel.SetupGet(c => c.DisplayName).Returns(channelType);
         channel.SetupGet(c => c.SupportsStreaming).Returns(supportsStreaming);
         channel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        channel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         return channel;
     }
 
@@ -1814,10 +1826,10 @@ public sealed class GatewayHostTests
         telegramChannel.SetupGet(c => c.DisplayName).Returns("Telegram");
         telegramChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
         telegramChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         telegramChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        telegramChannel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        telegramChannel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         // SignalR is an observer binding
         var signalrChannel = new Mock<IChannelAdapter>();
@@ -1825,7 +1837,7 @@ public sealed class GatewayHostTests
         signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
         signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
         signalrChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -1877,22 +1889,31 @@ public sealed class GatewayHostTests
         var message = CreateMessage("hello", sessionId: "session-1", channelType: "telegram");
         await host.DispatchAsync(message);
 
-        // Assert: SignalR observer received stream events (3 events: MessageStart, ContentDelta, MessageEnd)
+        // Assert: SignalR observer received stream events (3 events: MessageStart, ContentDelta, MessageEnd).
+        // The stream target is built from the resolved session ID and the observer binding's
+        // ChannelAddress + BindingId — not the originating Telegram address. This is the
+        // typed-target contract introduced with ChannelStreamTarget (#677).
         signalrChannel.As<IStreamEventChannelAdapter>().Verify(
             c => c.SendStreamEventAsync(
-                "signalr-session-abc",
+                It.Is<ChannelStreamTarget>(t =>
+                    t.SessionId == SessionId.From("session-1") &&
+                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
                 It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageStart),
                 It.IsAny<CancellationToken>()),
             Times.Once);
         signalrChannel.As<IStreamEventChannelAdapter>().Verify(
             c => c.SendStreamEventAsync(
-                "signalr-session-abc",
+                It.Is<ChannelStreamTarget>(t =>
+                    t.SessionId == SessionId.From("session-1") &&
+                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
                 It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
                 It.IsAny<CancellationToken>()),
             Times.Once);
         signalrChannel.As<IStreamEventChannelAdapter>().Verify(
             c => c.SendStreamEventAsync(
-                "signalr-session-abc",
+                It.Is<ChannelStreamTarget>(t =>
+                    t.SessionId == SessionId.From("session-1") &&
+                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
                 It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageEnd),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -1927,7 +1948,7 @@ public sealed class GatewayHostTests
         signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
         signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
         signalrChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -1974,7 +1995,7 @@ public sealed class GatewayHostTests
         // Since GetOutboundBindings returns [], no additional observer fan-out occurs.
         signalrChannel.As<IStreamEventChannelAdapter>().Verify(
             c => c.SendStreamEventAsync(
-                It.IsAny<string>(),
+                It.IsAny<ChannelStreamTarget>(),
                 It.IsAny<AgentStreamEvent>(),
                 It.IsAny<CancellationToken>()),
             Times.Once); // exactly once as the primary channel, not doubled via observer fan-out

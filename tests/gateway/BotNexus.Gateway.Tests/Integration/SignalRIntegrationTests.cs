@@ -26,6 +26,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
+using BotNexus.Gateway.Tests;
+
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
@@ -102,8 +104,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         });
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "all-a" }, cts.Token);
-        await adapter.SendStreamEventAsync(sessionB, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "all-b" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "all-a" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionB), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "all-b" }, cts.Token);
 
         (await eventA.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("all-a");
         (await eventB.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("all-b");
@@ -138,8 +140,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         });
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionTarget, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "target-only" }, cts.Token);
-        await adapter.SendStreamEventAsync(sessionOther, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "other-should-not-arrive" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionTarget), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "target-only" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionOther), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "other-should-not-arrive" }, cts.Token);
 
         (await targetReceived.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("target-only");
         (await otherReceived.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("other-should-not-arrive");
@@ -192,8 +194,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         });
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(joinedSession, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "legacy-join-event" }, cts.Token);
-        await adapter.SendStreamEventAsync(subscribedSession, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "subscribe-all-event" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(joinedSession), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "legacy-join-event" }, cts.Token);
+        await adapter.SendStreamEventAsync(StreamTargets.For(subscribedSession), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "subscribe-all-event" }, cts.Token);
 
         (await joinedTcs.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("legacy-join-event");
         (await subscribedTcs.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("subscribe-all-event");
@@ -516,12 +518,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         });
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "event-a"
         }, cts.Token);
-        await adapter.SendStreamEventAsync(sessionB, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionB), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "event-b"
@@ -554,7 +556,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         using var __ = connectionB.On<AgentStreamEvent>("ContentDelta", payload => receivedB.TrySetResult(payload));
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionId, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionId), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "group-message"
@@ -699,7 +701,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload => deltaTcs.TrySetResult(payload));
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionId, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionId), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "delta-text"
@@ -730,7 +732,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         using var __ = connectionB.On<AgentStreamEvent>("ContentDelta", _ => bReceived = true);
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent
+        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
         {
             Type = AgentStreamEventType.ContentDelta,
             ContentDelta = "session-a-only"
@@ -779,7 +781,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
         foreach (var type in Enum.GetValues<AgentStreamEventType>())
         {
-            await adapter.SendStreamEventAsync(sessionId, new AgentStreamEvent
+            await adapter.SendStreamEventAsync(StreamTargets.For(sessionId), new AgentStreamEvent
             {
                 Type = type,
                 ContentDelta = type == AgentStreamEventType.ContentDelta ? "delta" : null,

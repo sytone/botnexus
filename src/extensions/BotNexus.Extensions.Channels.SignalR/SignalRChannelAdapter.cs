@@ -55,32 +55,33 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     }
 
     /// <summary>
-    /// Executes send stream delta async.
+    /// Sends a streaming delta to the SignalR group for the target session.
     /// </summary>
-    /// <param name="conversationId">The conversation id.</param>
+    /// <param name="target">Typed stream target — SignalR routes by <c>target.SessionId</c>.</param>
     /// <param name="delta">The delta.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The send stream delta async result.</returns>
-    public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+    public override Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
     {
-        var normalizedSessionId = NormalizeSessionId(conversationId);
-        return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
-            .ContentDelta(new ContentDeltaPayload(normalizedSessionId, delta));
+        var sessionIdValue = target.SessionId.Value;
+        return _hubContext.Clients.Group(GetSessionGroup(sessionIdValue))
+            .ContentDelta(new ContentDeltaPayload(sessionIdValue, delta));
     }
 
     /// <summary>
-    /// Executes send stream event async.
+    /// Sends a structured stream event to the SignalR group for the target session.
     /// </summary>
-    /// <param name="conversationId">The conversation id.</param>
+    /// <param name="target">Typed stream target — SignalR routes by <c>target.SessionId</c>.</param>
     /// <param name="streamEvent">The stream event.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The send stream event async result.</returns>
-    public Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
+    public Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
-        // Prefer the session ID stamped on the event (set by GatewayHost) over the conversationId
-        // parameter, which may be the channel address (e.g. agentId for SignalR) rather than a session ID.
-        var sessionIdStr = streamEvent.SessionId?.Value ?? NormalizeSessionId(conversationId);
-        var typedSessionId = SessionId.From(sessionIdStr);
+        // Prefer the session ID stamped on the event (set by GatewayHost) over the target,
+        // so observer fan-out — which addresses each observer by their own binding — still
+        // surfaces the originating session id to the client.
+        var typedSessionId = streamEvent.SessionId ?? target.SessionId;
+        var sessionIdStr = typedSessionId.Value;
 
         logger.LogInformation("SignalR → group session:{SessionId} method {Method}", sessionIdStr, streamEvent.Type);
         var enrichedEvent = streamEvent with { SessionId = typedSessionId };

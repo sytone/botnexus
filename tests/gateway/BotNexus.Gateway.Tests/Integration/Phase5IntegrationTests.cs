@@ -353,7 +353,7 @@ public sealed class Phase5IntegrationTests
         public Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
+        public Task SendStreamDeltaAsync(ChannelStreamTarget target, string delta, CancellationToken cancellationToken = default)
         {
             StreamDeltas.Add(delta);
             return Task.CompletedTask;
