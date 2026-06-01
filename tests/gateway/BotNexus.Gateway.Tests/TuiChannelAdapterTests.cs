@@ -69,6 +69,13 @@ public sealed class TuiChannelAdapterTests
 
         steerDispatchCount.ShouldBe(1);
         output.ToString().ShouldContain("Steering queued");
+
+        // PR2 of W-5 (#691): TUI must NOT fabricate a session id; the binding system
+        // resolves (channelType=tui, channelAddress=console) to the correct conversation
+        // and session naturally. A hardcoded RequestedSessionId here would shadow the
+        // P9 binding resolution path and bypass the natural session lifecycle.
+        var steerMessage = dispatchedMessages.Single(m => m.Content == "adjust please");
+        steerMessage.RoutingHints.ShouldBeNull();
     }
 
     [Fact]
@@ -114,5 +121,11 @@ public sealed class TuiChannelAdapterTests
         dispatchedMessages.Where(m => m.Content == "hello world").ShouldHaveSingleItem();
         dispatchedMessages.ShouldAllBe(m => !m.Metadata.ContainsKey("control"));
         output.ToString().ShouldNotContain("Steering queued");
+
+        // PR2 of W-5 (#691): TUI must NOT fabricate a session id on regular input either.
+        // The conversation router will look up the (tui, console) binding for the resolved
+        // agent and reuse / open a session — that's the post-P9 contract.
+        var regularMessage = dispatchedMessages.Single(m => m.Content == "hello world");
+        regularMessage.RoutingHints.ShouldBeNull();
     }
 }

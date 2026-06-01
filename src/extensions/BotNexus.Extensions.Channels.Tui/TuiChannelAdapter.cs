@@ -197,10 +197,9 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                     SenderId = Environment.UserName,
                     Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                     ChannelAddress = ChannelAddress.From("console"),
-                    RoutingHints = new InboundMessageRoutingHints(
-                        RequestedAgentId: null,
-                        RequestedSessionId: SessionId.From("tui-console"),
-                        RequestedConversationId: null),
+                    // PR2 of W-5 (#691): no RoutingHints — the conversation router
+                    // resolves the (tui, console) binding to the active conversation
+                    // and reuses or opens a session through the normal P9 path.
                     Content = steerContent,
                     Metadata = new Dictionary<string, object?>
                     {
@@ -216,10 +215,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                 SenderId = Environment.UserName,
                 Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                 ChannelAddress = ChannelAddress.From("console"),
-                RoutingHints = new InboundMessageRoutingHints(
-                    RequestedAgentId: null,
-                    RequestedSessionId: SessionId.From("tui-console"),
-                    RequestedConversationId: null),
+                // PR2 of W-5 (#691): no RoutingHints — see comment in the steer branch.
                 Content = line
             }, cancellationToken);
         }
