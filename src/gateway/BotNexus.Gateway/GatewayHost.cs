@@ -16,6 +16,7 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
+using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using UserId = BotNexus.Domain.Primitives.UserId;
@@ -554,6 +555,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 {
                                     var adapter = ResolveChannelAdapter(b.ChannelType) as IStreamEventChannelAdapter;
                                     var observerTarget = new ChannelStreamTarget(
+                                        session.ConversationId,
                                         Domain.Primitives.SessionId.From(sessionId),
                                         b.ChannelAddress,
                                         b.BindingId);
@@ -578,12 +580,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             OnEventAsync: async (AgentStreamEvent evt, CancellationToken ct) =>
                             {
                                 // Enrich with agentId so the client can route events
-                                // even before session registration completes.
-                                var enriched = evt.AgentId is null || evt.SessionId is null
+                                // even before session registration completes. Stamp the
+                                // ConversationId too so subscribers can route by
+                                // conversation (stable across compaction).
+                                var enriched = evt.AgentId is null || evt.SessionId is null || evt.ConversationId is null
                                     ? evt with 
                                     { 
                                         AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
-                                        SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId)
+                                        SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId),
+                                        ConversationId = evt.ConversationId ?? session.ConversationId
                                     }
                                     : evt;
 
@@ -591,6 +596,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // route this delta or event. Each adapter consumes the field
                                 // that matches its routing semantics — see ChannelStreamTarget.
                                 var streamTarget = new ChannelStreamTarget(
+                                    session.ConversationId,
                                     Domain.Primitives.SessionId.From(sessionId),
                                     message.ChannelAddress,
                                     message.BindingId);
@@ -600,6 +606,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                     await HandleUserInputRequiredAsync(
                                         message,
                                         sessionId,
+                                        session.ConversationId,
                                         streamingSource,
                                         enriched,
                                         ct);
@@ -914,6 +921,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private async Task HandleUserInputRequiredAsync(
         InboundMessage message,
         string sessionId,
+        ConversationId conversationId,
         ChannelSource source,
         AgentStreamEvent streamEvent,
         CancellationToken cancellationToken)
@@ -921,7 +929,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         var request = streamEvent.UserInputRequest;
 
         if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
-            await SendAskUserToBindingAsync(sourceAdapter, source, sessionId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(sourceAdapter, source, sessionId, conversationId, streamEvent, request, cancellationToken);
 
         if (_conversationRouter is null)
             return;
@@ -943,7 +951,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 message.SenderId,
                 binding.BindingId,
                 binding.DisplayPrefix);
-            await SendAskUserToBindingAsync(adapter, bindingSource, sessionId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(adapter, bindingSource, sessionId, conversationId, streamEvent, request, cancellationToken);
         }
     }
 
@@ -951,6 +959,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IChannelAdapter adapter,
         ChannelSource source,
         string sessionId,
+        ConversationId conversationId,
         AgentStreamEvent streamEvent,
         AskUserRequest? request,
         CancellationToken cancellationToken)
@@ -958,6 +967,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (adapter is IStreamEventChannelAdapter streamAdapter)
         {
             var target = new ChannelStreamTarget(
+                conversationId,
                 SessionId.From(sessionId),
                 source.ChannelAddress,
                 source.BindingId);

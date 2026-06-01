@@ -221,6 +221,7 @@ public sealed class InternalChannelAdapterTests
 
         var sut = CreateAdapter(channelManager.Object, sessionStore.Object);
         var target = new ChannelStreamTarget(
+            ConversationId.From("conv-parent-1"),
             parentSession,
             ChannelAddress.From("telegram-chat-99"),
             null);

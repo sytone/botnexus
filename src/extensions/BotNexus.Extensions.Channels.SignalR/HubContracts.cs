@@ -59,12 +59,14 @@ public sealed record HubCapabilities(
 /// <summary>Payload sent via the <c>SessionReset</c> client method.</summary>
 public sealed record SessionResetPayload(
     [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("sessionId")] string SessionId);
+    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 /// <summary>Payload sent via the <c>ContentDelta</c> client method from the channel adapter.</summary>
 public sealed record ContentDeltaPayload(
     [property: JsonPropertyName("sessionId")] string SessionId,
-    [property: JsonPropertyName("contentDelta")] string? ContentDelta);
+    [property: JsonPropertyName("contentDelta")] string? ContentDelta,
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 /// <summary>Payload sent via sub-agent lifecycle client methods (Spawned, Completed, Failed, Killed).</summary>
 public sealed record SubAgentEventPayload(
@@ -80,7 +82,8 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("turnsUsed")] int TurnsUsed,
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
     [property: JsonPropertyName("timedOut")] bool TimedOut,
-    [property: JsonPropertyName("childSessionId")] string? ChildSessionId);
+    [property: JsonPropertyName("childSessionId")] string? ChildSessionId,
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 /// <summary>Payload sent via the <c>AgentsChanged</c> client method when agent config changes on the server.</summary>
 public sealed record AgentsChangedPayload(
@@ -101,7 +104,8 @@ public enum SteeringFeedbackKind { Injected, Queued }
 public sealed record SteeringFeedbackPayload(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("sessionId")] string SessionId,
-    [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);
+    [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind,
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 
 

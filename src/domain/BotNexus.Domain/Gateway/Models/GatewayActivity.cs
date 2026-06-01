@@ -22,6 +22,13 @@ public sealed record GatewayActivity
     /// <summary>The session involved, if any.</summary>
     public string? SessionId { get; init; }
 
+    /// <summary>
+    /// The conversation involved, if any. Carried alongside <see cref="SessionId"/> so SignalR
+    /// (and other channel) bridges that subscribe by conversation can route activity events
+    /// without doing a session-store lookup at delivery time.
+    /// </summary>
+    public string? ConversationId { get; init; }
+
     /// <summary>The channel involved, if any.</summary>
     public ChannelKey? ChannelType { get; init; }
 
