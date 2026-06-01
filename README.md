@@ -1,364 +1,199 @@
 # BotNexus
 
-A modular, extensible AI agent execution platform built in C#/.NET. BotNexus enables running multiple AI agents concurrently, each powered by configurable LLM providers, receiving messages from multiple channels, and executing tools dynamically.
-
-## 📖 Getting Started
-
-| Guide | Audience |
-|-------|----------|
-| **[Getting Started →](docs/getting-started.md)** | First-time users — clone to running in minutes |
-| **[Developer Guide →](docs/getting-started-dev.md)** | Developers and agents — build, test, run locally |
-| **[API Reference →](docs/api-reference.md)** | REST and SignalR endpoint documentation |
-| **[Architecture →](docs/architecture/overview.md)** | System design, components, and extension points |
-| **[Observability →](docs/observability.md)** | Distributed tracing, logging, and local Jaeger setup |
-| **[Sub-Agent Spawning →](docs/features/sub-agent-spawning.md)** | Background sub-agent delegation, tools, and configuration |
-
----
-
-## Key Features
-
-- **Multi-Agent** — Run multiple agents with independent configs (model, provider, system prompt, tools)
-- **Multi-Channel** — Discord, Slack, Telegram, SignalR, REST API, and Azure Service Bus
-- **Multi-Provider** — GitHub Copilot (26 models: Claude, GPT, GPT-5, Gemini, Grok via model-aware routing), OpenAI, Anthropic, Azure OpenAI
-- **Model-Aware Routing** — Each model defines its API format (Anthropic Messages, OpenAI Completions, OpenAI Responses); requests route to the correct handler automatically
-- **Extensible** — Dynamic assembly loading with folder-based extension system
-- **Skills System** — Modular knowledge packages for agents (git workflows, coding standards, best practices)
-- **MCP Support** — Model Context Protocol servers (stdio and SSE transports)
-- **MCP Invoke** — Expose BotNexus agents as MCP servers to other tools
-- **Session Persistence** — Conversation history persisted to disk (JSONL format)
-- **Conversations** — Named, persistent conversation contexts across sessions with cross-agent access
-- **Observable** — Correlation IDs, health checks, real-time activity stream via WebUI
-- **CLI Tool** — `botnexus` command-line tool for config, agents, providers, doctor, and Gateway lifecycle
-- **Diagnostics** — 13 health checkups across 6 categories with auto-fix support (`botnexus doctor`)
-- **Hot Reload** — Edit `config.json` and changes apply live (agents, providers, cron) — no restart needed
-- **REST API** — Agent CRUD, session management, skills, system status endpoints
-- **WebUI** — Real-time chat with model selector, tool visibility toggle, and command palette (`/help`, `/reset`, `/status`, `/models`)
-- **Mobile WebUI** — Responsive Blazor WASM mobile client for on-the-go agent access
-- **Tool Control** — Disable tools per agent via `DisallowedTools` config
-- **Skill Control** — Disable skills per agent via `DisabledSkills` config (supports wildcards)
-- **Loop Detection** — Configurable safeguards against infinite tool call loops (`MaxRepeatedToolCalls`)
-- **Model Logging** — Actual model used logged per provider call for debugging and observability
-- **Config Audit** — Config changes backed up to `.bak`, OAuth token operations logged
-- **Agent Templates** — Auto-bootstrapped workspace with SOUL.md, IDENTITY.md, USER.md, HEARTBEAT.md, MEMORY.md
-- **Heartbeat System** — Dedicated `HeartbeatAction` + `HeartbeatTrigger` with cron scheduling for background agent tasks
-- **Memory System** — Structured agent memory with search, retrieval, and lifecycle management
-- **Audio Transcription** — Audio input transcription extension
-- **Web Tools** — Built-in web search and fetch tools
-- **Process & Exec Tools** — Shell command execution with approval gating
-
-## Gateway Service
-
-The **BotNexus Gateway** is the central hub for multi-agent orchestration. It provides:
-
-- **REST API** — Agents, sessions, chat, configuration endpoints
-- **SignalR** — Real-time streaming with agents
-- **Multi-agent routing** — Route messages to different agents by ID
-- **Session persistence** — Durable conversation history (JSONL)
-- **Hot reload** — Edit `config.json` and changes apply live (no restart)
-- **Health checks** — Built-in `/health` endpoint for monitoring
-- **Blazor WebUI** — Interactive chat and configuration interface
-
-### Quick Start
-
-```bash
-# Build the solution
-dotnet build BotNexus.slnx
-
-# Run the Gateway (port 5005 by default)
-# Option 1: PowerShell dev script (build + test + run)
-.\scripts\dev-loop.ps1
-
-# Option 2: Start gateway only
-.\scripts\start-gateway.ps1
-
-# Option 3: Direct dotnet command
-dotnet run --project src/gateway/BotNexus.Gateway.Api
+```text
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ░░▒▒▓▓████████████████████████████████████████████████████████▓▓▒▒░░       ║
+║ ░▒▓                                                                        ║
+║ ░▒▓  ██████╗  ██████╗ ████████╗███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗ ║
+║ ░▒▓  ██╔══██╗██╔═══██╗╚══██╔══╝████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝ ║
+║ ░▒▓  ██████╔╝██║   ██║   ██║   ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗ ║
+║ ░▒▓  ██╔══██╗██║   ██║   ██║   ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║ ║
+║ ░▒▓  ██████╔╝╚██████╔╝   ██║   ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║ ║
+║ ░▒▓  ╚═════╝  ╚═════╝    ╚═╝   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ║
+║ ░▒▓                                                                        ║
+║ ░▒▓  BotNexus :: LLM ORCHESTRATION LAB :: BAD IDEA DETECTOR :: TOOL WRANGLER║
+║ ░▒▓  "Mostly harmless" until someone enables shell access.                   ║
+║ ░▒▓                                                                        ║
+║ ░▒▓                ▄▄         +-- SHELL ACCESS --+                          ║
+║ ░▒▓          ╭────────────╮   |        ON        |                          ║
+║ ░▒▓       ╭──┤   ▣    ▣   ├──╮+------------------+                          ║
+║ ░▒▓       │  │            │  │ questionable choices enabled                 ║
+║ ░▒▓       ╰──┤   ╰────╯   ├──╯ error budget: lightly smoking                ║
+║ ░▒▓          ╰────────────╯    no body, just terminal confidence            ║
+║ ░▒▓                            tiny chaos, pocket-sized                      ║
+║ ░░▒▒▓▓████████████████████████████████████████████████████████▓▓▒▒░░       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
-Open `http://localhost:5005` for the real-time chat dashboard. See the [Developer Guide](docs/getting-started-dev.md) for the full workflow.
+BotNexus is an experimental platform for playing with LLMs, agents, tools,
+channels, memory, prompts, and the occasional "should we really automate this?"
+moment. It is built in C#/.NET and exists to explore where AI agents are useful,
+where they are merely confident, and where the correct answer is still a human
+with coffee and a raised eyebrow.
 
-### Configuration
+This is not a mission-critical, ISO-certified, slide-deck-polished enterprise
+brain. It is a sandbox for trying different interaction patterns with LLMs:
+chatting through a WebUI, routing messages through channels, giving agents tools,
+persisting sessions, testing memory, and seeing which ideas survive contact with
+reality. Think "Mostly harmless", with build warnings treated as errors.
 
-Edit `~/.botnexus/config.json` to configure:
+## What It Does
 
-```json
-{
-  "gateway": {
-    "listenUrl": "http://localhost:5005",
-    "defaultAgentId": "assistant",
-    "sessionsDirectory": "workspace/sessions"
-  },
-  "agents": {
-    "assistant": {
-      "provider": "copilot",
-      "model": "gpt-4.1",
-      "systemPromptFile": "prompts/assistant.txt",
-      "isolationStrategy": "in-process",
-      "enabled": true
-    }
-  },
-  "providers": {
-    "copilot": {
-      "apiKey": "auth:copilot",
-      "baseUrl": "https://api.githubcopilot.com",
-      "defaultModel": "gpt-4.1"
-    }
-  }
-}
+```text
+            +------------------+
+            |   Humans / Apps  |
+            +---------+--------+
+                      |
+        +-------------v-------------+
+        |         BotNexus           |
+        |  gateway + routing + logs  |
+        +------+------+------+------+
+               |      |      |
+        +------v+ +---v---+ +v------+
+        | Agent | |Agent | | Agent  |
+        +---+---+ +---+--+ +---+---+
+            |         |        |
+        +---v---------v--------v---+
+        | providers, tools, memory  |
+        +--------------------------+
 ```
 
-### Key API Endpoints
+BotNexus gives you a local playground for running and observing agents:
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check status |
-| `/api/agents` | GET | List all agents |
-| `/api/agents` | POST | Register a new agent |
-| `/api/agents/{id}` | GET | Get agent details |
-| `/api/agents/{id}/sessions/{sid}/status` | GET | Check agent instance status |
-| `/api/chat` | POST | Send a message to an agent |
-| `/api/chat/steer` | POST | Inject steering message into active run |
-| `/api/chat/follow-up` | POST | Queue follow-up for next run |
-| `/api/sessions` | GET | List sessions |
-| `/api/sessions/{id}` | GET | Get session history |
-| `/api/sessions/{id}` | DELETE | Delete a session |
-| `/api/conversations` | GET/POST | List or create named conversation contexts |
-| `/hub/gateway` | SignalR Hub | Real-time streaming with agents |
+- **Multi-agent orchestration** - run multiple agents with separate providers,
+  models, prompts, tools, and workspaces.
+- **Provider flexibility** - use GitHub Copilot, OpenAI, Anthropic, Azure OpenAI,
+  OpenAI-compatible endpoints, and model-aware routing.
+- **Channels** - connect agents through the WebUI, SignalR, REST APIs, Telegram,
+  Slack, Discord, Azure Service Bus, or your own adapter.
+- **WebUI** - chat in the browser, watch streaming responses, switch models, and
+  poke the machine while it pretends everything is fine.
+- **Tools and skills** - give agents shell tools, web tools, MCP servers, skills,
+  and other sharp objects with approval gates where appropriate.
+- **Memory and sessions** - persist conversations, agent workspace files, and
+  long-running context so every run does not begin with "new phone, who dis?".
+- **Scheduling** - use cron-style triggers and heartbeats for background agent
+  tasks, status checks, and periodic nonsense detection.
+- **Diagnostics** - run `doctor`, inspect health checks, and watch correlation IDs
+  when the robots insist they are feeling perfectly normal.
+- **Extension system** - load providers, channels, and tools dynamically instead
+  of welding every experiment into the gateway.
 
-### SignalR Hub
+## Install And Run From Source
 
-Connect to `http://localhost:5005/hub/gateway` with a SignalR client.
+BotNexus is currently easiest to run from source. You will need:
 
-**Hub methods:**
-- `SubscribeAll()`
-- `SendMessage(agentId, channelType, content)`
-- `Steer(agentId, sessionId, content)`
-- `Abort(agentId, sessionId)`
-- `ResetSession(agentId, sessionId)`
-
-**Server events:**
-- `Connected`
-- `MessageStart`, `ThinkingDelta`, `ContentDelta`, `ToolStart`, `ToolEnd`, `MessageEnd`, `Error`
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Gateway.Api (ASP.NET)                │
-│   [REST Controllers] [SignalR Hub] [WebUI Files]        │
-└────────────┬──────────────────────────────┬─────────────┘
-             │                              │
-        Message Bus                  Session Persistence
-             │                              │
-┌────────────▼──────────────────────────────▼─────────────┐
-│                   BotNexus.Gateway                       │
-│  [Agent Router] [Hot Reload] [Channel Manager]          │
-└────────────┬────────────────────────────────────────────┘
-             │
-        Extension Points
-             │
-    ┌────────┼────────┐
-    │        │        │
-   [IIsolationStrategy]  [IChannelAdapter]  [ISessionStore]
-   (in-process/sandbox)  (Discord/Slack)    (File/Memory/Redis)
-```
-
-### For More Details
-
-👉 **Read [src/gateway/README.md](src/gateway/README.md)** for detailed architecture, configuration, and development guide.
-
-### CLI Tool
-
-BotNexus includes a command-line tool for managing configuration, agents, providers, diagnostics, and the Gateway lifecycle:
-
-```bash
-# Install as a .NET tool
-dotnet tool install --global --add-source ./src/BotNexus.Cli/bin/Release/net10.0 botnexus
-
-# Or run directly from source
-dotnet run --project src/BotNexus.Cli -- doctor
-```
-
-Key commands: `botnexus init`, `botnexus validate`, `botnexus agent list/add/remove`, `botnexus config get/set`, `botnexus doctor`, `botnexus status`, `botnexus start`, `botnexus stop`. Run `botnexus --help` for the full list.
-
-On first run, BotNexus creates `~/.botnexus/` with a default `config.json`. Edit this file to configure providers, channels, and agents:
-
-```
-~/.botnexus/
-├── config.json          # Your configuration (primary)
-├── extensions/          # Channel, provider, and tool plugins
-├── tokens/              # OAuth token storage
-├── workspace/sessions/  # Conversation history
-└── logs/
-```
-
-### Minimal Configuration (`~/.botnexus/config.json`)
-
-```json
-{
-  "gateway": {
-    "listenUrl": "http://localhost:5005",
-    "defaultAgentId": "assistant"
-  },
-  "agents": {
-    "assistant": {
-      "provider": "copilot",
-      "model": "gpt-4.1",
-      "isolationStrategy": "in-process",
-      "enabled": true
-    }
-  },
-  "providers": {
-    "copilot": {
-      "apiKey": "auth:copilot",
-      "baseUrl": "https://api.githubcopilot.com",
-      "defaultModel": "gpt-4.1"
-    }
-  }
-}
-```
-
-## Architecture
-
-| Component | Description |
-|-----------|-------------|
-| **Gateway** | Main orchestrator — message bus, agent routing, channel management, hot reload |
-| **Gateway.Api** | ASP.NET host — REST controllers, SignalR hub, Blazor WebUI |
-| **Gateway.Dispatching** | Message dispatch pipeline between channels and agent runners |
-| **Gateway.Prompts** | Prompt pipeline — template rendering, context injection, mustache support |
-| **Gateway.Conversations** | Named persistent conversation contexts with cross-agent access |
-| **Gateway.Sessions** | JSONL-based conversation persistence |
-| **Agent** | Per-agent processing loop with context building and tool execution |
-| **Core** | 14 interface contracts, configuration, extension loading |
-| **Cli** | `botnexus` command-line tool — config, agents, providers, doctor, Gateway lifecycle |
-| **Cron** | Scheduled task engine — cron expressions, HeartbeatAction, HeartbeatTrigger |
-| **Memory** | Structured agent memory with search, retrieval, and lifecycle management |
-| **Tools** | Built-in tool implementations shared across agents |
-| **Diagnostics** | 13 health checkups with auto-fix, used by CLI doctor and `/api/doctor` endpoint |
-| **Channels** | Discord, Slack, Telegram, SignalR, Service Bus implementations |
-| **Providers** | Copilot (OAuth, model-aware routing), OpenAI, Anthropic LLM backends |
-| **WebUI** | Real-time activity monitoring dashboard (desktop + mobile Blazor WASM) |
-
-### Provider Model-Aware Routing
-
-BotNexus uses a **Pi-style, model-aware provider architecture**:
-
-- **ModelDefinition** — Each model explicitly declares its API format (Anthropic Messages, OpenAI Completions, OpenAI Responses)
-- **IApiFormatHandler** — Separate handler per API format (3 handlers in Copilot provider for 26 models)
-- **Automatic Routing** — Request model determines handler; no provider name needed
-- **Copilot Models** — 26 pre-registered models: Claude (6), GPT-4/4o/o1/o3 (8), GPT-5 (7), Gemini (4), Grok (1)
-
-Example:
-```json
-{
-  "Agents": {
-    "analyst": {
-      "Model": "gpt-4o",        // Routes to openai-completions handler
-      "Provider": "copilot"
-    },
-    "researcher": {
-      "Model": "gpt-5.4",       // Routes to openai-responses handler
-      "Provider": "copilot"
-    },
-    "coder": {
-      "Model": "claude-opus-4.6", // Routes to anthropic-messages handler
-      "Provider": "copilot"
-    }
-  }
-}
-```
-
-See [Architecture Guide](docs/architecture/overview.md) and [Configuration Guide](docs/configuration.md) for details.
-
----
-
-- **[Getting Started](docs/getting-started.md)** ← Start here
-- [Developer Guide](docs/getting-started-dev.md) — Build, test, and run locally
-- [API Reference](docs/api-reference.md) — REST and SignalR endpoints
-- [Architecture Overview](docs/architecture/overview.md) — System design and components
-- [Configuration Guide](docs/configuration.md) — Complete configuration reference
-- [Extension Development](docs/extension-development.md) — Build custom providers, channels, and tools
-- [Workspace & Memory](docs/development/workspace-and-memory.md) — Agent workspace and memory system
-- [Cron & Scheduling](docs/cron-and-scheduling.md) — Scheduled tasks and heartbeats
-- [Skills Guide](docs/skills.md) — Modular knowledge packages for agents
-
-## Repository Layout
-
-Top-level folders in this repository:
-
-| Folder | Purpose |
+| Requirement | Notes |
 |---|---|
-| `.copilot/` | Copilot configuration and custom instructions. |
-| `.github/` | GitHub Actions CI/CD workflows, Copilot agent definitions, and issue templates. |
-| `.squad/` | Team charters, decisions, and shared working context for role-based agents. |
-| `artifacts/` | Generated outputs and captured run artifacts. |
-| `docs/` | User, API, architecture, and planning documentation. |
-| `examples/` | Runnable examples and proofs-of-concept. Includes `examples/teams-proxy` (Azure Bot + Service Bus Teams bridge) and `examples/BotNexus.CodingAgent`. |
-| `projects/` | Project incubator area for active experiments before they are promoted to `src/` or `examples/`. |
-| `scripts/` | Development and operational automation scripts. |
-| `src/` | Production source code (domain, agent, gateway, extensions). |
-| `tests/` | Unit, integration, component, and end-to-end test suites. |
-| `tools/` | Tooling utilities and support assets used by development workflows. |
-| `worktrees/` | Git worktree root — active feature/fix branches. Never commit directly here. |
+| .NET SDK 10.0+ | Required to build and run the gateway. |
+| PowerShell 7+ | Used by the repo scripts on Windows and Linux. |
+| Git | For cloning the repo and worktree shenanigans. |
+| GitHub Copilot subscription | Required only if you use the default Copilot provider. |
+| Node.js + npm | Needed for the documentation site. |
 
-## Project Structure
+Clone the repo:
 
-```
-src/
-├── domain/
-│   └── BotNexus.Domain                                  # Domain primitives (value objects, smart enums)
-├── agent/
-│   ├── BotNexus.Agent.Core                              # Agent loop, tool execution, streaming
-│   ├── BotNexus.Agent.Providers.Core                    # Provider abstractions, LLM client, model registry
-│   ├── BotNexus.Agent.Providers.Copilot                 # GitHub Copilot provider (OAuth, model-aware routing)
-│   ├── BotNexus.Agent.Providers.OpenAI                  # OpenAI provider
-│   ├── BotNexus.Agent.Providers.Anthropic               # Anthropic provider
-│   └── BotNexus.Agent.Providers.OpenAICompat            # OpenAI-compatible provider (custom endpoints)
-├── gateway/
-│   ├── BotNexus.Gateway                                 # Main host, agent router, hot reload
-│   ├── BotNexus.Gateway.Api                             # REST API, middleware, SignalR hub, Blazor host
-│   ├── BotNexus.Gateway.Abstractions                    # Gateway contracts and interfaces
-│   ├── BotNexus.Gateway.Contracts                       # Shared DTOs
-│   ├── BotNexus.Gateway.Channels                        # Channel adapter base classes
-│   ├── BotNexus.Gateway.Conversations                   # Named persistent conversation contexts
-│   ├── BotNexus.Gateway.Dispatching                     # Message dispatch pipeline
-│   ├── BotNexus.Gateway.Prompts                         # Prompt pipeline (template rendering, mustache)
-│   ├── BotNexus.Gateway.Sessions                        # Session persistence (JSONL)
-│   ├── BotNexus.Cron                                    # Cron scheduling engine (HeartbeatAction, HeartbeatTrigger)
-│   ├── BotNexus.Memory                                  # Agent memory: search, retrieval, lifecycle
-│   ├── BotNexus.Tools                                   # Built-in tool implementations
-│   └── BotNexus.Cli                                     # CLI tool (botnexus command)
-├── extensions/
-│   ├── BotNexus.Extensions.Channels.SignalR             # SignalR channel (WebUI real-time)
-│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient         # Blazor WebUI (desktop)
-│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient.Core    # Shared Blazor service layer
-│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile  # Blazor WASM mobile client
-│   ├── BotNexus.Extensions.Channels.Telegram           # Telegram Bot channel
-│   ├── BotNexus.Extensions.Channels.ServiceBus         # Azure Service Bus channel
-│   ├── BotNexus.Extensions.Channels.Tui                # Terminal UI channel
-│   ├── BotNexus.Extensions.Mcp                         # MCP server support (stdio + SSE)
-│   ├── BotNexus.Extensions.McpInvoke                   # Expose agents as MCP servers
-│   ├── BotNexus.Extensions.Skills                      # Modular knowledge packages
-│   ├── BotNexus.Extensions.ExecTool                    # Shell exec tool with approval gating
-│   ├── BotNexus.Extensions.ProcessTool                 # Background process management tool
-│   ├── BotNexus.Extensions.WebTools                    # Web search and fetch tools
-│   └── BotNexus.Extensions.AudioTranscription          # Audio input transcription
-
-examples/                                                # Runnable examples and proof-of-concept projects
-tests/                                                   # Unit, integration, and E2E tests
+```powershell
+git clone https://github.com/sytone/botnexus.git
+cd botnexus
 ```
 
-## Configuration
+Install local repo dependencies:
 
-BotNexus uses a layered configuration model:
+```powershell
+pwsh ./scripts/repo/init.ps1
+```
 
-1. **Code defaults** — Built-in constants
-2. **appsettings.json** — Project defaults
-3. **~/.botnexus/config.json** — User configuration (primary)
-4. **Environment variables** — Override any setting via `BotNexus__Path__To__Property`
+Build the solution:
 
-Set `BOTNEXUS_HOME` environment variable to override the `~/.botnexus/` location.
+```powershell
+pwsh ./scripts/repo/build.ps1
+```
 
-## License
+Start the gateway and WebUI:
 
-See [LICENSE](LICENSE) for details.
+```powershell
+pwsh ./scripts/dev-loop.ps1
+```
+
+Open:
+
+```text
+http://localhost:5005
+```
+
+If the health endpoint answers, the machine is at least awake:
+
+```powershell
+curl http://localhost:5005/health
+```
+
+## First Configuration
+
+On first run, BotNexus creates a home folder at `~/.botnexus/`. That folder is
+where configuration, tokens, agent workspaces, session history, and logs live.
+
+For provider setup, use the CLI directly from source:
+
+```powershell
+dotnet run --project src/gateway/BotNexus.Cli -- provider setup
+```
+
+The Copilot provider uses GitHub device login. The first time an agent needs a
+Copilot token, BotNexus will show a code and ask you to authorize it in GitHub.
+This is the part where the computer says, in a calm voice, that it cannot open
+the pod bay doors until OAuth is complete.
+
+You can also inspect and validate configuration with:
+
+```powershell
+dotnet run --project src/gateway/BotNexus.Cli -- validate
+dotnet run --project src/gateway/BotNexus.Cli -- doctor
+dotnet run --project src/gateway/BotNexus.Cli -- agent list
+```
+
+## Repository Map
+
+```text
+botnexus/
+|-- src/          gateway, agents, providers, tools, memory, cron
+|-- tests/        unit, integration, architecture, scenario, component tests
+|-- docs/         published documentation site
+|-- scripts/      build, test, repo, and local development scripts
+|-- examples/     experiments and sample integrations
+`-- tools/        supporting utilities
+```
+
+The short version: code lives in `src/`, proof that code still works lives in
+`tests/`, and the explanation of why any of this seemed reasonable lives in
+`docs/`.
+
+## Documentation
+
+Start here when you want more than a README can responsibly contain:
+
+| Page | Use it for |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Pick the right setup path. |
+| [Developer Setup](docs/getting-started-dev.md) | Build, run, test, and develop from source. |
+| [Configuration Guide](docs/configuration.md) | Configure providers, agents, channels, and overrides. |
+| [CLI Reference](docs/cli-reference.md) | Use `botnexus` commands without spelunking through JSON. |
+| [API Reference](docs/api-reference.md) | Call the REST and SignalR endpoints. |
+| [Architecture Overview](docs/architecture/overview.md) | Understand the gateway, agents, extensions, and message flow. |
+| [Extension Development](docs/extension-development.md) | Build custom providers, channels, tools, and integrations. |
+| [Workspace And Memory](docs/development/workspace-and-memory.md) | Shape agent workspaces and memory behavior. |
+| [Cron And Scheduling](docs/cron-and-scheduling.md) | Schedule background agent tasks. |
+| [Skills Guide](docs/skills.md) | Package reusable agent knowledge. |
+| [Observability](docs/observability.md) | Trace, log, and inspect the weird bits. |
+
+## A Small Warning Label
+
+```text
+ +-------------------------------------------------------+
+ | EXPERIMENTAL: may contain agents, opinions, and       |
+ | automation ideas that seemed better before testing.   |
+ +-------------------------------------------------------+
+```
+
+Use BotNexus to explore. Use judgment before wiring it to anything expensive,
+sharp, regulated, or capable of sending messages to your boss at 3 AM.
