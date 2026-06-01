@@ -288,11 +288,11 @@ else
         if (firstConv is not null)
         {
             await Interaction.SelectConversationAsync(agentId, firstConv.ConversationId);
-            Nav.NavigateTo($"/chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(firstConv.ConversationId)}");
+            Nav.NavigateTo($"chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(firstConv.ConversationId)}");
         }
         else
         {
-            Nav.NavigateTo($"/chat/{Uri.EscapeDataString(agentId)}");
+            Nav.NavigateTo($"chat/{Uri.EscapeDataString(agentId)}");
         }
     }
 
@@ -301,7 +301,7 @@ else
         var convId = e.Value?.ToString();
         if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
         await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
-        Nav.NavigateTo($"/chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
+        Nav.NavigateTo($"chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
     }
 
     private async Task SendMessage()
