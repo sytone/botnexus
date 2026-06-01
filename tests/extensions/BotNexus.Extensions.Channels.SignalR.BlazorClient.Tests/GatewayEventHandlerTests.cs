@@ -107,6 +107,30 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal("thinking", conv.Messages[0].ThinkingContent);
     }
 
+    // PR1.5 (#682): explicit ConversationId on the event must take precedence over the
+    // session→conversation lookup so post-compaction stream events (which carry the
+    // original conversation but a new sessionId not yet known to the client) still
+    // land in the right ConversationState.
+    [Fact]
+    public void HandleContentDelta_uses_evt_ConversationId_over_session_lookup_after_compaction()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        // The server has compacted into a new session ("sess-2") that the client has
+        // not yet registered. The event carries the original ConversationId.
+        Assert.False(_store.TryResolveConversationBySession("agent-1", "sess-2", out _));
+
+        _handler.HandleContentDelta(new AgentStreamEvent
+        {
+            SessionId = "sess-2",
+            ConversationId = "conv-1",
+            ContentDelta = "post-compaction-chunk"
+        });
+
+        Assert.Equal("post-compaction-chunk", conv.StreamState.Buffer);
+    }
+
     // ---- IsTurnActive tests (issue #253 steering flicker fix) ----
 
     [Fact]

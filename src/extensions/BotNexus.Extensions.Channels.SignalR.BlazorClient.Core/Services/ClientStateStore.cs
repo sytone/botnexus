@@ -366,6 +366,22 @@ public sealed class ClientStateStore : IClientStateStore
     }
 
     /// <inheritdoc />
+    public bool TryResolveAgentByConversation(string? conversationId, out string? agentId)
+    {
+        agentId = null;
+        if (string.IsNullOrWhiteSpace(conversationId)) return false;
+        foreach (var (id, agent) in _agents)
+        {
+            if (agent.Conversations.ContainsKey(conversationId))
+            {
+                agentId = id;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <inheritdoc />
     public bool TryResolveConversationBySession(string agentId, string? sessionId, out string? conversationId)
     {
         conversationId = null;
