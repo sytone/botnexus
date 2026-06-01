@@ -44,4 +44,35 @@ public sealed class CliBannerTests
         var output = writer.ToString();
         output.ShouldStartWith(CliBanner.Text);
     }
+
+    [Fact]
+    public void ResolveBannerWriter_returns_supplied_writer_when_output_is_a_terminal()
+    {
+        var consoleOut = new StringWriter();
+
+        var resolved = CliApp.ResolveBannerWriter(consoleOut, isOutputRedirected: false);
+
+        resolved.ShouldBeSameAs(consoleOut);
+    }
+
+    [Fact]
+    public void ResolveBannerWriter_returns_null_writer_when_output_is_redirected()
+    {
+        var consoleOut = new StringWriter();
+
+        var resolved = CliApp.ResolveBannerWriter(consoleOut, isOutputRedirected: true);
+
+        // Suppresses the banner so piped / captured / tee'd CLI output stays
+        // machine-readable. Cross-OS test fixtures (ConfigPathResolverTests,
+        // CliTestFixture) and shell pipelines depend on this contract.
+        resolved.ShouldBeSameAs(TextWriter.Null);
+    }
+
+    [Fact]
+    public void ResolveBannerWriter_throws_when_console_writer_is_null()
+    {
+        Action act = () => CliApp.ResolveBannerWriter(null!, isOutputRedirected: false);
+
+        Should.Throw<ArgumentNullException>(act);
+    }
 }

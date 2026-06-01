@@ -1,1 +1,1 @@
-return await BotNexus.Cli.CliApp.RunAsync(args, Console.Out);
+return await BotNexus.Cli.CliApp.RunAsync(args, BotNexus.Cli.CliApp.ResolveBannerWriter(Console.Out, Console.IsOutputRedirected));
