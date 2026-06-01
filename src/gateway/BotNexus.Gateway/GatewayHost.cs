@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Threading.Channels;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
@@ -37,10 +35,8 @@ namespace BotNexus.Gateway;
 /// The central Gateway orchestration service. Manages the lifecycle of channel adapters,
 /// listens for inbound messages, routes them to agents, and streams responses back.
 /// </summary>
-public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncDisposable
+public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboundMessageProcessor, IAsyncDisposable
 {
-    private const int DefaultSessionQueueCapacity = 64;
-    private const string BusyMessage = "Session is busy processing messages. Please retry shortly.";
     private const string ControlSteer = "steer";
     private const string ControlCompact = "compact";
 
@@ -61,7 +57,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
     private readonly ISessionCompactionCoordinator _compactionCoordinator;
     private readonly IConversationStore? _conversationStore;
-    private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DefaultInboundMessageOrchestrator _orchestrator;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -72,7 +68,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         ISessionCompactor compactor,
         IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHost> logger,
-        int sessionQueueCapacity = DefaultSessionQueueCapacity,
+        int sessionQueueCapacity = DefaultInboundMessageOrchestrator.DefaultQueueCapacity,
         SessionLifecycleEvents? sessionLifecycleEvents = null,
         IMediaPipeline? mediaPipeline = null,
         IConversationDispatcher? conversationDispatcher = null,
@@ -112,10 +108,26 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 compactionOptions,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Sessions.SessionCompactionCoordinator>.Instance,
                 memoryFlusher);
-        SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
+        // Sub-PR #696 (W-5 PR3): the per-session FIFO queue plus its bounded
+        // backpressure now live in DefaultInboundMessageOrchestrator. GatewayHost
+        // constructs the orchestrator with itself as the IInboundMessageProcessor
+        // and exposes the instance via Orchestrator so DI can register the same
+        // singleton for transports such as SignalR's GatewayHub (PR4).
+        _orchestrator = new DefaultInboundMessageOrchestrator(
+            this,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultInboundMessageOrchestrator>.Instance,
+            channelManager,
+            Math.Max(sessionQueueCapacity, 1));
     }
 
-    private int SessionQueueCapacity { get; }
+    /// <summary>
+    /// Inbound-message orchestrator owning the per-session queue. Exposed so the
+    /// composition root can register the SAME orchestrator instance under
+    /// <see cref="IInboundMessageOrchestrator"/> for other transports (e.g. the
+    /// SignalR GatewayHub in PR4) — every entry point shares one queue and one
+    /// processor.
+    /// </summary>
+    public IInboundMessageOrchestrator Orchestrator => _orchestrator;
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -154,100 +166,24 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             catch (Exception ex) { _logger.LogWarning(ex, "Error stopping channel adapter: {ChannelType}", channel.ChannelType); }
         }
 
-        await CompleteSessionQueuesAsync();
+        await _orchestrator.DisposeAsync();
     }
 
     /// <inheritdoc />
-    public async Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default)
+    public Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default)
+        => _orchestrator.DispatchAsync(message, cancellationToken);
+
+    /// <summary>
+    /// <see cref="IInboundMessageProcessor"/> entry point invoked by the
+    /// orchestrator's per-session worker. Runs resolution, session save, and
+    /// agent execution and returns a <see cref="InboundProcessingOutcome"/>
+    /// describing per-agent dispatch results and whether the queue should now
+    /// close (e.g. session was sealed).
+    /// </summary>
+    public async Task<InboundProcessingOutcome> ProcessAsync(InboundMessage message, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(message);
-        // CitizenId is a struct, so `required` can't catch `default`. Every channel
-        // producer must populate Sender with a valid typed citizen (#526).
-        if (!message.Sender.IsValid)
-        {
-            throw new ArgumentException(
-                $"InboundMessage.Sender must be a valid CitizenId; got default(CitizenId). " +
-                $"Channel '{message.ChannelType}' producer must populate it (see #526).",
-                nameof(message));
-        }
+        var dispatches = new List<DispatchResult>();
 
-        var queueKey = GetQueueKey(message);
-        var queueState = _sessionQueues.GetOrAdd(queueKey, CreateSessionQueueState);
-        var queueItem = new QueuedInboundMessage(message, cancellationToken);
-
-        if (!queueState.Queue.Writer.TryWrite(queueItem))
-        {
-            await SendBusyAsync(message, cancellationToken);
-            return;
-        }
-
-        try
-        {
-            await queueItem.Completion.Task.WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await queueItem.Completion.Task;
-            }
-            catch
-            {
-                // Preserve previous dispatcher behavior for canceled callers.
-            }
-        }
-    }
-
-    private SessionQueueState CreateSessionQueueState(string queueKey)
-    {
-        var queue = Channel.CreateBounded<QueuedInboundMessage>(new BoundedChannelOptions(SessionQueueCapacity)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false
-        });
-
-        var workerTask = ProcessSessionQueueAsync(queueKey, queue.Reader);
-        return new SessionQueueState(queue, workerTask);
-    }
-
-    private async Task ProcessSessionQueueAsync(string queueKey, ChannelReader<QueuedInboundMessage> queueReader)
-    {
-        try
-        {
-            await foreach (var item in queueReader.ReadAllAsync())
-            {
-                try
-                {
-                    // Use a detached token for agent processing so client disconnect
-                    // doesn't kill in-progress agent work. The agent continues in the
-                    // background even if the originating channel disconnects.
-                    await ProcessInboundMessageAsync(item.Message, CancellationToken.None);
-                    item.Completion.TrySetResult();
-                }
-                catch (OperationCanceledException)
-                {
-                    item.Completion.TrySetCanceled();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing queued inbound message for queue '{QueueKey}'", queueKey);
-                    item.Completion.TrySetException(ex);
-                }
-                finally
-                {
-                    await CleanupQueueIfClosedSessionAsync(queueKey, item.Message, CancellationToken.None);
-                }
-            }
-        }
-        finally
-        {
-            _sessionQueues.TryRemove(queueKey, out _);
-        }
-    }
-
-    private async Task ProcessInboundMessageAsync(InboundMessage message, CancellationToken cancellationToken)
-    {
         // Sub-PR 6.2 (#582): lift the legacy string-typed routing overrides into Vogen-typed
         // hints once at entry; every downstream telemetry tag / activity payload / fall-back
         // reads from the typed hints. This matches the pattern established for the conversation
@@ -276,7 +212,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (targetAgents.Count == 0)
         {
             _logger.LogWarning("No agent resolved for message from {ChannelType}:{SenderId}", message.ChannelType, message.SenderId);
-            return;
+            return new InboundProcessingOutcome(dispatches, ShouldClosePerSessionQueue: false);
         }
 
         foreach (var agentId in targetAgents)
@@ -339,6 +275,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     BindingId = message.BindingId ?? resolvedSource.BindingId
                 };
+                dispatches.Add(dispatchResult);
             }
             else if (_conversationRouter is not null)
             {
@@ -370,6 +307,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     BindingId = message.BindingId ?? resolvedSource.BindingId
                 };
+                // Synthesise a DispatchResult for the back-compat router path so
+                // the orchestrator's InboundDispatchResult uniformly reflects
+                // EVERY routed agent regardless of which resolver branch ran.
+                var routerContext = InboundMessageContext.FromInboundMessage(AgentId.From(agentId), message);
+                dispatches.Add(new DispatchResult(routerContext, resolvedSource, resolution));
             }
 
             var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
@@ -748,6 +690,25 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 }, CancellationToken.None);
             }
         }
+
+        // Sub-PR 6.2 (#582): replicate the legacy CleanupQueueIfClosedSessionAsync
+        // signal: if the message addressed an explicit session and that session
+        // is now sealed, ask the orchestrator to close the per-session queue so
+        // no further messages can be enqueued against a dead session.
+        var shouldClosePerSessionQueue = false;
+        if (hints.RequestedSessionId is { } sealedCheckId)
+        {
+            using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
+            sessionActivity?.SetTag("botnexus.session.id", sealedCheckId.Value);
+
+            var sealedCheckSession = await _sessions.GetAsync(sealedCheckId, cancellationToken);
+            if (sealedCheckSession?.Status is SessionStatus.Sealed)
+            {
+                shouldClosePerSessionQueue = true;
+            }
+        }
+
+        return new InboundProcessingOutcome(dispatches, shouldClosePerSessionQueue);
     }
 
     private async Task SendSessionStatusRejectedAsync(
@@ -909,18 +870,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                || trimmed.StartsWith("HEARTBEAT_OK", StringComparison.Ordinal);
     }
 
-    private static string GetQueueKey(InboundMessage message)
-    {
-        // Sub-PR 6.2 (#582): typed routing-hint read replaces direct legacy field read.
-        // Whitespace SessionId values now collapse to channel-key fallback (was: kept the
-        // whitespace string as the queue key, which would have prevented two real sessions
-        // sharing whitespace ids — vanishingly unlikely but the new shape is more honest).
-        var hints = InboundMessageRoutingHints.FromMessage(message);
-        return hints.RequestedSessionId is { } sid
-            ? sid.Value
-            : $"{message.ChannelType}:{message.ChannelAddress}";
-    }
-
     private async Task HandleUserInputRequiredAsync(
         InboundMessage message,
         string sessionId,
@@ -1018,71 +967,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         return string.Join(Environment.NewLine, lines);
     }
 
-    private async Task SendBusyAsync(InboundMessage message, CancellationToken cancellationToken)
-    {
-        if (ResolveChannelAdapter(message.ChannelType) is not { } channel)
-            return;
-
-        // Sub-PR 6.2 (#582): forward typed session-id hint into the OutboundMessage envelope
-        // (OutboundMessage.SessionId remains a string property — it is the wire shape and
-        // is out of scope for the InboundMessage fence).
-        var hints = InboundMessageRoutingHints.FromMessage(message);
-        await channel.SendAsync(new OutboundMessage
-        {
-            ChannelType = message.ChannelType,
-            ChannelAddress = message.ChannelAddress,
-            Content = BusyMessage,
-            SessionId = hints.RequestedSessionId?.Value
-        }, cancellationToken);
-    }
-
-    private async Task CleanupQueueIfClosedSessionAsync(string queueKey, InboundMessage message, CancellationToken cancellationToken)
-    {
-        // Sub-PR 6.2 (#582): lift hints inline; the typed RequestedSessionId carries the
-        // pre-normalised Vogen SessionId, so we can pass it straight into _sessions.GetAsync
-        // without re-parsing through SessionId.From (which the prior code did on the raw
-        // string). Whitespace inputs collapse to null hints and short-circuit the cleanup.
-        var hints = InboundMessageRoutingHints.FromMessage(message);
-        if (hints.RequestedSessionId is not { } requestedSessionId)
-            return;
-
-        using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
-        sessionActivity?.SetTag("botnexus.session.id", requestedSessionId.Value);
-
-        var session = await _sessions.GetAsync(requestedSessionId, cancellationToken);
-        if (session?.Status is not SessionStatus.Sealed)
-            return;
-
-        if (_sessionQueues.TryRemove(queueKey, out var state))
-            state.Queue.Writer.TryComplete();
-    }
-
-    private async Task CompleteSessionQueuesAsync()
-    {
-        foreach (var state in _sessionQueues.Values)
-            state.Queue.Writer.TryComplete();
-
-        var workers = _sessionQueues.Values.Select(state => state.WorkerTask).ToArray();
-        if (workers.Length == 0)
-            return;
-
-        try
-        {
-            await Task.WhenAll(workers);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "One or more session queue workers completed with errors during shutdown.");
-        }
-    }
-
     /// <summary>
-    /// Drains any session queue workers that were started by DispatchAsync but never
-    /// cleaned up via the BackgroundService shutdown path (e.g., in unit tests).
+    /// Drains any session queue workers that were started by the orchestrator
+    /// but never cleaned up via the BackgroundService shutdown path (e.g., in
+    /// unit tests where ExecuteAsync was never invoked).
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        await CompleteSessionQueuesAsync();
+        await _orchestrator.DisposeAsync();
         base.Dispose();
     }
 
@@ -1277,19 +1169,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         }
 
         return images;
-    }
-
-    private sealed class SessionQueueState(Channel<QueuedInboundMessage> queue, Task workerTask)
-    {
-        public Channel<QueuedInboundMessage> Queue { get; } = queue;
-        public Task WorkerTask { get; } = workerTask;
-    }
-
-    private sealed class QueuedInboundMessage(InboundMessage message, CancellationToken cancellationToken)
-    {
-        public InboundMessage Message { get; } = message;
-        public CancellationToken CancellationToken { get; } = cancellationToken;
-        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
 
