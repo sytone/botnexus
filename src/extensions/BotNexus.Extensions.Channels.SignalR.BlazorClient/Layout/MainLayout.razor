@@ -1,9 +1,10 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalLoadService PortalLoad
 @inject GatewayInfoService GatewayInfo
+@inject ExtensionFeatureService ExtensionFeatures
 @inject GatewayHubConnection Hub
 @inject IUpdateStatusService UpdateStatus
 @inject IJSRuntime JS
@@ -196,6 +197,19 @@
                     </div>
                 }
 
+                @if (ExtensionFeatures.SkillsEnabled)
+                {
+                    <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">🧠 Skills</a>
+
+                    @* Skills sub-nav -- shown when on the skills page *@
+                    @if (IsOnPage("skills"))
+                    {
+                        <div class="sidebar-subnav">
+                            <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">🗂️ Explorer</a>
+                        </div>
+                    }
+                }
+
                 <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">🤖 Agents</a>
             </nav>
 
@@ -277,6 +291,7 @@
         Nav.LocationChanged += OnLocationChanged;
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         UpdateStatus.StatusChanged += HandleStateChanged;
+        ExtensionFeatures.OnChanged += HandleStateChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -335,6 +350,7 @@
     {
         _gatewayInfoLoaded = true;
         await GatewayInfo.LoadAsync();
+        await ExtensionFeatures.LoadAsync();
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
@@ -572,6 +588,7 @@
         Nav.LocationChanged -= OnLocationChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         UpdateStatus.StatusChanged -= HandleStateChanged;
+        ExtensionFeatures.OnChanged -= HandleStateChanged;
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

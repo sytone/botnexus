@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
@@ -26,8 +26,10 @@ public sealed class ProbeRound2ComponentTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_interaction);
-        _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        var restClient = Substitute.For<IGatewayRestClient>();
+        _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -178,6 +180,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(gatewayInfo);
         ctx.Services.AddSingleton(restClient);
         ctx.Services.AddSingleton(http);
+        ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -217,8 +220,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(portalLoad);
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
-        _ctx.Services.AddSingleton(restClient);
-        _ctx.Services.AddSingleton(http);
+        _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
 
         _store.SeedAgents([new AgentSummary("a-1", "Agent One")]);
         _store.SeedConversations("a-1", []);

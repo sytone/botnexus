@@ -103,6 +103,18 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken ct = default);
 
+    /// <summary>GET /api/extensions/details — lists all loaded extensions with full manifest detail.</summary>
+    Task<IReadOnlyList<ExtensionDetailDto>> GetExtensionDetailsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>GET /api/skills or /api/skills/{path} — browse the global skills directory.</summary>
+    Task<WorkspaceResponseDto?> GetSkillsAsync(string? path = null, CancellationToken cancellationToken = default);
+
+    /// <summary>PUT /api/skills/{path} — write text content to a skills-relative file.</summary>
+    Task<bool> WriteSkillFileAsync(string path, string content, CancellationToken cancellationToken = default);
+
+    /// <summary>DELETE /api/skills/{path}?force={force} — delete a file or directory from the skills dir.</summary>
+    Task<bool> DeleteSkillItemAsync(string path, bool force = false, CancellationToken cancellationToken = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }

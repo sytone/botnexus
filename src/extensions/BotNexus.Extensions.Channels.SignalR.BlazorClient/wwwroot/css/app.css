@@ -1,4 +1,4 @@
-/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
+﻿/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
 :root {
     --bg-primary: #1a1a2e;
@@ -3955,4 +3955,13 @@ h3.conversation-title.editable:hover {
     color: var(--text-muted, #999);
     padding-bottom: 0.5rem;
 
+}
+
+/* == Skills Explorer == */
+.skills-panel-canvas {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }

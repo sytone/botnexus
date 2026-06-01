@@ -42,6 +42,7 @@ public sealed class UpdateBadgeTests : IDisposable
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(_updateSvc);
+        _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }

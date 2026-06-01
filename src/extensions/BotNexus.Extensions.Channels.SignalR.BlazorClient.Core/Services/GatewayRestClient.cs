@@ -258,4 +258,73 @@ public sealed class GatewayRestClient : IGatewayRestClient
         return $"{requestPath}/{string.Join("/", encodedSegments)}";
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ExtensionDetailDto>> GetExtensionDetailsAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        try
+        {
+            var result = await _http.GetFromJsonAsync<List<ExtensionDetailDto>>(
+                $"{_apiBaseUrl}extensions/details",
+                cancellationToken);
+            return result as IReadOnlyList<ExtensionDetailDto> ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkspaceResponseDto?> GetSkillsAsync(
+        string? path = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildSkillsRequestPath(path);
+        return await _http.GetFromJsonAsync<WorkspaceResponseDto>(requestPath, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> WriteSkillFileAsync(
+        string path,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildSkillsRequestPath(path);
+        var response = await _http.PutAsJsonAsync(requestPath, new { content }, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteSkillItemAsync(
+        string path,
+        bool force = false,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildSkillsRequestPath(path);
+        if (force)
+            requestPath += "?force=true";
+        var response = await _http.DeleteAsync(requestPath, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    private string BuildSkillsRequestPath(string? path)
+    {
+        var requestPath = $"{_apiBaseUrl}skills";
+        if (string.IsNullOrWhiteSpace(path))
+            return requestPath;
+
+        var normalizedPath = path.Trim().Replace('\\', '/').Trim('/');
+        if (normalizedPath.Length == 0)
+            return requestPath;
+
+        var encodedSegments = normalizedPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString);
+        return $"{requestPath}/{string.Join("/", encodedSegments)}";
+    }
+
 }
