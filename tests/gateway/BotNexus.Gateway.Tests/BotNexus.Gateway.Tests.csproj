@@ -25,6 +25,21 @@
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.Tui\BotNexus.Extensions.Channels.Tui.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.Telegram\BotNexus.Extensions.Channels.Telegram.csproj" />
+    <!--
+      Build-only reference: CliTestFixture and ConfigPathResolverTests' CliConfigFixture
+      shell out to `dotnet <repo>/src/gateway/BotNexus.Cli/bin/Debug/net10.0/BotNexus.Cli.dll`
+      via Process.Start. They need the CLI binary to exist before the tests run.
+
+      Without this reference, running this test project on its own (e.g. via
+      scripts/repo/test-impacted.ps1 when BotNexus.Cli is not in the impacted set)
+      throws FileNotFoundException at fixture startup. The reference guarantees MSBuild
+      builds the CLI alongside this test project; ReferenceOutputAssembly=false +
+      Private=false stop the Exe's assembly from being copied into the test bin folder
+      (which would interfere with xUnit test discovery on the test assembly).
+    -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Cli\BotNexus.Cli.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
