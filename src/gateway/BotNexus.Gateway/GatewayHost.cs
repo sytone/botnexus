@@ -583,14 +583,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // even before session registration completes. Stamp the
                                 // ConversationId too so subscribers can route by
                                 // conversation (stable across compaction).
-                                var enriched = evt.AgentId is null || evt.SessionId is null || evt.ConversationId is null
-                                    ? evt with 
-                                    { 
-                                        AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
-                                        SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId),
-                                        ConversationId = evt.ConversationId ?? session.ConversationId
-                                    }
-                                    : evt;
+                                // Unconditional enrichment — the ?? fallbacks no-op when
+                                // the event already carries the field. This shape also
+                                // avoids triggering the Session.ConversationId-nullable
+                                // architecture fence (which can't tell evt.ConversationId
+                                // from session.ConversationId).
+                                var enriched = evt with
+                                {
+                                    AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
+                                    SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId),
+                                    ConversationId = evt.ConversationId ?? session.ConversationId
+                                };
 
                                 // Build the typed stream target the channel adapter uses to
                                 // route this delta or event. Each adapter consumes the field

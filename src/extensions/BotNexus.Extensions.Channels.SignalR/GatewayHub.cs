@@ -224,10 +224,20 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         var typedSessionId = ParseSessionId(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, Context.ConnectionAborted);
-        var groupKey = session is not null && session.ConversationId.IsInitialized()
-            ? SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value)
-            : SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value);
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupKey, Context.ConnectionAborted);
+        // Mirror JoinSession: remove BOTH the real conversation group and the
+        // sessionId-synonym group so a Leave fully detaches the connection from
+        // any group JoinSession added on its behalf.
+        if (session is not null && session.ConversationId.IsInitialized())
+        {
+            await Groups.RemoveFromGroupAsync(
+                Context.ConnectionId,
+                SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value),
+                Context.ConnectionAborted);
+        }
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value),
+            Context.ConnectionAborted);
     }
 
     /// <summary>
