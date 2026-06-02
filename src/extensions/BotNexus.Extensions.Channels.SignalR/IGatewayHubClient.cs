@@ -27,4 +27,7 @@ public interface IGatewayHubClient
 
     Task SteeringFeedback(SteeringFeedbackPayload payload);
     Task CanvasUpdated(string agentId, string conversationId, string html);
+
+    /// <summary>Server notifies the client that a gateway restart interrupted its active agent turn.</summary>
+    Task TurnInterrupted(AgentStreamEvent evt);
 }

@@ -109,5 +109,7 @@ public enum AgentStreamEventType
     /// <summary>A turn (LLM call + tool cycle) has completed. Used for mid-run persistence checkpoints.</summary>
     TurnEnd,
     /// <summary>Agent execution is paused while awaiting interactive user input.</summary>
-    UserInputRequired
+    UserInputRequired,
+    /// <summary>The gateway restarted mid-turn; the interrupted session has been flagged and the user notified.</summary>
+    TurnInterrupted
 }

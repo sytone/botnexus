@@ -111,6 +111,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
             AgentStreamEventType.MessageEnd => client.MessageEnd(enrichedEvent),
             AgentStreamEventType.Error => client.Error(enrichedEvent),
             AgentStreamEventType.UserInputRequired => client.UserInputRequired(enrichedEvent),
+            AgentStreamEventType.TurnInterrupted => client.TurnInterrupted(enrichedEvent),
             _ => Task.CompletedTask
         };
     }
