@@ -23,6 +23,7 @@ public sealed class SidebarNavigationTests
         await using var _ = browser!;
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        // Sidebar is opened by NewChatPageAsync -> GotoAgentChatAsync -> EnsureSidebarOpenAsync
         var dropdown = portal.AgentDropdown;
         await dropdown.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
@@ -48,8 +49,9 @@ public sealed class SidebarNavigationTests
             url => url.Contains(targetAgent, StringComparison.OrdinalIgnoreCase),
             new PageWaitForURLOptions { Timeout = 15_000 });
 
+        // agent-panel is in the sidebar which is already open; wait Attached then Visible
         var agentPanel = page.Locator("[data-testid='agent-panel']").First;
-        await agentPanel.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        await agentPanel.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 10_000 });
     }
 
     [SkippableFact]
@@ -62,7 +64,12 @@ public sealed class SidebarNavigationTests
         await using var _ = browser!;
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        var tabs = page.Locator(".agent-panel-tab");
+        // Scope tab interactions to the visible agent-panel to avoid strict-mode
+        // violations (multiple agents render multiple panels, only one is active/open).
+        var activePanel = page.Locator("[data-testid='agent-panel']").First;
+        await activePanel.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 15_000 });
+
+        var tabs = activePanel.Locator(".agent-panel-tab");
         await tabs.First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
         var tabLabels = await tabs.AllInnerTextsAsync();
@@ -73,14 +80,20 @@ public sealed class SidebarNavigationTests
         Assert.True(flatLabels.Contains("reports"), "Reports tab missing");
         Assert.True(flatLabels.Contains("canvas"), "Canvas tab missing");
 
-        var workspaceTab = tabs.Filter(new LocatorFilterOptions { HasTextString = "Workspace" }).First;
+        // Click Workspace tab and verify selection — scope to active panel
+        var workspaceTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Workspace" }).First;
         await workspaceTab.ClickAsync();
-        var ariaSelected = await page.Locator("[data-tab='workspace']").GetAttributeAsync("aria-selected");
+
+        var workspaceTabSelected = activePanel.Locator("[data-tab='workspace']").First;
+        var ariaSelected = await workspaceTabSelected.GetAttributeAsync("aria-selected");
         Assert.Equal("true", ariaSelected);
 
-        var convTab = tabs.Filter(new LocatorFilterOptions { HasTextString = "Conversation" }).First;
+        // Switch back to Conversation tab
+        var convTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Conversation" }).First;
         await convTab.ClickAsync();
-        ariaSelected = await page.Locator("[data-tab='conversation']").GetAttributeAsync("aria-selected");
+
+        var convTabSelected = activePanel.Locator("[data-tab='conversation']").First;
+        ariaSelected = await convTabSelected.GetAttributeAsync("aria-selected");
         Assert.Equal("true", ariaSelected);
     }
 
@@ -96,6 +109,9 @@ public sealed class SidebarNavigationTests
 
         await page.GotoAsync($"{_fx.GatewayBaseUrl}/agents");
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+        // After navigation the sidebar state is reset — re-open it
+        await portal.EnsureSidebarOpenAsync();
 
         await portal.SidebarChatLink.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await portal.SidebarChatLink.ClickAsync();

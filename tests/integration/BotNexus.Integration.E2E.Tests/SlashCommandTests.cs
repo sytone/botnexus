@@ -7,13 +7,11 @@ namespace BotNexus.Integration.E2E.Tests;
 /// Tests for slash command behaviour in the chat input:
 ///
 /// 1. Typing "/" shows the command palette with all commands
-/// 2. Typing "/com" filters to matching commands
+/// 2. Typing "/co" filters to /compact only (not /clear)
 /// 3. Tab-completing a command fills the input
-/// 4. /new resets the session
+/// 4. /new resets the session (new conversation context)
 /// 5. /clear empties local messages
-/// 6. /compact triggers compaction (covered more deeply in CompactionFlowTests)
-/// 7. Escape dismisses the palette without sending
-/// 8. Enter executes the selected command
+/// 6. Escape dismisses the palette without sending
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
 public sealed class SlashCommandTests
@@ -42,17 +40,16 @@ public sealed class SlashCommandTests
         });
         await chat.ChatInput.PressSequentiallyAsync("/");
 
-        // Command palette should appear
+        // Command palette should appear within 15s (CI can be slow)
         await chat.CommandPalette.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 5_000,
+            Timeout = 15_000,
         });
 
         var commands = await chat.CommandItems.AllInnerTextsAsync();
         var commandNames = commands.Select(c => c.Trim()).ToList();
 
-        // All four commands should be present
         Assert.Contains(commandNames, c => c.Contains("/new"));
         Assert.Contains(commandNames, c => c.Contains("/compact"));
         Assert.Contains(commandNames, c => c.Contains("/clear"));
@@ -83,14 +80,21 @@ public sealed class SlashCommandTests
         await chat.CommandPalette.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 5_000,
+            Timeout = 15_000,
         });
 
         var commands = await chat.CommandItems.AllInnerTextsAsync();
-        // "/co" should match /compact but not /new, /clear, /prompts
-        Assert.True(commands.Count == 1 || commands.All(c => c.Contains("/co")),
-            $"Expected only /compact-matching commands, got: {string.Join(", ", commands)}");
-        Assert.Contains(commands, c => c.Contains("/compact"));
+        var commandTexts = commands.Select(c => c.Trim()).ToList();
+
+        // "/co" matches "compact" but not "new", "clear" (starts with 'cl'), or "prompts"
+        Assert.True(commandTexts.Count > 0, "Command palette showed no results for '/co'");
+        Assert.All(commandTexts, c => Assert.True(
+            c.Contains("co", StringComparison.OrdinalIgnoreCase),
+            $"Unexpected command in filtered palette: '{c}'"));
+        Assert.Contains(commandTexts, c => c.Contains("/compact", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(commandTexts, c => c.Contains("/new", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(commandTexts, c => c.Contains("/clear", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(commandTexts, c => c.Contains("/prompts", StringComparison.OrdinalIgnoreCase));
     }
 
     [SkippableFact]
@@ -116,7 +120,7 @@ public sealed class SlashCommandTests
         await chat.CommandPalette.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 5_000,
+            Timeout = 15_000,
         });
 
         await chat.ChatInput.PressAsync("Escape");
@@ -127,7 +131,6 @@ public sealed class SlashCommandTests
             Timeout = 5_000,
         });
 
-        // Input text should still be there (not cleared)
         var inputValue = await chat.ChatInput.InputValueAsync();
         Assert.Equal("/", inputValue);
     }
@@ -145,7 +148,6 @@ public sealed class SlashCommandTests
         var (_, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        // Seed with a message
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
@@ -153,9 +155,8 @@ public sealed class SlashCommandTests
         var beforeCount = await chat.Page.Locator(".message").CountAsync();
         Assert.True(beforeCount > 0, "Expected messages before /clear");
 
-        // Execute /clear
         await chat.ExecuteSlashCommandAsync("/clear");
-        await Task.Delay(500); // Allow Blazor to re-render
+        await Task.Delay(500);
 
         var afterCount = await chat.Page.Locator(".message").CountAsync();
         Assert.True(afterCount < beforeCount,
@@ -163,7 +164,7 @@ public sealed class SlashCommandTests
     }
 
     [SkippableFact]
-    public async Task SlashNew_ResetsSession_MessagesCleared()
+    public async Task SlashNew_ResetsSession_UrlChanges()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
 
@@ -172,27 +173,27 @@ public sealed class SlashCommandTests
         Skip.If(browser is null, skipReason);
 
         await using var _ = browser!;
-        var (_, _, chat) = await PortalTestHelpers.NewChatPageAsync(
+        var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        // Seed with a message
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
 
-        // Execute /new
+        var urlBefore = page.Url;
+
         await chat.ExecuteSlashCommandAsync("/new");
 
-        // New session should result in fewer messages (ideally 0, possibly a session boundary marker)
-        await Task.Delay(1000);
-        var sessionBoundaries = await chat.Page.Locator(".session-boundary").CountAsync();
-        // After /new there should be a session boundary divider in the conversation history
-        // OR the message list is empty for the new session context
-        var totalMessages = await chat.Page.Locator(".message").CountAsync();
+        // /new should navigate to a fresh conversation — URL changes or messages reset.
+        // Give the portal 5s to react (new session = new conversation ID in URL or cleared state).
+        await Task.Delay(2_000);
 
-        // Either way the new session is clean — assert we have a boundary OR empty messages
-        Assert.True(sessionBoundaries > 0 || totalMessages == 0,
-            $"After /new, expected session boundary or empty messages. Boundaries: {sessionBoundaries}, Messages: {totalMessages}");
+        var urlAfter = page.Url;
+        var messagesAfter = await chat.Page.Locator(".message").CountAsync();
+
+        // Either the URL has changed (new conversation ID) or the message list is now empty/shorter
+        Assert.True(urlAfter != urlBefore || messagesAfter == 0,
+            $"/new did not reset the session. URL before: {urlBefore}, after: {urlAfter}, messages: {messagesAfter}");
     }
 
     [SkippableFact]
@@ -218,20 +219,18 @@ public sealed class SlashCommandTests
         await chat.CommandPalette.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 5_000,
+            Timeout = 15_000,
         });
 
         await chat.ChatInput.PressAsync("Tab");
 
-        // After Tab the input should be filled with the completed command + space
         var value = await chat.ChatInput.InputValueAsync();
         Assert.StartsWith("/new", value, StringComparison.OrdinalIgnoreCase);
 
-        // Palette should be dismissed
         await chat.CommandPalette.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Hidden,
-            Timeout = 3_000,
+            Timeout = 5_000,
         });
     }
 }
