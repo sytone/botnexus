@@ -22,4 +22,19 @@ public sealed class SkillsConfig
 
     /// <summary>Maximum total characters of skill content in the prompt.</summary>
     public int MaxSkillContentChars { get; set; } = 100_000;
+
+    // ── SkillManagerTool gates ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Allow the agent to create and edit skills via the skill_manage tool.
+    /// When false (default), the tool is not contributed and write operations are blocked.
+    /// </summary>
+    public bool AllowSkillCreation { get; set; } = false;
+
+    /// <summary>
+    /// Allow the agent to delete skills and remove supporting files via the skill_manage tool.
+    /// When false (default), delete and remove_file actions are blocked.
+    /// Requires <see cref="AllowSkillCreation"/> to also be true.
+    /// </summary>
+    public bool AllowSkillDeletion { get; set; } = false;
 }
