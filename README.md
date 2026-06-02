@@ -78,77 +78,167 @@ BotNexus gives you a local playground for running and observing agents:
 - **Extension system** - load providers, channels, and tools dynamically instead
   of welding every experiment into the gateway.
 
-## Install And Run From Source
+## Quick Install
 
-BotNexus is currently easiest to run from source. You will need:
+BotNexus ships as a global .NET CLI tool. You need the .NET 10 SDK or Runtime
+installed, then one command installs the `botnexus` CLI:
 
-| Requirement | Notes |
-|---|---|
-| .NET SDK 10.0+ | Required to build and run the gateway. |
-| PowerShell 7+ | Used by the repo scripts on Windows and Linux. |
-| Git | For cloning the repo and worktree shenanigans. |
-| GitHub Copilot subscription | Required only if you use the default Copilot provider. |
-| Node.js + npm | Needed for the documentation site. |
-
-Clone the repo:
-
-```powershell
-git clone https://github.com/sytone/botnexus.git
-cd botnexus
+```bash
+dotnet tool install -g BotNexus.Cli
 ```
 
-Install local repo dependencies:
+Once installed, run the setup sequence:
 
-```powershell
-pwsh ./scripts/repo/init.ps1
+```bash
+# 1. Clone the BotNexus platform to ~/botnexus and build it
+botnexus install --build
+
+# 2. Initialize ~/.botnexus with a default config and required directories
+botnexus init
+
+# 3. Configure your first LLM provider (interactive wizard)
+botnexus provider setup
+
+# 4. Validate configuration
+botnexus validate
+
+# 5. Start the gateway
+botnexus gateway start
 ```
 
-Build the solution:
+Open the WebUI at `http://localhost:5005`.
 
-```powershell
-pwsh ./scripts/repo/build.ps1
-```
+> **Prerequisites:** [.NET 10 SDK](https://dotnet.microsoft.com/download) — verify
+> with `dotnet --version`. A GitHub account with an active Copilot subscription is
+> required for the default `github-copilot` provider.
 
-Start the gateway and WebUI:
+## First Provider Setup
 
-```powershell
-pwsh ./scripts/dev-loop.ps1
-```
-
-Open:
+The `provider setup` wizard guides you through adding a provider interactively.
+For the default GitHub Copilot provider it runs an OAuth device code flow:
 
 ```text
-http://localhost:5005
+  1. Open: https://github.com/login/device
+  2. Enter code: ABCD-1234
 ```
 
-If the health endpoint answers, the machine is at least awake:
+Authorize in your browser. The token is saved to `~/.botnexus/auth.json` and
+refreshed automatically. You only do this once.
 
-```powershell
-curl http://localhost:5005/health
+Other supported providers:
+
+| Provider | Auth |
+|---|---|
+| `github-copilot` | OAuth (device code) |
+| `openai` | API key |
+| `anthropic` | API key |
+
+To add a provider non-interactively (useful for scripts):
+
+```bash
+botnexus provider add --name openai --api-key sk-... --default-model gpt-4o
 ```
 
 ## First Configuration
 
-On first run, BotNexus creates a home folder at `~/.botnexus/`. That folder is
-where configuration, tokens, agent workspaces, session history, and logs live.
+On first run, `botnexus init` creates `~/.botnexus/` with a `config.json` and
+the required directory layout:
 
-For provider setup, use the CLI directly from source:
-
-```powershell
-dotnet run --project src/gateway/BotNexus.Cli -- provider setup
+```text
+~/.botnexus/
+├── config.json          # Your configuration
+├── auth.json            # OAuth tokens
+├── agents/              # Agent workspace directories
+├── sessions.sqlite      # Conversation history
+├── backups/             # Config backups
+└── logs/                # Gateway logs
 ```
 
-The Copilot provider uses GitHub device login. The first time an agent needs a
-Copilot token, BotNexus will show a code and ask you to authorize it in GitHub.
-This is the part where the computer says, in a calm voice, that it cannot open
-the pod bay doors until OAuth is complete.
+Inspect or edit configuration via the CLI:
 
-You can also inspect and validate configuration with:
+```bash
+botnexus config get
+botnexus config set agents.assistant.model gpt-4.1
+botnexus validate
+botnexus doctor
+```
 
-```powershell
-dotnet run --project src/gateway/BotNexus.Cli -- validate
-dotnet run --project src/gateway/BotNexus.Cli -- doctor
-dotnet run --project src/gateway/BotNexus.Cli -- agent list
+## Gateway Lifecycle
+
+```bash
+botnexus gateway start      # Start in background (default port 5005)
+botnexus gateway status     # Check if running and show PID
+botnexus gateway stop       # Stop the gateway
+botnexus gateway restart    # Stop then start
+```
+
+The gateway serves the WebUI and REST API at `http://localhost:5005`.
+
+## Agents
+
+Agents are named configurations with their own workspace, model, and settings.
+BotNexus creates an `assistant` agent by default. Add more:
+
+```bash
+botnexus agent add          # Interactive wizard
+botnexus agent list         # List configured agents
+```
+
+Each agent gets a workspace directory at `~/.botnexus/agents/<name>/` with
+markdown files that shape its personality and memory:
+
+```text
+~/.botnexus/agents/assistant/
+├── SOUL.md       # Core personality and values
+├── IDENTITY.md   # Role, style, and constraints
+├── USER.md       # User preferences
+├── MEMORY.md     # Long-term distilled knowledge
+├── HEARTBEAT.md  # Periodic task instructions
+└── memory/
+    ├── 2026-04-01.md    # Daily memory notes (YYYY-MM-DD.md)
+    └── ...
+```
+
+Edit these files directly to customize behavior. Changes take effect on the next
+conversation — no restart required.
+
+## Diagnostics
+
+```bash
+botnexus doctor     # Health checks across config, connectivity, extensions
+botnexus validate   # Validate config.json structure and provider settings
+botnexus locations  # Show all resolved paths (home, config, logs, etc.)
+```
+
+## Install And Run From Source
+
+Prefer building from source? You need:
+
+| Requirement | Notes |
+|---|---|
+| .NET SDK 10.0+ | Required to build and run the gateway. |
+| Git | For cloning the repo. |
+| PowerShell 7+ | Optional — used by some repo helper scripts. |
+
+Clone the repo:
+
+```bash
+git clone https://github.com/sytone/botnexus.git
+cd botnexus
+```
+
+Build and run the CLI directly:
+
+```bash
+dotnet run --project src/gateway/BotNexus.Cli -- init
+dotnet run --project src/gateway/BotNexus.Cli -- provider setup
+dotnet run --project src/gateway/BotNexus.Cli -- gateway start
+```
+
+Or use `serve` to run the gateway in the foreground (restarts on exit):
+
+```bash
+dotnet run --project src/gateway/BotNexus.Cli -- serve
 ```
 
 ## Repository Map
