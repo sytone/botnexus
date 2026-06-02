@@ -44,11 +44,18 @@ This is why **the choice of `ChannelAddress` is the most consequential decision 
 | `ChannelType` | `signalr` |
 | `ChannelAddress` | `agentId` (the target agent's id, as a string) |
 | Sender mapping | `Sender = CitizenId.Of(UserId.From(ConnectionId))` |
-| Binding cardinality | One conversation per agent, shared across all browser tabs/reconnects |
+| Binding cardinality | Many conversations per agent (see below); one *address-bound* conversation per agent at a time |
 
-The Portal hub uses the **agent id** as the channel address (see `GatewayHub.cs` — `ChannelAddress = ChannelAddress.From(typedAgentId.Value)` on every inbound). The SignalR `ConnectionId` is used as the `SenderId` for audit but is **not** part of the binding — that's intentional, so that closing and reopening a browser tab resolves to the same conversation.
+The Portal hub uses the **agent id** as the channel address (see `GatewayHub.cs` — `ChannelAddress = ChannelAddress.From(typedAgentId.Value)` on every inbound). The SignalR `ConnectionId` is used as the `SenderId` for audit but is **not** part of the binding — that's intentional, so that closing and reopening a browser tab resolves to the same conversation as before.
 
-If a Portal caller wants to target a *specific* non-default conversation, the hub method accepts an explicit `conversationId` parameter and forwards it as `InboundMessageContext.RequestedConversationId`. The router takes the explicit-id path (see "Resolution paths" below) and bypasses binding lookup.
+**The Portal supports many conversations per agent.** The client tracks an `ActiveConversationId` per agent and creates new ones explicitly via `Interaction.CreateConversationAsync(agentId)` (REST `POST /conversations`). Every `SendMessage` from the Portal carries that explicit `conversationId`, so the router takes the explicit-id path (see "Resolution paths" below) and bypasses binding lookup entirely.
+
+**The binding lookup is the fallback path** for inbounds that arrive without an explicit `conversationId` (e.g. a brand-new SignalR connection that hasn't selected a conversation yet). Because the address is just `agentId`, only **one** conversation can be address-bound at a time per agent. On the explicit-id path the router runs *bind-on-first-use*: if the targeted conversation doesn't already own the `(signalr, agentId)` binding, it claims it — which displaces any previous conversation from being the default. In practice this means the "default" conversation for an agent migrates to whichever conversation the user most recently sent a message into.
+
+Two consequences worth knowing:
+
+- The `(signalr, agentId)` address is **not user-scoped**. If two browsers reach the same gateway and target the same agent without an explicit `conversationId`, they'll both land in the same address-bound conversation. The current Portal works around this by always passing an explicit `conversationId` after the first message; truly multi-tenant Portal deployments need a different addressing scheme (e.g. include a tenant or user identifier in `ChannelAddress`).
+- An archived conversation that still holds the `(signalr, agentId)` binding will be reopened by the next bindingless inbound (see resolution path 3 below). Explicitly create a new conversation if you want a clean start.
 
 ### Telegram
 
