@@ -13,6 +13,7 @@ internal sealed class LocationsCommand
     public Command Build(Option<bool> verboseOption)
     {
         var command = new Command("locations", "Manage configured locations.");
+        command.AddAlias("location");
 
         var listCommand = new Command("list", "List all registered locations.");
         var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
@@ -96,6 +97,7 @@ internal sealed class LocationsCommand
             nameArgument,
             deleteTargetOption
         };
+        deleteCommand.AddAlias("remove");
         deleteCommand.SetHandler(async context =>
         {
             var name = context.ParseResult.GetValueForArgument(nameArgument);

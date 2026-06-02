@@ -19,7 +19,7 @@ internal sealed class GatewayCommand
 
     public Command Build(Option<bool> verboseOption)
     {
-        var command = new Command("gateway", "Manage the BotNexus Gateway lifecycle");
+        var command = new Command("gateway", "Manage the BotNexus Gateway lifecycle (start detached, stop, status, restart). For foreground/dev mode use 'serve' or 'serve gateway'");
 
         // Common options for start/restart
         var portOption = new Option<int>("--port", () => 5005, "Port to listen on.");

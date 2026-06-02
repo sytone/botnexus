@@ -65,9 +65,9 @@ internal sealed class ProviderCommand
         command.AddCommand(BuildRemoveCommand(verboseOption));
 
         // Default to setup when no subcommand given
-        var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
+        var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.") { IsHidden = true };
         var defaultProviderOption = new Option<string?>("--provider", () => null,
-            $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt.");
+            $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt.") { IsHidden = true };
         command.Add(defaultTargetOption);
         command.Add(defaultProviderOption);
         command.SetHandler(async context =>
