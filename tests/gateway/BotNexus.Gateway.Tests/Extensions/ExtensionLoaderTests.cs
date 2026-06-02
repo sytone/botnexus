@@ -197,6 +197,7 @@ public sealed class ExtensionLoaderTests : IDisposable
         services.AddSingleton(Mock.Of<IAgentRegistry>());
         services.AddSingleton(Mock.Of<ISessionStore>());
         services.AddSingleton(Mock.Of<IChannelDispatcher>());
+        services.AddSingleton(Mock.Of<IInboundMessageOrchestrator>());
         services.AddSingleton(Mock.Of<IActivityBroadcaster>());
         services.AddSingleton(Mock.Of<ISessionCompactor>());
         services.AddSingleton(Mock.Of<ISessionCompactionCoordinator>());

@@ -52,38 +52,6 @@ public sealed class SessionResumeIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task ExpiredSession_ReactivatedOnJoin_HistoryPreserved()
-    {
-        var storePath = CreateStorePath();
-        {
-            var seedStore = CreateFileStore(storePath);
-            {
-                var session = await seedStore.GetOrCreateAsync(SessionId.From("expired-join"), AgentId.From(TestAgentId));
-                session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "persisted-message" });
-                session.Status = SessionStatus.Expired;
-                session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-2);
-                await seedStore.SaveAsync(session);
-            }
-        }
-
-        await using var factory = CreateTestFactory(storePath);
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-
-        var result = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, "expired-join", cts.Token);
-        var store = factory.Services.GetRequiredService<ISessionStore>();
-        var reloaded = await store.GetAsync(SessionId.From("expired-join"), cts.Token);
-
-        result.GetProperty("isResumed").GetBoolean().ShouldBeTrue();
-        result.GetProperty("status").GetString().ShouldBe(SessionStatus.Active.ToString());
-        reloaded.ShouldNotBeNull();
-        reloaded!.Status.ShouldBe(SessionStatus.Active);
-        reloaded.ExpiresAt.ShouldBeNull();
-        reloaded.History.Where(e => e.Content == "persisted-message").ShouldHaveSingleItem();
-    }
-
-    [Fact]
     public async Task ResetSession_SealsOldSessionInPlace_PreservingHistory()
     {
         var storePath = CreateStorePath();

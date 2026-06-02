@@ -13,6 +13,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
@@ -56,8 +57,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -104,8 +104,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -199,8 +198,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token, agentId: "nova");
@@ -247,9 +245,13 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "no-reply-session";
-        #pragma warning disable CS0618 // JoinSession is the supported way to subscribe to a synthetic test session
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-        #pragma warning restore CS0618
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var contentReceived = false;
         using var _ = connection.On<ContentDeltaPayload>("ContentDelta", _ => contentReceived = true);
@@ -283,9 +285,13 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "normal-reply-session";
-        #pragma warning disable CS0618
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-        #pragma warning restore CS0618
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var receivedTcs = new TaskCompletionSource<ContentDeltaPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var _ = connection.On<ContentDeltaPayload>("ContentDelta", payload => receivedTcs.TrySetResult(payload));
@@ -319,8 +325,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -351,8 +356,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -431,9 +435,13 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string parentSessionId = "parent-session-sub-agent";
-        #pragma warning disable CS0618
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, parentSessionId, cts.Token);
-        #pragma warning restore CS0618
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(parentSessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var receivedTcs = new TaskCompletionSource<SubAgentEventPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var _ = connection.On<SubAgentEventPayload>("SubAgentSpawned", payload => receivedTcs.TrySetResult(payload));
@@ -487,9 +495,13 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "burst-session";
-        #pragma warning disable CS0618
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-        #pragma warning restore CS0618
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         const int burstCount = 25;
         var received = new List<string>(burstCount);
@@ -677,12 +689,18 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         response.StatusCode.ShouldBeOneOf(HttpStatusCode.Created, HttpStatusCode.Conflict);
     }
 
+    private static async Task SeedSessionAsync(WebApplicationFactory<Program> factory, GatewaySession session, CancellationToken cancellationToken)
+    {
+        var store = factory.Services.GetRequiredService<ISessionStore>();
+        await store.SaveAsync(session, cancellationToken);
+    }
+
     private static CancellationTokenSource CreateTimeout()
         => new(TimeSpan.FromSeconds(15));
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private sealed class RecordingDispatcher : IChannelDispatcher
+    private sealed class RecordingDispatcher : IChannelDispatcher, IInboundMessageOrchestrator
     {
         public List<InboundMessage> Messages { get; } = [];
 
@@ -690,6 +708,12 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         {
             Messages.Add(message);
             return Task.CompletedTask;
+        }
+
+        public Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default)
+        {
+            Messages.Add(message);
+            return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
     }
 

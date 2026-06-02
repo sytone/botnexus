@@ -13,18 +13,6 @@ public sealed record SendMessageResult(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("channelType")] string? ChannelType);
 
-/// <summary>Result returned by the (deprecated) <c>JoinSession</c> method.</summary>
-public sealed record JoinSessionResult(
-    [property: JsonPropertyName("sessionId")] string SessionId,
-    [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("connectionId")] string ConnectionId,
-    [property: JsonPropertyName("messageCount")] int MessageCount,
-    [property: JsonPropertyName("isResumed")] bool IsResumed,
-    [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("channelType")] string? ChannelType,
-    [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt);
-
 /// <summary>Result returned by <c>SubscribeAll</c>.</summary>
 public sealed record SubscribeAllResult(
     [property: JsonPropertyName("sessions")] IReadOnlyList<SessionSummary> Sessions);
