@@ -45,7 +45,7 @@ internal sealed class ServeCommand
         var serveSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
         var serveTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
-        var command = new Command("serve", "Start a BotNexus service. Defaults to the gateway.")
+        var command = new Command("serve", "Start a BotNexus service in the foreground (development mode). Defaults to the gateway. Note: for production/background use, prefer 'gateway start' which runs the gateway as a detached process.")
         {
             servePortOption,
             serveSourceOption,

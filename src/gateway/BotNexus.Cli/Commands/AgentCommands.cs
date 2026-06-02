@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
@@ -12,6 +12,7 @@ internal sealed class AgentCommands
     public Command Build(Option<bool> verboseOption)
     {
         var command = new Command("agent", "Manage configured agents.");
+        command.AddAlias("agents");
 
         var listCommand = new Command("list", "List configured agents.");
         var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
@@ -29,6 +30,10 @@ internal sealed class AgentCommands
         var providerOption = new Option<string>("--provider", () => "github-copilot", "Agent provider name.");
         var modelOption = new Option<string>("--model", () => "gpt-4.1", "Agent model name.");
         var enabledOption = new Option<bool>("--enabled", () => true, "Whether the agent is enabled.");
+        var displayNameOption = new Option<string?>("--display-name", () => null, "Human-readable display name (defaults to agent ID if not set).");
+        var descriptionOption = new Option<string?>("--description", () => null, "Description of the agent's purpose.");
+        var emojiOption = new Option<string?>("--emoji", () => null, "Emoji shown alongside the agent name in clients (e.g. \"🤖\").");
+        var disabledFlag = new Option<bool>("--disabled", () => false, "Disable the agent (sets Enabled = false). Takes precedence over --enabled.");
 
         var addTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var addCommand = new Command("add", "Add an agent to config.json.")
@@ -37,6 +42,10 @@ internal sealed class AgentCommands
             providerOption,
             modelOption,
             enabledOption,
+            displayNameOption,
+            descriptionOption,
+            emojiOption,
+            disabledFlag,
             addTargetOption
         };
         addCommand.SetHandler(async context =>
@@ -45,11 +54,17 @@ internal sealed class AgentCommands
             var provider = context.ParseResult.GetValueForOption(providerOption) ?? "github-copilot";
             var model = context.ParseResult.GetValueForOption(modelOption) ?? "gpt-4.1";
             var enabled = context.ParseResult.GetValueForOption(enabledOption);
+            var disabled = context.ParseResult.GetValueForOption(disabledFlag);
+            var displayName = context.ParseResult.GetValueForOption(displayNameOption);
+            var description = context.ParseResult.GetValueForOption(descriptionOption);
+            var emoji = context.ParseResult.GetValueForOption(emojiOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(addTargetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
-            context.ExitCode = await ExecuteAddAsync(id, provider, model, enabled, configPath, verbose, CancellationToken.None);
+            // --disabled flag takes precedence over --enabled
+            if (disabled) enabled = false;
+            context.ExitCode = await ExecuteAddAsync(id, provider, model, enabled, displayName, description, emoji, configPath, verbose, CancellationToken.None);
         });
 
         var removeTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
@@ -227,9 +242,12 @@ internal sealed class AgentCommands
     }
 
     public async Task<int> ExecuteAddAsync(string id, string provider, string model, bool enabled, bool verbose, CancellationToken cancellationToken)
-        => await ExecuteAddAsync(id, provider, model, enabled, PlatformConfigLoader.DefaultConfigPath, verbose, cancellationToken);
+        => await ExecuteAddAsync(id, provider, model, enabled, null, null, null, PlatformConfigLoader.DefaultConfigPath, verbose, cancellationToken);
 
     public async Task<int> ExecuteAddAsync(string id, string provider, string model, bool enabled, string configPath, bool verbose, CancellationToken cancellationToken)
+        => await ExecuteAddAsync(id, provider, model, enabled, null, null, null, configPath, verbose, cancellationToken);
+
+    public async Task<int> ExecuteAddAsync(string id, string provider, string model, bool enabled, string? displayName, string? description, string? emoji, string configPath, bool verbose, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(id))
         {
@@ -250,6 +268,9 @@ internal sealed class AgentCommands
 
         config.Agents[id] = new AgentDefinitionConfig
         {
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
+            Description = string.IsNullOrWhiteSpace(description) ? null : description,
+            Emoji = string.IsNullOrWhiteSpace(emoji) ? null : emoji,
             Provider = provider,
             Model = model,
             Enabled = enabled
