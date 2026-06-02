@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Extensions.Channels.SignalR;
@@ -47,8 +48,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -103,8 +103,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -130,8 +129,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -253,7 +251,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private sealed class RecordingDispatcher : IChannelDispatcher
+    private sealed class RecordingDispatcher : IChannelDispatcher, IInboundMessageOrchestrator
     {
         private readonly List<InboundMessage> _messages = [];
 
@@ -266,6 +264,12 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         {
             lock (_messages) { _messages.Add(message); }
             return Task.CompletedTask;
+        }
+
+        public Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default)
+        {
+            lock (_messages) { _messages.Add(message); }
+            return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
     }
 }

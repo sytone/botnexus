@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Extensions.Channels.SignalR;
@@ -75,7 +76,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var result = await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
         var sessions = result.GetProperty("sessions").EnumerateArray().ToList();
 
-        sessions.Where(s => s.GetProperty("sessionId").GetString() == "manifest-1").ShouldHaveSingleItem();
+        // Replaces the legacy Hub_JoinSession_ReturnsSessionData coverage: the per-session
+        // payload SubscribeAll surfaces must include the agent and message-count fields the
+        // portal relies on for session-summary rendering.
+        var manifest = sessions.Where(s => s.GetProperty("sessionId").GetString() == "manifest-1").ShouldHaveSingleItem();
+        manifest.GetProperty("agentId").GetString().ShouldBe(TestAgentId);
+        manifest.GetProperty("messageCount").GetInt32().ShouldBe(0);
     }
 
     [Fact]
@@ -165,96 +171,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Hub_SubscribeAll_WithExistingJoinSession_BothWork()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        const string joinedSession = "legacy-join-session";
-        const string subscribedSession = "legacy-subscribe-session";
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(subscribedSession), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
-
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-        var joinResult = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, joinedSession, cts.Token);
-        joinResult.GetProperty("sessionId").GetString().ShouldBe(joinedSession);
-
-        var subscribeAllResult = await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
-        subscribeAllResult.GetProperty("sessions").EnumerateArray()
-            .ShouldContain(item => item.GetProperty("sessionId").GetString() == subscribedSession);
-
-        var joinedTcs = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var subscribedTcs = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload =>
-        {
-            if (payload.ContentDelta == "legacy-join-event")
-                joinedTcs.TrySetResult(payload);
-            if (payload.ContentDelta == "subscribe-all-event")
-                subscribedTcs.TrySetResult(payload);
-        });
-
-        var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(StreamTargets.For(joinedSession), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "legacy-join-event" }, cts.Token);
-        await adapter.SendStreamEventAsync(StreamTargets.For(subscribedSession), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "subscribe-all-event" }, cts.Token);
-
-        (await joinedTcs.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("legacy-join-event");
-        (await subscribedTcs.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("subscribe-all-event");
-    }
-
-    [Fact]
-    public async Task Hub_JoinSession_ReturnsSessionData()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-        const string sessionId = "session-join-1";
-        var result = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-
-        result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        result.GetProperty("agentId").GetString().ShouldBe(TestAgentId);
-        result.GetProperty("messageCount").GetInt32().ShouldBe(0);
-    }
-
-    [Fact]
-    public async Task Hub_JoinSession_WithNullSessionId_CreatesNewSession()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-        var result = await connection.InvokeCoreAsync<JsonElement>("JoinSession", [TestAgentId, null], cts.Token);
-
-        result.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
-        result.GetProperty("agentId").GetString().ShouldBe(TestAgentId);
-    }
-
-    [Fact]
-    public async Task Hub_JoinSession_WithExistingSessionId_JoinsExistingSession()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-        const string sessionId = "existing-session";
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-        var secondJoin = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-
-        secondJoin.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        secondJoin.GetProperty("messageCount").GetInt32().ShouldBe(0);
-    }
-
-    [Fact]
     public async Task Hub_SendMessage_DispatchesToGateway()
     {
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -278,8 +200,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher(failOnNullSessionId: true);
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -296,8 +217,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -322,8 +242,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -345,8 +264,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -368,8 +286,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -393,8 +310,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token, agentA);
@@ -424,8 +340,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token, agentA);
@@ -448,107 +363,24 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Hub_SendMessage_AfterLeaveSession_HandlesStaleSessionGracefully()
-    {
-        var dispatcher = new RecordingDispatcher();
-        await using var factory = CreateTestFactory(services =>
-        {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
-        });
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        const string sessionA = "stale-session-a";
-        await SeedSessionAsync(factory, new GatewaySession
-        {
-            SessionId = SessionId.From(sessionA),
-            AgentId = AgentId.From(TestAgentId),
-            ChannelType = ChannelKey.From("signalr"),
-            SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
-            Status = GatewaySessionStatus.Active
-        }, cts.Token);
-
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
-        await connection.InvokeAsync("LeaveSession", sessionA, cts.Token);
-
-        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "after-leave", (string?)null, cts.Token);
-
-        result.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
-        dispatcher.Messages.ShouldHaveSingleItem();
-        dispatcher.Messages[0].Content.ShouldBe("after-leave");
-        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
-        dispatcher.Messages[0].RoutingHints!.RequestedSessionId.ShouldNotBeNull();
-        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
-    }
-
-    [Fact]
-    public async Task Hub_SessionSwitch_ConcurrentClientsDifferentSessions_ReceiveOnlyOwnEvents()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        await using var connectionA = await CreateStartedConnection(factory, cts.Token);
-        await using var connectionB = await CreateStartedConnection(factory, cts.Token);
-        const string sessionA = "concurrent-client-a";
-        const string sessionB = "concurrent-client-b";
-        await connectionA.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
-        await connectionB.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
-
-        var receivedA = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var receivedB = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var crossReceivedA = false;
-        var crossReceivedB = false;
-
-        using var _ = connectionA.On<AgentStreamEvent>("ContentDelta", payload =>
-        {
-            if (payload.ContentDelta == "event-a")
-                receivedA.TrySetResult(payload);
-            if (payload.ContentDelta == "event-b")
-                crossReceivedA = true;
-        });
-        using var __ = connectionB.On<AgentStreamEvent>("ContentDelta", payload =>
-        {
-            if (payload.ContentDelta == "event-b")
-                receivedB.TrySetResult(payload);
-            if (payload.ContentDelta == "event-a")
-                crossReceivedB = true;
-        });
-
-        var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
-        {
-            Type = AgentStreamEventType.ContentDelta,
-            ContentDelta = "event-a"
-        }, cts.Token);
-        await adapter.SendStreamEventAsync(StreamTargets.For(sessionB), new AgentStreamEvent
-        {
-            Type = AgentStreamEventType.ContentDelta,
-            ContentDelta = "event-b"
-        }, cts.Token);
-
-        (await receivedA.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("event-a");
-        (await receivedB.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("event-b");
-        await Task.Delay(250, cts.Token);
-        crossReceivedA.ShouldBeFalse();
-        crossReceivedB.ShouldBeFalse();
-    }
-
-    [Fact]
     public async Task Hub_MultipleClients_SameSession_BothReceiveMessages()
     {
         await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
+        const string sessionId = "shared-session";
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
         await using var connectionA = await CreateStartedConnection(factory, cts.Token);
         await using var connectionB = await CreateStartedConnection(factory, cts.Token);
-
-        const string sessionId = "shared-session";
-        await connectionA.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
-        await connectionB.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
+        await connectionA.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
+        await connectionB.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var receivedA = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         var receivedB = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -572,8 +404,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -598,8 +429,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -624,8 +454,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
         {
-            services.RemoveAll<IChannelDispatcher>();
-            services.AddSingleton<IChannelDispatcher>(dispatcher);
+            services.UseRecordingDispatcher(dispatcher);
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
@@ -646,9 +475,16 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "reset-session";
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var resetTcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var _ = connection.On<JsonElement>("SessionReset", payload => resetTcs.TrySetResult(payload));
@@ -693,9 +529,16 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "adapter-delta";
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var deltaTcs = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload => deltaTcs.TrySetResult(payload));
@@ -713,46 +556,22 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Hub_ChannelAdapter_SendsToCorrectGroup()
-    {
-        await using var factory = CreateTestFactory();
-        using var cts = CreateTimeout();
-        await RegisterAgentAsync(factory, cts.Token);
-
-        await using var connectionA = await CreateStartedConnection(factory, cts.Token);
-        await using var connectionB = await CreateStartedConnection(factory, cts.Token);
-        const string sessionA = "group-a";
-        const string sessionB = "group-b";
-        await connectionA.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
-        await connectionB.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
-
-        var aTcs = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var bReceived = false;
-        using var _ = connectionA.On<AgentStreamEvent>("ContentDelta", payload => aTcs.TrySetResult(payload));
-        using var __ = connectionB.On<AgentStreamEvent>("ContentDelta", _ => bReceived = true);
-
-        var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
-        await adapter.SendStreamEventAsync(StreamTargets.For(sessionA), new AgentStreamEvent
-        {
-            Type = AgentStreamEventType.ContentDelta,
-            ContentDelta = "session-a-only"
-        }, cts.Token);
-
-        (await aTcs.Task.WaitAsync(cts.Token)).ContentDelta.ShouldBe("session-a-only");
-        await Task.Delay(250, cts.Token);
-        bReceived.ShouldBeFalse();
-    }
-
-    [Fact]
     public async Task Hub_ChannelAdapter_AllEventTypes()
     {
         await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
-        await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "all-events";
-        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionId, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(TestAgentId),
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
         var handlers = new Dictionary<string, TaskCompletionSource<AgentStreamEvent>>(StringComparer.Ordinal)
         {
@@ -931,7 +750,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private sealed class RecordingDispatcher(bool failOnNullSessionId = false) : IChannelDispatcher
+    private sealed class RecordingDispatcher(bool failOnNullSessionId = false) : IChannelDispatcher, IInboundMessageOrchestrator
     {
         public List<InboundMessage> Messages { get; } = [];
 
@@ -942,6 +761,15 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
             Messages.Add(message);
             return Task.CompletedTask;
+        }
+
+        public Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default)
+        {
+            if (failOnNullSessionId && string.IsNullOrWhiteSpace(message.RoutingHints?.RequestedSessionId?.Value))
+                throw new InvalidOperationException("sessionId is required.");
+
+            Messages.Add(message);
+            return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
     }
 
