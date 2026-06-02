@@ -2242,49 +2242,6 @@ details[open] > .thinking-summary::before {
     font-size: 0.78rem;
 }
 
-/* ── Audio recording ────────────────────────────────────────────────── */
-
-.mic-btn {
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    align-self: flex-end;
-}
-
-.mic-btn:hover:not(:disabled) {
-    background: var(--bg-surface);
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.mic-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.recording-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
-    background: rgba(231, 76, 60, 0.15);
-    color: var(--error);
-    font-weight: 600;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
-    animation: pulse 1s ease-in-out infinite;
-}
-
-.recording-btn:hover {
-    background: rgba(231, 76, 60, 0.25);
-}
 
 /* ── Agent config panel (modal overlay) ─────────────────────────────── */
 
