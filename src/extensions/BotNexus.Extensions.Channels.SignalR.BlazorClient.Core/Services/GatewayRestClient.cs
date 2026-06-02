@@ -25,7 +25,7 @@ public sealed class GatewayRestClient : IGatewayRestClient
         string conversationId,
         CancellationToken ct = default)
     {
-        var url = $"{_apiBaseUrl}/api/agents/{Uri.EscapeDataString(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}/canvas";
+        var url = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}/canvas";
         try
         {
             var response = await _http.GetAsync(url, ct);
