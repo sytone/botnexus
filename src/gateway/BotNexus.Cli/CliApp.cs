@@ -22,23 +22,25 @@ internal static class CliApp
     }
 
     /// <summary>
-    /// Picks the writer that should receive the decorative startup banner. The banner
-    /// is rendered only when the CLI is connected to an interactive terminal — when
-    /// stdout is redirected to a pipe, a file, or a process capture the banner would
-    /// pollute machine-readable output (and the box-drawing characters break tests
-    /// that diff exact strings). Returns <see cref="TextWriter.Null"/> when redirected
-    /// so the banner is suppressed, otherwise the supplied console writer.
+    /// Picks the writer that should receive the decorative startup banner.
+    /// <para>
+    /// The banner is always routed to stderr so that stdout remains clean for
+    /// machine-readable output regardless of redirection state. When stderr is also
+    /// redirected (e.g. in CI pipelines that capture both streams) the banner is
+    /// suppressed entirely via <see cref="TextWriter.Null"/> to avoid polluting
+    /// captured output.
+    /// </para>
     /// </summary>
-    /// <param name="consoleOut">The CLI's normal stdout writer (typically <see cref="Console.Out"/>).</param>
+    /// <param name="consoleError">The CLI's stderr writer (typically <see cref="Console.Error"/>).</param>
     /// <param name="isOutputRedirected">
     /// Whether stdout is currently redirected. Pass <see cref="Console.IsOutputRedirected"/>
     /// from <c>Program.cs</c>; tests supply an explicit value.
     /// </param>
     /// <returns>The writer the banner should be sent to.</returns>
-    internal static TextWriter ResolveBannerWriter(TextWriter consoleOut, bool isOutputRedirected)
+    internal static TextWriter ResolveBannerWriter(TextWriter consoleError, bool isOutputRedirected)
     {
-        ArgumentNullException.ThrowIfNull(consoleOut);
-        return isOutputRedirected ? TextWriter.Null : consoleOut;
+        ArgumentNullException.ThrowIfNull(consoleError);
+        return isOutputRedirected ? TextWriter.Null : consoleError;
     }
 
     private static void ConfigureOutputEncoding()
