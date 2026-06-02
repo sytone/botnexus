@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -39,6 +39,7 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
+        _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

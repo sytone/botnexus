@@ -34,3 +34,13 @@ public sealed record WorkspaceResponseDto(
     [property: JsonPropertyName("encoding")] string? Encoding,
     [property: JsonPropertyName("isTruncated")] bool? IsTruncated,
     [property: JsonPropertyName("binary")] bool? Binary);
+
+/// <summary>Loaded extension detail response from GET /api/extensions/details.</summary>
+public sealed record ExtensionDetailDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("extensionTypes")] IReadOnlyList<string>? ExtensionTypes,
+    [property: JsonPropertyName("registeredServices")] IReadOnlyList<string>? RegisteredServices,
+    [property: JsonPropertyName("assemblyFileName")] string? AssemblyFileName);
