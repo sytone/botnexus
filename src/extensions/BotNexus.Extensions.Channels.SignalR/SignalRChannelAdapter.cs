@@ -53,7 +53,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
         var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ChannelAddress.Value);
         // Prefer the conversation when present; otherwise fall back to "conversation:{sessionId}"
         // as a back-compat synonym so callers that have not yet populated ConversationId still
-        // reach the connection (which subscribed via the same fallback in JoinSession/SubscribeAll).
+        // reach the connection (which subscribed via the same fallback in SubscribeAll).
         var groupKey = message.ConversationId is { Length: > 0 } conv
             ? GetConversationGroup(conv)
             : GetConversationGroup(normalizedSessionId);

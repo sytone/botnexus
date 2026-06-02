@@ -34,7 +34,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
     private readonly ISessionStore _sessions;
-    private readonly IChannelDispatcher _dispatcher;
+    private readonly IInboundMessageOrchestrator _orchestrator;
     private readonly IActivityBroadcaster _activity;
     private readonly ISessionCompactor _compactor;
     private readonly ISessionWarmupService _warmup;
@@ -51,7 +51,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
         ISessionStore sessions,
-        IChannelDispatcher dispatcher,
+        IInboundMessageOrchestrator orchestrator,
         IActivityBroadcaster activity,
         ISessionCompactor compactor,
         ISessionWarmupService warmup,
@@ -67,7 +67,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _supervisor = supervisor;
         _registry = registry;
         _sessions = sessions;
-        _dispatcher = dispatcher;
+        _orchestrator = orchestrator;
         _activity = activity;
         _compactor = compactor;
         _warmup = warmup;
@@ -102,8 +102,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         //   1) the real "conversation:{conversationId}" group (production routing key —
         //      the conversation survives compaction so the connection keeps receiving),
         //   2) a back-compat "conversation:{sessionId}" synonym, so any caller that
-        //      builds a ChannelStreamTarget from the sessionId only (legacy code paths,
-        //      tests, the obsolete JoinSession helper) still reaches the connection.
+        //      builds a ChannelStreamTarget from the sessionId only (legacy code paths
+        //      and tests) still reaches the connection.
         var groupKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var session in sessions)
         {
@@ -127,117 +127,6 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             groupKeys.Count);
 
         return new SubscribeAllResult(sessions);
-    }
-
-    /// <summary>
-    /// Executes join session.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="sessionId">The session id.</param>
-    /// <returns>The join session result.</returns>
-    [Obsolete("JoinSession is deprecated. Use SubscribeAll and SendMessage(agentId, channelType, content).")]
-    public async Task<JoinSessionResult> JoinSession(string agentId, string? sessionId)
-    {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = string.IsNullOrWhiteSpace(sessionId)
-            ? SessionId.Create()
-            : ParseSessionId(sessionId);
-
-        _logger.LogInformation("Hub JoinSession: agent={AgentId} session={SessionId} connection={ConnectionId}",
-            typedAgentId, typedSessionId, Context.ConnectionId);
-
-        var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, Context.ConnectionAborted);
-
-        // After Phase 10 PR1.5 (#682) the adapter routes by conversation group. Join both:
-        //   1) the real "conversation:{conversationId}" group (production routing key,
-        //      survives compaction), and
-        //   2) the "conversation:{sessionId}" synonym so callers that build a
-        //      ChannelStreamTarget from the sessionId only (legacy paths, tests, the
-        //      obsolete JoinSession contract itself) still reach the connection.
-        if (session.ConversationId.IsInitialized())
-        {
-            await Groups.AddToGroupAsync(
-                Context.ConnectionId,
-                SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value),
-                Context.ConnectionAborted);
-        }
-        await Groups.AddToGroupAsync(
-            Context.ConnectionId,
-            SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value),
-            Context.ConnectionAborted);
-
-        var needsSave = false;
-        if (session.Status == SessionStatus.Expired)
-        {
-            _logger.LogInformation("Reactivating expired session {SessionId} on join", typedSessionId);
-            session.Status = SessionStatus.Active;
-            session.ExpiresAt = null;
-            needsSave = true;
-        }
-
-        if (session.ChannelType is null)
-        {
-            session.ChannelType = ChannelKey.From("signalr");
-            needsSave = true;
-        }
-
-        session.SessionType = SessionType.UserAgent;
-        if (needsSave)
-        {
-            await _sessions.SaveAsync(session, Context.ConnectionAborted);
-        }
-
-        // P9-F: Participants live on the Conversation, not the Session. The user-citizen
-        // for this SignalR connection is registered against the conversation pinned to the
-        // session. Skipped when the session has not yet been pinned (rare; resolution
-        // usually fires before JoinSession).
-        if (_conversationStore is not null && session.ConversationId.IsInitialized())
-        {
-            await _conversationStore.AddParticipantsAsync(
-                session.ConversationId,
-                [new SessionParticipant
-                {
-                    CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
-                }],
-                Context.ConnectionAborted);
-        }
-
-        return new JoinSessionResult(
-            session.SessionId.Value,
-            session.AgentId.Value,
-            Context.ConnectionId,
-            session.History.Count,
-            session.History.Count > 0,
-            session.Status.ToString(),
-            session.ChannelType?.Value,
-            session.CreatedAt,
-            session.UpdatedAt);
-    }
-
-    /// <summary>
-    /// Executes leave session.
-    /// </summary>
-    /// <param name="sessionId">The session id.</param>
-    /// <returns>The leave session result.</returns>
-    [Obsolete("LeaveSession is deprecated. Clients remain subscribed via SubscribeAll.")]
-    public async Task LeaveSession(string sessionId)
-    {
-        var typedSessionId = ParseSessionId(sessionId);
-        var session = await _sessions.GetAsync(typedSessionId, Context.ConnectionAborted);
-        // Mirror JoinSession: remove BOTH the real conversation group and the
-        // sessionId-synonym group so a Leave fully detaches the connection from
-        // any group JoinSession added on its behalf.
-        if (session is not null && session.ConversationId.IsInitialized())
-        {
-            await Groups.RemoveFromGroupAsync(
-                Context.ConnectionId,
-                SignalRChannelAdapter.GetConversationGroup(session.ConversationId.Value),
-                Context.ConnectionAborted);
-        }
-        await Groups.RemoveFromGroupAsync(
-            Context.ConnectionId,
-            SignalRChannelAdapter.GetConversationGroup(typedSessionId.Value),
-            Context.ConnectionAborted);
     }
 
     /// <summary>
@@ -361,7 +250,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
 
         _ = SafeDispatchAsync(
-            () => _dispatcher.DispatchAsync(
+            () => _orchestrator.AcceptAsync(
                 new InboundMessage
                 {
                     ChannelType = ChannelKey.From("signalr"),
@@ -388,7 +277,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
         string messageType, string senderId, string? conversationId = null)
-        => _dispatcher.DispatchAsync(
+        => _orchestrator.AcceptAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("signalr"),
@@ -480,7 +369,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId.Trim();
 
         _ = SafeDispatchAsync(
-            () => _dispatcher.DispatchAsync(
+            () => _orchestrator.AcceptAsync(
                 new InboundMessage
                 {
                     ChannelType = typedChannelType,
@@ -713,21 +602,6 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     // GetSessionGroup is gone — the hub now subscribes/unsubscribes via SignalRChannelAdapter.GetConversationGroup.
     // Removing this prevents future regressions back to session-keyed routing (#682).
 
-    private static AgentId ParseAgentId(string agentId)
-    {
-        if (string.IsNullOrWhiteSpace(agentId))
-            throw new HubException("Agent ID is required.");
-
-        return AgentId.From(agentId);
-    }
-
-    private static SessionId ParseSessionId(string sessionId)
-    {
-        if (string.IsNullOrWhiteSpace(sessionId))
-            throw new HubException("Session ID is required.");
-
-        return SessionId.From(sessionId);
-    }
     // AgentId is a Vogen value object; the parameter cannot be default(AgentId) (compile-time
     // VOG009) and is already validated and trimmed at construction. The defensive re-construction
     // step is therefore a pass-through. SessionId and ChannelKey are still hand-rolled and need

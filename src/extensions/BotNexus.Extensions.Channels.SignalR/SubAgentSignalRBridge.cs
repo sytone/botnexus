@@ -73,7 +73,7 @@ public sealed class SubAgentSignalRBridge(
         // PR1.5 (#682): route by conversation so the connection's subscription survives
         // post-compaction session swaps. Activity emitters that haven't been updated yet
         // (no ConversationId on the activity) fall back to "conversation:{sessionId}" —
-        // the same back-compat synonym the hub uses for legacy JoinSession/SubscribeAll.
+        // the same back-compat synonym the hub uses in SubscribeAll.
         var conversationKey = !string.IsNullOrWhiteSpace(evt.ConversationId)
             ? evt.ConversationId
             : parentSessionId;
