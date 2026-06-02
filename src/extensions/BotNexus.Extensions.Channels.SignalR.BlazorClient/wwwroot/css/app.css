@@ -2045,17 +2045,6 @@ html, body, #app {
     }
 }
 
-/* ── Processing status bar ──────────────────────────────────────────── */
-
-.processing-status-bar {
-    padding: 0.35rem 1rem;
-    background: rgba(0, 180, 216, 0.08);
-    border-bottom: 1px solid rgba(0, 180, 216, 0.2);
-    color: var(--accent);
-    font-size: 0.78rem;
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
 /* ── Thinking blocks ────────────────────────────────────────────────── */
 
 .thinking-block {

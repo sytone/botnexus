@@ -1,4 +1,4 @@
-﻿@inject IJSRuntime JS
+@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -130,13 +130,6 @@
             <span class="read-only-badge">🔍 Sub-agent session</span>
             <span class="read-only-status @(IsStreaming ? "" : "completed")">@GetSubAgentStatus()</span>
             <span class="read-only-label">Read-only — you can observe but not interact</span>
-        </div>
-    }
-
-    @if (IsStreaming && ProcessingStage is not null)
-    {
-        <div class="processing-status-bar">
-            @ProcessingStage
         </div>
     }
 

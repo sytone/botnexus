@@ -159,8 +159,6 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId != agent.ActiveConversationId)
             conv.UnreadCount++;
-
-        agent.ProcessingStage = $"🔧 Using tool: {evt.ToolName}";
         _store.NotifyChanged();
     }
 
