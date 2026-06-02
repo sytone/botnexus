@@ -41,6 +41,19 @@ public sealed class AgentCommandsTests
     }
 
     [Fact]
+    public async Task AgentAdd_ScaffoldsWorkspaceAfterAdd()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync("""{ "agents": {} }""");
+
+        var result = await fixture.RunCliAsync("agent", "add", "my-bot", "--provider", "copilot", "--model", "gpt-4.1");
+
+        result.ExitCode.ShouldBe(0);
+        var workspacePath = Path.Combine(fixture.RootPath, "agents", "my-bot", "workspace");
+        Directory.Exists(workspacePath).ShouldBeTrue("workspace directory should be created");
+        File.Exists(Path.Combine(workspacePath, "SOUL.md")).ShouldBeTrue("SOUL.md should be scaffolded");
+    }
+
+    [Fact]
     public async Task AgentAdd_WhenAgentExists_ReturnsOne()
     {
         await using var fixture = await CliTestFixture.CreateAsync("""

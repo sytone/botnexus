@@ -222,6 +222,10 @@ internal sealed class AgentCommands
         if (saveCode != 0)
             return saveCode;
 
+        var homePath = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
+        var botNexusHome = new BotNexusHome(homePath);
+        botNexusHome.GetAgentDirectory(id);
+
         AnsiConsole.MarkupLine($"[green]✓[/] Agent [green]{Markup.Escape(id)}[/] added successfully.");
         return 0;
     }
@@ -258,6 +262,10 @@ internal sealed class AgentCommands
         var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
         if (saveCode != 0)
             return saveCode;
+
+        var homePath = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
+        var botNexusHome = new BotNexusHome(homePath);
+        botNexusHome.GetAgentDirectory(id);
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{Markup.Escape(id)}[/].");
         return 0;
