@@ -88,6 +88,7 @@ export default defineConfig({
         items: [
           { text: 'Overview', link: '/architecture/overview' },
           { text: 'Domain Model', link: '/architecture/domain-model' },
+          { text: 'Channel Binding', link: '/architecture/channel-binding' },
           { text: 'Extension Guide', link: '/architecture/extension-guide' },
           { text: 'Principles', link: '/architecture/principles' },
           { text: 'System Flows', link: '/architecture/system-flows' },
