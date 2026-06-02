@@ -40,30 +40,39 @@ User → SignalR Client → GatewayHub.SubscribeAll()
 Client → SendMessage(agentId, channelType, content) → Auto-Session → Dispatch
 ```
 
-**SendMessage Flow (New Model):**
+**SendMessage Flow (Current Model — #721):**
 
-1. Client calls `SendMessage(agentId, channelType, content)`
-2. Hub calls `ResolveOrCreateSessionAsync(agentId, channelType)`
-   - Looks for existing active session for agent + channel
-   - Creates new session if none exists (auto-session)
-3. Hub subscribes caller to session group (if not already)
-4. Hub dispatches inbound message via `IChannelDispatcher`
+1. Client calls `SendMessage(agentId, channelType, content, conversationId?)`
+2. Hub calls `ResolveOrCreateSessionAsync(agentId, channelType, conversationId?)`
+   - Delegates to `IConversationDispatcher.DispatchAsync(context)` which runs the
+     conversation router → routes via explicit `conversationId`, channel-binding
+     reuse, or initiator-pin to produce `(sessionId, conversationId)`.
+   - Side-effect: the router internally calls `SessionStore.GetOrCreate + SaveAsync`
+     as it materialises bindings, so the session row exists by the time RoCSA returns.
+   - **Hub no longer mutates session state** (Status, ChannelType, SessionType,
+     Participants). Those are owned by `GatewayHost.ProcessAsync` downstream in the
+     orchestrator's per-session worker.
+3. Hub subscribes caller to **conversation** group (not session) so streams reach the
+   caller even if the active session id later changes via compaction. See #682.
+4. Hub fires-and-forgets the inbound message via `IInboundMessageOrchestrator.AcceptAsync`.
 
-**Session Creation (Auto-Session on Send):**
+**Session Mutation (owned by GatewayHost):**
 
 ```csharp
-var session = await ResolveOrCreateSessionAsync(agentId, channelType);
-// Sets:
-// - SessionId: auto-generated or resolved
-// - AgentId: from request
-// - ChannelType: from request
-// - SessionType: UserAgent
-// - Participants: [User: connectionId]
-// - Status: Active
-
-await SubscribeInternalAsync(session.SessionId);
-await DispatchMessageAsync(agentId, session.SessionId, content, "message");
+// GatewayHost.ProcessAsync (orchestrator worker):
+var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
+session.ChannelType ??= channelType;
+session.SessionType = ResolveSessionType(inbound, conversation);
+if (session.Status == SessionStatus.Expired) session.Status = SessionStatus.Active;
+await _sessions.SaveAsync(session, ct);
+await EnsureCallerParticipantAsync(conversation, inbound, ct);
 ```
+
+**Eventual-consistency note:** because session mutation moved to the worker, a reused
+Expired session is reactivated *eventually* after `SendMessage` returns rather than
+synchronously. The window is small (worker wake) and SignalR streaming is unaffected
+because the agent only emits after reactivation; polling REST callers that fire within
+the wake window may briefly observe the pre-reactivation row.
 
 ### 3. Message Dispatch
 
