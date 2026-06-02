@@ -202,6 +202,21 @@ markdown files that shape its personality and memory:
 Edit these files directly to customize behavior. Changes take effect on the next
 conversation — no restart required.
 
+## Keeping Up to Date
+
+**NuGet tool install:**
+
+```bash
+dotnet tool update -g BotNexus.Cli
+botnexus gateway restart
+```
+
+**Source build:**
+
+```bash
+botnexus update   # git pull → build → redeploy extensions → restart gateway
+```
+
 ## Diagnostics
 
 ```bash
