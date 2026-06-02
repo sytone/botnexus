@@ -12,9 +12,7 @@ using SessionId = BotNexus.Domain.Primitives.SessionId;
 using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
-using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Domain.World;
-using SessionType = BotNexus.Domain.Primitives.SessionType;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -152,27 +150,29 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             ? null
             : conversationId.Trim();
 
-        // Resolve/create the session using the same conversation context as the inbound message
-        // so non-default conversations stay aligned between hub subscriptions and gateway routing.
-        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
-        // SaveAsync inside ResolveOrCreateSessionAsync pins session.ConversationId; subscribe by
-        // conversation so streams emitted into this conversation reach this connection even if
-        // the active session id later changes (compaction). #682
-        await SubscribeConversationInternalAsync(session.ConversationId);
+        // Resolve the (sessionId, conversationId) the inbound message will land on so the
+        // caller is in the conversation group before the orchestrator's worker emits stream
+        // events. Session-row mutation (status / channel / participants) is owned by
+        // GatewayHost.ProcessAsync downstream — see #721.
+        var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
+        // The router's GetOrCreate+SaveAsync (called inside the dispatcher) pins ConversationId
+        // on the session row; subscribe by conversation so streams reach this connection even
+        // if the active session id later changes (compaction). #682
+        await SubscribeConversationInternalAsync(resolution.ConversationId);
 
         var connectionId = Context.ConnectionId;
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
-            typedAgentId, typedChannelType, session.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
+            typedAgentId, typedChannelType, resolution.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId, normalizedConversationId),
+            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId),
             typedAgentId,
-            session.SessionId);
+            resolution.SessionId);
 
         return new SendMessageResult(
-            session.SessionId.Value,
-            session.AgentId.Value,
-            session.ChannelType?.Value);
+            resolution.SessionId.Value,
+            resolution.AgentId.Value,
+            resolution.ChannelType.Value);
     }
 
     /// <summary>
@@ -239,12 +239,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var typedChannelType = NormalizeChannelKey(channelType);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
-        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
-        await SubscribeConversationInternalAsync(session.ConversationId);
+        var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        await SubscribeConversationInternalAsync(resolution.ConversationId);
 
         _logger.LogInformation(
             "Hub SendMessageWithMedia: agent={AgentId} channel={ChannelType} session={SessionId} parts={PartCount}",
-            typedAgentId, typedChannelType, session.SessionId, contentParts.Count);
+            typedAgentId, typedChannelType, resolution.SessionId, contentParts.Count);
 
         var connectionId = Context.ConnectionId;
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
@@ -259,7 +259,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
                     RoutingHints = new InboundMessageRoutingHints(
                         RequestedAgentId: typedAgentId,
-                        RequestedSessionId: session.SessionId,
+                        RequestedSessionId: resolution.SessionId,
                         RequestedConversationId: null),
                     Content = content,
                     ContentParts = parts,
@@ -267,12 +267,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 },
                 CancellationToken.None),
             typedAgentId,
-            session.SessionId);
+            resolution.SessionId);
 
         return new SendMessageResult(
-            session.SessionId.Value,
-            session.AgentId.Value,
-            session.ChannelType?.Value);
+            resolution.SessionId.Value,
+            resolution.AgentId.Value,
+            resolution.ChannelType.Value);
     }
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
@@ -661,14 +661,38 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             Context.ConnectionAborted);
     }
 
-    private async Task<GatewaySession> ResolveOrCreateSessionAsync(
+    /// <summary>
+    /// Resolves the (sessionId, conversationId) pair the inbound message will land on by
+    /// delegating to the shared <see cref="IConversationDispatcher"/>. Returns a lightweight
+    /// <see cref="HubInboundResolution"/> that carries just the IDs the hub needs to
+    /// (a) populate the synchronous <see cref="SendMessageResult"/> contract and
+    /// (b) join the caller connection to the conversation group before the orchestrator's
+    /// background worker emits stream events.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a pure resolution call. Session row materialisation, ChannelType / SessionType
+    /// stamping, Expired→Active reactivation, transcript SaveAsync, and caller participant
+    /// registration are owned by <c>GatewayHost.ProcessAsync</c> inside the orchestrator's
+    /// per-session worker (#721). The router invoked by the dispatcher already calls
+    /// <c>SessionStore.GetOrCreateAsync</c> + <c>SaveAsync</c> as a side-effect of binding
+    /// resolution, so the session row exists by the time this method returns.
+    /// </para>
+    /// <para>
+    /// One eventual-consistency window survives this slim-down: a reused Expired session
+    /// stays Expired until the orchestrator's worker reactivates it. SignalR streaming is
+    /// unaffected because the agent only emits after reactivation; polling REST callers
+    /// that fire within the small worker-wake window may observe the pre-reactivation row.
+    /// </para>
+    /// </remarks>
+    private async Task<HubInboundResolution> ResolveOrCreateSessionAsync(
         AgentId agentId,
         ChannelKey channelType,
         string? conversationId = null)
     {
-        // Conversation-first routing: resolve/create via IConversationDispatcher.
-        // Use agentId as the channel address so every connection from the same agent
-        // routes to the same portal conversation, regardless of SignalR connection ID.
+        // Conversation-first routing: use agentId as the channel address so every connection
+        // from the same agent routes to the same portal conversation, regardless of SignalR
+        // connection ID.
         var channelAddress = ChannelAddress.From(agentId.Value);
         var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
             ? (ConversationId?)null
@@ -683,10 +707,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 Sender = CitizenId.Of(UserId.From(Context.ConnectionId)),
                 Content = string.Empty,
                 // RoutingHints intentionally omitted — the outer InboundMessageContext below
-                // carries the typed RequestedAgentId + RequestedConversationId explicitly;
-                // the positional-record constructor does not re-derive hints from the message
-                // (only FromInboundMessage does that). Sub-PR 6.3 (#586) deleted the legacy
-                // string override fields, so the inner message carries no routing payload.
+                // carries the typed RequestedAgentId + RequestedConversationId explicitly.
             },
             new ChannelSource(
                 channelType,
@@ -694,60 +715,26 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 Context.ConnectionId),
             RequestedConversationId: typedConversationId,
             RequestedAgentId: agentId);
+
         var dispatchResult = await _conversationDispatcher.DispatchAsync(context, Context.ConnectionAborted);
-
-        var session = await _sessions.GetOrCreateAsync(dispatchResult.Resolution.SessionId, agentId, Context.ConnectionAborted);
-
-        var needsSave = false;
-        if (session.Status == SessionStatus.Expired)
-        {
-            session.Status = SessionStatus.Active;
-            session.ExpiresAt = null;
-            needsSave = true;
-        }
-
-        if (!session.ChannelType.HasValue || !ChannelMatches(session.ChannelType.Value, channelType))
-        {
-            session.ChannelType = channelType;
-            needsSave = true;
-        }
-
-        if (!session.SessionType.Equals(SessionType.UserAgent))
-        {
-            session.SessionType = SessionType.UserAgent;
-            needsSave = true;
-        }
-
-        if (needsSave)
-            await _sessions.SaveAsync(session, Context.ConnectionAborted);
-
-        // P9-F: Participants live on the Conversation, not the Session — register the
-        // user-citizen against the conversation pinned to this session. Skipped when the
-        // session has not yet been pinned or the conversation store isn't wired (legacy
-        // composition roots).
-        if (_conversationStore is not null && session.ConversationId.IsInitialized())
-        {
-            await _conversationStore.AddParticipantsAsync(
-                session.ConversationId,
-                [new SessionParticipant
-                {
-                    CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
-                }],
-                Context.ConnectionAborted);
-        }
-
-        return session;
+        return new HubInboundResolution(
+            dispatchResult.Resolution.SessionId,
+            dispatchResult.Resolution.ConversationId,
+            agentId,
+            channelType);
     }
 
-    private static bool ChannelMatches(ChannelKey? candidate, ChannelKey target)
-    {
-        if (!candidate.HasValue)
-            return target.Equals(ChannelKey.From("signalr"));
-
-        return ChannelMatches(candidate.Value, target);
-    }
-
-    private static bool ChannelMatches(ChannelKey candidate, ChannelKey target)
-        => candidate.Equals(target);
+    /// <summary>
+    /// Resolved identifiers returned by <see cref="ResolveOrCreateSessionAsync"/>. Carries
+    /// only what the hub needs synchronously to subscribe the caller connection to the
+    /// conversation group and to return <see cref="SendMessageResult"/>. Heavier session
+    /// mutation (status, channel stamp, participant add) is owned by
+    /// <c>GatewayHost.ProcessAsync</c> downstream.
+    /// </summary>
+    private readonly record struct HubInboundResolution(
+        SessionId SessionId,
+        ConversationId ConversationId,
+        AgentId AgentId,
+        ChannelKey ChannelType);
 }
 
