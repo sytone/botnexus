@@ -1,0 +1,17 @@
+<Project>
+  <!-- Import the root Directory.Build.props (required by MSBuild conventions) -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- Multi-target gateway components for .NET 9 and .NET 10.
+         This allows the CLI tool (PackAsTool) to be installed on .NET 9 SDK users.
+         dotnet tool install picks the highest matching TFM for the installed SDK.
+         None of the gateway components use net10.0-specific APIs.
+         See issue #736.
+         Note: TargetFramework (singular) is cleared so the SDK uses TargetFrameworks
+         (plural) for multi-TFM dispatch. Without this, the root's TargetFramework=net10.0
+         would suppress multi-targeting. -->
+    <TargetFramework />
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+</Project>

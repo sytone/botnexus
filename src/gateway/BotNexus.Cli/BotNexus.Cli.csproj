@@ -13,6 +13,10 @@
     <RepositoryUrl>https://github.com/sytone/botnexus</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ai;agent;botnexus;dotnet;cli</PackageTags>
+    <!-- Multi-target so users on .NET 9 SDK can install the tool.
+         dotnet tool install picks the highest matching TFM for the installed SDK.
+         TargetFrameworks=net9.0;net10.0 is set by src/gateway/Directory.Build.props.
+         See issue #736. -->
     <!-- When the CLI invokes 'dotnet build' on the solution, it passes SkipCli=true
          so the CLI project skips rebuilding itself (the DLL is already loaded and locked). -->
     <IsExcludedFromBuild Condition="'$(SkipCli)' == 'true'">true</IsExcludedFromBuild>

@@ -1,0 +1,72 @@
+name: "CI: Tool Install Compatibility"
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Directory.Build.props'
+      - 'src/gateway/BotNexus.Cli/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Directory.Build.props'
+      - 'src/gateway/BotNexus.Cli/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # Validate the packed nupkg contains DotnetToolSettings.xml for each TFM
+  # and that dotnet tool install succeeds from a local source on .NET 9 and .NET 10.
+  tool-install-matrix:
+    name: "Tool install on .NET ${{ matrix.dotnet-version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet-version: [ '9.0.x', '10.0.x' ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET ${{ matrix.dotnet-version }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ matrix.dotnet-version }}
+      - name: Restore
+        run: dotnet restore src/gateway/BotNexus.Cli/BotNexus.Cli.csproj --nologo
+      - name: Pack CLI
+        run: |
+          dotnet pack src/gateway/BotNexus.Cli \
+            -c Release \
+            --no-restore \
+            --nologo \
+            -p:Version=0.0.0-ci-install-test \
+            -p:SourceRevisionId=${{ github.sha }} \
+            -o /tmp/botnexus-pkg
+      - name: Verify DotnetToolSettings.xml present in nupkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          NUPKG=$(find /tmp/botnexus-pkg -name "*.nupkg" | head -1)
+          echo "Inspecting: $NUPKG"
+          unzip -l "$NUPKG"
+          # Must have DotnetToolSettings.xml for both TFMs
+          for tfm in net9.0 net10.0; do
+            ENTRY="tools/${tfm}/any/DotnetToolSettings.xml"
+            if unzip -l "$NUPKG" | grep -q "$ENTRY"; then
+              echo "PASS: $ENTRY found"
+            else
+              echo "FAIL: $ENTRY NOT found in nupkg"
+              exit 1
+            fi
+          done
+      - name: Install from local source
+        run: |
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          dotnet tool install -g BotNexus.Cli \
+            --version 0.0.0-ci-install-test \
+            --add-source /tmp/botnexus-pkg
+      - name: Verify botnexus binary is runnable
+        run: |
+          export PATH="$HOME/.dotnet/tools:$PATH"
+          botnexus --version
+      - name: Uninstall
+        if: always()
+        run: dotnet tool uninstall -g BotNexus.Cli || true
