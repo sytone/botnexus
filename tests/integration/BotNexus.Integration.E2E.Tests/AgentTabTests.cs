@@ -10,6 +10,11 @@ namespace BotNexus.Integration.E2E.Tests;
 ///   - Tab restored from URL on load
 ///   - Sub-agent panels hide Workspace/Reports tabs
 ///   - Regression #637: tab param silently dropped on cold load
+///
+/// DESIGN NOTE: All tab selectors are scoped to the FIRST agent-panel to avoid
+/// strict-mode violations — multiple agents render multiple panels concurrently
+/// in the DOM, each with its own copy of the tab strip.
+/// aria-selected values are lowercase "true"/"false" (Blazor renders C# bool as lowercase).
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
 public sealed class AgentTabTests : IAsyncLifetime
@@ -33,20 +38,30 @@ public sealed class AgentTabTests : IAsyncLifetime
         _playwright?.Dispose();
     }
 
+    // Helper: get the first agent panel (already attached after GotoAgentChat)
+    private static ILocator ActivePanel(IPage page) =>
+        page.Locator("[data-testid='agent-panel']").First;
+
     [SkippableFact]
     public async Task ConversationTab_IsActiveByDefault()
     {
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var convTab = page.Locator("[data-tab='conversation']").First;
-        await convTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var panel = ActivePanel(page);
+        var convTab = panel.Locator("[data-tab='conversation']").First;
+        await convTab.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
 
+        // Blazor renders bool as lowercase "true"/"false"
         var ariaSelected = await convTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
     }
 
     [SkippableFact]
@@ -55,19 +70,20 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        // Wait for tab strip to render
-        await page.Locator(".agent-tab-bar").First.WaitForAsync(new LocatorWaitForOptions
+        var panel = ActivePanel(page);
+        await panel.Locator(".agent-tab-bar").WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 10_000
+            Timeout = 10_000,
         });
 
-        var tabs = page.Locator(".agent-panel-tab");
+        var tabs = panel.Locator(".agent-panel-tab");
         var count = await tabs.CountAsync();
-        Assert.True(count >= 4, $"Expected at least 4 tabs (Conversation, Workspace, Reports, Canvas), got {count}");
+        Assert.True(count >= 4,
+            $"Expected at least 4 tabs (Conversation, Workspace, Reports, Canvas), got {count}");
     }
 
     [SkippableFact]
@@ -76,21 +92,24 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var workspaceTab = page.Locator("[data-tab='workspace']").First;
-        await workspaceTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var panel = ActivePanel(page);
+        var workspaceTab = panel.Locator("[data-tab='workspace']").First;
+        await workspaceTab.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         await workspaceTab.ClickAsync();
 
-        // Workspace tab should become active
         var ariaSelected = await workspaceTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
 
-        // URL should contain tab=workspace
         var url = page.Url;
         Assert.True(url.Contains("tab=workspace", StringComparison.OrdinalIgnoreCase),
-            $"URL should contain 'tab=workspace' after clicking Workspace tab. URL: {url}");
+            $"URL should contain 'tab=workspace'. URL: {url}");
     }
 
     [SkippableFact]
@@ -99,15 +118,20 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var canvasTab = page.Locator("[data-tab='canvas']").First;
-        await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var panel = ActivePanel(page);
+        var canvasTab = panel.Locator("[data-tab='canvas']").First;
+        await canvasTab.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         await canvasTab.ClickAsync();
 
         var ariaSelected = await canvasTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
 
         var url = page.Url;
         Assert.True(url.Contains("tab=canvas", StringComparison.OrdinalIgnoreCase),
@@ -120,15 +144,20 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var reportsTab = page.Locator("[data-tab='reports']").First;
-        await reportsTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var panel = ActivePanel(page);
+        var reportsTab = panel.Locator("[data-tab='reports']").First;
+        await reportsTab.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         await reportsTab.ClickAsync();
 
         var ariaSelected = await reportsTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
 
         var url = page.Url;
         Assert.True(url.Contains("tab=reports", StringComparison.OrdinalIgnoreCase),
@@ -142,31 +171,35 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        // Switch to workspace tab
-        var workspaceTab = page.Locator("[data-tab='workspace']").First;
-        await workspaceTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var panel = ActivePanel(page);
+        var workspaceTab = panel.Locator("[data-tab='workspace']").First;
+        await workspaceTab.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         await workspaceTab.ClickAsync();
 
         var urlWithTab = page.Url;
-        Assert.True(urlWithTab.Contains("tab=workspace"), $"URL should contain tab param. Got: {urlWithTab}");
+        Assert.True(urlWithTab.Contains("tab=workspace"),
+            $"URL should contain tab param after click. Got: {urlWithTab}");
 
-        // Navigate away and back using browser history
+        // Navigate away and back
         await page.GoBackAsync();
         await page.GoForwardAsync();
 
-        await page.Locator(".agent-tab-bar").First.WaitForAsync(new LocatorWaitForOptions
+        await ActivePanel(page).Locator(".agent-tab-bar").WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 15_000
+            Timeout = 15_000,
         });
 
-        // Workspace tab should still be selected
-        var restoredTab = page.Locator("[data-tab='workspace']").First;
+        var restoredTab = ActivePanel(page).Locator("[data-tab='workspace']").First;
         var ariaSelected = await restoredTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
     }
 
     [SkippableFact]
@@ -175,20 +208,18 @@ public sealed class AgentTabTests : IAsyncLifetime
         Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
         Skip.If(_browser is null, "Browser unavailable");
 
-        var agentId = _fix.AgentIds[0];
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+            _browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
+
+        var panel = ActivePanel(page);
 
         // Switch to workspace first
-        var workspaceTab = page.Locator("[data-tab='workspace']").First;
-        await workspaceTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-        await workspaceTab.ClickAsync();
+        await panel.Locator("[data-tab='workspace']").First.ClickAsync();
 
-        // Now switch back to conversation
-        var convTab = page.Locator("[data-tab='conversation']").First;
-        await convTab.ClickAsync();
+        // Back to conversation (default tab — should remove param)
+        await panel.Locator("[data-tab='conversation']").First.ClickAsync();
 
         var url = page.Url;
-        // Conversation tab is the default — URL should NOT contain tab= param
         Assert.False(url.Contains("tab=conversation", StringComparison.OrdinalIgnoreCase),
             $"Conversation tab (default) should not add tab param to URL. URL: {url}");
     }
@@ -204,19 +235,20 @@ public sealed class AgentTabTests : IAsyncLifetime
         var context = await _browser!.NewContextAsync();
         var page = await context.NewPageAsync();
 
-        // Navigate directly to chat with tab=workspace in URL
-        await page.GotoAsync($"{_fix.GatewayBaseUrl}/chat/{agentId}?tab=workspace",
+        await page.GotoAsync(
+            $"{_fix.GatewayBaseUrl}/chat/{agentId}?tab=workspace",
             new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
 
-        await page.Locator(".agent-tab-bar").First.WaitForAsync(new LocatorWaitForOptions
+        // Wait for tab strip to render (sidebar may be closed — tab bar is in main canvas)
+        var panel = ActivePanel(page);
+        await panel.Locator(".agent-tab-bar").WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 20_000
+            Timeout = 20_000,
         });
 
-        // After portal loads, workspace tab should be active
-        var workspaceTab = page.Locator("[data-tab='workspace']").First;
+        var workspaceTab = panel.Locator("[data-tab='workspace']").First;
         var ariaSelected = await workspaceTab.GetAttributeAsync("aria-selected");
-        Assert.Equal("True", ariaSelected);
+        Assert.Equal("true", ariaSelected, StringComparer.OrdinalIgnoreCase);
     }
 }

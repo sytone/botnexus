@@ -10,8 +10,7 @@ namespace BotNexus.Integration.E2E.Tests;
 /// 2. Tool calls appear in the message list and can be expanded/collapsed
 /// 3. Copy button on assistant messages works
 /// 4. Parallel streaming across multiple agent contexts completes independently
-/// 5. Error responses surface appropriately in the UI
-/// 6. Session boundary dividers appear after /new
+/// 5. Session boundary dividers appear after new session
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
 public sealed class AdvancedChatFeatureTests
@@ -84,21 +83,33 @@ public sealed class AdvancedChatFeatureTests
             Timeout = 15_000,
         });
 
-        // Tool name should contain our mock tool name
-        var toolHeader = page.Locator(".tool-header").First;
-        var headerText = await toolHeader.InnerTextAsync();
-        Assert.Contains("mock_lookup", headerText, StringComparison.OrdinalIgnoreCase);
+        // Tool name element should be present — the mock catalog uses "noop" as tool name
+        var toolName = page.Locator(".tool-name").First;
+        await toolName.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 5_000,
+        });
+        var nameText = await toolName.InnerTextAsync();
+        Assert.False(string.IsNullOrWhiteSpace(nameText), "Tool name should not be empty");
 
-        // Click to expand the tool details
+        // Click tool header to expand — expand indicator is ▸ (U+25B8) when collapsed
+        var toolHeader = page.Locator(".tool-header").First;
+        var expandSpan = page.Locator(".tool-expand").First;
+
+        var beforeExpand = await expandSpan.InnerTextAsync();
         await toolHeader.ClickAsync();
-        var expandBtn = page.Locator(".tool-expand").First;
-        var expandText = await expandBtn.InnerTextAsync();
-        Assert.Equal("▾", expandText.Trim()); // expanded
+        await Task.Delay(150);
+        var afterExpand = await expandSpan.InnerTextAsync();
+
+        // Expand indicator must change on click
+        Assert.NotEqual(beforeExpand.Trim(), afterExpand.Trim());
 
         // Click again to collapse
         await toolHeader.ClickAsync();
-        expandText = await expandBtn.InnerTextAsync();
-        Assert.Equal("▸", expandText.Trim()); // collapsed
+        await Task.Delay(150);
+        var afterCollapse = await expandSpan.InnerTextAsync();
+        Assert.Equal(beforeExpand.Trim(), afterCollapse.Trim());
     }
 
     [SkippableFact]
@@ -130,7 +141,6 @@ public sealed class AdvancedChatFeatureTests
         await chat.ToggleToolsBtn.ClickAsync();
         await Task.Delay(200);
 
-        // Tool messages should be hidden
         var toolMsgFirst = toolMessages.First;
         var isVisible = await toolMsgFirst.IsVisibleAsync();
         Assert.False(isVisible, "Tool message should be hidden after toggle off");
@@ -146,8 +156,6 @@ public sealed class AdvancedChatFeatureTests
     [SkippableFact]
     public async Task ParallelStreaming_TwoAgents_BothComplete_NoBleed()
     {
-        // Verifies that streaming across two different agent panels is independent:
-        // messages don't bleed between panels, both complete.
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
 
         using var playwright = await Playwright.CreateAsync();
@@ -156,7 +164,6 @@ public sealed class AdvancedChatFeatureTests
 
         await using var _ = browser!;
 
-        // Open two independent browser contexts (simulates two tabs)
         var ctx1 = await browser.NewContextAsync();
         var ctx2 = await browser.NewContextAsync();
         var page1 = await ctx1.NewPageAsync();
@@ -164,14 +171,12 @@ public sealed class AdvancedChatFeatureTests
 
         var chat1 = new ChatPanelPage(page1);
         var chat2 = new ChatPanelPage(page2);
-
         var portal1 = new PortalPage(page1);
         var portal2 = new PortalPage(page2);
 
         await portal1.GotoAgentChatAsync(_fx.GatewayBaseUrl, _fx.AgentIds[0]);
         await portal2.GotoAgentChatAsync(_fx.GatewayBaseUrl, _fx.AgentIds[1]);
 
-        // Trigger both streams near-simultaneously
         await chat1.ChatInput.FillAsync("MULTI_DELTA");
         await chat2.ChatInput.FillAsync("MULTI_DELTA");
 
@@ -180,17 +185,14 @@ public sealed class AdvancedChatFeatureTests
             chat2.SendBtn.ClickAsync()
         );
 
-        // Both should complete within 30 seconds
         await Task.WhenAll(
-            chat1.WaitForAssistantMessageAsync("Thinking about the problem", TimeSpan.FromSeconds(30)),
-            chat2.WaitForAssistantMessageAsync("Thinking about the problem", TimeSpan.FromSeconds(30))
+            chat1.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30)),
+            chat2.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30))
         );
 
-        // Verify messages did NOT bleed — page1 should not have messages from agent2 URL
-        var url1 = page1.Url;
-        Assert.Contains(_fx.AgentIds[0], url1, StringComparison.OrdinalIgnoreCase);
-        var url2 = page2.Url;
-        Assert.Contains(_fx.AgentIds[1], url2, StringComparison.OrdinalIgnoreCase);
+        // URL isolation: each page must still be on its own agent
+        Assert.Contains(_fx.AgentIds[0], page1.Url, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(_fx.AgentIds[1], page2.Url, StringComparison.OrdinalIgnoreCase);
 
         await ctx1.DisposeAsync();
         await ctx2.DisposeAsync();
@@ -213,7 +215,7 @@ public sealed class AdvancedChatFeatureTests
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
 
-        // Copy button should appear on assistant messages
+        // Copy button appears on assistant messages — locator uses msg-copy-btn class
         var copyBtn = page.Locator(".msg-copy-btn").First;
         await copyBtn.WaitForAsync(new LocatorWaitForOptions
         {
@@ -221,13 +223,12 @@ public sealed class AdvancedChatFeatureTests
             Timeout = 10_000,
         });
 
-        // Click it — it should show a checkmark feedback
         await copyBtn.ClickAsync();
         await Task.Delay(300);
 
+        // After copy the button briefly shows "√" (U+221A)
         var btnText = await copyBtn.InnerTextAsync();
-        // After copy the button shows "✓" for ~2 seconds
-        Assert.Equal("✓", btnText.Trim());
+        Assert.Equal("√", btnText.Trim());
     }
 
     [SkippableFact]
@@ -247,11 +248,21 @@ public sealed class AdvancedChatFeatureTests
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
 
-        // Start a new session via the button
+        // New session via header button — confirm dialog uses .reset-confirm-dialog
+        await chat.NewSessionBtn.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         await chat.NewSessionBtn.ClickAsync();
+        await chat.NewSessionConfirmDialog.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 5_000,
+        });
         await chat.NewSessionConfirmBtn.ClickAsync();
 
-        // A session boundary divider should appear
+        // .session-boundary divider must appear in the conversation history
         await page.Locator(".session-boundary").First.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,

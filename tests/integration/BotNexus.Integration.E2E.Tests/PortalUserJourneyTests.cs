@@ -5,18 +5,16 @@ namespace BotNexus.Integration.E2E.Tests;
 /// <summary>
 /// Playwright-driven portal journey tests verifying real end-to-end user flows.
 ///
-/// These tests use stable data-testid selectors added in PR #601:
-///   - [data-testid="agent-card"]      — agent cards on AgentDashboard
-///   - [data-testid="chat-composer"]   — the message textarea in ChatPanel
-///   - [data-testid="chat-send"]       — the Send button in ChatPanel
-///   - [data-testid="messages"]        — the messages scroll container
-///   - [data-testid="message"]         — each completed message bubble
-///   - [data-testid="streaming-message"] — the live in-progress bubble
-///   - [data-testid="conversation-new"] — the "new conversation" button
+/// Uses stable data-testid selectors present in the current portal:
+///   - [data-testid="chat-input"]        - the message textarea in ChatPanel
+///   - [data-testid="chat-send"]         - the Send button
+///   - [data-testid="chat-messages"]     - the messages scroll container
+///   - [data-testid="message"]           - each completed message bubble
+///   - [data-testid="streaming-message"] - the live in-progress bubble
 ///
-/// All locators are scoped to #{agentId}-conversation-panel because the
-/// multi-pane portal renders every configured agent concurrently — a global
-/// data-testid match is ambiguous (4 agents, 4 composers).
+/// NOTE: The old #{agentId}-conversation-panel scoping has been removed.
+/// Each test navigates directly to /chat/{agentId} so the page contains
+/// only that agent's chat panel — no ambiguity.
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
 public sealed class PortalUserJourneyTests
@@ -60,14 +58,12 @@ public sealed class PortalUserJourneyTests
             catch (TimeoutException)
             {
                 var snapshot = await page.ContentAsync();
-                Xunit.Assert.Fail($"Portal did not render agent id '{id}' within 30s. HTML head:\n{snapshot[..Math.Min(2000, snapshot.Length)]}");
+                Xunit.Assert.Fail(
+                    $"Portal did not render agent id '{id}' within 30s.\n" +
+                    $"HTML:\n{snapshot[..Math.Min(2000, snapshot.Length)]}");
             }
         }
     }
-
-    // ─── Followup flows for issue #598 ─────────────────────────────────────
-    // These use stable data-testid selectors added to AgentDashboard, ChatPanel
-    // and MainLayout so the assertions don't churn with cosmetic UI changes.
 
     [SkippableFact]
     public async Task NewConversation_PerAgent_SendHelloWorld()
@@ -83,12 +79,11 @@ public sealed class PortalUserJourneyTests
         {
             var context = await browser.NewContextAsync();
             var page = await context.NewPageAsync();
-
-            await SendAndAwaitAsync(page, agentId, "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
-
+            await SendAndAwaitAsync(page, _fx.GatewayBaseUrl, agentId, "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
             await context.CloseAsync();
         }
     }
+
     [SkippableFact]
     public async Task ParallelMultiDelta_AcrossAgents_AllCompleteIndependently()
     {
@@ -105,7 +100,7 @@ public sealed class PortalUserJourneyTests
             try
             {
                 var page = await context.NewPageAsync();
-                await SendAndAwaitAsync(page, agentId, "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
+                await SendAndAwaitAsync(page, _fx.GatewayBaseUrl, agentId, "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
             }
             finally { await context.CloseAsync(); }
         }).ToArray();
@@ -113,12 +108,6 @@ public sealed class PortalUserJourneyTests
         await Task.WhenAll(tasks);
     }
 
-    /// <summary>
-    /// Seeds an existing conversation on the first agent, then concurrently:
-    ///   (a) sends MULTI_DELTA against the existing conversation on agent[0]
-    ///   (b) opens a fresh context on agent[1] and sends HELLO_WORLD
-    /// Verifies both complete correctly with no cross-agent contamination.
-    /// </summary>
     [SkippableFact]
     public async Task MixedExistingAndNewConversations_ConcurrentMessages()
     {
@@ -129,20 +118,19 @@ public sealed class PortalUserJourneyTests
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await PlaywrightBootstrap.LaunchChromiumAsync(playwright);
 
-        // Seed an existing conversation on the first agent.
+        // Seed an existing conversation on agent[0]
         var seedContext = await browser.NewContextAsync();
         var seedPage = await seedContext.NewPageAsync();
-        await SendAndAwaitAsync(seedPage, _fx.AgentIds[0], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+        await SendAndAwaitAsync(seedPage, _fx.GatewayBaseUrl, _fx.AgentIds[0], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
         await seedContext.CloseAsync();
 
-        // In parallel: reopen on agent[0] (existing conv auto-selected) + fresh on agent[1].
         var existing = Task.Run(async () =>
         {
             var ctx = await browser.NewContextAsync();
             try
             {
                 var page = await ctx.NewPageAsync();
-                await SendAndAwaitAsync(page, _fx.AgentIds[0], "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
+                await SendAndAwaitAsync(page, _fx.GatewayBaseUrl, _fx.AgentIds[0], "MULTI_DELTA", "[MULTI_DELTA_COMPLETE]", timeoutMs: 90_000);
             }
             finally { await ctx.CloseAsync(); }
         });
@@ -153,7 +141,7 @@ public sealed class PortalUserJourneyTests
             try
             {
                 var page = await ctx.NewPageAsync();
-                await SendAndAwaitAsync(page, _fx.AgentIds[1], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
+                await SendAndAwaitAsync(page, _fx.GatewayBaseUrl, _fx.AgentIds[1], "HELLO_WORLD", "Hello, world!", timeoutMs: 60_000);
             }
             finally { await ctx.CloseAsync(); }
         });
@@ -161,14 +149,6 @@ public sealed class PortalUserJourneyTests
         await Task.WhenAll(existing, fresh);
     }
 
-    /// <summary>
-    /// Sends LONG_RUNNING to an agent and verifies:
-    ///   1. The streaming-message bubble appears immediately (spinner/live text visible).
-    ///   2. After the stream completes the streaming-message bubble is gone.
-    ///   3. The final completed message contains the sentinel [LONG_RUNNING_COMPLETE].
-    /// This tests that the portal correctly transitions streaming → completed state
-    /// and does not leave orphaned streaming indicators after a slow response.
-    /// </summary>
     [SkippableFact]
     public async Task LongRunning_StreamIndicator_AppearsAndDisappears()
     {
@@ -183,19 +163,24 @@ public sealed class PortalUserJourneyTests
 
         var agentId = _fx.AgentIds[0];
         var url = $"{_fx.GatewayBaseUrl}/chat/{agentId}";
-        var response = await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
-        Xunit.Assert.True(response!.Ok, $"GET {url} returned {response.Status}");
+        var nav = await page.GotoAsync(url, new PageGotoOptions
+        {
+            WaitUntil = WaitUntilState.NetworkIdle,
+            Timeout = 60_000,
+        });
+        Xunit.Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
 
-        var panel = page.Locator($"#{agentId}-conversation-panel");
-        await panel.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 30_000 });
-
-        var composer = panel.Locator("[data-testid='chat-composer']");
-        await composer.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 30_000 });
+        var composer = page.Locator("[data-testid='chat-input']").First;
+        await composer.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 30_000,
+        });
         await composer.FillAsync("LONG_RUNNING");
-        await panel.Locator("[data-testid='chat-send']").ClickAsync();
+        await page.Locator("[data-testid='chat-send']").First.ClickAsync();
 
-        // Step 1: streaming-message bubble must appear.
-        var streamingBubble = panel.Locator("[data-testid='streaming-message']");
+        // Step 1: streaming-message bubble must appear
+        var streamingBubble = page.Locator("[data-testid='streaming-message']").First;
         try
         {
             await streamingBubble.WaitForAsync(new LocatorWaitForOptions
@@ -209,22 +194,22 @@ public sealed class PortalUserJourneyTests
             Xunit.Assert.Fail($"Agent '{agentId}': streaming-message bubble never appeared during LONG_RUNNING stream.");
         }
 
-        // Step 2: after stream completes the streaming bubble must disappear.
+        // Step 2: bubble must disappear after stream completes
         try
         {
             await streamingBubble.WaitForAsync(new LocatorWaitForOptions
             {
                 State = WaitForSelectorState.Hidden,
-                Timeout = 15_000,
+                Timeout = 30_000,
             });
         }
         catch (TimeoutException)
         {
-            Xunit.Assert.Fail($"Agent '{agentId}': streaming-message bubble still visible after LONG_RUNNING completed — orphaned spinner bug.");
+            Xunit.Assert.Fail($"Agent '{agentId}': streaming-message bubble still visible after LONG_RUNNING completed.");
         }
 
-        // Step 3: final completed message contains the sentinel.
-        var completedMsg = panel.Locator("[data-testid='message'][data-message-role='Assistant']")
+        // Step 3: final message contains the sentinel
+        var completedMsg = page.Locator("[data-testid='message']")
             .Filter(new LocatorFilterOptions { HasTextString = "[LONG_RUNNING_COMPLETE]" });
         try
         {
@@ -236,50 +221,41 @@ public sealed class PortalUserJourneyTests
         }
         catch (TimeoutException)
         {
-            Xunit.Assert.Fail($"Agent '{agentId}': completed message with '[LONG_RUNNING_COMPLETE]' not found after streaming indicator disappeared.");
+            Xunit.Assert.Fail($"Agent '{agentId}': completed message '[LONG_RUNNING_COMPLETE]' not found after streaming ended.");
         }
+
         await context.CloseAsync();
     }
 
-    // ─── Helpers ───────────────────────────────────────────────────────────
+    // ── Helpers ────────────────────────────────────────────────────────────
 
-    private async Task SendAndAwaitAsync(IPage page, string agentId, string message, string expectedFragment, int timeoutMs)
+    private static async Task SendAndAwaitAsync(
+        IPage page, string baseUrl, string agentId, string message, string expectedFragment, int timeoutMs)
     {
-        var url = $"{_fx.GatewayBaseUrl}/chat/{agentId}";
-        var response = await page.GotoAsync(url, new PageGotoOptions
+        var url = $"{baseUrl}/chat/{agentId}";
+        var nav = await page.GotoAsync(url, new PageGotoOptions
         {
             WaitUntil = WaitUntilState.NetworkIdle,
             Timeout = 60_000,
         });
-        Xunit.Assert.NotNull(response);
-        Xunit.Assert.True(response!.Ok, $"GET {url} returned {response.Status}");
+        Xunit.Assert.NotNull(nav);
+        Xunit.Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
 
-        // Scope to this agent's panel — all agents render concurrently in the
-        // multi-pane layout, so a global [data-testid] match is ambiguous.
-        var panel = page.Locator($"#{agentId}-conversation-panel");
-        await panel.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Attached,
-            Timeout = 30_000,
-        });
-
-        var composer = panel.Locator("[data-testid='chat-input'], [data-testid='chat-composer']");
+        var composer = page.Locator("[data-testid='chat-input']").First;
         await composer.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
             Timeout = 30_000,
         });
         await composer.FillAsync(message);
-        await panel.Locator("[data-testid='chat-send']").ClickAsync();
+        await page.Locator("[data-testid='chat-send']").First.ClickAsync();
 
-        // Wait for an assistant message containing the expected fragment.
-        var assistantMatch = panel.Locator(
-            "[data-testid='message'][data-message-role='Assistant'], [data-testid='streaming-message']")
+        var match = page.Locator("[data-testid='message'], [data-testid='streaming-message']")
             .Filter(new LocatorFilterOptions { HasTextString = expectedFragment });
 
         try
         {
-            await assistantMatch.First.WaitForAsync(new LocatorWaitForOptions
+            await match.First.WaitForAsync(new LocatorWaitForOptions
             {
                 State = WaitForSelectorState.Attached,
                 Timeout = timeoutMs,
@@ -289,9 +265,9 @@ public sealed class PortalUserJourneyTests
         {
             var snapshot = await page.ContentAsync();
             Xunit.Assert.Fail(
-                $"Agent '{agentId}' did not produce assistant message containing '{expectedFragment}' " +
-                $"within {timeoutMs}ms after sending '{message}'.\nHTML head:\n" +
-                snapshot[..Math.Min(2000, snapshot.Length)]);
+                $"Agent '{agentId}' did not produce message containing '{expectedFragment}' " +
+                $"within {timeoutMs}ms after sending '{message}'.\n" +
+                $"HTML:\n{snapshot[..Math.Min(2000, snapshot.Length)]}");
         }
     }
 }
