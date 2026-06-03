@@ -14,10 +14,18 @@
     <Compile Include="IWebhookRegistrationStore.cs" />
     <Compile Include="IWebhookRunStore.cs" />
     <Compile Include="WebhookSecretHelper.cs" />
+    <Compile Include="SqliteWebhookRegistrationStore.cs" />
+    <Compile Include="SqliteWebhookRunStore.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
 
 </Project>
