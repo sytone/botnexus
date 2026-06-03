@@ -39,8 +39,9 @@ public sealed class PortalPage
     public PortalPage(IPage page) => Page = page;
 
     /// <summary>
-    /// Navigate to the portal root and wait for the Blazor SPA to hydrate
-    /// (portal-loading spinner disappears and at least one sidebar nav item is visible).
+    /// Navigate to the portal root and wait for the Blazor SPA to hydrate.
+    /// Sidebar starts closed by default (no localStorage in CI); opens it
+    /// automatically so tests can interact with nav items.
     /// </summary>
     public async Task GotoAndWaitForLoadAsync(string baseUrl, TimeSpan? timeout = null)
     {
@@ -51,12 +52,15 @@ public sealed class PortalPage
             Timeout = ms,
         });
 
-        // Wait for the portal to finish its SignalR init phase
+        // Wait for the portal to finish its SignalR init phase.
+        // Use Attached (not Visible) — sidebar items exist in the DOM even when closed.
         await Page.Locator(".sidebar-nav-item").First.WaitForAsync(new LocatorWaitForOptions
         {
-            State = WaitForSelectorState.Visible,
+            State = WaitForSelectorState.Attached,
             Timeout = ms,
         });
+
+        await EnsureSidebarOpenAsync();
     }
 
     /// <summary>
@@ -71,16 +75,43 @@ public sealed class PortalPage
             Timeout = ms,
         });
 
+        // Wait for agent-panel to be attached then ensure sidebar is open.
         await Page.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions
         {
-            State = WaitForSelectorState.Visible,
+            State = WaitForSelectorState.Attached,
             Timeout = ms,
         });
+
+        await EnsureSidebarOpenAsync();
+    }
+
+    /// <summary>
+    /// Ensure the sidebar is in the open state. The sidebar defaults to
+    /// closed (no localStorage in CI) and must be opened before tests can
+    /// interact with nav items, the agent dropdown, or conversation list.
+    /// Clicks the burger button only when the sidebar is currently closed.
+    /// </summary>
+    public async Task EnsureSidebarOpenAsync()
+    {
+        var sidebar = Page.Locator(".main-sidebar").First;
+        var isClosed = await sidebar.EvaluateAsync<bool>(
+            "el => el.classList.contains('sidebar-closed')");
+        if (isClosed)
+        {
+            await BurgerBtn.ClickAsync();
+            // Wait for sidebar to transition to open
+            await sidebar.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 5_000,
+            });
+        }
     }
 
     /// <summary>Select an agent from the sidebar dropdown.</summary>
     public async Task SelectAgentAsync(string agentId)
     {
+        await EnsureSidebarOpenAsync();
         await AgentDropdown.SelectOptionAsync(agentId);
         // Wait for conversation list to appear under the selected agent
         await ConversationList.WaitForAsync(new LocatorWaitForOptions
@@ -93,6 +124,7 @@ public sealed class PortalPage
     /// <summary>Get all conversation titles currently visible in the sidebar.</summary>
     public async Task<IReadOnlyList<string>> GetConversationTitlesAsync()
     {
+        await EnsureSidebarOpenAsync();
         var items = Page.Locator("[data-testid='conversation-list-item'] .conversation-list-item-title");
         return await items.AllInnerTextsAsync();
     }
