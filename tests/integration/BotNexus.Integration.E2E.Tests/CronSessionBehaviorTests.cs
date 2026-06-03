@@ -256,7 +256,7 @@ public sealed class CronSessionBehaviorTests
 
         // Spot-check: at least one assistant message visible
         var assistantMsgs = portal.Page.Locator(
-            ".message-assistant, [data-role='assistant'], .assistant-message");
+            ".message.assistant");
         var aCount = await assistantMsgs.CountAsync();
         Assert.True(aCount > 0,
             $"No assistant messages visible after reload with 20 exchanges. " +
