@@ -152,6 +152,7 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
         Path.Combine("gateway", "BotNexus.Cron", "SqliteCronStore.cs"),
         Path.Combine("gateway", "BotNexus.Gateway.Sessions", "FileSessionStore.cs"),
         Path.Combine("gateway", "BotNexus.Gateway.Webhooks", "SqliteWebhookRunStore.cs"),
+        Path.Combine("gateway", "BotNexus.Gateway.Api", "Controllers", "WebhooksController.cs"),
     };
 
     private static string ToRelative(string srcRoot, string fullPath)
