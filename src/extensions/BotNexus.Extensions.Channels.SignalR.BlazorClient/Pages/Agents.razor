@@ -1,4 +1,6 @@
 @page "/agents"
+@page "/agents/new"
+@page "/agents/{AgentId}"
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject GatewayHubConnection Hub
@@ -7,6 +9,13 @@
 <PageTitle>BotNexus — Agents</PageTitle>
 
 <div class="agents-page">
+
+@if (_showDetailPanel && AgentId is not null && AgentId != "new")
+{
+    <AgentDetailPanel AgentId="@AgentId" OnSaved="HandleDetailSaved" OnDeleted="HandleDetailDeleted" />
+}
+else
+{
     <header class="agents-toolbar">
         <h2>🤖 Agents</h2>
         <div class="agents-toolbar-actions">
@@ -197,9 +206,14 @@
             </table>
         }
     }
+}
 </div>
 
 @code {
+    [Parameter] public string? AgentId { get; set; }
+
+    private bool _showDetailPanel;
+
     private record ProviderItem(string Id, string Name);
     private record ModelItem(string ModelId, string Name);
 
@@ -240,6 +254,16 @@
 
     /// <summary>True when the form has been modified from its initial state.</summary>
     private bool IsDirty => _form != _originalForm;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _showDetailPanel = AgentId is not null && AgentId != "new";
+        if (AgentId == "new") ShowAddForm();
+        await base.OnParametersSetAsync();
+    }
+
+    private void HandleDetailSaved() { SetStatus("Agent saved.", "success"); _ = LoadAgentsAsync(); }
+    private void HandleDetailDeleted() { Nav.NavigateTo("agents"); _ = LoadAgentsAsync(); }
 
     protected override async Task OnInitializedAsync()
     {

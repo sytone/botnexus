@@ -3911,3 +3911,179 @@ h3.conversation-title.editable:hover {
     flex-direction: column;
     height: 100%;
 }
+
+/* ── Agent Detail Panel (Wave 3) ──────────────────────────────────── */
+
+.agent-detail-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    max-width: 100%;
+}
+
+.agent-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.agent-detail-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.agent-detail-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.agent-detail-id {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius);
+}
+
+.agent-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 0.5rem 1rem;
+    background: var(--bg-primary);
+}
+
+.agent-section > summary {
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    user-select: none;
+}
+
+.agent-section > summary::before {
+    content: '\25B6';
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+}
+
+.agent-section[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.agent-section-title {
+    /* alias for summary styling */
+}
+
+.agent-section-body {
+    padding: 0.75rem 1rem 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.agent-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.agent-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.agent-tag button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0;
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.agent-tag button:hover {
+    color: var(--text-primary);
+}
+
+.agent-tag-input {
+    max-width: 200px;
+}
+
+.agent-tag-add-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.agent-list-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+
+.agent-danger-zone {
+    margin: 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--danger, #e53e3e);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.sidebar-subnav-add {
+    color: var(--text-muted);
+    opacity: 0.75;
+}
+
+.sidebar-subnav-add:hover {
+    opacity: 1;
+    color: var(--accent);
+}
+
+.sidebar-subnav-item.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--bg-surface);
+}
+
+.world-default-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 0.1rem 0.4rem;
+    color: var(--text-muted);
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
