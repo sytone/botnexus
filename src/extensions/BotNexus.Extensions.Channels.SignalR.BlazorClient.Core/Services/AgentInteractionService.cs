@@ -603,6 +603,23 @@ public sealed class AgentInteractionService : IAgentInteractionService
             foreach (var session in sessionsTask.Result)
                 _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
 
+            // Fetch canvas for the auto-selected conversation on initial load (#383)
+            var agent = _store.GetAgent(agentId);
+            var activeConvId = agent?.ActiveConversationId;
+            if (activeConvId is not null && agent!.Conversations.TryGetValue(activeConvId, out var activeConv))
+            {
+                try
+                {
+                    var canvasHtml = await _restClient.GetConversationCanvasAsync(agentId, activeConvId);
+                    if (canvasHtml is not null)
+                    {
+                        activeConv.CanvasHtml = canvasHtml;
+                        activeConv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
+                    }
+                }
+                catch { /* canvas fetch is best-effort */ }
+            }
+
             _store.NotifyChanged();
         }
         catch (Exception ex)
