@@ -59,25 +59,29 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    - Implement until the test passes
    - Never write implementation code to make a pre-existing test pass by deleting the test
 
-2. **Run the full test suite** before committing any code change:
-
-   ```shell
-   dotnet test BotNexus.slnx --nologo --tl:off
-   ```
-
-   For faster iteration during development, run only impacted tests:
+2. **Run the impacted test script before every push.** This is not optional:
 
    ```shell
    scripts/repo/test-impacted.ps1
    ```
 
-   This uses the project dependency graph to run only test projects affected by your changes, plus architecture and scenario tests as a safety net. Use `-DryRun` to preview which projects would run.
+   This uses `dotnet-affected` to run only test projects transitively affected by your changes, **plus `Architecture.Tests` and `Scenarios.Tests` as mandatory safety-net projects** that always run regardless of what changed. These catch cross-cutting fitness functions (architecture fences, P9-B-2 invariants, scenario contracts) that a narrowly-targeted `dotnet test` on a single project will miss.
+
+   Use `-DryRun` to preview which projects would run without executing them.
+
+   The full suite is available if needed but is not required for every push:
+
+   ```shell
+   dotnet test BotNexus.slnx --nologo --tl:off
+   ```
 
 3. **Zero failures required.** If any test fails, diagnose and fix the issue before proceeding. Do not commit code with failing tests.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 
 5. **Do not use `--no-verify`** for code changes. The pre-commit hook runs the test suite and must pass.
+
+   > **Note:** The pre-commit hook does _not_ run `test-impacted.ps1`. It builds the solution and runs unit tests, but does not include the architecture or scenario safety-net projects. You must run `test-impacted.ps1` separately before pushing — the pre-commit hook alone is not sufficient.
 
 6. **Do not use `--no-build` with `dotnet test` or `dotnet run` during local development.** It causes stale-binary issues, silent skips when fixtures fail to rebuild, and confusing test-output gaps. Always let `dotnet test` rebuild — if the build is too slow, fix the build, don't bypass it. (The CI workflow and `test-impacted.ps1 -NoBuild` are exceptions — they build once upfront then test with `--no-build` for speed.)
 
@@ -106,6 +110,16 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 ## Git Workflow
 
 **All file modifications and commits must happen in a dedicated worktree, never directly on `main`.** This is mandatory for all agents and developers. Local `main` must remain clean and aligned to `origin/main`.
+
+### Pre-Push Checklist
+
+Before every `git push` on a PR branch:
+
+1. Build is clean: `dotnet build BotNexus.slnx --nologo`
+2. Impacted tests pass: `scripts/repo/test-impacted.ps1`
+3. No `--no-verify` used on commits containing code changes
+
+The pre-commit hook alone is not sufficient — it does not run architecture or scenario tests.
 
 ### Worktree Policy
 
