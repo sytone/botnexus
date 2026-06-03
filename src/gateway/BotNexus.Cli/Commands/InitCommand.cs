@@ -62,6 +62,14 @@ internal sealed class InitCommand
                 {
                     Type = "Sqlite",
                     ConnectionString = $"Data Source={Path.Combine(homePath, "sessions.sqlite")}"
+                },
+                Extensions = new ExtensionsConfig
+                {
+                    Enabled = true,
+                    Defaults = new Dictionary<string, JsonElement>
+                    {
+                        ["botnexus-skills"] = JsonDocument.Parse("{\"enabled\":true}").RootElement.Clone()
+                    }
                 }
             },
             Cron = new CronConfig
