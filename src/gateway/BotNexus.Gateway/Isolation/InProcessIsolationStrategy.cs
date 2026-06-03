@@ -308,6 +308,22 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
         }
 
+        var configurationWriter = _serviceProvider.GetService<IAgentConfigurationWriter>();
+        var botNexusHome = _serviceProvider.GetService<BotNexusHome>();
+        var changeNotifiers = _serviceProvider.GetServices<IAgentChangeNotifier>();
+        if (agentRegistry is not null && configurationWriter is not null && botNexusHome is not null)
+        {
+            var includeCreateAgent = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("create_agent", StringComparer.OrdinalIgnoreCase);
+            if (includeCreateAgent)
+                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome));
+
+            var includeUpdateAgent = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("update_agent", StringComparer.OrdinalIgnoreCase);
+            if (includeUpdateAgent)
+                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers));
+        }
+
         var includeCanvas = effectiveToolIds.Count == 0
                             || effectiveToolIds.Contains("canvas", StringComparer.OrdinalIgnoreCase);
         if (includeCanvas)
