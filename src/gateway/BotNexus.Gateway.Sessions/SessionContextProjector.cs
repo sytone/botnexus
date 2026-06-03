@@ -56,7 +56,7 @@ public static class SessionContextProjector
     /// excluded.
     /// </summary>
     public static bool IsVisibleInLiveContext(SessionEntry entry) =>
-        !entry.IsHistory && !entry.IsCrashSentinel;
+        !entry.IsHistory && !entry.IsCrashSentinel && !entry.Role.Equals(MessageRole.Notification);
 
     /// <summary>
     /// Eager projection used by isolation strategies to build the initial LLM

@@ -23,4 +23,7 @@ public interface IGatewayEventHandler
     void HandleReconnecting();
     Task HandleReconnectedAsync(CancellationToken cancellationToken = default);
     void HandleDisconnected();
+
+    /// <summary>Handles a <c>TurnInterrupted</c> event received from the server after a gateway restart.</summary>
+    void HandleTurnInterrupted(AgentStreamEvent evt);
 }

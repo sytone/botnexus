@@ -189,6 +189,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
+        services.AddHostedService<InterruptedTurnNotificationService>();
         services.AddHostedService<SessionCleanupService>();
         services.AddHostedService<MemoryIndexer>();
 

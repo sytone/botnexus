@@ -39,6 +39,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnMessageEnd += HandleMessageEnd;
         _hub.OnError += HandleError;
         _hub.OnUserInputRequired += HandleUserInputRequired;
+        _hub.OnTurnInterrupted += HandleTurnInterrupted;
         _hub.OnSessionReset += HandleSessionReset;
         _hub.OnSubAgentSpawned += HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted += HandleSubAgentCompleted;
@@ -299,6 +300,34 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             DrainPendingConversationRefreshes(agentId);
     }
 
+
+    /// <summary>
+    /// Handles a <c>TurnInterrupted</c> event signalling that a gateway restart cut the previous turn short.
+    /// Appends a notification message to the affected conversation so the user sees the context.
+    /// </summary>
+    public void HandleTurnInterrupted(AgentStreamEvent evt)
+    {
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+
+        if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
+        {
+            conv.Messages.Add(new ChatMessage("Notification",
+                evt.ErrorMessage ?? "The gateway was restarted while your last message was being processed.",
+                DateTimeOffset.UtcNow));
+            conv.StreamState.Buffer = "";
+            conv.StreamState.ThinkingBuffer = "";
+            conv.StreamState.IsStreaming = false;
+        }
+
+        if (agent is not null)
+        {
+            agent.IsStreaming = false;
+            agent.ProcessingStage = null;
+        }
+
+        _store.NotifyChanged();
+    }
     public void HandleUserInputRequired(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId))
@@ -832,6 +861,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnMessageEnd -= HandleMessageEnd;
         _hub.OnError -= HandleError;
         _hub.OnUserInputRequired -= HandleUserInputRequired;
+        _hub.OnTurnInterrupted -= HandleTurnInterrupted;
         _hub.OnSessionReset -= HandleSessionReset;
         _hub.OnSubAgentSpawned -= HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted -= HandleSubAgentCompleted;

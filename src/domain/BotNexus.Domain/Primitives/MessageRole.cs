@@ -17,6 +17,9 @@ public sealed class MessageRole : IEquatable<MessageRole>
     public static readonly MessageRole System = Register("system");
     public static readonly MessageRole Tool = Register("tool");
 
+    /// <summary>Gateway-generated notification messages (e.g. restart interruption notices). Not forwarded to the LLM.</summary>
+    public static readonly MessageRole Notification = Register("notification");
+
     /// <summary>
     /// Gets the value.
     /// </summary>

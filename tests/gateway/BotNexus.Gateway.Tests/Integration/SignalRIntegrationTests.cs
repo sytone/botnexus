@@ -582,7 +582,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             ["ToolEnd"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["MessageEnd"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["Error"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
-            ["UserInputRequired"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
+            ["UserInputRequired"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            ["TurnInterrupted"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
         };
 
         var subscriptions = new List<IDisposable>
@@ -594,7 +595,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             connection.On<AgentStreamEvent>("ToolEnd", payload => handlers["ToolEnd"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("MessageEnd", payload => handlers["MessageEnd"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("Error", payload => handlers["Error"].TrySetResult(payload)),
-            connection.On<AgentStreamEvent>("UserInputRequired", payload => handlers["UserInputRequired"].TrySetResult(payload))
+            connection.On<AgentStreamEvent>("UserInputRequired", payload => handlers["UserInputRequired"].TrySetResult(payload)),
+            connection.On<AgentStreamEvent>("TurnInterrupted", payload => handlers["TurnInterrupted"].TrySetResult(payload))
         };
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
@@ -634,6 +636,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.MessageEnd => "MessageEnd",
                 AgentStreamEventType.Error => "Error",
                 AgentStreamEventType.UserInputRequired => "UserInputRequired",
+                AgentStreamEventType.TurnInterrupted => "TurnInterrupted",
                 AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
                 _ => throw new ArgumentOutOfRangeException()
             };
