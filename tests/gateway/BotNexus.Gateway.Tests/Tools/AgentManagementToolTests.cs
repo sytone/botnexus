@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests.Tools;
@@ -48,7 +49,7 @@ public sealed class AgentManagementToolTests
     private static IReadOnlyDictionary<string, object?> Args(params (string key, object? value)[] pairs) =>
         pairs.ToDictionary(p => p.key, p => p.value);
 
-    // ─── CreateAgentTool Tests ───
+    // --- CreateAgentTool Tests ---
 
     [Fact]
     public void CreateAgent_HasExpectedNameAndLabel()
@@ -149,7 +150,7 @@ public sealed class AgentManagementToolTests
             ("id", "full-agent"),
             ("displayName", "Full Agent"),
             ("description", "Does everything"),
-            ("emoji", "🤖"),
+            ("emoji", "robot"),
             ("modelId", "gpt-4o"),
             ("apiProvider", "openai"),
             ("systemPrompt", "You are helpful."),
@@ -159,7 +160,7 @@ public sealed class AgentManagementToolTests
 
         registry.Verify(r => r.Register(It.Is<AgentDescriptor>(d =>
             d.Description == "Does everything" &&
-            d.Emoji == "🤖" &&
+            d.Emoji == "robot" &&
             d.SystemPrompt == "You are helpful." &&
             d.ToolIds.Contains("read") &&
             d.ToolIds.Contains("write"))), Times.Once);
@@ -184,7 +185,7 @@ public sealed class AgentManagementToolTests
         result.Content[0].Value.ShouldNotContain("error");
     }
 
-    // ─── UpdateAgentTool Tests ───
+    // --- UpdateAgentTool Tests ---
 
     [Fact]
     public void UpdateAgent_HasExpectedNameAndLabel()
@@ -250,7 +251,7 @@ public sealed class AgentManagementToolTests
             AgentId = AgentId.From("preserve-agent"),
             DisplayName = "Original Name",
             Description = "Original desc",
-            Emoji = "🧪",
+            Emoji = "test-emoji",
             ModelId = "original-model",
             ApiProvider = "original-provider",
             SystemPrompt = "Original prompt",
@@ -271,7 +272,7 @@ public sealed class AgentManagementToolTests
         registry.Verify(r => r.Update(AgentId.From("preserve-agent"), It.Is<AgentDescriptor>(d =>
             d.DisplayName == "Original Name" &&
             d.Description == "Original desc" &&
-            d.Emoji == "🧪" &&
+            d.Emoji == "test-emoji" &&
             d.ModelId == "new-model" &&
             d.ApiProvider == "original-provider" &&
             d.SystemPrompt == "Original prompt" &&
@@ -295,5 +296,104 @@ public sealed class AgentManagementToolTests
             ("displayName", "Updated")));
 
         result.Content[0].Value.ShouldNotContain("error");
+    }
+
+    // --- Bootstrap Config Tests ---
+
+    [Fact]
+    public async Task CreateAgent_PopulatesMemoryConfig()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        AgentDescriptor? savedDescriptor = null;
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentDescriptor, CancellationToken>((d, _) => savedDescriptor = d)
+            .Returns(Task.CompletedTask);
+
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "mem-agent"),
+            ("displayName", "Memory Agent"),
+            ("modelId", "claude-sonnet"),
+            ("apiProvider", "anthropic")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        savedDescriptor.ShouldNotBeNull();
+        savedDescriptor!.Memory.ShouldNotBeNull();
+        savedDescriptor.Memory!.Enabled.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAgent_PopulatesSkillsExtensionConfig_WhenSkillsEnabled()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        AgentDescriptor? savedDescriptor = null;
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentDescriptor, CancellationToken>((d, _) => savedDescriptor = d)
+            .Returns(Task.CompletedTask);
+
+        var skillsElement = JsonSerializer.SerializeToElement(new { enabled = true });
+        var platformConfig = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Extensions = new ExtensionsConfig
+                {
+                    Defaults = new Dictionary<string, JsonElement>
+                    {
+                        ["botnexus-skills"] = skillsElement
+                    }
+                }
+            }
+        };
+        var options = Options.Create(platformConfig);
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, options);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "skills-agent"),
+            ("displayName", "Skills Agent"),
+            ("modelId", "gpt-4o"),
+            ("apiProvider", "openai")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        savedDescriptor.ShouldNotBeNull();
+        savedDescriptor!.ExtensionConfig.ShouldContainKey("botnexus-skills");
+    }
+
+    [Fact]
+    public async Task UpdateAgent_PreservesExistingMemoryConfig()
+    {
+        var existingMemory = new MemoryAgentConfig
+        {
+            Enabled = true,
+            Indexing = "auto",
+            PromptInjection = "full"
+        };
+        var existing = new AgentDescriptor
+        {
+            AgentId = AgentId.From("mem-preserve"),
+            DisplayName = "Preserve Memory",
+            ModelId = "test-model",
+            ApiProvider = "test",
+            Memory = existingMemory
+        };
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "mem-preserve", existingDescriptor: existing);
+        registry.Setup(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>())).Returns(true);
+        AgentDescriptor? savedDescriptor = null;
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentDescriptor, CancellationToken>((d, _) => savedDescriptor = d)
+            .Returns(Task.CompletedTask);
+
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object]);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "mem-preserve"),
+            ("displayName", "New Name")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        savedDescriptor.ShouldNotBeNull();
+        savedDescriptor!.Memory.ShouldNotBeNull();
+        savedDescriptor.Memory!.Enabled.ShouldBeTrue();
+        savedDescriptor.Memory.Indexing.ShouldBe("auto");
     }
 }

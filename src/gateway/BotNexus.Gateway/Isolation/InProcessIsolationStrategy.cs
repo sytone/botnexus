@@ -316,7 +316,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var includeCreateAgent = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("create_agent", StringComparer.OrdinalIgnoreCase);
             if (includeCreateAgent)
-                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome));
+            {
+                var platformConfigOptions = _serviceProvider.GetService<IOptions<PlatformConfig>>();
+                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions));
+            }
 
             var includeUpdateAgent = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("update_agent", StringComparer.OrdinalIgnoreCase);

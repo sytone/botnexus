@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Core.Models;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -18,7 +19,8 @@ public sealed class CreateAgentTool(
     IAgentRegistry agentRegistry,
     IAgentConfigurationWriter configurationWriter,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
-    BotNexusHome botNexusHome) : IAgentTool
+    BotNexusHome botNexusHome,
+    IOptions<PlatformConfig>? platformConfigOptions = null) : IAgentTool
 {
     private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9-]*[a-z0-9]$", RegexOptions.Compiled);
 
@@ -113,6 +115,11 @@ public sealed class CreateAgentTool(
 
         var toolIds = ParseToolIds(ReadString(arguments, "toolIds"));
 
+        var platformConfig = platformConfigOptions?.Value;
+        var memory = BuildMemoryConfig(platformConfig);
+        var soul = BuildSoulConfig(platformConfig);
+        var extensionConfig = BuildExtensionConfig(platformConfig);
+
         var descriptor = new AgentDescriptor
         {
             AgentId = agentId,
@@ -122,7 +129,10 @@ public sealed class CreateAgentTool(
             ModelId = modelId,
             ApiProvider = apiProvider,
             SystemPrompt = ReadString(arguments, "systemPrompt"),
-            ToolIds = toolIds
+            ToolIds = toolIds,
+            Memory = memory,
+            Soul = soul,
+            ExtensionConfig = extensionConfig
         };
 
         agentRegistry.Register(descriptor);
@@ -171,6 +181,53 @@ public sealed class CreateAgentTool(
     {
         var payload = JsonSerializer.Serialize(new { error = message }, JsonOptions);
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, payload)]);
+    }
+
+    private static MemoryAgentConfig BuildMemoryConfig(PlatformConfig? platformConfig)
+    {
+        if (platformConfig?.AgentDefaults?.Memory is { Enabled: true } defaultMemory)
+            return defaultMemory;
+
+        return new MemoryAgentConfig
+        {
+            Enabled = true,
+            Indexing = "auto",
+            PromptInjection = "full",
+            Search = new MemorySearchAgentConfig
+            {
+                DefaultTopK = 10,
+                TemporalDecay = new TemporalDecayAgentConfig { Enabled = true, HalfLifeDays = 30 }
+            }
+        };
+    }
+
+    private static SoulAgentConfig BuildSoulConfig(PlatformConfig? platformConfig)
+    {
+        return new SoulAgentConfig
+        {
+            Enabled = true,
+            Timezone = platformConfig?.Gateway?.DefaultTimezone ?? "UTC",
+            DayBoundary = "00:00",
+            ReflectionOnSeal = false
+        };
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement> BuildExtensionConfig(PlatformConfig? platformConfig)
+    {
+        var config = new Dictionary<string, JsonElement>();
+
+        var extensionDefaults = platformConfig?.Gateway?.Extensions?.Defaults;
+        if (extensionDefaults is not null &&
+            extensionDefaults.TryGetValue("botnexus-skills", out var skillsDefault) &&
+            skillsDefault.ValueKind == JsonValueKind.Object &&
+            skillsDefault.TryGetProperty("enabled", out var enabledProp) &&
+            enabledProp.ValueKind == JsonValueKind.True)
+        {
+            config["botnexus-skills"] = JsonSerializer.SerializeToElement(
+                new { enabled = true, maxLoadedSkills = 20, allowSkillCreation = false, allowSkillDeletion = false });
+        }
+
+        return config;
     }
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)
