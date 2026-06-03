@@ -26,6 +26,7 @@ internal sealed class DoctorCommand
         });
 
         command.AddCommand(locationsCommand);
+        command.AddCommand(new DoctorConfigCommand().Build(verboseOption));
         return command;
     }
 
