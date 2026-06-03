@@ -1,4 +1,4 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -322,19 +322,7 @@
                           @onkeydown="HandleKeyDown"
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
-                @if (_isRecording)
-                {
-                    <button class="recording-btn" @onclick="StopRecording" title="Stop recording">
-                        🔴 Stop
-                    </button>
-                }
-                else
-                {
-                    <button class="mic-btn" @onclick="StartRecording" title="Record audio message"
-                            disabled="@(!IsConnected)">
-                        🎤
-                    </button>
-                }
+
                 @if (IsStreaming)
                 {
                     <button class="steer-btn"
@@ -433,7 +421,6 @@ private bool IsStreaming =>
     private string _titleDraft = "";
     private readonly Dictionary<string, string> _markdownCache = new();
     private readonly HashSet<string> _expandedTools = new();
-    private bool _isRecording;
     private bool _showCommandPalette;
     private string _selectedCommand = "";
     private bool _forceScrollNext;
@@ -552,35 +539,6 @@ private bool IsStreaming =>
     {
         ToggleThinking();
         _showMobileActionsMenu = false;
-    }
-
-    private async Task StartRecording()
-    {
-        try
-        {
-            var started = await JS.InvokeAsync<bool>("BotNexusAudio.startRecording");
-            _isRecording = started;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Recording failed: {ex.Message}");
-        }
-    }
-
-    private async Task StopRecording()
-    {
-        try
-        {
-            var base64Audio = await JS.InvokeAsync<string?>("BotNexusAudio.stopRecording");
-            _isRecording = false;
-            if (base64Audio is not null)
-                await Interaction.SendMessageAsync(AgentId, $"[audio:webm;base64,{base64Audio}]");
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Stop recording failed: {ex.Message}");
-            _isRecording = false;
-        }
     }
 
     private void UpdateCommandPalette()
