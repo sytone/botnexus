@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>BotNexus.Gateway.Webhooks</RootNamespace>
+    <Description>Domain models, store interfaces, and security helpers for the BotNexus webhook subsystem.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="WebhookRegistration.cs" />
+    <Compile Include="WebhookResponseMode.cs" />
+    <Compile Include="WebhookRun.cs" />
+    <Compile Include="WebhookRunStatus.cs" />
+    <Compile Include="IWebhookRegistrationStore.cs" />
+    <Compile Include="IWebhookRunStore.cs" />
+    <Compile Include="WebhookSecretHelper.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+
+</Project>
