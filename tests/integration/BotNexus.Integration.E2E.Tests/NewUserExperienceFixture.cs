@@ -273,3 +273,14 @@ public sealed class NewUserExperienceCollection : ICollectionFixture<NewUserExpe
 {
     public const string Name = "New user E2E";
 }
+
+/// <summary>
+/// Isolated collection for MobileScrollTests — uses its own gateway instance so
+/// mobile scroll tests cannot pollute the shared mock-provider state of the main
+/// NewUserExperienceCollection.
+/// </summary>
+[CollectionDefinition(MobileScrollCollection.Name)]
+public sealed class MobileScrollCollection : ICollectionFixture<NewUserExperienceFixture>
+{
+    public const string Name = "Mobile scroll E2E";
+}

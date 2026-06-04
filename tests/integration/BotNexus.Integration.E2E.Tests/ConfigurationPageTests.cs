@@ -38,13 +38,20 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
         var portal = new PortalPage(page);
 
         await page.GotoAsync($"{_fix.GatewayBaseUrl}/{path}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
 
-        await page.Locator(".sidebar-nav-item").First.WaitForAsync(new LocatorWaitForOptions
+        // Wait briefly for the page to settle after NetworkIdle
+        await page.WaitForTimeoutAsync(1000);
+
+        // The sidebar starts closed when localStorage has no saved state (fresh CI browser).
+        // Open it by clicking the burger button so sidebar-subnav items become visible.
+        var sidebar = page.Locator(".main-sidebar");
+        var isClosed = await sidebar.EvaluateAsync<bool>("el => el.classList.contains('sidebar-closed')");
+        if (isClosed)
         {
-            State = WaitForSelectorState.Visible,
-            Timeout = 20_000
-        });
+            await page.Locator(".burger-btn").ClickAsync();
+            await page.WaitForTimeoutAsync(300);
+        }
 
         return (page, portal);
     }
@@ -203,7 +210,7 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
             new LocatorFilterOptions { HasTextString = "Gateway" }).First;
         await gatewayLink.ClickAsync();
 
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
         Assert.True(page.Url.Contains("configuration/gateway", StringComparison.OrdinalIgnoreCase),
             $"Clicking Gateway sub-nav should navigate to /configuration/gateway. URL: {page.Url}");
     }

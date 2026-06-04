@@ -51,7 +51,7 @@ public sealed class SessionIsolationTests
         Skip.If(browser is null, skipReason);
 
         await using var _ = browser!;
-        var agentId = _fx.AgentIds[0];
+        var agentId = _fx.AgentIds[2]; // Use charlie to avoid contamination from alpha's heavy test load
 
         // ── Conversation A ────────────────────────────────────────────────
         var (pageA, portalA, chatA) = await PortalTestHelpers.NewChatPageAsync(
@@ -66,7 +66,7 @@ public sealed class SessionIsolationTests
         await portalA.ConversationNewBtn.ClickAsync();
         await pageA.WaitForTimeoutAsync(500);
 
-        var chatB = new ChatPanelPage(pageA);
+        var chatB = new ChatPanelPage(pageA, agentId);
         await chatB.SendMessageAsync("MULTI_DELTA");
         await chatB.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
@@ -78,10 +78,21 @@ public sealed class SessionIsolationTests
         // ── Switch back to conversation A ──────────────────────────────────
         await pageA.GotoAsync(urlA, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
-        await pageA.WaitForTimeoutAsync(1_500);
+        // Wait for Blazor WASM to mount and reload conversation A's history.
+        // NetworkIdle is not reliable for WASM; instead wait for a message bubble to appear.
+        try
+        {
+            await pageA.Locator($"#{agentId}-conversation-panel [data-testid='message']").First
+                .WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        }
+        catch (TimeoutException)
+        {
+            // Fall back to a longer fixed wait before asserting.
+            await pageA.WaitForTimeoutAsync(5_000);
+        }
 
         // A's content (Hello, world!) must be visible; B's content must not
         var pageContent = await pageA.ContentAsync();
@@ -118,7 +129,7 @@ public sealed class SessionIsolationTests
 
         // Start a fresh conversation (new session)
         await portal.ConversationNewBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(1_000);
+        await page.WaitForTimeoutAsync(2_000); // wait for Blazor to render the new conversation
 
         var pageContent = await page.ContentAsync();
 
@@ -128,11 +139,10 @@ public sealed class SessionIsolationTests
         Assert.False(hasErrorText,
             "New empty session shows an error state. Should show an empty state / welcome message.");
 
-        // Must show: some kind of input affordance so the user knows what to do
-        var inputBox = page.Locator(
-            "[data-testid='chat-input'], .message-input, textarea[placeholder], input[placeholder]")
-            .First;
-        var inputVisible = await inputBox.IsVisibleAsync();
+        // Must show: some kind of input affordance so the user knows what to do.
+        // Scope to charlie's conversation panel — that's the agent we navigated to.
+        var chatForNew = new BotNexus.Integration.E2E.Tests.PageObjects.ChatPanelPage(page, agentId);
+        var inputVisible = await chatForNew.ChatInput.IsVisibleAsync();
         Assert.True(inputVisible,
             "New empty session: message input not visible. A first-time user has no way to " +
             "know they should type here. Empty state must show the message input box.");
@@ -177,7 +187,7 @@ public sealed class SessionIsolationTests
         // Navigate to session B
         await page.GotoAsync(urlB, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 20_000
         });
         await page.WaitForTimeoutAsync(1_000);
@@ -269,7 +279,7 @@ public sealed class SessionIsolationTests
         // Hard reload
         await page.ReloadAsync(new PageReloadOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
         await page.WaitForTimeoutAsync(2_000);

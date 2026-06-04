@@ -57,7 +57,7 @@ public sealed class PageTitleTests : IAsyncLifetime
         var (page, portal, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
         // Wait for the page to fully load
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         var title = await page.TitleAsync();
 
@@ -80,7 +80,7 @@ public sealed class PageTitleTests : IAsyncLifetime
 
         var agentId = _fix.AgentIds[0];
         var (page, portal, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         var title = await page.TitleAsync();
 
@@ -101,7 +101,7 @@ public sealed class PageTitleTests : IAsyncLifetime
 
         var agentId = _fix.AgentIds[0];
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // Get the active conversation title from the UI
         var convTitle = await page.Locator(".conversation-title").First.InnerTextAsync();
@@ -128,7 +128,7 @@ public sealed class PageTitleTests : IAsyncLifetime
 
         var agentId = _fix.AgentIds[0];
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // Check that a conversation is active
         var titleEl = page.Locator(".conversation-title.editable").First;

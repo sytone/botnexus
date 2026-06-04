@@ -114,15 +114,14 @@ public sealed class ParallelExecutionDisplayTests
         await portal.SelectAgentAsync(agentB);
 
         // Agent B panel should load normally — not stuck/frozen
-        var agentBPanel = page.Locator("[data-testid='agent-panel']").First;
-        await agentBPanel.WaitForAsync(new LocatorWaitForOptions
+        var chatB = new ChatPanelPage(page, agentB);
+        await chatB.ChatInput.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
             Timeout = 10_000,
         });
 
         // Agent B's input should be usable
-        var chatB = new ChatPanelPage(page);
         var inputVisible = await chatB.ChatInput.IsVisibleAsync();
         Assert.True(inputVisible,
             "After switching to agent B while agent A was streaming, agent B's input is not visible. " +
@@ -177,17 +176,17 @@ public sealed class ParallelExecutionDisplayTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await freshPage.GotoAsync(seededUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000,
         });
 
-        // Wait for agent panel to be visible and interactive
-        await freshPage.Locator("[data-testid='agent-panel']").First
-            .WaitForAsync(new LocatorWaitForOptions
-            {
-                State = WaitForSelectorState.Visible,
-                Timeout = 10_000,
-            });
+        // Wait for chat input to be visible and interactive (agent-panel is CSS-managed)
+        var freshChat = new ChatPanelPage(freshPage, agentId);
+        await freshChat.ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
         sw.Stop();
 
         Assert.True(sw.Elapsed.TotalSeconds < 3.0,
@@ -196,7 +195,6 @@ public sealed class ParallelExecutionDisplayTests
             "Investigate render blocking, over-fetching, or missing pagination.");
 
         // Input must be functional (portal fully hydrated, not just painted)
-        var freshChat = new ChatPanelPage(freshPage);
         var inputEnabled = await freshChat.ChatInput.IsEnabledAsync();
         Assert.True(inputEnabled,
             "Agent panel visible but input is disabled/frozen after load. " +
@@ -335,9 +333,14 @@ public sealed class ParallelExecutionDisplayTests
             "Agent B parallel execution: 'carefully' not found in MULTI_DELTA response. " +
             "Parallel streaming may have caused content loss or corruption.");
 
-        // Cross-contamination check: A's panel must not show B's content
-        Assert.False(contentA.Contains("carefully", StringComparison.OrdinalIgnoreCase),
-            "Agent A's panel contains 'carefully' from Agent B's MULTI_DELTA stream. " +
+        // Cross-contamination check: A's LAST assistant message must not show B's content.
+        // (Prior conversation history may contain 'carefully' from unrelated tests; only check
+        // the most recent response which must be from the HELLO_WORLD call above.)
+        var lastAssistantMsg = await pageA
+            .Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-messages'] .message.assistant .msg-content")
+            .Last.InnerTextAsync(new LocatorInnerTextOptions { Timeout = 5_000 });
+        Assert.False(lastAssistantMsg.Contains("carefully", StringComparison.OrdinalIgnoreCase),
+            "Agent A's last assistant message contains 'carefully' from Agent B's MULTI_DELTA stream. " +
             "Parallel execution caused content cross-contamination between agent panels.");
     }
 }

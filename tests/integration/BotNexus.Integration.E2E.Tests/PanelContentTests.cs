@@ -35,7 +35,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var context = await _browser!.NewContextAsync();
         var page = await context.NewPageAsync();
         await page.GotoAsync($"{_fix.GatewayBaseUrl}/chat/{agentId}?tab={tab}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
         await page.Locator(".agent-tab-bar").First.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
@@ -72,8 +72,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
 
         // Either a file tree or an empty-state message should render
-        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel");
-        var emptyState = page.Locator(".workspace-empty, .workspace-panel");
+        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel").First;
+        var emptyState = page.Locator(".workspace-empty, .workspace-panel").First;
 
         // At least one of these should be present
         var treeVisible = await fileTree.IsVisibleAsync();
@@ -87,10 +87,10 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // The fixture provisions two locations: workspace-tmp and scratch
-        var panelContent = await page.Locator(".agent-tab-pane.active").InnerTextAsync();
+        var panelContent = await page.Locator(".agent-tab-pane.active").First.InnerTextAsync();
 
         // Should contain something — not be completely empty
         Assert.False(string.IsNullOrWhiteSpace(panelContent),
@@ -111,7 +111,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on reports tab");
 
         // Reports panel section should be active
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -122,9 +122,9 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "reports");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         var paneText = await activePane.InnerTextAsync();
         // Should render something
         Assert.False(string.IsNullOrWhiteSpace(paneText), "Reports panel should render some content");
@@ -143,7 +143,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on canvas tab");
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -156,7 +156,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "canvas");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // Should not show a raw 404 page or crash
         var body = await page.Locator("body").InnerTextAsync();
@@ -177,7 +177,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         {
             var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
-            var canvasTab = page.Locator("[data-tab='canvas']").First;
+            // Scope to the active (non-hidden) chat panel wrapper to avoid matching tabs in hidden panels
+            var canvasTab = page.Locator(".chat-panel-wrapper:not(.hidden) [data-tab='canvas']").First;
             await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
             Assert.True(await canvasTab.IsVisibleAsync(),

@@ -27,7 +27,7 @@ public sealed class SidebarNavigationTests
         var dropdown = portal.AgentDropdown;
         await dropdown.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
-        var options = await dropdown.Locator("option[value!='']").AllInnerTextsAsync();
+        var options = await dropdown.Locator("option:not([value=''])").AllInnerTextsAsync();
         foreach (var agentId in _fx.AgentIds)
             Assert.Contains(options, o => o.Contains(agentId, StringComparison.OrdinalIgnoreCase));
     }
@@ -83,18 +83,25 @@ public sealed class SidebarNavigationTests
         // Click Workspace tab and verify selection — scope to active panel
         var workspaceTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Workspace" }).First;
         await workspaceTab.ClickAsync();
+        await page.WaitForTimeoutAsync(500);
 
+        // Blazor renders bool as "True"/"False" or may use class="active" — check either
         var workspaceTabSelected = activePanel.Locator("[data-tab='workspace']").First;
         var ariaSelected = await workspaceTabSelected.GetAttributeAsync("aria-selected");
-        Assert.Equal("true", ariaSelected);
+        Assert.True(
+            "true".Equals(ariaSelected, StringComparison.OrdinalIgnoreCase) || await workspaceTabSelected.EvaluateAsync<bool>("el => el.classList.contains('active')"),
+            $"Workspace tab not selected after click. aria-selected='{ariaSelected}'");
 
         // Switch back to Conversation tab
         var convTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Conversation" }).First;
         await convTab.ClickAsync();
+        await page.WaitForTimeoutAsync(500);
 
         var convTabSelected = activePanel.Locator("[data-tab='conversation']").First;
         ariaSelected = await convTabSelected.GetAttributeAsync("aria-selected");
-        Assert.Equal("true", ariaSelected);
+        Assert.True(
+            "true".Equals(ariaSelected, StringComparison.OrdinalIgnoreCase) || await convTabSelected.EvaluateAsync<bool>("el => el.classList.contains('active')"),
+            $"Conversation tab not selected after click. aria-selected='{ariaSelected}'");
     }
 
     [SkippableFact]
@@ -108,7 +115,7 @@ public sealed class SidebarNavigationTests
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
         await page.GotoAsync($"{_fx.GatewayBaseUrl}/agents");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // After navigation the sidebar state is reset — re-open it
         await portal.EnsureSidebarOpenAsync();

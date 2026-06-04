@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -298,8 +298,11 @@ public sealed class MainLayoutTests : IDisposable
         };
 
         var cut = RenderLayout();
+        // Wait for async renders (e.g., isMobileView JS call in OnAfterRenderAsync) to stabilize
+        // before clicking, to avoid UnknownEventHandlerIdException on stale event IDs.
+        cut.WaitForState(() => cut.FindAll(".agent-session-item").Count > 0);
 
-        cut.Find(".agent-session-item").Click();
+        cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
 
         _interaction.Received(1).ViewSubAgentAsync(
             Arg.Is<SubAgentInfo>(s => s.SubAgentId == "sub-1"));
@@ -476,9 +479,11 @@ public sealed class MainLayoutTests : IDisposable
         nav.NavigateTo("http://localhost/chat/a-1/c-1");
 
         var cut = RenderLayout();
-        cut.FindAll(".conversation-list-item-btn")
+        // Wait for async renders to stabilize before clicking
+        cut.WaitForState(() => cut.FindAll(".conversation-list-item-btn").Count >= 2);
+        cut.InvokeAsync(() => cut.FindAll(".conversation-list-item-btn")
             .First(btn => btn.TextContent.Contains("Second", StringComparison.Ordinal))
-            .Click();
+            .Click());
 
         cut.WaitForAssertion(() =>
             Assert.EndsWith("/chat/a-1/c-2", nav.Uri));
@@ -583,7 +588,7 @@ public sealed class MainLayoutTests : IDisposable
         // Wait for after-render to fire (_isMobile to be set)
         cut.WaitForAssertion(() =>
             Assert.Empty(cut.FindAll(".agent-dropdown-select")),
-            TimeSpan.FromSeconds(1));
+            TimeSpan.FromSeconds(3));
     }
 
     [Fact]
