@@ -133,6 +133,84 @@ public sealed class CronControllerTests
         created.Model.ShouldBe("openai/gpt-4.1");
     }
 
+    [Fact]
+    public async Task Create_WithFarFutureNextRunAt_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        // Year 10000 is beyond the MaxAllowedTimestamp ceiling of 9000-01-01
+        var request = CreateJob("job-future") with
+        {
+            NextRunAt = new DateTimeOffset(9001, 1, 1, 0, 0, 0, TimeSpan.Zero)
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_WithPreEpochNextRunAt_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        // Before 1970-01-01 (the MinAllowedTimestamp floor)
+        var request = CreateJob("job-preepoch") with
+        {
+            NextRunAt = new DateTimeOffset(1969, 12, 31, 23, 59, 59, TimeSpan.Zero)
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Update_WithFarFutureNextRunAt_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        await store.CreateAsync(CreateJob("job-upd"));
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var request = CreateJob("job-upd") with
+        {
+            NextRunAt = new DateTimeOffset(9001, 6, 15, 0, 0, 0, TimeSpan.Zero)
+        };
+
+        var result = await controller.Update("job-upd", request, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_WithValidNearFutureNextRunAt_ReturnsCreated()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var futureTime = DateTimeOffset.UtcNow.AddHours(1);
+        var request = CreateJob("job-validnext") with { NextRunAt = futureTime };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
+        created.ShouldNotBeNull();
+        created!.NextRunAt.ShouldBe(futureTime);
+    }
+
+    [Fact]
+    public async Task Create_WithOutOfRangeCreatedAt_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var request = CreateJob("job-badcreated") with
+        {
+            CreatedAt = new DateTimeOffset(9001, 1, 1, 0, 0, 0, TimeSpan.Zero)
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
     private static CronController CreateController(FakeCronStore store, ICronAction action, CronOptions options)
     {
         var scheduler = new CronScheduler(
