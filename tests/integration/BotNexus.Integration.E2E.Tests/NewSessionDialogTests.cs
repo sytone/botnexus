@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -109,6 +109,7 @@ public sealed class NewSessionDialogTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         // Send a message first so there's history
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();

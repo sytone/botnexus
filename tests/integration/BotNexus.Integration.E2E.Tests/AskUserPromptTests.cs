@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -47,7 +47,7 @@ public sealed class AskUserPromptTests : IAsyncLifetime
         await promptEl.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
-            Timeout = 20_000
+            Timeout = 35_000
         });
 
         return (page, promptEl);

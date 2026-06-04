@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -56,7 +56,11 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var configBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .chat-header-actions .config-btn");
+        // The config-btn is in the AgentPanel header, which is a sibling of the conversation-panel section.
+        // Use the filter approach: find the agent-panel that contains the target conversation panel.
+        var configBtn = page.Locator(".agent-panel")
+            .Filter(new() { Has = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel") })
+            .Locator(".chat-header-actions .config-btn");
         await configBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await configBtn.ClickAsync();
 
@@ -153,8 +157,8 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
         var steerBtn = page.Locator(".steer-btn");
         Assert.True(await steerBtn.IsVisibleAsync(), "Steer button should be visible during streaming");
 
-        // Send button should NOT be visible while streaming
-        var sendBtn = page.Locator("[data-testid='chat-send']");
+        // Send button should NOT be visible (alpha panel only) while streaming
+        var sendBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel [data-testid='chat-send']");
         Assert.False(await sendBtn.IsVisibleAsync(), "Send button should be hidden during streaming");
     }
 

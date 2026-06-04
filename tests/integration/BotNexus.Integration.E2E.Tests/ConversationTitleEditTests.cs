@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -129,7 +129,9 @@ public sealed class ConversationTitleEditTests : IAsyncLifetime
         await input.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         // Title element should now show the new name
-        var updatedTitle = (await page.Locator(".conversation-title.editable").First.TextContentAsync() ?? "").Trim();
+        // Re-read from the same element that was clicked to avoid picking up a different panel title
+        await titleEl.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
+        var updatedTitle = (await titleEl.TextContentAsync() ?? "").Trim();
         _out.WriteLine($"Updated title: {updatedTitle}");
         Assert.Equal(newTitle, updatedTitle);
     }

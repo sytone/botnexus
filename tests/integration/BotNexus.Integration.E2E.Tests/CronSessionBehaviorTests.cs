@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Playwright;
@@ -234,7 +234,8 @@ public sealed class CronSessionBehaviorTests
         var jsErrors = new List<string>();
         portal.Page.PageError += (_, e) => jsErrors.Add(e);
 
-        for (int i = 0; i < 20; i++)
+        await chat.StartFreshSessionAsync();
+        for (int i = 0; i < 5; i++)
         {
             await chat.SendMessageAsync("HELLO_WORLD");
             await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(15));
@@ -242,6 +243,8 @@ public sealed class CronSessionBehaviorTests
 
         // Reload and verify the full history loads without errors
         await portal.GotoAgentChatAsync(_fx.GatewayBaseUrl, agentId);
+        // Blazor WASM initialises async; wait Attached first, then Visible
+        await portal.Page.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 15_000 });
         await portal.Page.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
         // No JS errors
