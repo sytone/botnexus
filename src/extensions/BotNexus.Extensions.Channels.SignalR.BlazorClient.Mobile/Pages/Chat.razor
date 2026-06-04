@@ -210,6 +210,9 @@ else
         {
             await ApplyRouteSelectionAsync();
             StateHasChanged();
+            // Force-scroll to bottom once portal is ready and history is rendered
+            // so the user always sees the most recent message on first load (issue #793).
+            await ForceScrollToBottomAsync();
         });
 
     private void HandleStateChanged()

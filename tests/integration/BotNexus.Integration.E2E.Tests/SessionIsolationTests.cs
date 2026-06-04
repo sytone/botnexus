@@ -59,8 +59,17 @@ public sealed class SessionIsolationTests
         await chatA.SendMessageAsync("HELLO_WORLD");
         await chatA.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
-        // Capture conversation A's session URL so we can return to it
-        var urlA = pageA.Url;
+        // Get the active conversation ID from the sidebar so we can navigate back to it precisely.
+        // The portal may not auto-update the URL after send, so we read from the DOM.
+        await portalA.EnsureSidebarOpenAsync();
+        var convAItem = pageA.Locator("[data-testid='conversation-list-item'] .conversation-list-item-btn.active").First;
+        var convAId = await convAItem.EvaluateAsync<string?>("el => el.closest('[data-conversation-id]')?.getAttribute('data-conversation-id')");
+        var urlA = !string.IsNullOrWhiteSpace(convAId)
+            ? $"{_fx.GatewayBaseUrl}/chat/{agentId}/{convAId}"
+            : pageA.Url;
+        // Fall back to current URL if no href found
+        if (string.IsNullOrWhiteSpace(urlA) || urlA == _fx.GatewayBaseUrl)
+            urlA = pageA.Url;
 
         // ── Conversation B (new chat in same page) ─────────────────────────
         await portalA.ConversationNewBtn.ClickAsync();

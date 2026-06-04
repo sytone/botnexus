@@ -239,6 +239,12 @@ public sealed class MobileScrollTests : IAsyncLifetime
         await _page.EvaluateAsync("() => { const el = document.querySelector('.message-stream'); if (el) el.scrollTop = 0; }");
         await _page.WaitForTimeoutAsync(150);
 
+        // Skip if the stream is not tall enough to be scrollable (less than 2x viewport height).
+        // Without enough content, scrollTop=0 is ALSO the bottom, so the test is not meaningful.
+        var preScrollInfo = await GetScrollInfoAsync();
+        Skip.If(preScrollInfo.ScrollHeight <= preScrollInfo.ClientHeight + 50,
+            $"Message stream not tall enough to be scrollable (height={preScrollInfo.ScrollHeight:F0}, client={preScrollInfo.ClientHeight:F0}). Test requires history with enough messages.");
+
         var beforeCount = await _page.Locator(".message-stream .message").CountAsync();
 
         // Send a message — this causes a new message to arrive

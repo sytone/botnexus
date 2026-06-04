@@ -72,8 +72,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
 
         // Either a file tree or an empty-state message should render
-        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel");
-        var emptyState = page.Locator(".workspace-empty, .workspace-panel");
+        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel").First;
+        var emptyState = page.Locator(".workspace-empty, .workspace-panel").First;
 
         // At least one of these should be present
         var treeVisible = await fileTree.IsVisibleAsync();
@@ -177,7 +177,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         {
             var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
-            var canvasTab = page.Locator("[data-tab='canvas']").First;
+            // Scope to the active (non-hidden) chat panel wrapper to avoid matching tabs in hidden panels
+            var canvasTab = page.Locator(".chat-panel-wrapper:not(.hidden) [data-tab='canvas']").First;
             await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
             Assert.True(await canvasTab.IsVisibleAsync(),
