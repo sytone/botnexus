@@ -382,11 +382,14 @@ public sealed class MobileChatTests
         await mobilePage.ScrollToTopAsync();
         // Wait longer than the 600ms forceScrollToBottom backstop to let all timers fire
         await page.WaitForTimeoutAsync(800);
-        // Re-scroll to top after any backstop timers have completed
-        await mobilePage.ScrollToTopAsync();
-        await page.WaitForTimeoutAsync(200);
-
-        var scrollTopBefore = await mobilePage.GetScrollTopAsync();
+        // Re-scroll to top after any backstop timers have completed — do it atomically
+        // right before the measurement so no Blazor render cycle can move it between scroll and read.
+        var scrollTopBefore = await page.EvaluateAsync<double>(@"() => {
+            const el = document.querySelector('.message-stream');
+            if (!el) return 0;
+            el.scrollTop = 0;
+            return el.scrollTop;
+        }");
 
         // Send — triggers response (which may stream)
         await mobilePage.SendMessageAsync("SLOW_STREAM");

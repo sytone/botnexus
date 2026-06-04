@@ -449,6 +449,7 @@ private bool IsStreaming =>
     ];
 
     private SlashCommand[] _filteredCommands = [];
+    private bool _cancellingTitle;
 
     private void StartEditTitle()
     {
@@ -468,6 +469,15 @@ private bool IsStreaming =>
 
     private async Task SaveTitle()
     {
+        // If the user pressed Escape, the browser fires blur after keydown - ignore the save.
+        if (_cancellingTitle)
+        {
+            _cancellingTitle = false;
+            _editingTitle = false;
+            StateHasChanged();
+            return;
+        }
+
         if (IsReadOnly)
         {
             _editingTitle = false;
@@ -489,6 +499,9 @@ private bool IsStreaming =>
             await SaveTitle();
         else if (e.Key == "Escape")
         {
+            // Set flag before StateHasChanged so the blur event fired by Escape is suppressed.
+            _cancellingTitle = true;
+            _titleDraft = ActiveConversationTitle ?? "";
             _editingTitle = false;
             StateHasChanged();
         }

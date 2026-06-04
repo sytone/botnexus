@@ -180,7 +180,10 @@ public sealed class SlashCommandTests
 
         var urlBefore = page.Url;
 
-        var messagesBefore = await chat.Page.Locator(".chat-panel-wrapper:not(.hidden) .message").CountAsync();
+        // Scope to the alpha agent panel only — avoids counting messages from other agent panels
+        // that are visible in the multi-panel portal but unrelated to this /new command.
+        var agentPanelSel = $"#{_fx.AgentIds[0]}-conversation-panel .message";
+        var messagesBefore = await chat.Page.Locator(agentPanelSel).CountAsync();
         await chat.ExecuteSlashCommandAsync("/new");
 
         // /new should navigate to a fresh conversation — URL changes or messages reset.
@@ -188,7 +191,7 @@ public sealed class SlashCommandTests
         await Task.Delay(4_000);
 
         var urlAfter = page.Url;
-        var messagesAfter = await chat.Page.Locator(".chat-panel-wrapper:not(.hidden) .message").CountAsync();
+        var messagesAfter = await chat.Page.Locator(agentPanelSel).CountAsync();
 
         // Either the URL has changed (new conversation ID) or the message list is now empty/shorter
         // Note: the portal may not update the URL for /new — URL change is a nice-to-have, not required.
