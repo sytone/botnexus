@@ -298,6 +298,9 @@ public sealed class MainLayoutTests : IDisposable
         };
 
         var cut = RenderLayout();
+        // Wait for async renders (e.g., isMobileView JS call in OnAfterRenderAsync) to stabilize
+        // before clicking, to avoid UnknownEventHandlerIdException on stale event IDs.
+        cut.WaitForState(() => cut.FindAll(".agent-session-item").Count > 0);
 
         cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
 
@@ -476,6 +479,8 @@ public sealed class MainLayoutTests : IDisposable
         nav.NavigateTo("http://localhost/chat/a-1/c-1");
 
         var cut = RenderLayout();
+        // Wait for async renders to stabilize before clicking
+        cut.WaitForState(() => cut.FindAll(".conversation-list-item-btn").Count >= 2);
         cut.InvokeAsync(() => cut.FindAll(".conversation-list-item-btn")
             .First(btn => btn.TextContent.Contains("Second", StringComparison.Ordinal))
             .Click());
