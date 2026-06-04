@@ -130,7 +130,10 @@ public sealed class SessionIsolationTests
 
         // Must show: some kind of input affordance so the user knows what to do
         var inputBox = page.Locator(
-            "[data-testid='chat-input'], .message-input, textarea[placeholder], input[placeholder]")
+            ".chat-panel-wrapper:not(.hidden) [data-testid='chat-input'], " +
+            ".chat-panel-wrapper:not(.hidden) .message-input, " +
+            ".chat-panel-wrapper:not(.hidden) textarea[placeholder], " +
+            ".chat-panel-wrapper:not(.hidden) input[placeholder]")
             .First;
         var inputVisible = await inputBox.IsVisibleAsync();
         Assert.True(inputVisible,

@@ -241,14 +241,14 @@ public sealed class PortalUserJourneyTests
         Xunit.Assert.NotNull(nav);
         Xunit.Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
 
-        var composer = page.Locator("[data-testid='chat-input']").First;
+        var composer = page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-input']").First;
         await composer.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
             Timeout = 30_000,
         });
         await composer.FillAsync(message);
-        await page.Locator("[data-testid='chat-send']").First.ClickAsync();
+        await page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-send']").First.ClickAsync();
 
         var match = page.Locator("[data-testid='message'], [data-testid='streaming-message']")
             .Filter(new LocatorFilterOptions { HasTextString = expectedFragment });

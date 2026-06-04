@@ -10,34 +10,34 @@ public sealed class ChatPanelPage
     public IPage Page { get; }
 
     // ── Input area ────────────────────────────────────────────────────────
-    public ILocator ChatInput       => Page.Locator("[data-testid='chat-input']").First;
-    public ILocator SendBtn         => Page.Locator("[data-testid='chat-send']").First;
-    public ILocator SteerBtn        => Page.Locator(".steer-btn").First;
-    public ILocator AbortBtn        => Page.Locator(".abort-btn").First;
+    public ILocator ChatInput       => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-input']").First;
+    public ILocator SendBtn         => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-send']").First;
+    public ILocator SteerBtn        => Page.Locator(".chat-panel-wrapper:not(.hidden) .steer-btn").First;
+    public ILocator AbortBtn        => Page.Locator(".chat-panel-wrapper:not(.hidden) .abort-btn").First;
 
     // ── Message area ──────────────────────────────────────────────────────
-    public ILocator MessagesContainer   => Page.Locator("[data-testid='chat-messages']").First;
-    public ILocator AssistantMessages   => Page.Locator(".message.assistant .message-content, .msg-content");
-    public ILocator SystemMessages      => Page.Locator("[data-testid='chat-system-message']");
-    public ILocator UserMessages        => Page.Locator(".message.user .message-content");
-    public ILocator StreamingIndicator  => Page.Locator(".streaming-indicator").First;
-    public ILocator StreamingBadge      => Page.Locator(".streaming-badge").First;
+    public ILocator MessagesContainer   => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-messages']").First;
+    public ILocator AssistantMessages   => Page.Locator(".chat-panel-wrapper:not(.hidden) .message.assistant .message-content, .chat-panel-wrapper:not(.hidden) .msg-content");
+    public ILocator SystemMessages      => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-system-message']");
+    public ILocator UserMessages        => Page.Locator(".chat-panel-wrapper:not(.hidden) .message.user .message-content");
+    public ILocator StreamingIndicator  => Page.Locator(".chat-panel-wrapper:not(.hidden) .streaming-indicator").First;
+    public ILocator StreamingBadge      => Page.Locator(".chat-panel-wrapper:not(.hidden) .streaming-badge").First;
 
     // ── Header area ───────────────────────────────────────────────────────
-    public ILocator ConversationTitle   => Page.Locator(".conversation-title").First;
-    public ILocator NewSessionBtn       => Page.Locator(".new-chat-btn").First;
-    public ILocator ConfigBtn           => Page.Locator(".config-btn").First;
-    public ILocator ToggleThinkingBtn   => Page.Locator("button[title='Toggle thinking visibility']").First;
-    public ILocator ToggleToolsBtn      => Page.Locator("button[title='Toggle tool visibility']").First;
+    public ILocator ConversationTitle   => Page.Locator(".chat-panel-wrapper:not(.hidden) .conversation-title").First;
+    public ILocator NewSessionBtn       => Page.Locator(".chat-panel-wrapper:not(.hidden) .new-chat-btn").First;
+    public ILocator ConfigBtn           => Page.Locator(".chat-panel-wrapper:not(.hidden) .config-btn").First;
+    public ILocator ToggleThinkingBtn   => Page.Locator(".chat-panel-wrapper:not(.hidden) button[title='Toggle thinking visibility']").First;
+    public ILocator ToggleToolsBtn      => Page.Locator(".chat-panel-wrapper:not(.hidden) button[title='Toggle tool visibility']").First;
 
     // ── Command palette ───────────────────────────────────────────────────
-    public ILocator CommandPalette      => Page.Locator(".command-palette").First;
-    public ILocator CommandItems        => Page.Locator(".command-item");
+    public ILocator CommandPalette      => Page.Locator(".chat-panel-wrapper:not(.hidden) .command-palette").First;
+    public ILocator CommandItems        => Page.Locator(".chat-panel-wrapper:not(.hidden) .command-item");
 
     // ── New session confirm ───────────────────────────────────────────────
-    public ILocator NewSessionConfirmDialog => Page.Locator(".reset-confirm-dialog").First;
-    public ILocator NewSessionConfirmBtn    => Page.Locator(".reset-confirm-dialog .confirm-btn").First;
-    public ILocator NewSessionCancelBtn     => Page.Locator(".reset-confirm-dialog .cancel-btn").First;
+    public ILocator NewSessionConfirmDialog => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog").First;
+    public ILocator NewSessionConfirmBtn    => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog .confirm-btn").First;
+    public ILocator NewSessionCancelBtn     => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog .cancel-btn").First;
 
     public ChatPanelPage(IPage page) => Page = page;
 
