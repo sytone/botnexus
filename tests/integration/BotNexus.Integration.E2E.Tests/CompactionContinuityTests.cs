@@ -407,9 +407,10 @@ public sealed class CompactionContinuityTests
         Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
     }
 
-    private static async Task<ILocator> GetComposerAsync(IPage page)
+    private static async Task<ILocator> GetComposerAsync(IPage page, string agentId = "alpha")
     {
-        var composer = page.Locator("[data-testid='chat-input']").First;
+        // Scope to the specific agent's conversation panel to avoid multi-panel strict-mode violations.
+        var composer = page.Locator($"#{agentId}-conversation-panel [data-testid='chat-input']");
         await composer.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
@@ -418,10 +419,10 @@ public sealed class CompactionContinuityTests
         return composer;
     }
 
-    private static async Task SendAsync(IPage page, ILocator composer, string text)
+    private static async Task SendAsync(IPage page, ILocator composer, string text, string agentId = "alpha")
     {
         await composer.FillAsync(text);
-        var send = page.Locator("[data-testid='chat-send']").First;
+        var send = page.Locator($"#{agentId}-conversation-panel [data-testid='chat-send']");
         await send.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await send.ClickAsync();
         try
@@ -434,9 +435,9 @@ public sealed class CompactionContinuityTests
         catch (TimeoutException) { }
     }
 
-    private static async Task WaitForAssistantTextAsync(IPage page, string substring, TimeSpan timeout)
+    private static async Task WaitForAssistantTextAsync(IPage page, string substring, TimeSpan timeout, string agentId = "alpha")
     {
-        var locator = page.Locator(".message.assistant .message-content")
+        var locator = page.Locator($"#{agentId}-conversation-panel .message.assistant .message-content")
             .Filter(new LocatorFilterOptions { HasTextString = substring })
             .First;
         try

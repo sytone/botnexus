@@ -66,7 +66,7 @@ public sealed class SessionIsolationTests
         await portalA.ConversationNewBtn.ClickAsync();
         await pageA.WaitForTimeoutAsync(500);
 
-        var chatB = new ChatPanelPage(pageA);
+        var chatB = new ChatPanelPage(pageA, agentId);
         await chatB.SendMessageAsync("MULTI_DELTA");
         await chatB.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
@@ -128,11 +128,10 @@ public sealed class SessionIsolationTests
         Assert.False(hasErrorText,
             "New empty session shows an error state. Should show an empty state / welcome message.");
 
-        // Must show: some kind of input affordance so the user knows what to do
-        var inputBox = page.Locator(
-            "[data-testid='chat-input'], .message-input, textarea[placeholder], input[placeholder]")
-            .First;
-        var inputVisible = await inputBox.IsVisibleAsync();
+        // Must show: some kind of input affordance so the user knows what to do.
+        // Scope to charlie's conversation panel — that's the agent we navigated to.
+        var chatForNew = new BotNexus.Integration.E2E.Tests.PageObjects.ChatPanelPage(page, agentId);
+        var inputVisible = await chatForNew.ChatInput.IsVisibleAsync();
         Assert.True(inputVisible,
             "New empty session: message input not visible. A first-time user has no way to " +
             "know they should type here. Empty state must show the message input box.");
