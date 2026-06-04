@@ -43,6 +43,16 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
         // Wait briefly for the page to settle after NetworkIdle
         await page.WaitForTimeoutAsync(1000);
 
+        // The sidebar starts closed when localStorage has no saved state (fresh CI browser).
+        // Open it by clicking the burger button so sidebar-subnav items become visible.
+        var sidebar = page.Locator(".main-sidebar");
+        var isClosed = await sidebar.EvaluateAsync<bool>("el => el.classList.contains('sidebar-closed')");
+        if (isClosed)
+        {
+            await page.Locator(".burger-btn").ClickAsync();
+            await page.WaitForTimeoutAsync(300);
+        }
+
         return (page, portal);
     }
 

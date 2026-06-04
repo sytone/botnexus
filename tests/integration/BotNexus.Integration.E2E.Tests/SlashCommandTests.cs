@@ -186,12 +186,22 @@ public sealed class SlashCommandTests
         var messagesBefore = await chat.Page.Locator(agentPanelSel).CountAsync();
         await chat.ExecuteSlashCommandAsync("/new");
 
-        // /new should navigate to a fresh conversation — URL changes or messages reset.
-        // Give the portal time to react (new session = new conversation ID in URL or cleared state).
-        await Task.Delay(4_000);
-
-        var urlAfter = page.Url;
-        var messagesAfter = await chat.Page.Locator(agentPanelSel).CountAsync();
+        // /new should navigate to a fresh conversation - URL changes or messages reset.
+        // Wait up to 15s for either a URL change (new conversation ID appended) or message reset.
+        var urlAfter = urlBefore;
+        var messagesAfter = messagesBefore;
+        try
+        {
+            // Primary signal: URL path gains a conversation ID suffix after /new creates one.
+            await page.WaitForURLAsync(url => url != urlBefore, new PageWaitForURLOptions { Timeout = 15_000 });
+            urlAfter = page.Url;
+        }
+        catch (TimeoutException)
+        {
+            // URL didn't change within timeout; check message count as fallback.
+            await Task.Delay(1_000);
+        }
+        messagesAfter = await chat.Page.Locator(agentPanelSel).CountAsync();
 
         // Either the URL has changed (new conversation ID) or the message list is now empty/shorter
         // Note: the portal may not update the URL for /new — URL change is a nice-to-have, not required.
