@@ -368,7 +368,7 @@ test(domain): add missing edge case for session expiry
 The BotNexus development configuration file is located at:
 
 ```
-C:\Users\jobullen\.botnexus\config.json
+C:\Users\<ALIAS>\.botnexus\config.json
 ```
 
 Use the BotNexus CLI to manage configuration:
