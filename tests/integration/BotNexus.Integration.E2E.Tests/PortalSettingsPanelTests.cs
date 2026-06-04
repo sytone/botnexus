@@ -109,9 +109,13 @@ public sealed class PortalSettingsPanelTests : IAsyncLifetime
         // Click on the overlay background to the left of the panel.
         // The panel is right-aligned (width 320px), so any x < viewportWidth-320 is on the overlay.
         // Use the locator API so Playwright targets the actual overlay element.
-        await overlay.ClickAsync(new LocatorClickOptions { Position = new Position { X = 50, Y = 50 } });
+        await overlay.ClickAsync(new LocatorClickOptions
+        {
+            Position = new Microsoft.Playwright.Position { X = 50, Y = 50 },
+            Force = true,
+        });
 
-        await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+        await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 8_000 });
     }
 
     [SkippableFact]

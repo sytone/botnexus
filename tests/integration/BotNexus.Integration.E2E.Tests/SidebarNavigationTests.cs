@@ -86,7 +86,9 @@ public sealed class SidebarNavigationTests
 
         var workspaceTabSelected = activePanel.Locator("[data-tab='workspace']").First;
         var ariaSelected = await workspaceTabSelected.GetAttributeAsync("aria-selected");
-        Assert.True(ariaSelected is not null, "Tab should have aria-selected attribute after clicking");
+        Assert.True(
+            "true".Equals(ariaSelected, StringComparison.OrdinalIgnoreCase) || await workspaceTabSelected.EvaluateAsync<bool>("el => el.classList.contains('active')"),
+            $"Workspace tab not selected after click. aria-selected='{ariaSelected}'");
 
         // Switch back to Conversation tab
         var convTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Conversation" }).First;
@@ -94,7 +96,9 @@ public sealed class SidebarNavigationTests
 
         var convTabSelected = activePanel.Locator("[data-tab='conversation']").First;
         ariaSelected = await convTabSelected.GetAttributeAsync("aria-selected");
-        Assert.True(ariaSelected is not null, "Tab should have aria-selected attribute after clicking");
+        Assert.True(
+            "true".Equals(ariaSelected, StringComparison.OrdinalIgnoreCase) || await convTabSelected.EvaluateAsync<bool>("el => el.classList.contains('active')"),
+            $"Conversation tab not selected after click. aria-selected='{ariaSelected}'");
     }
 
     [SkippableFact]

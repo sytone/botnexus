@@ -164,6 +164,9 @@ public sealed class ConversationManagementTests
         await titleInput.FillAsync("This should not be saved");
         await titleInput.PressAsync("Escape");
 
+        // Wait for the input to be hidden before reading the displayed title
+        await titleInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 3_000 });
+
         // Title should revert to original
         var restoredTitle = page.Locator(".conversation-title").First;
         await restoredTitle.WaitForAsync(new LocatorWaitForOptions

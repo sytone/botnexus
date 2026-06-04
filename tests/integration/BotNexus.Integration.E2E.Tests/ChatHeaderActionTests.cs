@@ -56,7 +56,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var configBtn = page.Locator(".chat-header-actions .config-btn").First;
+        var configBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .chat-header-actions .config-btn");
         await configBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await configBtn.ClickAsync();
 
@@ -74,7 +74,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var newSessionBtn = page.Locator(".new-chat-btn").First;
+        var newSessionBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .new-chat-btn");
         await newSessionBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await newSessionBtn.ClickAsync();
 
@@ -98,7 +98,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var newSessionBtn = page.Locator(".new-chat-btn").First;
+        var newSessionBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .new-chat-btn");
         await newSessionBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await newSessionBtn.ClickAsync();
 
@@ -120,7 +120,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var newSessionBtn = page.Locator(".new-chat-btn").First;
+        var newSessionBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .new-chat-btn");
         await newSessionBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await newSessionBtn.ClickAsync();
 

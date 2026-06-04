@@ -19,12 +19,19 @@ window.chatScroll = {
      *  so the element is visible (hidden panels have scrollHeight=0). */
     forceScrollToBottom: function (element) {
         if (!element) return;
+        // Immediate attempt
+        element.scrollTop = element.scrollHeight;
+        // rAF attempt — catches most Blazor DOM mutations
         requestAnimationFrame(function () {
             element.scrollTop = element.scrollHeight;
-            // Backstop: re-scroll after a short delay to catch any late DOM mutations
+            // Short backstop for late text deltas
             setTimeout(function () {
                 element.scrollTop = element.scrollHeight;
-            }, 50);
+            }, 100);
+            // Longer backstop for history loads that arrive after hub connect
+            setTimeout(function () {
+                element.scrollTop = element.scrollHeight;
+            }, 600);
         });
     },
 
