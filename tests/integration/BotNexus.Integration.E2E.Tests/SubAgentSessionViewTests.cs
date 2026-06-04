@@ -65,12 +65,11 @@ public sealed class SubAgentSessionViewTests : IAsyncLifetime
     public async Task SubAgentSession_InputArea_IsPresent_ForNormalAgent()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+        var (_, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        var input = page.Locator("[data-testid='chat-input']");
-        await input.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
-        Assert.True(await input.IsVisibleAsync(),
+        await chat.ChatInput.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        Assert.True(await chat.ChatInput.IsVisibleAsync(),
             "Chat input should be visible for non-readonly conversations.");
     }
 

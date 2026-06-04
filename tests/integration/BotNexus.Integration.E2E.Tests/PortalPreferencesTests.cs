@@ -8,7 +8,7 @@ namespace BotNexus.Integration.E2E.Tests;
 /// Tests for the portal settings panel preferences:
 /// - Expanding input toggle persists across navigation
 /// - Portal settings panel opens and closes correctly (complements PortalSettingsPanelTests)
-/// - Settings icon (⚙️) is not a literal 'x' (regression for #630)
+/// - Settings icon is not a literal 'x' (regression for #630)
 /// - Close button in panel is not a literal 'x' (regression for #634)
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
@@ -65,10 +65,11 @@ public sealed class PortalPreferencesTests : IAsyncLifetime
 
         await page.Locator("[data-testid='banner-settings-btn']").ClickAsync();
 
-        var panel = page.Locator("[data-testid='portal-settings-panel']");
+        // Panel uses CSS class .portal-settings-panel, not a data-testid
+        var panel = page.Locator(".portal-settings-panel");
         await panel.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
-        var closeBtn = panel.Locator("[data-testid='portal-settings-close']");
+        var closeBtn = panel.Locator("[data-testid='settings-close-btn']");
         if (await closeBtn.CountAsync() > 0)
         {
             var text = (await closeBtn.TextContentAsync() ?? "").Trim();
@@ -86,7 +87,7 @@ public sealed class PortalPreferencesTests : IAsyncLifetime
 
         await page.Locator("[data-testid='banner-settings-btn']").ClickAsync();
 
-        var panel = page.Locator("[data-testid='portal-settings-panel']");
+        var panel = page.Locator(".portal-settings-panel");
         await panel.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
         var panelText = (await panel.TextContentAsync() ?? "").ToLowerInvariant();
@@ -102,22 +103,21 @@ public sealed class PortalPreferencesTests : IAsyncLifetime
     public async Task ChatInput_AcceptsText_AndDoesNotSubmitOnEnter_WithShift()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
-        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(
+        var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        var input = page.Locator("[data-testid='chat-input']");
-        await input.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        await chat.ChatInput.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
         var beforeCount = await page.Locator("[data-testid='message']").CountAsync();
-        await input.ClickAsync();
+        await chat.ChatInput.ClickAsync();
         // Shift+Enter should insert newline, not submit
-        await input.PressSequentiallyAsync("Line 1", new() { Delay = 20 });
-        await input.PressAsync("Shift+Enter");
-        await input.PressSequentiallyAsync("Line 2", new() { Delay = 20 });
+        await chat.ChatInput.PressSequentiallyAsync("Line 1", new() { Delay = 20 });
+        await chat.ChatInput.PressAsync("Shift+Enter");
+        await chat.ChatInput.PressSequentiallyAsync("Line 2", new() { Delay = 20 });
 
         var afterCount = await page.Locator("[data-testid='message']").CountAsync();
         Assert.Equal(beforeCount, afterCount); // No message submitted
-        var value = await input.InputValueAsync();
+        var value = await chat.ChatInput.InputValueAsync();
         Assert.True(value.Contains("Line 1"), "Input should still contain the typed text.");
     }
 }

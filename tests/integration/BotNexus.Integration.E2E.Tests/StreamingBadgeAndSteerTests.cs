@@ -5,9 +5,9 @@ using Xunit.Abstractions;
 namespace BotNexus.Integration.E2E.Tests;
 
 /// <summary>
-/// Tests for the streaming badge ("Streaming…") shown in the chat header during active turns,
-/// the steer button (🔀 Steer) that appears while streaming,
-/// and the abort button (⏹ Stop) + Escape key shortcut.
+/// Tests for the streaming badge ("Streaming...") shown in the chat header during active turns,
+/// the steer button (Steer) that appears while streaming,
+/// and the abort button (Stop) + Escape key shortcut.
 /// </summary>
 [Collection(NewUserExperienceCollection.Name)]
 public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
@@ -52,11 +52,11 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
             var badge = page.Locator(".streaming-badge");
             await badge.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 8_000 });
             var text = (await badge.TextContentAsync() ?? "").Trim();
-            Assert.True(text.Contains("Streaming"), $"Streaming badge should say 'Streaming…', got: '{text}'.");
+            Assert.True(text.Contains("Streaming"), $"Streaming badge should say 'Streaming...', got: '{text}'.");
         }
         catch (TimeoutException)
         {
-            _out.WriteLine("Streaming badge not observed — stream may have completed too quickly.");
+            _out.WriteLine("Streaming badge not observed - stream may have completed too quickly.");
         }
     }
 
@@ -73,20 +73,18 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
 
         try
         {
-            var steerBtn = page.Locator(".steer-btn");
+            var steerBtn = chat.SteerBtn;
             await steerBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 8_000 });
 
-            var sendBtn = page.Locator("[data-testid='chat-send']");
-            var sendVisible = await sendBtn.IsVisibleAsync();
+            var sendVisible = await chat.SendBtn.IsVisibleAsync();
             Assert.False(sendVisible, "Send button should be hidden while Steer button is visible.");
 
-            var abortBtn = page.Locator(".abort-btn");
-            var abortVisible = await abortBtn.IsVisibleAsync();
+            var abortVisible = await chat.AbortBtn.IsVisibleAsync();
             Assert.True(abortVisible, "Abort (Stop) button should be visible during streaming.");
         }
         catch (TimeoutException)
         {
-            _out.WriteLine("Stream completed before steer/abort observation — acceptable.");
+            _out.WriteLine("Stream completed before steer/abort observation - acceptable.");
         }
     }
 
@@ -103,18 +101,16 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
 
         try
         {
-            var abortBtn = page.Locator(".abort-btn");
-            await abortBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 8_000 });
-            await abortBtn.ClickAsync();
+            await chat.AbortBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 8_000 });
+            await chat.AbortBtn.ClickAsync();
 
             // Send button should come back
-            var sendBtn = page.Locator("[data-testid='chat-send']");
-            await sendBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-            _out.WriteLine("Abort succeeded — send button restored.");
+            await chat.SendBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            _out.WriteLine("Abort succeeded - send button restored.");
         }
         catch (TimeoutException)
         {
-            _out.WriteLine("Abort button not observed in time — stream completed before abort.");
+            _out.WriteLine("Abort button not observed in time - stream completed before abort.");
         }
     }
 
@@ -136,16 +132,15 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
                 new() { Timeout = 8_000 });
 
             // Focus the input and press Escape
-            await page.Locator("[data-testid='chat-input']").ClickAsync();
+            await chat.ChatInput.ClickAsync();
             await page.Keyboard.PressAsync("Escape");
 
-            var sendBtn = page.Locator("[data-testid='chat-send']");
-            await sendBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            await chat.SendBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
             _out.WriteLine("Escape abort succeeded.");
         }
         catch (TimeoutException)
         {
-            _out.WriteLine("Stream completed before Escape abort — acceptable.");
+            _out.WriteLine("Stream completed before Escape abort - acceptable.");
         }
     }
 
@@ -158,10 +153,9 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
-        var input = page.Locator("[data-testid='chat-input']");
-        var normalPlaceholder = await input.GetAttributeAsync("placeholder") ?? "";
+        var normalPlaceholder = await chat.ChatInput.GetAttributeAsync("placeholder") ?? "";
         Assert.True(normalPlaceholder.Contains("Type a message"),
-            $"Normal placeholder should say 'Type a message…', got: '{normalPlaceholder}'.");
+            $"Normal placeholder should say 'Type a message...', got: '{normalPlaceholder}'.");
 
         await chat.SendMessageAsync("SLOW_STREAM");
 
@@ -170,13 +164,13 @@ public sealed class StreamingBadgeAndSteerTests : IAsyncLifetime
             await page.WaitForFunctionAsync(
                 "document.querySelector('[data-testid=\"chat-input\"]')?.placeholder?.includes('steer')",
                 null, new() { Timeout = 8_000 });
-            var streamingPlaceholder = await input.GetAttributeAsync("placeholder") ?? "";
+            var streamingPlaceholder = await chat.ChatInput.GetAttributeAsync("placeholder") ?? "";
             Assert.True(streamingPlaceholder.Contains("steer"),
                 $"During streaming placeholder should hint at steering, got: '{streamingPlaceholder}'.");
         }
         catch (TimeoutException)
         {
-            _out.WriteLine("Streaming placeholder not observed — stream completed too fast.");
+            _out.WriteLine("Streaming placeholder not observed - stream completed too fast.");
         }
     }
 }
