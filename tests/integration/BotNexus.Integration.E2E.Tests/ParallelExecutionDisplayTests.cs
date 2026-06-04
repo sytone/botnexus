@@ -114,7 +114,8 @@ public sealed class ParallelExecutionDisplayTests
         await portal.SelectAgentAsync(agentB);
 
         // Agent B panel should load normally — not stuck/frozen
-        var agentBPanel = page.Locator("[data-testid='agent-panel']").First;
+        // Scope to the specific agent panel to avoid multi-panel strict mode violations.
+        var agentBPanel = page.Locator($"#{agentB}-conversation-panel");
         await agentBPanel.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
@@ -122,7 +123,7 @@ public sealed class ParallelExecutionDisplayTests
         });
 
         // Agent B's input should be usable
-        var chatB = new ChatPanelPage(page);
+        var chatB = new ChatPanelPage(page, agentB);
         var inputVisible = await chatB.ChatInput.IsVisibleAsync();
         Assert.True(inputVisible,
             "After switching to agent B while agent A was streaming, agent B's input is not visible. " +
@@ -182,7 +183,8 @@ public sealed class ParallelExecutionDisplayTests
         });
 
         // Wait for agent panel to be visible and interactive
-        await freshPage.Locator("[data-testid='agent-panel']").First
+        // Scope to the specific agent panel to avoid multi-panel strict mode violations.
+        await freshPage.Locator($"#{agentId}-conversation-panel")
             .WaitForAsync(new LocatorWaitForOptions
             {
                 State = WaitForSelectorState.Visible,
@@ -196,7 +198,7 @@ public sealed class ParallelExecutionDisplayTests
             "Investigate render blocking, over-fetching, or missing pagination.");
 
         // Input must be functional (portal fully hydrated, not just painted)
-        var freshChat = new ChatPanelPage(freshPage);
+        var freshChat = new ChatPanelPage(freshPage, agentId);
         var inputEnabled = await freshChat.ChatInput.IsEnabledAsync();
         Assert.True(inputEnabled,
             "Agent panel visible but input is disabled/frozen after load. " +

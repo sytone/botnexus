@@ -38,6 +38,7 @@ public sealed class SlashCommandTests
             State = WaitForSelectorState.Visible,
             Timeout = 20_000,
         });
+        await chat.ChatInput.ClickAsync(); // ensure focus before typing
         await chat.ChatInput.PressSequentiallyAsync("/");
 
         // Command palette should appear within 15s (CI can be slow)

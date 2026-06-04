@@ -71,9 +71,11 @@ public sealed class PanelContentTests : IAsyncLifetime
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
 
+        // Scope to the specific agent panel to avoid strict mode violations in multi-panel portal
+        var agentPanel = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel");
+
         // Either a file tree or an empty-state message should render
-        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel");
-        var emptyState = page.Locator(".workspace-empty, .workspace-panel");
+        var fileTree = agentPanel.Locator(".workspace-file-tree, .workspace-panel");
 
         // At least one of these should be present
         var treeVisible = await fileTree.IsVisibleAsync();
@@ -110,8 +112,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on reports tab");
 
-        // Reports panel section should be active
-        var activePane = page.Locator(".agent-tab-pane.active");
+        // Scope to the specific agent's reports panel
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-reports-panel");
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -124,7 +126,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "reports");
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-reports-panel");
         var paneText = await activePane.InnerTextAsync();
         // Should render something
         Assert.False(string.IsNullOrWhiteSpace(paneText), "Reports panel should render some content");
@@ -143,7 +145,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on canvas tab");
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-canvas-panel");
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -177,7 +179,9 @@ public sealed class PanelContentTests : IAsyncLifetime
         {
             var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
-            var canvasTab = page.Locator("[data-tab='canvas']").First;
+            // Scope the tab locator to the specific agent panel to avoid multi-panel strict mode
+            var agentPanelRoot = page.Locator($"#{agentId}-conversation-panel");
+            var canvasTab = agentPanelRoot.Locator("[data-tab='canvas']");
             await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
             Assert.True(await canvasTab.IsVisibleAsync(),

@@ -241,16 +241,19 @@ public sealed class PortalUserJourneyTests
         Xunit.Assert.NotNull(nav);
         Xunit.Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
 
-        var composer = page.Locator("[data-testid='chat-input']").First;
+        // Scope to the specific agent panel so we do not accidentally target a hidden panel
+        // in the multi-panel portal layout (all agent panels are rendered simultaneously).
+        var agentPanel = page.Locator($"#{agentId}-conversation-panel");
+        var composer = agentPanel.Locator("[data-testid='chat-input']");
         await composer.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
             Timeout = 30_000,
         });
         await composer.FillAsync(message);
-        await page.Locator("[data-testid='chat-send']").First.ClickAsync();
+        await agentPanel.Locator("[data-testid='chat-send']").ClickAsync();
 
-        var match = page.Locator("[data-testid='message'], [data-testid='streaming-message']")
+        var match = agentPanel.Locator("[data-testid='message'], [data-testid='streaming-message']")
             .Filter(new LocatorFilterOptions { HasTextString = expectedFragment });
 
         try
