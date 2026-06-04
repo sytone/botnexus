@@ -17,7 +17,7 @@ namespace BotNexus.Integration.E2E.Tests;
 /// Tests 1 and 2 are static (no gateway needed). Tests 3-5 require a live gateway.
 /// The bug is proven by tests 1+2 failing before the fix, passing after.
 /// </summary>
-[Collection(NewUserExperienceCollection.Name)]
+[Collection(MobileScrollCollection.Name)]
 public sealed class MobileScrollTests : IAsyncLifetime
 {
     private readonly NewUserExperienceFixture _fx;
@@ -168,8 +168,8 @@ public sealed class MobileScrollTests : IAsyncLifetime
         var msgLocator = _page.Locator(".message-stream .message, .message-stream .tool-pill");
         await msgLocator.First.WaitForAsync(new() { State = WaitForSelectorState.Attached, Timeout = 20_000 });
 
-        // Allow OnAfterRenderAsync + requestAnimationFrame + 50ms backstop to complete
-        await _page.WaitForTimeoutAsync(500);
+        // Allow OnAfterRenderAsync + HandleReadyChanged + requestAnimationFrame + backstop timers to complete
+        await _page.WaitForTimeoutAsync(1000);
 
         var scrollInfo = await GetScrollInfoAsync();
         _out.WriteLine($"History load scroll: top={scrollInfo.ScrollTop:F0} height={scrollInfo.ScrollHeight:F0} client={scrollInfo.ClientHeight:F0} atBottom={scrollInfo.AtBottom}");
@@ -207,8 +207,8 @@ public sealed class MobileScrollTests : IAsyncLifetime
             $"document.querySelectorAll('.message-stream .message').length > {beforeCount}",
             null, new() { Timeout = 15_000 });
 
-        // Allow requestAnimationFrame + 50ms backstop to complete
-        await _page.WaitForTimeoutAsync(400);
+        // Allow requestAnimationFrame + backstop timers to complete
+        await _page.WaitForTimeoutAsync(900);
 
         var scrollInfo = await GetScrollInfoAsync();
         _out.WriteLine($"After send scroll: top={scrollInfo.ScrollTop:F0} height={scrollInfo.ScrollHeight:F0} atBottom={scrollInfo.AtBottom}");
@@ -248,7 +248,7 @@ public sealed class MobileScrollTests : IAsyncLifetime
         await _page.WaitForFunctionAsync(
             $"document.querySelectorAll('.message-stream .message').length > {beforeCount}",
             null, new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(400);
+        await _page.WaitForTimeoutAsync(900);
 
         var scrollInfo = await GetScrollInfoAsync();
         _out.WriteLine($"Preserve scroll: top={scrollInfo.ScrollTop:F0} height={scrollInfo.ScrollHeight:F0} client={scrollInfo.ClientHeight:F0} atBottom={scrollInfo.AtBottom}");
