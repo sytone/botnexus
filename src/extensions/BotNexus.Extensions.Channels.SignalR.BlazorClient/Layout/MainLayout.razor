@@ -226,11 +226,9 @@
                 }
             </nav>
 
-            @* Restart button + build info at bottom *@
+            @* Build info at bottom *@
             <div class="sidebar-footer">
-                <button class="restart-btn" @onclick="RestartGateway" disabled="@_restarting">
-                    @(_restarting ? "Restarting…" : "🔄 Restart Gateway")
-                </button>
+                @* Restart Gateway button removed -- no process supervisor present; button killed the gateway with no recovery (#794) *@
                 @if (GatewayInfo.Info is not null)
                 {
                     <div class="gateway-info">
@@ -294,7 +292,6 @@
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
     private List<Announcement> _announcements = [];
     private List<SidebarAgentItem> _sidebarAgents = [];
-        private bool _restarting;
     private PortalSettingsPanel? _settingsPanel;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
@@ -587,18 +584,6 @@
         _showUpdateConfirm = false;
         await UpdateStatus.StartUpdateAsync();
         await InvokeAsync(StateHasChanged);
-    }
-
-    private async Task RestartGateway()
-    {
-        _restarting = true;
-        try
-        {
-            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            await http.PostAsync("/api/gateway/shutdown", null);
-        }
-        catch { /* Expected — gateway drops */ }
-        _restarting = false;
     }
 
     public void Dispose()
