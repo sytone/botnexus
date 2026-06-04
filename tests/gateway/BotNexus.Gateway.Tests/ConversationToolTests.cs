@@ -400,6 +400,92 @@ public sealed class ConversationToolTests
         return args;
     }
 
+    // --- Archive action tests (#700) ---
+
+    [Fact]
+    public async Task Archive_SetsConversationStatusToArchived()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Old Chat", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
+
+        var result = await tool.ExecuteAsync("call-1", Args("archive"));
+        var text = ReadText(result);
+
+        text.ShouldContain("archived");
+
+        var updated = await store.GetAsync(conversation.ConversationId);
+        updated.ShouldNotBeNull();
+        updated.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task Archive_WithExplicitConversationId_ArchivesCorrectConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var conv1 = await store.CreateAsync(CreateConversation("agent-a", "Keep", null));
+        var conv2 = await store.CreateAsync(CreateConversation("agent-a", "Remove", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conv1.ConversationId);
+
+        await tool.ExecuteAsync("call-1", Args("archive", conversationId: conv2.ConversationId.Value));
+
+        var kept = await store.GetAsync(conv1.ConversationId);
+        var removed = await store.GetAsync(conv2.ConversationId);
+        kept.ShouldNotBeNull();
+        kept.Status.ShouldBe(ConversationStatus.Active);
+        removed.ShouldNotBeNull();
+        removed.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task Archive_OwnAccess_DeniesOtherAgentConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-b", "Secret", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args("archive", conversationId: conversation.ConversationId.Value));
+
+        await act.ShouldThrowAsync<UnauthorizedAccessException>();
+    }
+
+    [Fact]
+    public async Task Archive_AllAccess_CanArchiveOtherAgentConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-b", "Old", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.All);
+
+        await tool.ExecuteAsync("call-1", Args("archive", conversationId: conversation.ConversationId.Value));
+
+        var updated = await store.GetAsync(conversation.ConversationId);
+        updated.ShouldNotBeNull();
+        updated.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task Archive_NonExistentConversation_ThrowsKeyNotFoundException()
+    {
+        var store = new InMemoryConversationStore();
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+        var fakeId = ConversationId.Create();
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args("archive", conversationId: fakeId.Value));
+
+        await act.ShouldThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task PrepareArguments_ArchiveAction_IsAccepted()
+    {
+        var store = new InMemoryConversationStore();
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        // Should not throw
+        var result = await tool.PrepareArgumentsAsync(Args("archive"));
+        result.ShouldNotBeNull();
+    }
+
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
 }

@@ -29,14 +29,14 @@ public sealed class ConversationTool(
 
     public Tool Definition => new(
         Name,
-        "Get, list, create, and annotate persistent conversation context.",
+        "Get, list, create, annotate, and archive persistent conversation context.",
         JsonDocument.Parse("""
             {
               "type": "object",
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["get", "set_title", "set_purpose", "set", "list", "new", "message"],
+                  "enum": ["get", "set_title", "set_purpose", "set", "list", "new", "message", "archive"],
                   "description": "Action to perform."
                 },
                 "conversationId": {
@@ -84,7 +84,8 @@ public sealed class ConversationTool(
             !action.Equals("list", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("new", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("set", StringComparison.OrdinalIgnoreCase) &&
-            !action.Equals("message", StringComparison.OrdinalIgnoreCase))
+            !action.Equals("message", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("archive", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"Unsupported conversation action '{action}'.");
 
         return Task.FromResult(arguments);
@@ -106,6 +107,7 @@ public sealed class ConversationTool(
             "new" => await NewAsync(arguments, cancellationToken).ConfigureAwait(false),
             "set" => await SetAsync(arguments, cancellationToken).ConfigureAwait(false),
             "message" => await SendMessageAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "archive" => await ArchiveAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported conversation action '{action}'.")
         };
     }
@@ -315,6 +317,19 @@ public sealed class ConversationTool(
         }
         await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
         return TextResult("Conversation updated.");
+    }
+
+    private async Task<AgentToolResult> ArchiveAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
+    {
+        var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
+        EnsureCanAccess(conversation.AgentId);
+        await conversationStore.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(new
+        {
+            conversationId = conversation.ConversationId.Value,
+            agentId = conversation.AgentId.Value,
+            status = "archived"
+        }, JsonOptions));
     }
 
     private async Task<Conversation> ResolveConversationAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
