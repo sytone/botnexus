@@ -193,6 +193,18 @@ else
         await ApplyRouteSelectionAsync();
     }
 
+    /// <summary>
+    /// Scrolls to the bottom after the first render so that history loaded on
+    /// mount or navigation is immediately visible at the most recent message.
+    /// Without this override, the view stays at scroll position 0 regardless
+    /// of how many messages are loaded (issue #793).
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await ForceScrollToBottomAsync();
+    }
+
     private void HandleReadyChanged() =>
         _ = InvokeAsync(async () =>
         {
