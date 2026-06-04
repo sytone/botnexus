@@ -81,17 +81,14 @@ public sealed class SessionIsolationTests
             WaitUntil = WaitUntilState.NetworkIdle,
             Timeout = 30_000
         });
-        await pageA.WaitForTimeoutAsync(1_500);
 
-        // A's content (Hello, world!) must be visible; B's content must not
-        var pageContent = await pageA.ContentAsync();
+        // Wait for conversation A's history to actually load (not just a flat delay)
+        var chatA2 = new ChatPanelPage(pageA);
+        await chatA2.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(15));
 
-        Assert.True(pageContent.Contains("Hello", StringComparison.OrdinalIgnoreCase),
-            "Switched back to conversation A but 'Hello' from HELLO_WORLD response not visible. " +
-            "Session isolation broken: conversation A history not restored.");
-
-        // "carefully" is a distinctive word from MULTI_DELTA that should NOT appear
-        Assert.False(pageContent.Contains("carefully", StringComparison.OrdinalIgnoreCase),
+        // "carefully" is a distinctive word from MULTI_DELTA that should NOT appear in A's messages
+        var messagesContent = await chatA2.MessagesContainer.InnerTextAsync();
+        Assert.False(messagesContent.Contains("carefully", StringComparison.OrdinalIgnoreCase),
             "Conversation B's content ('carefully' from MULTI_DELTA) leaked into conversation A. " +
             "Session isolation broken: message histories are being mixed.");
     }

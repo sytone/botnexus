@@ -106,8 +106,8 @@ public sealed class PortalSettingsPanelTests : IAsyncLifetime
         var overlay = page.Locator(".portal-settings-overlay");
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
-        // Click outside the panel (on the overlay itself) — use offset to avoid hitting the panel
-        await overlay.ClickAsync(new LocatorClickOptions { Position = new Position { X = 5, Y = 5 } });
+        // Click outside the panel (top-left corner of viewport) - settings panel is centered/right-aligned
+        await page.Mouse.ClickAsync(5, 5);
 
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
     }

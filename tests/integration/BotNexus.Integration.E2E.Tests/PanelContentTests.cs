@@ -90,7 +90,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
         // The fixture provisions two locations: workspace-tmp and scratch
-        var panelContent = await page.Locator(".agent-tab-pane.active").InnerTextAsync();
+        var panelContent = await page.Locator(".agent-tab-pane.active").First.InnerTextAsync();
 
         // Should contain something — not be completely empty
         Assert.False(string.IsNullOrWhiteSpace(panelContent),
@@ -111,7 +111,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on reports tab");
 
         // Reports panel section should be active
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -124,7 +124,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "reports");
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         var paneText = await activePane.InnerTextAsync();
         // Should render something
         Assert.False(string.IsNullOrWhiteSpace(paneText), "Reports panel should render some content");
@@ -143,7 +143,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on canvas tab");
 
-        var activePane = page.Locator(".agent-tab-pane.active");
+        var activePane = page.Locator(".agent-tab-pane.active").First;
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
