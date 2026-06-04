@@ -237,7 +237,7 @@ public sealed class AgentTabTests : IAsyncLifetime
 
         await page.GotoAsync(
             $"{_fix.GatewayBaseUrl}/chat/{agentId}?tab=workspace",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
 
         // Wait for tab strip to render (sidebar may be closed — tab bar is in main canvas)
         var panel = ActivePanel(page);

@@ -46,7 +46,7 @@ public sealed class AgentsPage
     {
         await Page.GotoAsync($"{baseUrl}/agents", new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         // Wait for either the table or the empty state

@@ -32,6 +32,7 @@ public sealed class AdvancedChatFeatureTests
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("THINKING_BLOCK");
         await chat.WaitForAssistantMessageAsync("After careful consideration", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
@@ -72,6 +73,7 @@ public sealed class AdvancedChatFeatureTests
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("TOOL_CALL_SEQUENCE");
         await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
@@ -125,6 +127,7 @@ public sealed class AdvancedChatFeatureTests
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("TOOL_CALL_SEQUENCE");
         await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
@@ -169,13 +172,18 @@ public sealed class AdvancedChatFeatureTests
         var page1 = await ctx1.NewPageAsync();
         var page2 = await ctx2.NewPageAsync();
 
-        var chat1 = new ChatPanelPage(page1);
-        var chat2 = new ChatPanelPage(page2);
         var portal1 = new PortalPage(page1);
         var portal2 = new PortalPage(page2);
 
         await portal1.GotoAgentChatAsync(_fx.GatewayBaseUrl, _fx.AgentIds[0]);
         await portal2.GotoAgentChatAsync(_fx.GatewayBaseUrl, _fx.AgentIds[1]);
+
+        // Use scoped constructors so locators target the correct agent panel
+        var chat1 = new ChatPanelPage(page1, _fx.AgentIds[0]);
+        var chat2 = new ChatPanelPage(page2, _fx.AgentIds[1]);
+
+        await chat1.StartFreshSessionAsync();
+        await chat2.StartFreshSessionAsync();
 
         await chat1.ChatInput.FillAsync("MULTI_DELTA");
         await chat2.ChatInput.FillAsync("MULTI_DELTA");
@@ -211,6 +219,7 @@ public sealed class AdvancedChatFeatureTests
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();
@@ -244,6 +253,9 @@ public sealed class AdvancedChatFeatureTests
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        // Start fresh to avoid contamination from prior tests, then send a message
+        // so there is history for the session boundary to appear after the new session
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(30));
         await chat.WaitForStreamingCompleteAsync();

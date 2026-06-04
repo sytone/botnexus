@@ -58,8 +58,14 @@ public static class PortalTestHelpers
         var context = await browser.NewContextAsync();
         var page = await context.NewPageAsync();
         var portal = new PortalPage(page);
-        var chat = new ChatPanelPage(page);
+        var chat = new ChatPanelPage(page, agentId);
         await portal.GotoAgentChatAsync(baseUrl, agentId, loadTimeout);
+
+        // Wait for any in-flight streaming from prior tests to complete before
+        // handing off to the caller. Avoids races where the chat input is locked
+        // because the gateway is still processing a turn started by a previous test.
+        await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(10));
+
         return (page, portal, chat);
     }
 

@@ -4,42 +4,97 @@ namespace BotNexus.Integration.E2E.Tests.PageObjects;
 
 /// <summary>
 /// Page object for the chat panel of a single agent.
+/// All locators are scoped to the agent's conversation panel element so they
+/// work correctly in the multi-panel portal layout (3-4 panels rendered simultaneously).
 /// </summary>
 public sealed class ChatPanelPage
 {
     public IPage Page { get; }
 
+    /// <summary>
+    /// Root locator for this agent's conversation panel.
+    /// When an agentId is provided the scope is "#agentId-conversation-panel";
+    /// otherwise it falls back to the first agent-panel data-testid element.
+    /// </summary>
+    public ILocator Root { get; }
+
     // ── Input area ────────────────────────────────────────────────────────
-    public ILocator ChatInput       => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-input']").First;
-    public ILocator SendBtn         => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-send']").First;
-    public ILocator SteerBtn        => Page.Locator(".chat-panel-wrapper:not(.hidden) .steer-btn").First;
-    public ILocator AbortBtn        => Page.Locator(".chat-panel-wrapper:not(.hidden) .abort-btn").First;
+    public ILocator ChatInput       => Root.Locator("[data-testid='chat-input']");
+    public ILocator SendBtn         => Root.Locator("[data-testid='chat-send']");
+    public ILocator SteerBtn        => Root.Locator(".steer-btn");
+    public ILocator AbortBtn        => Root.Locator(".abort-btn");
 
     // ── Message area ──────────────────────────────────────────────────────
-    public ILocator MessagesContainer   => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-messages']").First;
-    public ILocator AssistantMessages   => Page.Locator(".chat-panel-wrapper:not(.hidden) .message.assistant .message-content, .chat-panel-wrapper:not(.hidden) .msg-content");
-    public ILocator SystemMessages      => Page.Locator(".chat-panel-wrapper:not(.hidden) [data-testid='chat-system-message']");
-    public ILocator UserMessages        => Page.Locator(".chat-panel-wrapper:not(.hidden) .message.user .message-content");
-    public ILocator StreamingIndicator  => Page.Locator(".chat-panel-wrapper:not(.hidden) .streaming-indicator").First;
-    public ILocator StreamingBadge      => Page.Locator(".chat-panel-wrapper:not(.hidden) .streaming-badge").First;
+    public ILocator MessagesContainer   => Root.Locator("[data-testid='chat-messages']");
+    public ILocator AssistantMessages   => Root.Locator(".message.assistant .message-content, .msg-content");
+    public ILocator SystemMessages      => Root.Locator("[data-testid='chat-system-message']");
+    public ILocator UserMessages        => Root.Locator(".message.user .message-content");
+    public ILocator StreamingIndicator  => Root.Locator(".streaming-indicator");
+    public ILocator StreamingBadge      => Root.Locator(".streaming-badge");
 
     // ── Header area ───────────────────────────────────────────────────────
-    public ILocator ConversationTitle   => Page.Locator(".chat-panel-wrapper:not(.hidden) .conversation-title").First;
-    public ILocator NewSessionBtn       => Page.Locator(".chat-panel-wrapper:not(.hidden) .new-chat-btn").First;
-    public ILocator ConfigBtn           => Page.Locator(".chat-panel-wrapper:not(.hidden) .config-btn").First;
-    public ILocator ToggleThinkingBtn   => Page.Locator(".chat-panel-wrapper:not(.hidden) button[title='Toggle thinking visibility']").First;
-    public ILocator ToggleToolsBtn      => Page.Locator(".chat-panel-wrapper:not(.hidden) button[title='Toggle tool visibility']").First;
+    public ILocator ConversationTitle   => Root.Locator(".conversation-title");
+    public ILocator NewSessionBtn       => Root.Locator(".new-chat-btn");
+    public ILocator ConfigBtn           => Root.Locator(".config-btn");
+    public ILocator ToggleThinkingBtn   => Root.Locator("button[title='Toggle thinking visibility']");
+    public ILocator ToggleToolsBtn      => Root.Locator("button[title='Toggle tool visibility']");
 
     // ── Command palette ───────────────────────────────────────────────────
-    public ILocator CommandPalette      => Page.Locator(".chat-panel-wrapper:not(.hidden) .command-palette").First;
-    public ILocator CommandItems        => Page.Locator(".chat-panel-wrapper:not(.hidden) .command-item");
+    public ILocator CommandPalette      => Root.Locator(".command-palette");
+    public ILocator CommandItems        => CommandPalette.Locator(".command-item");
 
-    // ── New session confirm ───────────────────────────────────────────────
-    public ILocator NewSessionConfirmDialog => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog").First;
-    public ILocator NewSessionConfirmBtn    => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog .confirm-btn").First;
-    public ILocator NewSessionCancelBtn     => Page.Locator(".chat-panel-wrapper:not(.hidden) .reset-confirm-dialog .cancel-btn").First;
+    // ── New session confirm (rendered in body, not scoped to panel) ───────
+    public ILocator NewSessionConfirmDialog => Page.Locator(".reset-confirm-dialog").First;
+    public ILocator NewSessionConfirmBtn    => Page.Locator(".reset-confirm-dialog .confirm-btn").First;
+    public ILocator NewSessionCancelBtn     => Page.Locator(".reset-confirm-dialog .cancel-btn").First;
 
-    public ChatPanelPage(IPage page) => Page = page;
+    /// <summary>Unscoped constructor — falls back to the first visible agent panel.</summary>
+    public ChatPanelPage(IPage page)
+    {
+        Page = page;
+        Root = page.Locator("[data-testid='agent-panel']").First;
+    }
+
+    /// <summary>Scoped constructor — all locators target the specific agent's panel.</summary>
+    public ChatPanelPage(IPage page, string agentId)
+    {
+        Page = page;
+        Root = page.Locator($"#{agentId}-conversation-panel");
+    }
+
+    /// <summary>
+    /// Click the New Session button, confirm the dialog, then wait for the chat input
+    /// to become visible again. Use this at the start of any test that needs a clean
+    /// conversation history (prevents cross-test message contamination on the shared gateway).
+    /// </summary>
+    public async Task StartFreshSessionAsync()
+    {
+        await NewSessionBtn.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+        await NewSessionBtn.ClickAsync();
+
+        await NewSessionConfirmDialog.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 5_000,
+        });
+        await NewSessionConfirmBtn.ClickAsync();
+
+        // Wait for the dialog to close and input to be ready
+        await NewSessionConfirmDialog.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Hidden,
+            Timeout = 5_000,
+        });
+        await ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+    }
 
     /// <summary>
     /// Type a message and click Send, then wait for the input to clear

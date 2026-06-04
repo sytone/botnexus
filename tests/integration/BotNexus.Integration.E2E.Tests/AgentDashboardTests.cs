@@ -149,7 +149,7 @@ public sealed class AgentDashboardTests : IAsyncLifetime
         var context2 = await _browser!.NewContextAsync();
         var page2 = await context2.NewPageAsync();
         await page2.GotoAsync($"{_fix.GatewayBaseUrl}/chat/{agentId}/{convId}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
 
         await page2.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions
         {
@@ -199,7 +199,7 @@ public sealed class AgentDashboardTests : IAsyncLifetime
         var (page, portal) = await PortalTestHelpers.NewPortalPageAsync(_browser!, _fix.GatewayBaseUrl);
 
         // Wait for connection to stabilise
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         var connStatus = portal.ConnectionStatus;
         await connStatus.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });

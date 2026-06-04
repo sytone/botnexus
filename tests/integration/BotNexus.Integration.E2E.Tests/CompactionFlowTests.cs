@@ -46,7 +46,7 @@ public sealed class CompactionFlowTests
 
         var nav = await page.GotoAsync($"{_fx.GatewayBaseUrl}/chat/{agentId}", new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         Xunit.Assert.NotNull(nav);

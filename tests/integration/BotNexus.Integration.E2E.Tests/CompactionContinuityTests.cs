@@ -400,7 +400,7 @@ public sealed class CompactionContinuityTests
     {
         var nav = await page.GotoAsync(url, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         Assert.NotNull(nav);

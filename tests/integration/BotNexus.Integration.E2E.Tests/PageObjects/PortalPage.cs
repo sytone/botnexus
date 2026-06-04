@@ -48,7 +48,7 @@ public sealed class PortalPage
         var ms = (float)(timeout ?? TimeSpan.FromSeconds(60)).TotalMilliseconds;
         await Page.GotoAsync(baseUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = ms,
         });
 
@@ -71,7 +71,11 @@ public sealed class PortalPage
         var ms = (float)(timeout ?? TimeSpan.FromSeconds(60)).TotalMilliseconds;
         await Page.GotoAsync($"{baseUrl}/chat/{agentId}", new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            // Use Load (not NetworkIdle) — the Blazor SignalR WebSocket and any
+            // in-progress agent turns keep the network permanently busy, so
+            // NetworkIdle never resolves. Load fires once the DOM + initial scripts
+            // are ready, then we wait for the agent-panel element to be attached.
+            WaitUntil = WaitUntilState.Load,
             Timeout = ms,
         });
 

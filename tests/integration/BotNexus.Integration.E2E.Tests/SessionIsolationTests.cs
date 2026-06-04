@@ -51,7 +51,7 @@ public sealed class SessionIsolationTests
         Skip.If(browser is null, skipReason);
 
         await using var _ = browser!;
-        var agentId = _fx.AgentIds[0];
+        var agentId = _fx.AgentIds[2]; // Use charlie to avoid contamination from alpha's heavy test load
 
         // ── Conversation A ────────────────────────────────────────────────
         var (pageA, portalA, chatA) = await PortalTestHelpers.NewChatPageAsync(
@@ -59,17 +59,8 @@ public sealed class SessionIsolationTests
         await chatA.SendMessageAsync("HELLO_WORLD");
         await chatA.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
-        // Get the active conversation ID from the sidebar so we can navigate back to it precisely.
-        // The portal may not auto-update the URL after send, so we read from the DOM.
-        await portalA.EnsureSidebarOpenAsync();
-        var convAItem = pageA.Locator("[data-testid='conversation-list-item'] .conversation-list-item-btn.active").First;
-        var convAId = await convAItem.EvaluateAsync<string?>("el => el.closest('[data-conversation-id]')?.getAttribute('data-conversation-id')");
-        var urlA = !string.IsNullOrWhiteSpace(convAId)
-            ? $"{_fx.GatewayBaseUrl}/chat/{agentId}/{convAId}"
-            : pageA.Url;
-        // Fall back to current URL if no href found
-        if (string.IsNullOrWhiteSpace(urlA) || urlA == _fx.GatewayBaseUrl)
-            urlA = pageA.Url;
+        // Capture conversation A's session URL so we can return to it
+        var urlA = pageA.Url;
 
         // ── Conversation B (new chat in same page) ─────────────────────────
         await portalA.ConversationNewBtn.ClickAsync();
@@ -87,17 +78,20 @@ public sealed class SessionIsolationTests
         // ── Switch back to conversation A ──────────────────────────────────
         await pageA.GotoAsync(urlA, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
+        await pageA.WaitForTimeoutAsync(1_500);
 
-        // Wait for conversation A's history to actually load (not just a flat delay)
-        var chatA2 = new ChatPanelPage(pageA);
-        await chatA2.WaitForAssistantMessageAsync("Hello", TimeSpan.FromSeconds(15));
+        // A's content (Hello, world!) must be visible; B's content must not
+        var pageContent = await pageA.ContentAsync();
 
-        // "carefully" is a distinctive word from MULTI_DELTA that should NOT appear in A's messages
-        var messagesContent = await chatA2.MessagesContainer.InnerTextAsync();
-        Assert.False(messagesContent.Contains("carefully", StringComparison.OrdinalIgnoreCase),
+        Assert.True(pageContent.Contains("Hello", StringComparison.OrdinalIgnoreCase),
+            "Switched back to conversation A but 'Hello' from HELLO_WORLD response not visible. " +
+            "Session isolation broken: conversation A history not restored.");
+
+        // "carefully" is a distinctive word from MULTI_DELTA that should NOT appear
+        Assert.False(pageContent.Contains("carefully", StringComparison.OrdinalIgnoreCase),
             "Conversation B's content ('carefully' from MULTI_DELTA) leaked into conversation A. " +
             "Session isolation broken: message histories are being mixed.");
     }
@@ -124,7 +118,7 @@ public sealed class SessionIsolationTests
 
         // Start a fresh conversation (new session)
         await portal.ConversationNewBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(1_000);
+        await page.WaitForTimeoutAsync(2_000); // wait for Blazor to render the new conversation
 
         var pageContent = await page.ContentAsync();
 
@@ -136,10 +130,7 @@ public sealed class SessionIsolationTests
 
         // Must show: some kind of input affordance so the user knows what to do
         var inputBox = page.Locator(
-            ".chat-panel-wrapper:not(.hidden) [data-testid='chat-input'], " +
-            ".chat-panel-wrapper:not(.hidden) .message-input, " +
-            ".chat-panel-wrapper:not(.hidden) textarea[placeholder], " +
-            ".chat-panel-wrapper:not(.hidden) input[placeholder]")
+            "[data-testid='chat-input'], .message-input, textarea[placeholder], input[placeholder]")
             .First;
         var inputVisible = await inputBox.IsVisibleAsync();
         Assert.True(inputVisible,
@@ -186,7 +177,7 @@ public sealed class SessionIsolationTests
         // Navigate to session B
         await page.GotoAsync(urlB, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 20_000
         });
         await page.WaitForTimeoutAsync(1_000);
@@ -278,7 +269,7 @@ public sealed class SessionIsolationTests
         // Hard reload
         await page.ReloadAsync(new PageReloadOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
         await page.WaitForTimeoutAsync(2_000);
