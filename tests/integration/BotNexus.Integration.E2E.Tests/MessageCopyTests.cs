@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -46,6 +46,7 @@ public sealed class MessageCopyTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -67,6 +68,7 @@ public sealed class MessageCopyTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
 
         var userMsg = page.Locator("[data-message-role='User']").First;
@@ -89,6 +91,7 @@ public sealed class MessageCopyTests : IAsyncLifetime
         // Grant clipboard permissions
         await page.Context.GrantPermissionsAsync(["clipboard-read", "clipboard-write"]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -125,6 +128,7 @@ public sealed class MessageCopyTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -151,6 +155,7 @@ public sealed class MessageCopyTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("TOOL_CALL_SEQUENCE");
         await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(20));
 

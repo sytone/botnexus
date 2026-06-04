@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -59,7 +59,7 @@ public sealed class ChatHeaderOverflowMenuTests : IAsyncLifetime
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
         var page = await GetNarrowPageAsync(_fx.AgentIds[0]);
 
-        var trigger = page.Locator(".chat-header-overflow-trigger");
+        var trigger = page.Locator(".chat-header-overflow-trigger").First;
         await trigger.WaitForAsync(new() { State = WaitForSelectorState.Attached, Timeout = 15_000 });
 
         // May be hidden by CSS when there's enough space; we just verify it exists in the DOM
@@ -75,7 +75,7 @@ public sealed class ChatHeaderOverflowMenuTests : IAsyncLifetime
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
         var page = await GetNarrowPageAsync(_fx.AgentIds[0]);
 
-        var trigger = page.Locator(".chat-header-overflow-trigger");
+        var trigger = page.Locator(".chat-header-overflow-trigger").First;
         await trigger.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
         await trigger.ClickAsync();
@@ -94,7 +94,7 @@ public sealed class ChatHeaderOverflowMenuTests : IAsyncLifetime
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
         var page = await GetNarrowPageAsync(_fx.AgentIds[0]);
 
-        var trigger = page.Locator(".chat-header-overflow-trigger");
+        var trigger = page.Locator(".chat-header-overflow-trigger").First;
         await trigger.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
         await trigger.ClickAsync();
 
@@ -115,7 +115,7 @@ public sealed class ChatHeaderOverflowMenuTests : IAsyncLifetime
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
         var page = await GetNarrowPageAsync(_fx.AgentIds[0]);
 
-        var trigger = page.Locator(".chat-header-overflow-trigger");
+        var trigger = page.Locator(".chat-header-overflow-trigger").First;
         await trigger.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
         await trigger.ClickAsync();
 

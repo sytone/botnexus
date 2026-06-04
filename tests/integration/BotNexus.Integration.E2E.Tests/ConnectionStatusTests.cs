@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -70,7 +70,7 @@ public sealed class ConnectionStatusTests : IAsyncLifetime
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
         // Session ID chip appears in the chat header
-        var chip = page.Locator(".session-controls .session-id");
+        var chip = page.Locator(".session-controls .session-id").First;
         // It may not appear if no session has started yet — wait up to 5s
         try
         {

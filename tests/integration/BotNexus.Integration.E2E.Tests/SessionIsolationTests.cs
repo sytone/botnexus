@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Playwright;
@@ -56,6 +56,7 @@ public sealed class SessionIsolationTests
         // ── Conversation A ────────────────────────────────────────────────
         var (pageA, portalA, chatA) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, agentId);
+        await chatA.StartFreshSessionAsync();
         await chatA.SendMessageAsync("HELLO_WORLD");
         await chatA.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 

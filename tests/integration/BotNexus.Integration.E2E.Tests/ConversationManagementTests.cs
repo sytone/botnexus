@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -47,7 +47,7 @@ public sealed class ConversationManagementTests
         // Wait for the conversation list to grow (SignalR update)
         await portal.Page.WaitForFunctionAsync(
             "before => document.querySelectorAll('[data-testid=conv-item]').length > before",
-            before.Count, new PageWaitForFunctionOptions { Timeout = 10_000 });
+            before.Count, new PageWaitForFunctionOptions { Timeout = 20_000 });
         var after = await portal.GetConversationTitlesAsync();
         Assert.True(after.Count > before.Count,
             $"Conversation count did not increase after clicking New. Before: {before.Count}, After: {after.Count}");

@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -45,6 +45,7 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -73,6 +74,7 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -95,6 +97,7 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
 
@@ -116,6 +119,7 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
             _browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
+        await chat.StartFreshSessionAsync();
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();
 

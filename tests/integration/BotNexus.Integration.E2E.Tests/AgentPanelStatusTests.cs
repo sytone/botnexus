@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -103,7 +103,16 @@ public sealed class AgentPanelStatusTests : IAsyncLifetime
 
         // Conversation tab should be selected by default
         var conversationTab = tabBar.Locator("[data-tab='conversation']");
-        var ariaSelected = await conversationTab.GetAttributeAsync("aria-selected") ?? "";
+        // Wait for the tab to have aria-selected set (may need a render cycle after initial load)
+        string ariaSelected = "";
+        try {
+            await page.WaitForFunctionAsync(
+                "() => { const t = document.querySelector('[data-testid=\"agent-panel\"] [data-tab=\"conversation\"]'); return t && t.getAttribute('aria-selected') === 'true'; }",
+                null, new PageWaitForFunctionOptions { Timeout = 5_000 });
+            ariaSelected = await conversationTab.GetAttributeAsync("aria-selected") ?? "";
+        } catch (TimeoutException) {
+            ariaSelected = await conversationTab.GetAttributeAsync("aria-selected") ?? "";
+        }
         Assert.True(ariaSelected.Equals("true", StringComparison.OrdinalIgnoreCase),
             $"Conversation tab should be aria-selected=true by default, got: '{ariaSelected}'.");
     }

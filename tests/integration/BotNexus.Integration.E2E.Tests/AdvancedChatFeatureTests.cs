@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -242,6 +242,8 @@ public sealed class AdvancedChatFeatureTests
             Timeout = 10_000,
         });
 
+        await page.Locator(".message.assistant").First.HoverAsync();
+        // Hover the parent message to trigger CSS :hover so the copy button becomes clickable
         await copyBtn.ClickAsync();
         // Wait for copy feedback — button briefly shows checkmark
         await page.WaitForFunctionAsync(

@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -72,7 +72,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
 
         // Scope to the specific agent panel to avoid strict mode violations in multi-panel portal
-        var agentPanel = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel");
+        // Scope to the workspace tab pane for this agent (not conversation panel)
+        var agentPanel = page.Locator($"#{_fix.AgentIds[0]}-workspace-panel");
 
         // Either a file tree or an empty-state message should render
         var fileTree = agentPanel.Locator(".workspace-file-tree, .workspace-panel");
@@ -92,7 +93,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         await page.WaitForLoadStateAsync(LoadState.Load);
 
         // The fixture provisions two locations: workspace-tmp and scratch
-        var panelContent = await page.Locator(".agent-tab-pane.active").InnerTextAsync();
+        // Scope to alpha workspace panel to avoid strict mode violation in multi-panel portal
+        var panelContent = await page.Locator("#alpha-workspace-panel").InnerTextAsync();
 
         // Should contain something — not be completely empty
         Assert.False(string.IsNullOrWhiteSpace(panelContent),
@@ -179,8 +181,11 @@ public sealed class PanelContentTests : IAsyncLifetime
         {
             var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
-            // Scope the tab locator to the specific agent panel to avoid multi-panel strict mode
-            var agentPanelRoot = page.Locator($"#{agentId}-conversation-panel");
+            // The AgentPanel root div has no id. Locate the agent-panel that contains the
+            // #{agentId}-canvas-panel section, then scope the tab to that panel.
+            // Use Filter: find agent-panel divs that have a descendant with the canvas-panel id.
+            var agentPanelRoot = page.Locator(".agent-panel")
+                .Filter(new() { Has = page.Locator($"#{agentId}-canvas-panel") });
             var canvasTab = agentPanelRoot.Locator("[data-tab='canvas']");
             await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
