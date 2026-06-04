@@ -180,7 +180,7 @@ public sealed class SqliteWebhookRunStore(
     {
         cmd.Parameters.AddWithValue("$id", r.Id.Value);
         cmd.Parameters.AddWithValue("$webhookId", r.WebhookId.Value);
-        cmd.Parameters.AddWithValue("$conversationId", r.ConversationId.HasValue ? (object)r.ConversationId.Value.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("$conversationId", r.ConversationId.Value);
         cmd.Parameters.AddWithValue("$sessionId", r.SessionId.HasValue ? (object)r.SessionId.Value.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("$status", r.Status.ToString());
         cmd.Parameters.AddWithValue("$acceptedAt", r.AcceptedAt.ToString("O"));
@@ -198,7 +198,7 @@ public sealed class SqliteWebhookRunStore(
         {
             Id = WebhookRunId.From(reader.GetString(0)),
             WebhookId = WebhookId.From(reader.GetString(1)),
-            ConversationId = reader.IsDBNull(2) ? null : ConversationId.From(reader.GetString(2)),
+            ConversationId = ConversationId.From(reader.GetString(2)),
             SessionId = reader.IsDBNull(3) ? null : SessionId.From(reader.GetString(3)),
             Status = Enum.Parse<WebhookRunStatus>(reader.GetString(4)),
             AcceptedAt = ParseDate(reader.GetString(5)),

@@ -12,7 +12,7 @@ public sealed record WebhookRun
     public required WebhookId WebhookId { get; init; }
 
     /// <summary>Conversation resolved or created for this run.</summary>
-    public ConversationId? ConversationId { get; init; }
+    public required ConversationId ConversationId { get; init; }
 
     /// <summary>Session in which the agent executed (set when run starts).</summary>
     public SessionId? SessionId { get; init; }
