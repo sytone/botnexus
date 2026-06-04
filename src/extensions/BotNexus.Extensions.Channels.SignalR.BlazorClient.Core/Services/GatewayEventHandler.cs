@@ -256,14 +256,20 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         agent.IsStreaming = false;
         agent.ProcessingStage = null;
 
-        // Update timestamp client-side so sort order reflects recent activity (issue #382).
-        conv.UpdatedAt = DateTimeOffset.UtcNow;
+        if (!isNoReply)
+        {
+            // Update timestamp client-side so sort order reflects recent activity (issue #382).
+            // NO_REPLY turns must not bump the timestamp -- they produce no user-facing activity
+            // and bumping UpdatedAt would cause the conversation to appear at the top of the list
+            // with a recent timestamp, creating noise for cron wakeups that had nothing to say (#773).
+            conv.UpdatedAt = DateTimeOffset.UtcNow;
 
-        if (agent.AgentId != _store.ActiveAgentId)
-            agent.UnreadCount++;
+            if (agent.AgentId != _store.ActiveAgentId)
+                agent.UnreadCount++;
 
-        if (convId != agent.ActiveConversationId)
-            conv.UnreadCount++;
+            if (convId != agent.ActiveConversationId)
+                conv.UnreadCount++;
+        }
 
         _store.ClearPendingAskUser(convId);
         _store.NotifyChanged();

@@ -692,4 +692,87 @@ public sealed class GatewayEventHandlerTests
         Assert.True(refreshCalled, "refresh must fire immediately when not streaming");
     }
 
+
+    // ---- NO_REPLY sentinel tests (issue #773) ----
+
+    [Fact]
+    public void HandleMessageEnd_noReply_does_not_add_message_to_conversation()
+    {
+        // NO_REPLY turns must leave conversation.Messages untouched.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "NO_REPLY";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Empty(conv.Messages);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_noReply_does_not_update_conversation_timestamp()
+    {
+        // NO_REPLY turns must not bump UpdatedAt -- bumping it surfaces the conversation
+        // as recently-active in the sidebar and creates noise for cron no-ops (#773).
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var originalUpdatedAt = conv.UpdatedAt;
+        conv.StreamState.Buffer = "NO_REPLY";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Equal(originalUpdatedAt, conv.UpdatedAt);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_noReply_does_not_increment_unread_counts()
+    {
+        // NO_REPLY turns must not increment agent or conversation unread counts.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var agentUnreadBefore = agent.UnreadCount;
+        var convUnreadBefore = conv.UnreadCount;
+        conv.StreamState.Buffer = "NO_REPLY";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Equal(agentUnreadBefore, agent.UnreadCount);
+        Assert.Equal(convUnreadBefore, conv.UnreadCount);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_noReply_still_clears_streaming_state()
+    {
+        // Even for NO_REPLY, streaming flags must be cleared so the UI does not
+        // show a perpetual "Agent is responding..." indicator.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "NO_REPLY";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.False(agent.IsStreaming);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Equal(string.Empty, conv.StreamState.Buffer);
+        Assert.Null(agent.ProcessingStage);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_noReply_with_leading_trailing_whitespace_is_suppressed()
+    {
+        // The sentinel check uses .Trim() so whitespace around NO_REPLY is tolerated.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var originalUpdatedAt = conv.UpdatedAt;
+        conv.StreamState.Buffer = "  NO_REPLY  ";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Empty(conv.Messages);
+        Assert.Equal(originalUpdatedAt, conv.UpdatedAt);
+    }
+
 }
