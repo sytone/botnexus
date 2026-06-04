@@ -30,4 +30,7 @@ public interface IGatewayHubClient
 
     /// <summary>Server notifies the client that a gateway restart interrupted its active agent turn.</summary>
     Task TurnInterrupted(AgentStreamEvent evt);
+
+    /// <summary>Server signals that the agent turn has fully completed (all tool calls done, no more events).</summary>
+    Task TurnEnd(AgentStreamEvent evt);
 }
