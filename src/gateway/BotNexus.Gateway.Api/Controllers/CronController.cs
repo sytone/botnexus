@@ -19,6 +19,15 @@ public sealed class CronController(
     IOptionsMonitor<CronOptions> cronOptions,
     ILogger<CronController> logger) : ControllerBase
 {
+    // The year 9000 is chosen as a practical "absurdly far future" ceiling.
+    // DateTimeOffset.MaxValue is year 9999, but any NextRunAt beyond year 9000
+    // is almost certainly a client bug (e.g. a Unix millisecond timestamp passed
+    // where a cron expression was expected, or overflow in a JavaScript Date calc).
+    // Rejecting these early prevents them from silently polluting the scheduler's
+    // run queue or causing overflow in downstream arithmetic.
+    private static readonly DateTimeOffset MinAllowedTimestamp = new(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset MaxAllowedTimestamp = new(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     /// <summary>Lists cron jobs.</summary>
     /// <summary>
     /// Executes list.
@@ -95,6 +104,12 @@ public sealed class CronController(
     [HttpPost]
     public async Task<ActionResult<CronJob>> Create([FromBody] CronJob request, CancellationToken cancellationToken)
     {
+        if (request.NextRunAt.HasValue && !IsTimestampInRange(request.NextRunAt.Value))
+            return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
+
+        if (request.CreatedAt != default && !IsTimestampInRange(request.CreatedAt))
+            return BadRequest("CreatedAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
+
         var toCreate = request with
         {
             ActionType = NormalizeActionType(request.ActionType),
@@ -117,6 +132,9 @@ public sealed class CronController(
     [HttpPut("{jobId}")]
     public async Task<ActionResult<CronJob>> Update(string jobId, [FromBody] CronJob request, CancellationToken cancellationToken)
     {
+        if (request.NextRunAt.HasValue && !IsTimestampInRange(request.NextRunAt.Value))
+            return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
+
         var typedJobId = JobId.From(jobId);
         var existing = await store.GetAsync(typedJobId, cancellationToken);
         if (existing is null)
@@ -197,4 +215,7 @@ public sealed class CronController(
 
         return actionType?.Trim() ?? string.Empty;
     }
+
+    private static bool IsTimestampInRange(DateTimeOffset value)
+        => value >= MinAllowedTimestamp && value <= MaxAllowedTimestamp;
 }

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -8,7 +7,7 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/gateway")]
-public sealed class GatewayController(IHostApplicationLifetime lifetime) : ControllerBase
+public sealed class GatewayController : ControllerBase
 {
     /// <summary>Returns runtime and build information about the running gateway.</summary>
     [HttpGet("info")]
@@ -20,15 +19,4 @@ public sealed class GatewayController(IHostApplicationLifetime lifetime) : Contr
         commitShort   = GatewayBuildInfo.CommitShort,
         version       = GatewayBuildInfo.Version
     });
-
-    /// <summary>
-    /// Initiates a graceful shutdown so the process supervisor can restart the gateway cleanly.
-    /// </summary>
-    /// <returns>A shutdown acknowledgement payload.</returns>
-    [HttpPost("shutdown")]
-    public IActionResult Shutdown()
-    {
-        lifetime.StopApplication();
-        return Ok(new { status = "shutting_down" });
-    }
 }

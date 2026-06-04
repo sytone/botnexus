@@ -577,7 +577,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="exception">The disconnect exception, if any.</param>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _logger.LogInformation("Hub OnDisconnected: connection={ConnectionId}", Context.ConnectionId);
+        if (exception is not null && IsBenignConnectionException(exception))
+            _logger.LogDebug(exception, "Hub OnDisconnected: benign pre-handshake close for connection {ConnectionId}", Context.ConnectionId);
+        else if (exception is not null)
+            _logger.LogWarning(exception, "Hub OnDisconnected: unexpected exception for connection {ConnectionId}", Context.ConnectionId);
+        else
+            _logger.LogInformation("Hub OnDisconnected: connection={ConnectionId}", Context.ConnectionId);
 
         // Best-effort: mute any Interactive/NotifyOnly bindings keyed to this connection ID.
         // If the store lookup fails, fan-out self-healing via StaleChannelConnectionException
@@ -736,5 +741,29 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ConversationId ConversationId,
         AgentId AgentId,
         ChannelKey ChannelType);
+
+    /// <summary>
+    /// Returns <see langword="true"/> for exceptions that are expected side-effects of a
+    /// WebSocket client disconnecting before (or during) the SignalR handshake — e.g.
+    /// the browser navigating away, a network blip, or a rapid reconnect cycle. These
+    /// are logged at Debug level instead of Warning to avoid Application Insights noise.
+    /// </summary>
+    public static bool IsBenignConnectionException(Exception ex)
+    {
+        // Unwrap IOException wrappers (ASP.NET Kestrel sometimes wraps WebSocketException
+        // in an IOException when the underlying stream is torn down).
+        var inner = ex is System.IO.IOException ioEx ? ioEx.InnerException ?? ioEx : ex;
+
+        if (inner is OperationCanceledException)
+            return true;
+
+        if (inner is System.Net.WebSockets.WebSocketException wse)
+        {
+            return wse.WebSocketErrorCode == System.Net.WebSockets.WebSocketError.ConnectionClosedPrematurely
+                || wse.Message.Contains("closed before the connection was established", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
 }
 

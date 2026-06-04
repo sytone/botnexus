@@ -587,6 +587,7 @@ public sealed class ConversationToolTests
         updated.Title.ShouldBe("New");
     }
 
+
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
 }

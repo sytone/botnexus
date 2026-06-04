@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -604,5 +604,25 @@ public sealed class MainLayoutTests : IDisposable
 
         // Dropdown should be visible on desktop
         cut.Find(".agent-dropdown-select");
+    }
+
+    [Fact]
+    public void Restart_Gateway_button_is_not_rendered()
+    {
+        // #794: the Restart Gateway button was removed because it killed the gateway
+        // with no automatic recovery -- no process supervisor is present.
+        var cut = RenderLayout();
+
+        Assert.Empty(cut.FindAll(".restart-btn"));
+        Assert.DoesNotContain("Restart Gateway", cut.Markup);
+    }
+
+    [Fact]
+    public void Sidebar_footer_is_still_rendered_without_restart_button()
+    {
+        // The sidebar footer (build info, update badge) must survive the button removal.
+        var cut = RenderLayout();
+
+        cut.Find(".sidebar-footer");
     }
 }

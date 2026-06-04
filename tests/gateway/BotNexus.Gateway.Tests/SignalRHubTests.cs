@@ -611,4 +611,52 @@ public sealed class SignalRHubTests
         public override CancellationToken ConnectionAborted { get; } = CancellationToken.None;
         public override void Abort() { }
     }
+
+    // IsBenignConnectionException classification tests
+    [Fact]
+    public void IsBenignConnectionException_WithPreHandshakeMessageString_ReturnsTrue()
+    {
+        var ex = new System.Net.WebSockets.WebSocketException("WebSocket was closed before the connection was established");
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsBenignConnectionException_WithConnectionClosedPrematurely_ReturnsTrue()
+    {
+        var ex = new System.Net.WebSockets.WebSocketException(
+            System.Net.WebSockets.WebSocketError.ConnectionClosedPrematurely,
+            "Connection closed prematurely");
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsBenignConnectionException_WithOperationCanceledException_ReturnsTrue()
+    {
+        var ex = new OperationCanceledException("Request was cancelled");
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsBenignConnectionException_WithIoWrappedWebSocketException_ReturnsTrue()
+    {
+        var inner = new System.Net.WebSockets.WebSocketException("WebSocket was closed before the connection was established");
+        var ex = new System.IO.IOException("An existing connection was forcibly closed", inner);
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsBenignConnectionException_WithGenericException_ReturnsFalse()
+    {
+        var ex = new InvalidOperationException("Something went wrong");
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsBenignConnectionException_WithUnrelatedWebSocketException_ReturnsFalse()
+    {
+        var ex = new System.Net.WebSockets.WebSocketException(
+            System.Net.WebSockets.WebSocketError.InvalidMessageType,
+            "Unexpected message type");
+        GatewayHub.IsBenignConnectionException(ex).ShouldBeFalse();
+    }
 }
