@@ -317,6 +317,8 @@
             var stored = await JS.InvokeAsync<string?>("localStorage.getItem", SidebarKey);
             _sidebarOpen = stored == "true";
             _isMobile = await JS.InvokeAsync<bool>("chatScroll.isMobileView");
+            // Re-render immediately after mobile detection so layout responds without waiting for gateway load.
+            StateHasChanged();
 
             // Load gateway info once portal is ready
             if (PortalLoad.IsReady)

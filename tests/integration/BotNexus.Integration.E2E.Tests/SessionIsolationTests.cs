@@ -81,7 +81,18 @@ public sealed class SessionIsolationTests
             WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
-        await pageA.WaitForTimeoutAsync(1_500);
+        // Wait for Blazor WASM to mount and reload conversation A's history.
+        // NetworkIdle is not reliable for WASM; instead wait for a message bubble to appear.
+        try
+        {
+            await pageA.Locator($"#{agentId}-conversation-panel [data-testid='message']").First
+                .WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        }
+        catch (TimeoutException)
+        {
+            // Fall back to a longer fixed wait before asserting.
+            await pageA.WaitForTimeoutAsync(5_000);
+        }
 
         // A's content (Hello, world!) must be visible; B's content must not
         var pageContent = await pageA.ContentAsync();

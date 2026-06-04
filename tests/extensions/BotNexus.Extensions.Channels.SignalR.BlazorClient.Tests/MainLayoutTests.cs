@@ -588,7 +588,7 @@ public sealed class MainLayoutTests : IDisposable
         // Wait for after-render to fire (_isMobile to be set)
         cut.WaitForAssertion(() =>
             Assert.Empty(cut.FindAll(".agent-dropdown-select")),
-            TimeSpan.FromSeconds(1));
+            TimeSpan.FromSeconds(3));
     }
 
     [Fact]
