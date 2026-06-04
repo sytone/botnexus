@@ -138,7 +138,7 @@ public sealed class CronSessionBehaviorTests
         if (await sessionListLink.IsVisibleAsync())
         {
             await sessionListLink.ClickAsync();
-            await page.WaitForTimeoutAsync(1_000);
+            await page.WaitForSelectorAsync(".session-list, [data-testid='session-list'], .sessions-container", new() { State = WaitForSelectorState.Attached, Timeout = 10_000 });
 
             // Check that a cron badge/label is shown somewhere in the session list
             var cronBadge = page.Locator("[data-testid='session-channel-badge']")
@@ -194,7 +194,7 @@ public sealed class CronSessionBehaviorTests
 
         // The default conversation shown must not be the cron session
         // A cron session's user message would start with CRON_TRIGGER_CHECK
-        await page.WaitForTimeoutAsync(1_000);
+        await page.Locator("[data-testid='message-list'], .messages-container, .chat-messages").First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 10_000 });
 
         var msgArea = page.Locator("[data-testid='message-list'], .messages-container, .chat-messages");
         var cronContent = msgArea.Filter(
@@ -242,7 +242,7 @@ public sealed class CronSessionBehaviorTests
 
         // Reload and verify the full history loads without errors
         await portal.GotoAgentChatAsync(_fx.GatewayBaseUrl, agentId);
-        await portal.Page.WaitForTimeoutAsync(2_000);
+        await portal.Page.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
         // No JS errors
         Assert.Empty(jsErrors);
@@ -300,7 +300,7 @@ public sealed class CronSessionBehaviorTests
         await portal.SelectAgentAsync(agentB);
 
         // After landing on agentB, the sentinel from agentA's cron must not appear
-        await page.WaitForTimeoutAsync(500);
+        await page.Locator("[data-testid='agent-panel']").First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         var sentinelOnB = page.Locator(
             "[data-testid='message-list'], .messages-container, .chat-messages")
@@ -352,7 +352,7 @@ public sealed class CronSessionBehaviorTests
         }
 
         await sessionsLink.ClickAsync();
-        await page.WaitForTimeoutAsync(1_000);
+        await page.WaitForSelectorAsync(".session-list, [data-testid='session-list'], .sessions-container", new() { State = WaitForSelectorState.Attached, Timeout = 10_000 });
 
         // Check for sealed indicator elements
         var sealedIndicators = page.Locator(
@@ -423,7 +423,7 @@ public sealed class CronSessionBehaviorTests
             $"{_fx.GatewayBaseUrl}/chat/{agentId}?sessionId={sessionId}",
             new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 30_000 });
 
-        await page.WaitForTimeoutAsync(2_000);
+        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 10_000 });
 
         // The cron reply content must be visible somewhere on the page
         var pageContent = await page.ContentAsync();

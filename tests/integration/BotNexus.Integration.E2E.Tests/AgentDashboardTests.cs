@@ -182,8 +182,9 @@ public sealed class AgentDashboardTests : IAsyncLifetime
         // Click the New conversation button
         await portal.ConversationNewBtn.ClickAsync();
 
-        // Wait for new conversation to appear
-        await page.WaitForTimeoutAsync(2_000);
+        // Wait for new conversation to appear in the list
+        await portal.ConversationItems.Nth(initialCount).WaitForAsync(
+            new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 10_000 });
         var newCount = await portal.ConversationItems.CountAsync();
 
         Assert.True(newCount > initialCount,

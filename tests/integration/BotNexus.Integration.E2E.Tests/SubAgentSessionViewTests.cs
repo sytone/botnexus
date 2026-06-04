@@ -48,7 +48,9 @@ public sealed class SubAgentSessionViewTests : IAsyncLifetime
 
         // Normal agents should NOT have the read-only banner
         var banner = page.Locator(".read-only-banner");
-        await page.WaitForTimeoutAsync(500); // Brief wait to ensure rendering complete
+        // Ensure agent panel is fully rendered before checking for banner
+        await page.Locator("[data-testid='agent-panel']").First
+            .WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         var count = await banner.CountAsync();
         if (count > 0)

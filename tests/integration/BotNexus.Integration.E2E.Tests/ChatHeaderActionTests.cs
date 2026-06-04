@@ -183,7 +183,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         // Click to toggle off
         await thinkingBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300); // Brief settle
+        await page.WaitForFunctionAsync("() => { const b = document.querySelector(\x27.thinking-block\x27); return !b || b.style.display === \x27none\x27 || b.classList.contains(\x27visibility-hidden\x27); }", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // Thinking block should now be hidden (display:none or visibility-hidden)
         var isHidden = await page.EvaluateAsync<bool>(
@@ -194,7 +194,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         // Toggle back on
         await thinkingBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300);
+        await page.WaitForFunctionAsync("() => { const b = document.querySelector('.thinking-block'); return b && b.style.display !== 'none'; }", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var isVisible = await page.EvaluateAsync<bool>(
             "document.querySelector('.thinking-block') !== null && " +
@@ -226,7 +226,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
         // Tools toggle button is the second .toggle-btn
         var toolsBtn = page.Locator(".chat-header-actions .toggle-btn").Nth(1);
         await toolsBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300);
+        await page.WaitForFunctionAsync("() => Array.from(document.querySelectorAll(''.message.tool'')).every(el => el.style.display === ''none'')", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var isHidden = await page.EvaluateAsync<bool>(
             "Array.from(document.querySelectorAll('.message.tool')).every(el => el.style.display === 'none')");

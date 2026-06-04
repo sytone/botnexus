@@ -48,8 +48,6 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
 
-        // Wait for markdown cache to render (triggered by OnAfterRenderAsync)
-        await page.WaitForTimeoutAsync(500);
 
         var msgContent = page.Locator("[data-message-role='Assistant'] .msg-content").First;
         await msgContent.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
@@ -77,7 +75,6 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
 
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
-        await page.WaitForTimeoutAsync(500);
 
         var msgContent = page.Locator("[data-message-role='Assistant'] .msg-content").First;
         await msgContent.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
@@ -100,7 +97,6 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
 
         await chat.SendMessageAsync("MARKDOWN_RESPONSE");
         await chat.WaitForStreamingCompleteAsync();
-        await page.WaitForTimeoutAsync(500);
 
         var msgContent = page.Locator("[data-message-role='Assistant'] .msg-content").First;
         await msgContent.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
@@ -122,7 +118,6 @@ public sealed class MarkdownRenderingTests : IAsyncLifetime
 
         await chat.SendMessageAsync("HELLO_WORLD");
         await chat.WaitForStreamingCompleteAsync();
-        await page.WaitForTimeoutAsync(500);
 
         var assistantMsg = page.Locator("[data-message-role='Assistant']").First;
         await assistantMsg.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });

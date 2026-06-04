@@ -170,8 +170,10 @@ public sealed class AgentPageTests
             // Status might auto-dismiss quickly; check the table directly
         }
 
-        // New agent should be in the table
-        await Task.Delay(500);
+        // New agent should be in the table - wait for save to propagate
+        await agentsPage.Page.WaitForFunctionAsync(
+            "count => document.querySelectorAll('table tbody tr').length > count",
+            beforeCount, new PageWaitForFunctionOptions { Timeout = 10_000 });
         var afterIds = await agentsPage.GetAgentIdsAsync();
         Assert.Contains(afterIds, id => id.Trim().Equals(newAgentId, StringComparison.OrdinalIgnoreCase));
         Assert.True(afterIds.Count > beforeCount,
@@ -206,7 +208,8 @@ public sealed class AgentPageTests
 
         // Type in the Agent ID field
         await agentsPage.AgentIdInput.PressSequentiallyAsync("test");
-        await Task.Delay(200);
+        // Wait for Blazor to process the input change and show dirty indicator
+        await agentsPage.DirtyIndicator.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
         // Dirty indicator should appear
         dirtyVisible = await agentsPage.DirtyIndicator.IsVisibleAsync();
@@ -243,7 +246,10 @@ public sealed class AgentPageTests
             provider: "integration-mock",
             model: "integration-mock-echo");
 
-        await Task.Delay(500);
+        // Wait for agent to appear in list before trying to delete
+        await agentsPage.Page.WaitForFunctionAsync(
+            $"() => Array.from(document.querySelectorAll('[data-agent-id]')).some(el => el.dataset.agentId === '{tempAgentId}')",
+            null, new PageWaitForFunctionOptions { Timeout = 10_000 });
 
         // Click delete for the temp agent — Cancel first
         await agentsPage.ClickDeleteAsync(tempAgentId);
@@ -272,7 +278,10 @@ public sealed class AgentPageTests
         });
         await agentsPage.DeleteConfirmBtn.ClickAsync();
 
-        await Task.Delay(500);
+        // Wait for agent to disappear from the list
+        await agentsPage.Page.WaitForFunctionAsync(
+            $"() => !Array.from(document.querySelectorAll('[data-agent-id]')).some(el => el.dataset.agentId === '{tempAgentId}')",
+            null, new PageWaitForFunctionOptions { Timeout = 10_000 });
         var idsAfterDelete = await agentsPage.GetAgentIdsAsync();
         Assert.DoesNotContain(idsAfterDelete, id => id.Trim().Equals(tempAgentId, StringComparison.OrdinalIgnoreCase));
     }

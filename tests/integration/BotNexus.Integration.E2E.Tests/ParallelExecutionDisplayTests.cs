@@ -110,7 +110,8 @@ public sealed class ParallelExecutionDisplayTests
         var sendTask = chatA.SendMessageAsync("MULTI_DELTA");
 
         // Wait briefly then switch to agent B while agent A is still streaming
-        await page.WaitForTimeoutAsync(300);
+        // Wait for at least one streaming message to appear before switching
+        await chatA.StreamingIndicator.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await portal.SelectAgentAsync(agentB);
 
         // Agent B panel should load normally — not stuck/frozen
@@ -134,7 +135,9 @@ public sealed class ParallelExecutionDisplayTests
 
         // Switch back to agent A
         await portal.SelectAgentAsync(agentA);
-        await page.WaitForTimeoutAsync(1_500);
+        // Wait for agent A's panel to be active and visible
+        await page.Locator("[data-testid='agent-panel']").First
+            .WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // Agent A must show the complete MULTI_DELTA response
         // (not a blank, not a partial response, not an error)

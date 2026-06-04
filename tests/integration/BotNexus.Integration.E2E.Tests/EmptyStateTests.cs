@@ -168,8 +168,9 @@ public sealed class EmptyStateTests : IAsyncLifetime
         await page.WaitForSelectorAsync(".portal-loading, .agent-dashboard, [data-testid='agent-panel']",
             new() { Timeout = 30_000 });
 
-        // Allow time for agents to load
-        await page.WaitForTimeoutAsync(2000);
+        // Wait for the page to fully render — either dashboard or agent panel
+        await page.Locator("[data-testid='agent-dashboard'], [data-testid='agent-panel']").First.WaitForAsync(
+            new LocatorWaitForOptions { State = WaitForSelectorState.Attached, Timeout = 15_000 });
 
         // Either the AgentDashboard is shown (no active agent) or agents loaded and chat is shown
         var dashboard = page.Locator(".agent-dashboard");

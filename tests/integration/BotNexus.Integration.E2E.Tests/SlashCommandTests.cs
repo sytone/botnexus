@@ -154,7 +154,10 @@ public sealed class SlashCommandTests
         Assert.True(beforeCount > 0, "Expected messages before /clear");
 
         await chat.ExecuteSlashCommandAsync("/clear");
-        await Task.Delay(500);
+        // Wait for messages to be cleared
+        await chat.Page.WaitForFunctionAsync(
+            $"count => document.querySelectorAll('.message').length < count",
+            beforeCount, new PageWaitForFunctionOptions { Timeout = 10_000 });
 
         var afterCount = await chat.Page.Locator(".message").CountAsync();
         Assert.True(afterCount < beforeCount,

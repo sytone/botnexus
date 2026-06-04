@@ -233,7 +233,10 @@ public sealed class ChatMessageFlowTests
 
         var initialClass = await chat.ToggleToolsBtn.GetAttributeAsync("class") ?? "";
         await chat.ToggleToolsBtn.ClickAsync();
-        await Task.Delay(200); // Allow Blazor to re-render
+        // Wait for Blazor to toggle the button class
+        await chat.Page.WaitForFunctionAsync(
+            $"cls => document.querySelector('[data-testid=toggle-tools-btn]')?.className?.trim() !== cls",
+            initialClass.Trim(), new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var afterClass = await chat.ToggleToolsBtn.GetAttributeAsync("class") ?? "";
 

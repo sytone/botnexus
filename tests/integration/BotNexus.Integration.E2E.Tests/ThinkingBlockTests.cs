@@ -87,8 +87,11 @@ public sealed class ThinkingBlockTests : IAsyncLifetime
         await thinkingToggle.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
         await thinkingToggle.ClickAsync();
 
-        // Thinking block should now be hidden via display:none
-        await page.WaitForTimeoutAsync(200);
+        // Thinking block should now be hidden — wait for display:none
+        await page.WaitForFunctionAsync(
+            "el => (el.getAttribute('style') || '').includes('display:none') || (el.getAttribute('style') || '').includes('display: none')",
+            await thinkingBlock.ElementHandleAsync(),
+            new PageWaitForFunctionOptions { Timeout = 5_000 });
         style = await thinkingBlock.GetAttributeAsync("style") ?? "";
         _out.WriteLine($"After toggle thinking block style: {style}");
         Assert.True(style.Contains("display:none") || style.Contains("display: none"),
@@ -113,13 +116,18 @@ public sealed class ThinkingBlockTests : IAsyncLifetime
         var toggle = page.Locator(".toggle-btn[title='Toggle thinking visibility']").First;
         await toggle.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
-        // Off
         await toggle.ClickAsync();
-        await page.WaitForTimeoutAsync(200);
+        // Wait for block to be hidden
+        await page.WaitForFunctionAsync(
+            "() => { const b = document.querySelector('.thinking-block'); return b && ((b.getAttribute('style')||'').includes('display:none') || (b.getAttribute('style')||'').includes('display: none')); }",
+            null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // On again
         await toggle.ClickAsync();
-        await page.WaitForTimeoutAsync(200);
+        // Wait for block to be visible again
+        await page.WaitForFunctionAsync(
+            "() => { const b = document.querySelector('.thinking-block'); return b && !(b.getAttribute('style')||'').includes('display:none') && !(b.getAttribute('style')||'').includes('display: none'); }",
+            null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var style = await thinkingBlock.GetAttributeAsync("style") ?? "";
         Assert.False(style.Contains("display:none") || style.Contains("display: none"),

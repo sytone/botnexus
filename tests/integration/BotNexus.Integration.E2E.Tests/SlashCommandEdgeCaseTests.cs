@@ -98,8 +98,10 @@ public sealed class SlashCommandEdgeCaseTests : IAsyncLifetime
 
         await chat.ChatInput.ClickAsync();
         await chat.ChatInput.FillAsync("Hello world");
-
-        await page.WaitForTimeoutAsync(300);
+        // Command palette must not appear for regular text (give UI brief chance to react)
+        await page.WaitForFunctionAsync(
+            "() => document.querySelectorAll('.slash-command-palette, [data-testid=command-palette]').length === 0",
+            null, new PageWaitForFunctionOptions { Timeout = 2_000 }).ContinueWith(_ => Task.CompletedTask);
         Assert.Equal(0, await chat.CommandPalette.CountAsync());
     }
 
@@ -114,8 +116,10 @@ public sealed class SlashCommandEdgeCaseTests : IAsyncLifetime
 
         await chat.ChatInput.ClickAsync();
         await chat.ChatInput.PressSequentiallyAsync("/zzz", new() { Delay = 50 });
-
-        await page.WaitForTimeoutAsync(300);
+        // Unknown slash command: palette may show briefly with no matches then close, or not show at all
+        await page.WaitForFunctionAsync(
+            "() => document.querySelectorAll('.slash-command-palette, [data-testid=command-palette]').length === 0 || document.querySelectorAll('.slash-command-palette .slash-command-item').length === 0",
+            null, new PageWaitForFunctionOptions { Timeout = 3_000 }).ContinueWith(_ => Task.CompletedTask);
 
         if (await chat.CommandPalette.CountAsync() > 0)
         {
@@ -137,8 +141,10 @@ public sealed class SlashCommandEdgeCaseTests : IAsyncLifetime
 
         await chat.ChatInput.ClickAsync();
         await chat.ChatInput.FillAsync("/new something extra"); // has a space - not a slash command
-
-        await page.WaitForTimeoutAsync(300);
+        // Palette must not appear when slash command has trailing text with a space
+        await page.WaitForFunctionAsync(
+            "() => document.querySelectorAll('.slash-command-palette, [data-testid=command-palette]').length === 0",
+            null, new PageWaitForFunctionOptions { Timeout = 2_000 }).ContinueWith(_ => Task.CompletedTask);
         Assert.Equal(0, await chat.CommandPalette.CountAsync());
     }
 }
