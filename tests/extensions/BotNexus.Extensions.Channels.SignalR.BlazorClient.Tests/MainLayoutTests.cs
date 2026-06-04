@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -281,7 +281,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Clicking_sub_agent_row_routes_to_read_only_sub_agent_view()
+    public async Task Clicking_sub_agent_row_routes_to_read_only_sub_agent_view()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -298,13 +298,13 @@ public sealed class MainLayoutTests : IDisposable
         };
 
         var cut = RenderLayout();
-        // Wait for async renders (e.g., isMobileView JS call in OnAfterRenderAsync) to stabilize
-        // before clicking, to avoid UnknownEventHandlerIdException on stale event IDs.
+        // WaitForState stabilises the first render, then await InvokeAsync so any subsequent
+        // async re-renders (e.g. isMobileView JS interop in OnAfterRenderAsync) complete and
+        // event handler IDs are stable before we assert.
         cut.WaitForState(() => cut.FindAll(".agent-session-item").Count > 0);
+        await cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
 
-        cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
-
-        _interaction.Received(1).ViewSubAgentAsync(
+        await _interaction.Received(1).ViewSubAgentAsync(
             Arg.Is<SubAgentInfo>(s => s.SubAgentId == "sub-1"));
     }
 

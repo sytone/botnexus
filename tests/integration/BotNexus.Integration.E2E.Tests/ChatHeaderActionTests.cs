@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -56,7 +56,11 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, _fix.AgentIds[0]);
 
-        var configBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel .chat-header-actions .config-btn");
+        // The config-btn is in the AgentPanel header, which is a sibling of the conversation-panel section.
+        // Use the filter approach: find the agent-panel that contains the target conversation panel.
+        var configBtn = page.Locator(".agent-panel")
+            .Filter(new() { Has = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel") })
+            .Locator(".chat-header-actions .config-btn");
         await configBtn.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await configBtn.ClickAsync();
 
@@ -153,8 +157,8 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
         var steerBtn = page.Locator(".steer-btn");
         Assert.True(await steerBtn.IsVisibleAsync(), "Steer button should be visible during streaming");
 
-        // Send button should NOT be visible while streaming
-        var sendBtn = page.Locator("[data-testid='chat-send']");
+        // Send button should NOT be visible (alpha panel only) while streaming
+        var sendBtn = page.Locator($"#{_fix.AgentIds[0]}-conversation-panel [data-testid='chat-send']");
         Assert.False(await sendBtn.IsVisibleAsync(), "Send button should be hidden during streaming");
     }
 
@@ -183,7 +187,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         // Click to toggle off
         await thinkingBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300); // Brief settle
+        await page.WaitForFunctionAsync("() => { const b = document.querySelector(\x27.thinking-block\x27); return !b || b.style.display === \x27none\x27 || b.classList.contains(\x27visibility-hidden\x27); }", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // Thinking block should now be hidden (display:none or visibility-hidden)
         var isHidden = await page.EvaluateAsync<bool>(
@@ -194,7 +198,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
 
         // Toggle back on
         await thinkingBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300);
+        await page.WaitForFunctionAsync("() => { const b = document.querySelector('.thinking-block'); return b && b.style.display !== 'none'; }", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var isVisible = await page.EvaluateAsync<bool>(
             "document.querySelector('.thinking-block') !== null && " +
@@ -226,7 +230,7 @@ public sealed class ChatHeaderActionTests : IAsyncLifetime
         // Tools toggle button is the second .toggle-btn
         var toolsBtn = page.Locator(".chat-header-actions .toggle-btn").Nth(1);
         await toolsBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(300);
+        await page.WaitForFunctionAsync("() => Array.from(document.querySelectorAll(''.message.tool'')).every(el => el.style.display === ''none'')", null, new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         var isHidden = await page.EvaluateAsync<bool>(
             "Array.from(document.querySelectorAll('.message.tool')).every(el => el.style.display === 'none')");

@@ -83,9 +83,7 @@ public sealed class SidebarNavigationTests
         // Click Workspace tab and verify selection — scope to active panel
         var workspaceTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Workspace" }).First;
         await workspaceTab.ClickAsync();
-        await page.WaitForTimeoutAsync(500);
 
-        // Blazor renders bool as "True"/"False" or may use class="active" — check either
         var workspaceTabSelected = activePanel.Locator("[data-tab='workspace']").First;
         var ariaSelected = await workspaceTabSelected.GetAttributeAsync("aria-selected");
         Assert.True(
@@ -95,7 +93,6 @@ public sealed class SidebarNavigationTests
         // Switch back to Conversation tab
         var convTab = activePanel.Locator(".agent-panel-tab").Filter(new LocatorFilterOptions { HasTextString = "Conversation" }).First;
         await convTab.ClickAsync();
-        await page.WaitForTimeoutAsync(500);
 
         var convTabSelected = activePanel.Locator("[data-tab='conversation']").First;
         ariaSelected = await convTabSelected.GetAttributeAsync("aria-selected");

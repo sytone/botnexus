@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Playwright;
@@ -56,6 +56,7 @@ public sealed class SessionIsolationTests
         // ── Conversation A ────────────────────────────────────────────────
         var (pageA, portalA, chatA) = await PortalTestHelpers.NewChatPageAsync(
             browser, _fx.GatewayBaseUrl, agentId);
+        await chatA.StartFreshSessionAsync();
         await chatA.SendMessageAsync("HELLO_WORLD");
         await chatA.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(30));
 
@@ -64,7 +65,7 @@ public sealed class SessionIsolationTests
 
         // ── Conversation B (new chat in same page) ─────────────────────────
         await portalA.ConversationNewBtn.ClickAsync();
-        await pageA.WaitForTimeoutAsync(500);
+        await new ChatPanelPage(pageA, agentId).ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         var chatB = new ChatPanelPage(pageA, agentId);
         await chatB.SendMessageAsync("MULTI_DELTA");
@@ -129,7 +130,8 @@ public sealed class SessionIsolationTests
 
         // Start a fresh conversation (new session)
         await portal.ConversationNewBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(2_000); // wait for Blazor to render the new conversation
+        // Wait for Blazor to render the new conversation
+        await new ChatPanelPage(page, agentId).ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         var pageContent = await page.ContentAsync();
 
@@ -172,7 +174,7 @@ public sealed class SessionIsolationTests
 
         // Create session A and send a uniquely identifiable message
         await portal.ConversationNewBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(500);
+        await new ChatPanelPage(page, agentId).ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         var urlA = page.Url;
 
         var chatA = new ChatPanelPage(page);
@@ -190,7 +192,7 @@ public sealed class SessionIsolationTests
             WaitUntil = WaitUntilState.Load,
             Timeout = 20_000
         });
-        await page.WaitForTimeoutAsync(1_000);
+        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 15_000 });
 
         var bContent = await page.ContentAsync();
         Assert.False(
@@ -227,7 +229,7 @@ public sealed class SessionIsolationTests
         var portal2 = new PortalPage(page2);
         await portal2.GotoAgentChatAsync(_fx.GatewayBaseUrl, agentId);
         await portal2.ConversationNewBtn.ClickAsync();
-        await page2.WaitForTimeoutAsync(500);
+        await new ChatPanelPage(page2, agentId).ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         var chat2 = new ChatPanelPage(page2);
 
         // Tab 2's new empty conversation must not show tab 1's messages
@@ -282,7 +284,7 @@ public sealed class SessionIsolationTests
             WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
-        await page.WaitForTimeoutAsync(2_000);
+        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 15_000 });
 
         var postReloadContent = await page.ContentAsync();
 

@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -44,8 +44,10 @@ public sealed class ConversationManagementTests
         });
         await newConvBtn.ClickAsync();
 
-        // List should grow by at least 1
-        await Task.Delay(1000); // Allow SignalR update to propagate
+        // Wait for the conversation list to grow (SignalR update)
+        await portal.Page.WaitForFunctionAsync(
+            "before => document.querySelectorAll('[data-testid=conv-item]').length > before",
+            before.Count, new PageWaitForFunctionOptions { Timeout = 20_000 });
         var after = await portal.GetConversationTitlesAsync();
         Assert.True(after.Count > before.Count,
             $"Conversation count did not increase after clicking New. Before: {before.Count}, After: {after.Count}");
@@ -71,7 +73,8 @@ public sealed class ConversationManagementTests
 
         // Create a second conversation
         await portal.ConversationNewBtn.ClickAsync();
-        await Task.Delay(1000);
+        // Wait for new conversation to be active (input visible and cleared)
+        await chat.ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // The new conversation should have an empty messages area
         var msgCount = await chat.Page.Locator(".message").CountAsync();
@@ -216,7 +219,7 @@ public sealed class ConversationManagementTests
 
         // Create a new conversation to archive (don't archive the default)
         await portal.ConversationNewBtn.ClickAsync();
-        await Task.Delay(1000);
+        await chat.ChatInput.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         var titlesBefore = await portal.GetConversationTitlesAsync();
         Assert.True(titlesBefore.Count >= 2, "Need at least 2 conversations to test archive.");
@@ -236,7 +239,10 @@ public sealed class ConversationManagementTests
         page.Dialog += (_, dialog) => dialog.AcceptAsync();
 
         await archiveBtns.Last.ClickAsync();
-        await Task.Delay(1000);
+        // Wait for list to shrink after archive
+        await portal.Page.WaitForFunctionAsync(
+            "before => document.querySelectorAll('[data-testid=conv-item]').length < before",
+            titlesBefore.Count, new PageWaitForFunctionOptions { Timeout = 10_000 });
 
         var titlesAfter = await portal.GetConversationTitlesAsync();
         Assert.True(titlesAfter.Count < titlesBefore.Count,

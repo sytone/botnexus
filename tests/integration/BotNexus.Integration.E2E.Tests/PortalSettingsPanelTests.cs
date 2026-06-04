@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -106,14 +106,10 @@ public sealed class PortalSettingsPanelTests : IAsyncLifetime
         var overlay = page.Locator(".portal-settings-overlay");
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
-        // Click the overlay far left of the right-aligned 320 px panel.
-        // Use a viewport-relative position well within the overlay but outside the panel.
-        // Force=true bypasses the pointer-events check since the overlay covers the full viewport.
-        await overlay.ClickAsync(new LocatorClickOptions
-        {
-            Position = new Microsoft.Playwright.Position { X = 50, Y = 50 },
-            Force = true,
-        });
+        // Click on the overlay background to the left of the panel.
+        // The panel is right-aligned (width 320px), so click at x=50 (far left of 1280px viewport).
+        // Use page.Mouse.ClickAsync to dispatch a real mouse event that Blazor @onclick handles.
+        await page.Mouse.ClickAsync(50, 50);
 
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 8_000 });
     }

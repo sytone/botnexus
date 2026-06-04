@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -71,9 +71,12 @@ public sealed class PanelContentTests : IAsyncLifetime
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
 
+        // Scope to the specific agent panel to avoid strict mode violations in multi-panel portal
+        // Scope to the workspace tab pane for this agent (not conversation panel)
+        var agentPanel = page.Locator($"#{_fix.AgentIds[0]}-workspace-panel");
+
         // Either a file tree or an empty-state message should render
-        var fileTree = page.Locator(".workspace-file-tree, .workspace-panel").First;
-        var emptyState = page.Locator(".workspace-empty, .workspace-panel").First;
+        var fileTree = agentPanel.Locator(".workspace-file-tree, .workspace-panel");
 
         // At least one of these should be present
         var treeVisible = await fileTree.IsVisibleAsync();
@@ -90,7 +93,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         await page.WaitForLoadStateAsync(LoadState.Load);
 
         // The fixture provisions two locations: workspace-tmp and scratch
-        var panelContent = await page.Locator(".agent-tab-pane.active").First.InnerTextAsync();
+        // Scope to alpha workspace panel to avoid strict mode violation in multi-panel portal
+        var panelContent = await page.Locator("#alpha-workspace-panel").InnerTextAsync();
 
         // Should contain something — not be completely empty
         Assert.False(string.IsNullOrWhiteSpace(panelContent),
@@ -110,8 +114,8 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on reports tab");
 
-        // Reports panel section should be active
-        var activePane = page.Locator(".agent-tab-pane.active").First;
+        // Scope to the specific agent's reports panel
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-reports-panel");
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -124,7 +128,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "reports");
         await page.WaitForLoadStateAsync(LoadState.Load);
 
-        var activePane = page.Locator(".agent-tab-pane.active").First;
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-reports-panel");
         var paneText = await activePane.InnerTextAsync();
         // Should render something
         Assert.False(string.IsNullOrWhiteSpace(paneText), "Reports panel should render some content");
@@ -143,7 +147,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var errorEl = page.Locator(".portal-load-error");
         Assert.False(await errorEl.IsVisibleAsync(), "Portal load error should not appear on canvas tab");
 
-        var activePane = page.Locator(".agent-tab-pane.active").First;
+        var activePane = page.Locator($"#{_fix.AgentIds[0]}-canvas-panel");
         await activePane.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 
@@ -177,8 +181,12 @@ public sealed class PanelContentTests : IAsyncLifetime
         {
             var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
-            // Scope to the active (non-hidden) chat panel wrapper to avoid matching tabs in hidden panels
-            var canvasTab = page.Locator(".chat-panel-wrapper:not(.hidden) [data-tab='canvas']").First;
+            // The AgentPanel root div has no id. Locate the agent-panel that contains the
+            // #{agentId}-canvas-panel section, then scope the tab to that panel.
+            // Use Filter: find agent-panel divs that have a descendant with the canvas-panel id.
+            var agentPanelRoot = page.Locator(".agent-panel")
+                .Filter(new() { Has = page.Locator($"#{agentId}-canvas-panel") });
+            var canvasTab = agentPanelRoot.Locator("[data-tab='canvas']");
             await canvasTab.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
             Assert.True(await canvasTab.IsVisibleAsync(),

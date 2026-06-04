@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 
 namespace BotNexus.Integration.E2E.Tests;
@@ -47,14 +47,16 @@ public sealed class AdvancedChatFeatureTests
 
         // Toggle thinking off
         await chat.ToggleThinkingBtn.ClickAsync();
-        await Task.Delay(200);
+        // Wait for thinking block to be hidden
+        await thinkingBlock.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         var thinkingVisible = await thinkingBlock.IsVisibleAsync();
         Assert.False(thinkingVisible, "Thinking block should be hidden after toggle");
 
         // Toggle thinking back on
         await chat.ToggleThinkingBtn.ClickAsync();
-        await Task.Delay(200);
+        // Wait for thinking block to be visible again
+        await thinkingBlock.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
         thinkingVisible = await thinkingBlock.IsVisibleAsync();
         Assert.True(thinkingVisible, "Thinking block should be visible after toggle back on");
@@ -101,7 +103,10 @@ public sealed class AdvancedChatFeatureTests
 
         var beforeExpand = await expandSpan.InnerTextAsync();
         await toolHeader.ClickAsync();
-        await Task.Delay(150);
+        // Wait for expand indicator to change
+        await page.WaitForFunctionAsync(
+            $"text => document.querySelector('.tool-expand')?.innerText?.trim() !== text",
+            beforeExpand.Trim(), new PageWaitForFunctionOptions { Timeout = 5_000 });
         var afterExpand = await expandSpan.InnerTextAsync();
 
         // Expand indicator must change on click
@@ -109,7 +114,10 @@ public sealed class AdvancedChatFeatureTests
 
         // Click again to collapse
         await toolHeader.ClickAsync();
-        await Task.Delay(150);
+        // Wait for expand indicator to revert
+        await page.WaitForFunctionAsync(
+            $"text => document.querySelector('.tool-expand')?.innerText?.trim() === text",
+            beforeExpand.Trim(), new PageWaitForFunctionOptions { Timeout = 5_000 });
         var afterCollapse = await expandSpan.InnerTextAsync();
         Assert.Equal(beforeExpand.Trim(), afterCollapse.Trim());
     }
@@ -142,7 +150,8 @@ public sealed class AdvancedChatFeatureTests
 
         // Toggle tools off
         await chat.ToggleToolsBtn.ClickAsync();
-        await Task.Delay(200);
+        // Wait for tool messages to be hidden
+        await toolMessages.First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         var toolMsgFirst = toolMessages.First;
         var isVisible = await toolMsgFirst.IsVisibleAsync();
@@ -150,7 +159,8 @@ public sealed class AdvancedChatFeatureTests
 
         // Toggle back on
         await chat.ToggleToolsBtn.ClickAsync();
-        await Task.Delay(200);
+        // Wait for tool messages to be visible again
+        await toolMessages.First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
         isVisible = await toolMsgFirst.IsVisibleAsync();
         Assert.True(isVisible, "Tool message should be visible after toggle back on");
@@ -232,10 +242,16 @@ public sealed class AdvancedChatFeatureTests
             Timeout = 10_000,
         });
 
+        await page.Locator(".message.assistant").First.HoverAsync();
+        // Hover the parent message to trigger CSS :hover so the copy button becomes clickable
         await copyBtn.ClickAsync();
-        await Task.Delay(300);
+        // Wait for copy feedback — button briefly shows checkmark
+        await page.WaitForFunctionAsync(
+            "btn => btn.innerText.trim() !== '\u29BF' && btn.innerText.trim() !== '\u2399'",
+            await copyBtn.ElementHandleAsync(),
+            new PageWaitForFunctionOptions { Timeout = 3_000 }).ContinueWith(_ => Task.CompletedTask);
 
-        // After copy the button briefly shows "√" (U+221A)
+        // After copy the button briefly shows "\u221A" (U+221A)
         var btnText = await copyBtn.InnerTextAsync();
         Assert.Equal("√", btnText.Trim());
     }
