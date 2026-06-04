@@ -103,6 +103,12 @@ public sealed class GatewayAuthMiddleware
         return path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWithSegments("/api/federation/cross-world", StringComparison.OrdinalIgnoreCase) ||
+               // Webhook inbound endpoints use HMAC-SHA256 token auth, not the gateway API key.
+               // The path pattern is /api/webhooks/{agentId}/{webhookId} (POST only).
+               (HttpMethods.IsPost(request.Method) &&
+                path.StartsWithSegments("/api/webhooks", StringComparison.OrdinalIgnoreCase) &&
+                !path.StartsWithSegments("/api/webhooks/registrations", StringComparison.OrdinalIgnoreCase) &&
+                !path.StartsWithSegments("/api/webhooks/runs", StringComparison.OrdinalIgnoreCase)) ||
                IsStaticWebRootFile(request, webRootFileProvider);
     }
 
