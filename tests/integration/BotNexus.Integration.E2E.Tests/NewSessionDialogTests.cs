@@ -77,7 +77,7 @@ public sealed class NewSessionDialogTests : IAsyncLifetime
         await dialog.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         // Chat panel should still be in normal state
-        var inputArea = page.Locator("[data-testid='chat-input']");
+        var inputArea = page.Locator("[data-testid='chat-input']").First;
         await inputArea.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
     }
 

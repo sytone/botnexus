@@ -58,7 +58,7 @@ public static class PortalTestHelpers
         var context = await browser.NewContextAsync();
         var page = await context.NewPageAsync();
         var portal = new PortalPage(page);
-        var chat = new ChatPanelPage(page);
+        var chat = new ChatPanelPage(page, agentId);
         await portal.GotoAgentChatAsync(baseUrl, agentId, loadTimeout);
         return (page, portal, chat);
     }
