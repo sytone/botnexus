@@ -335,7 +335,7 @@ public sealed record WebhookRunResponse
         CompletedAt = r.CompletedAt;
         AgentResponse = r.AgentResponse;
         Error = r.Error;
-        ConversationId = r.ConversationId?.Value;
+        ConversationId = r.ConversationId.Value;
         SessionId = r.SessionId?.Value;
     }
 }

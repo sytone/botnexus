@@ -98,9 +98,12 @@ public sealed class WebhookInboundController(
         var typedAgentId = AgentId.From(agentId);
 
         // ── 6. Resolve or pin conversation ───────────────────────────────────
-        ConversationId? conversationId = registration.PinnedConversationId;
-
-        if (conversationId is null)
+        ConversationId resolvedConversationId;
+        if (registration.PinnedConversationId is { } pinned)
+        {
+            resolvedConversationId = pinned;
+        }
+        else
         {
             // Try to pin one — create a new conversation if not yet pinned.
             var now = DateTimeOffset.UtcNow;
@@ -117,7 +120,7 @@ public sealed class WebhookInboundController(
             var created = await conversationStore.CreateAsync(conversation, cancellationToken);
             var winner = await registrationStore.TryPinConversationAsync(
                 typedWebhookId, created.ConversationId, cancellationToken);
-            conversationId = winner ?? created.ConversationId;
+            resolvedConversationId = winner ?? created.ConversationId;
         }
 
         // ── 7. Resolve response mode ─────────────────────────────────────────
@@ -128,7 +131,7 @@ public sealed class WebhookInboundController(
         {
             Id = WebhookRunId.Create(),
             WebhookId = typedWebhookId,
-            ConversationId = conversationId,
+            ConversationId = resolvedConversationId,
             Status = WebhookRunStatus.Pending,
             AcceptedAt = DateTimeOffset.UtcNow,
             AgentAction = body.AgentAction ?? true,
@@ -151,19 +154,19 @@ public sealed class WebhookInboundController(
         if (!run.AgentAction)
         {
             // Store-only mode — record a session entry but don't run the agent.
-            await StoreMessageOnlyAsync(typedAgentId, conversationId.Value, body.Message, cancellationToken);
+            await StoreMessageOnlyAsync(typedAgentId, resolvedConversationId, body.Message, cancellationToken);
             run.Status = WebhookRunStatus.Completed;
             run.CompletedAt = DateTimeOffset.UtcNow;
             run.AgentResponse = null;
             await runStore.UpdateAsync(run, cancellationToken);
-            return Accepted(new WebhookAcceptedResponse(run.Id.Value, pollUrl, conversationId.Value.Value));
+            return Accepted(new WebhookAcceptedResponse(run.Id.Value, pollUrl, resolvedConversationId.Value));
         }
 
         return responseMode switch
         {
-            WebhookResponseMode.Sync => await HandleSyncAsync(run, typedAgentId, conversationId.Value, body.Message, pollUrl, cancellationToken),
-            WebhookResponseMode.Callback => await HandleCallbackAsync(run, typedAgentId, conversationId.Value, body.Message, pollUrl, cancellationToken),
-            _ => await HandleAsyncAsync(run, typedAgentId, conversationId.Value, body.Message, pollUrl, cancellationToken)
+            WebhookResponseMode.Sync => await HandleSyncAsync(run, typedAgentId, resolvedConversationId, body.Message, pollUrl, cancellationToken),
+            WebhookResponseMode.Callback => await HandleCallbackAsync(run, typedAgentId, resolvedConversationId, body.Message, pollUrl, cancellationToken),
+            _ => await HandleAsyncAsync(run, typedAgentId, resolvedConversationId, body.Message, pollUrl, cancellationToken)
         };
     }
 
@@ -333,7 +336,7 @@ public sealed class WebhookInboundController(
                 webhookId = run.WebhookId.Value,
                 status = run.Status.ToString(),
                 agentResponse = run.AgentResponse,
-                conversationId = run.ConversationId?.Value,
+                conversationId = run.ConversationId.Value,
                 completedAt = run.CompletedAt
             });
             await http.PostAsync(

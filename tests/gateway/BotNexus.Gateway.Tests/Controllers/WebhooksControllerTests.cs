@@ -189,6 +189,7 @@ public sealed class WebhooksControllerTests
         {
             Id = WebhookRunId.Create(),
             WebhookId = WebhookId.From("wh_abc123def456789"),
+            ConversationId = ConversationId.Create(),
             Status = WebhookRunStatus.Completed,
             AcceptedAt = DateTimeOffset.UtcNow,
             AgentResponse = "Done."

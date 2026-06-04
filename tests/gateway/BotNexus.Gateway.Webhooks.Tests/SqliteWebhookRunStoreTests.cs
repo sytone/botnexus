@@ -31,6 +31,7 @@ public sealed class SqliteWebhookRunStoreTests : IAsyncLifetime
         {
             Id = WebhookRunId.Create(),
             WebhookId = WebhookId.From(webhookId ?? "wh_testwebhook123456"),
+            ConversationId = ConversationId.Create(),
             Status = WebhookRunStatus.Pending,
             AcceptedAt = DateTimeOffset.UtcNow,
             AgentAction = true
