@@ -35,7 +35,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         var context = await _browser!.NewContextAsync();
         var page = await context.NewPageAsync();
         await page.GotoAsync($"{_fix.GatewayBaseUrl}/chat/{agentId}?tab={tab}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
         await page.Locator(".agent-tab-bar").First.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
@@ -89,7 +89,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "workspace");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // The fixture provisions two locations: workspace-tmp and scratch
         var panelContent = await page.Locator(".agent-tab-pane.active").InnerTextAsync();
@@ -124,7 +124,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "reports");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         var activePane = page.Locator($"#{_fix.AgentIds[0]}-reports-panel");
         var paneText = await activePane.InnerTextAsync();
@@ -158,7 +158,7 @@ public sealed class PanelContentTests : IAsyncLifetime
         Skip.If(_browser is null, "Browser unavailable");
 
         var page = await GoToAgentTabAsync(_fix.AgentIds[0], "canvas");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // Should not show a raw 404 page or crash
         var body = await page.Locator("body").InnerTextAsync();

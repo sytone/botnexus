@@ -108,7 +108,7 @@ public sealed class SidebarNavigationTests
         var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
 
         await page.GotoAsync($"{_fx.GatewayBaseUrl}/agents");
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
 
         // After navigation the sidebar state is reset — re-open it
         await portal.EnsureSidebarOpenAsync();

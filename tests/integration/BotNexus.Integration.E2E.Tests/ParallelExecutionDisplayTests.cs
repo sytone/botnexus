@@ -178,7 +178,7 @@ public sealed class ParallelExecutionDisplayTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await freshPage.GotoAsync(seededUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000,
         });
 

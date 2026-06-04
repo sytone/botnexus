@@ -421,7 +421,7 @@ public sealed class CronSessionBehaviorTests
         // Attempt direct navigation to the session
         await page.GotoAsync(
             $"{_fx.GatewayBaseUrl}/chat/{agentId}?sessionId={sessionId}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 30_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 30_000 });
 
         await page.WaitForTimeoutAsync(2_000);
 

@@ -37,7 +37,7 @@ public sealed class PortalUserJourneyTests
 
         var response = await page.GotoAsync(_fx.GatewayBaseUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         Xunit.Assert.NotNull(response);
@@ -165,7 +165,7 @@ public sealed class PortalUserJourneyTests
         var url = $"{_fx.GatewayBaseUrl}/chat/{agentId}";
         var nav = await page.GotoAsync(url, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         Xunit.Assert.True(nav!.Ok, $"GET {url} returned {nav.Status}");
@@ -235,7 +235,7 @@ public sealed class PortalUserJourneyTests
         var url = $"{baseUrl}/chat/{agentId}";
         var nav = await page.GotoAsync(url, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 60_000,
         });
         Xunit.Assert.NotNull(nav);

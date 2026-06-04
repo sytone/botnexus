@@ -38,7 +38,7 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
         var portal = new PortalPage(page);
 
         await page.GotoAsync($"{_fix.GatewayBaseUrl}/{path}",
-            new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
 
         await page.Locator(".sidebar-nav-item").First.WaitForAsync(new LocatorWaitForOptions
         {
@@ -203,7 +203,7 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
             new LocatorFilterOptions { HasTextString = "Gateway" }).First;
         await gatewayLink.ClickAsync();
 
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await page.WaitForLoadStateAsync(LoadState.Load);
         Assert.True(page.Url.Contains("configuration/gateway", StringComparison.OrdinalIgnoreCase),
             $"Clicking Gateway sub-nav should navigate to /configuration/gateway. URL: {page.Url}");
     }

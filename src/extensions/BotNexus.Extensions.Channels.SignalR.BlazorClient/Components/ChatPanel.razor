@@ -1,4 +1,4 @@
-﻿@inject IJSRuntime JS
+@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -407,6 +407,7 @@ private bool IsStreaming =>
 
     private async Task HandleInputChanged()
     {
+        UpdateCommandPalette();
         if (Prefs?.Current?.ExpandingInput == true)
             await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
     }

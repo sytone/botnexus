@@ -63,6 +63,40 @@ public sealed class ChatPanelPage
     }
 
     /// <summary>
+    /// Click the New Session button, confirm the dialog, then wait for the chat input
+    /// to become visible again. Use this at the start of any test that needs a clean
+    /// conversation history (prevents cross-test message contamination on the shared gateway).
+    /// </summary>
+    public async Task StartFreshSessionAsync()
+    {
+        await NewSessionBtn.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+        await NewSessionBtn.ClickAsync();
+
+        await NewSessionConfirmDialog.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 5_000,
+        });
+        await NewSessionConfirmBtn.ClickAsync();
+
+        // Wait for the dialog to close and input to be ready
+        await NewSessionConfirmDialog.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Hidden,
+            Timeout = 5_000,
+        });
+        await ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+    }
+
+    /// <summary>
     /// Type a message and click Send, then wait for the input to clear
     /// (signal that Blazor processed the send).
     /// </summary>

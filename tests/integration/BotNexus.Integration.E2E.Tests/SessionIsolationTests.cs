@@ -51,7 +51,7 @@ public sealed class SessionIsolationTests
         Skip.If(browser is null, skipReason);
 
         await using var _ = browser!;
-        var agentId = _fx.AgentIds[0];
+        var agentId = _fx.AgentIds[2]; // Use charlie to avoid contamination from alpha's heavy test load
 
         // ── Conversation A ────────────────────────────────────────────────
         var (pageA, portalA, chatA) = await PortalTestHelpers.NewChatPageAsync(
@@ -78,7 +78,7 @@ public sealed class SessionIsolationTests
         // ── Switch back to conversation A ──────────────────────────────────
         await pageA.GotoAsync(urlA, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
         await pageA.WaitForTimeoutAsync(1_500);
@@ -118,7 +118,7 @@ public sealed class SessionIsolationTests
 
         // Start a fresh conversation (new session)
         await portal.ConversationNewBtn.ClickAsync();
-        await page.WaitForTimeoutAsync(1_000);
+        await page.WaitForTimeoutAsync(2_000); // wait for Blazor to render the new conversation
 
         var pageContent = await page.ContentAsync();
 
@@ -177,7 +177,7 @@ public sealed class SessionIsolationTests
         // Navigate to session B
         await page.GotoAsync(urlB, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 20_000
         });
         await page.WaitForTimeoutAsync(1_000);
@@ -269,7 +269,7 @@ public sealed class SessionIsolationTests
         // Hard reload
         await page.ReloadAsync(new PageReloadOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.Load,
             Timeout = 30_000
         });
         await page.WaitForTimeoutAsync(2_000);
