@@ -202,7 +202,19 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
+        {
+            // Seed scroll-tracking state so the first Store.OnChanged event from
+            // streaming is not treated as an agent/conversation switch, which would
+            // cause an unconditional force-scroll even when the user has scrolled up.
+            _lastActiveAgentId = Store.ActiveAgentId;
+            _lastActiveConversationId = Store.ActiveAgentId is not null
+                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
+                : null;
+            _lastRenderedMessageCount = _lastActiveConversationId is not null
+                ? Store.GetMessages(_lastActiveConversationId).Count
+                : 0;
             await ForceScrollToBottomAsync();
+        }
     }
 
     private void HandleReadyChanged() =>
@@ -317,6 +329,8 @@ else
         if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
         await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
         Nav.NavigateTo($"chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
+        // Scroll to the bottom so the selected conversation's latest message is visible.
+        await ForceScrollToBottomAsync();
     }
 
     private async Task SendMessage()

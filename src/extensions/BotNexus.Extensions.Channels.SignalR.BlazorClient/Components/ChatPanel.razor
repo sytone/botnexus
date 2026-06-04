@@ -1,4 +1,4 @@
-﻿@inject IJSRuntime JS
+@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -409,6 +409,8 @@ private bool IsStreaming =>
     {
         if (Prefs?.Current?.ExpandingInput == true)
             await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+        // Update command palette on every input change so typing slash triggers it.
+        UpdateCommandPalette();
     }
 
     private async Task ToggleExpandingInput()

@@ -158,7 +158,7 @@ public sealed class MobileChatTests
         await errorDiv.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Attached });
 
         // Must contain a dismiss/close control
-        var dismissBtn = errorDiv.Locator("button, [data-dismiss], [aria-label*='dismiss' i], [aria-label*='close' i]");
+        var dismissBtn = errorDiv.Locator("button");
         var count = await dismissBtn.CountAsync();
 
         Assert.True(count > 0,
