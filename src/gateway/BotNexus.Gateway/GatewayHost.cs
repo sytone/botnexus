@@ -614,10 +614,36 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                 if (!sessionSaved)
                 {
+                    // Isolate transcript write from delivery success: a SaveAsync failure
+                    // must not propagate as a delivery failure — the channel send already
+                    // succeeded and retrying the outer operation would duplicate the reply
+                    // to the user. Log a warning and continue (#756).
                     using var saveActivity = GatewayDiagnostics.Source.StartActivity("session.save", ActivityKind.Internal);
                     saveActivity?.SetTag("botnexus.session.id", session.SessionId);
                     saveActivity?.SetTag("botnexus.agent.id", session.AgentId);
-                    await _sessions.SaveAsync(session, cancellationToken);
+                    try
+                    {
+                        await _sessions.SaveAsync(session, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Suppress: session is shutting down. Transcript loss is acceptable
+                        // on clean cancellation; no retry, no duplicate send.
+                        _logger.LogDebug(
+                            "Session transcript save skipped (cancellation) for session '{SessionId}'",
+                            sessionId);
+                    }
+                    catch (Exception saveEx)
+                    {
+                        // Delivery succeeded; log the transcript failure as a warning only.
+                        // The caller must NOT retry the outer operation — the channel send
+                        // already reached the user.
+                        _logger.LogWarning(
+                            saveEx,
+                            "Session transcript save failed after successful channel send for session '{SessionId}'. " +
+                            "Delivery was successful; transcript may be missing the last assistant turn.",
+                            sessionId);
+                    }
                 }
 
                 // Outbound fan-out: deliver response to other bindings in the conversation

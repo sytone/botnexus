@@ -2000,5 +2000,152 @@ public sealed class GatewayHostTests
                 It.IsAny<CancellationToken>()),
             Times.Once); // exactly once as the primary channel, not doubled via observer fan-out
     }
+
+    // #756 — transcript mirror isolation: SaveAsync failures after a successful channel send
+    // must NOT propagate as delivery failures (which could trigger duplicate retries).
+
+    [Fact]
+    public async Task DispatchAsync_WhenSaveAsyncThrows_DoesNotPropagateException_AndChannelSendSucceeded()
+    {
+        // Arrange: agent responds, channel send succeeds, but SaveAsync (transcript write) throws.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "agent-response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var saveCallCount = 0;
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns<GatewaySession, CancellationToken>((_, _) =>
+            {
+                saveCallCount++;
+                // First two saves succeed (write-ahead user message + crash sentinel);
+                // the transcript save after channel send throws.
+                if (saveCallCount >= 3)
+                    throw new InvalidOperationException("Simulated transcript write failure");
+                return Task.CompletedTask;
+            });
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        var activity = new RecordingActivityBroadcaster();
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object, activity,
+            CreateChannelManager(channel.Object));
+
+        // Act: should NOT throw even though SaveAsync threw on the 3rd call.
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        // Assert: channel send was called (delivery happened).
+        channel.Verify(c => c.SendAsync(
+            It.Is<OutboundMessage>(m => m.Content == "agent-response"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // AgentCompleted activity published (turn completed despite transcript failure).
+        activity.Activities.Select(a => a.Type).ShouldContain(GatewayActivityType.AgentCompleted);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenSaveAsyncThrowsException_ChannelSendCalledExactlyOnce()
+    {
+        // Verify no duplicate send occurs when SaveAsync fails: the channel must see exactly
+        // one SendAsync call, proving the transcript failure did not trigger a retry path.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-b"]);
+        var handle = CreatePromptHandle("agent-b", "session-2", "only-once");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-b"),
+                BotNexus.Domain.Primitives.SessionId.From("session-2"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-b")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-2"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-b"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var saveCallCount = 0;
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns<GatewaySession, CancellationToken>((_, _) =>
+            {
+                saveCallCount++;
+                if (saveCallCount >= 3)
+                    throw new IOException("Disk full - transcript write failed");
+                return Task.CompletedTask;
+            });
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-2"));
+
+        // Channel send must be called exactly once — no duplicate.
+        channel.Verify(c => c.SendAsync(
+            It.IsAny<OutboundMessage>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenSaveAsyncSucceeds_NormalBehaviourUnchanged()
+    {
+        // Regression guard: ensure the happy path still records history and completes normally.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-c"]);
+        var handle = CreatePromptHandle("agent-c", "session-3", "normal-response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-c"),
+                BotNexus.Domain.Primitives.SessionId.From("session-3"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-c")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-3"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-c"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        var activity = new RecordingActivityBroadcaster();
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object, activity,
+            CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-3"));
+
+        channel.Verify(c => c.SendAsync(
+            It.Is<OutboundMessage>(m => m.Content == "normal-response"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        session.History.Select(e => $"{e.Role}:{e.Content}").ToList()
+            .ShouldBe(["user:hello", "assistant:normal-response"]);
+        activity.Activities.Select(a => a.Type).ShouldContain(GatewayActivityType.AgentCompleted);
+    }
 }
 
