@@ -197,16 +197,28 @@ public sealed class SlashCommandTests
             // No confirm dialog — /new acted immediately
         }
 
-        // /new should navigate to a fresh conversation — URL changes or messages reset.
-        // Give the portal 5s to react (new session = new conversation ID in URL or cleared state).
-        await Task.Delay(2_000);
-
-        var urlAfter = page.Url;
-        var messagesAfter = await chat.Page.Locator(".message").CountAsync();
-
-        // Either the URL has changed (new conversation ID) or the message list is now empty/shorter
-        Assert.True(urlAfter != urlBefore || messagesAfter == 0,
-            $"/new did not reset the session. URL before: {urlBefore}, after: {urlAfter}, messages: {messagesAfter}");
+        // /new resets the session — the portal inserts a "─── New session started ───" system
+        // message in the current conversation rather than navigating to a new URL. Wait up to
+        // 5s for that marker to appear.
+        var newSessionMarker = chat.SystemMessages
+            .Filter(new LocatorFilterOptions { HasTextString = "New session" })
+            .First;
+        try
+        {
+            await newSessionMarker.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Attached,
+                Timeout = 5_000,
+            });
+        }
+        catch (TimeoutException)
+        {
+            // Fallback: URL may have changed if navigate-on-reset is implemented
+            var urlAfter = page.Url;
+            var messagesAfter = await chat.Page.Locator($"#{_fx.AgentIds[0]}-conversation-panel .message").CountAsync();
+            Assert.True(urlAfter != urlBefore || messagesAfter == 0,
+                $"/new did not reset the session. No 'New session' marker, URL before: {urlBefore}, after: {urlAfter}, messages: {messagesAfter}");
+        }
     }
 
     [SkippableFact]

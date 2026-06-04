@@ -66,6 +66,11 @@ public static class PortalTestHelpers
         // because the gateway is still processing a turn started by a previous test.
         await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(10));
 
+        // Extra settle: a prior turn may have just finished and triggered a new one
+        // (e.g. a slash command that fires a secondary turn). Wait 300ms then check again.
+        await page.WaitForTimeoutAsync(300);
+        await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(15));
+
         return (page, portal, chat);
     }
 

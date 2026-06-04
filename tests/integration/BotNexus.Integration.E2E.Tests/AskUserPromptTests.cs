@@ -37,6 +37,10 @@ public sealed class AskUserPromptTests : IAsyncLifetime
     {
         var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(_browser!, _fix.GatewayBaseUrl, agentId);
 
+        // Ensure a clean slate before sending the AskUser trigger to avoid prior-test
+        // contamination leaving the gateway mid-turn (which detaches chat-send in a loop).
+        await chat.StartFreshSessionAsync();
+
         await chat.SendMessageAsync(trigger);
 
         var promptEl = page.Locator(".ask-user-prompt");

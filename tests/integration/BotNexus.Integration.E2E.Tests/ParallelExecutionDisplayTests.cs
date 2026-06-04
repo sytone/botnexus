@@ -114,7 +114,7 @@ public sealed class ParallelExecutionDisplayTests
         await portal.SelectAgentAsync(agentB);
 
         // Agent B panel should load normally — not stuck/frozen
-        var chatB = new ChatPanelPage(page);
+        var chatB = new ChatPanelPage(page, agentB);
         await chatB.ChatInput.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
@@ -181,7 +181,7 @@ public sealed class ParallelExecutionDisplayTests
         });
 
         // Wait for chat input to be visible and interactive (agent-panel is CSS-managed)
-        var freshChat = new ChatPanelPage(freshPage);
+        var freshChat = new ChatPanelPage(freshPage, agentId);
         await freshChat.ChatInput.WaitForAsync(new LocatorWaitForOptions
         {
             State = WaitForSelectorState.Visible,
