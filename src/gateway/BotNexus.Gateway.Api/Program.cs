@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Api.Extensions;
+﻿using BotNexus.Gateway.Api.Extensions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -22,6 +22,7 @@ using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
 using Serilog;
 using System.Reflection;
+using BotNexus.Gateway.Webhooks;
 
 const string GatewayCorsPolicy = "GatewayCorsPolicy";
 
@@ -132,6 +133,10 @@ builder.Services.Configure<CronOptions>(options =>
             },
             StringComparer.OrdinalIgnoreCase);
 });
+
+// Webhook stores - SQLite co-located with the config directory.
+var webhookDbPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(resolvedConfigPath)!, "webhooks.sqlite");
+builder.Services.AddBotNexusWebhooks(webhookDbPath);
 
 static string? ResolveCronModel(CronJobConfig config)
 {
