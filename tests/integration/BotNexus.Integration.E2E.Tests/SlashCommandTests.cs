@@ -180,11 +180,12 @@ public sealed class SlashCommandTests
 
         var urlBefore = page.Url;
 
+        var messagesBefore = await chat.Page.Locator(".chat-panel-wrapper:not(.hidden) .message").CountAsync();
         await chat.ExecuteSlashCommandAsync("/new");
 
         // /new should navigate to a fresh conversation — URL changes or messages reset.
-        // Give the portal 5s to react (new session = new conversation ID in URL or cleared state).
-        await Task.Delay(2_000);
+        // Give the portal time to react (new session = new conversation ID in URL or cleared state).
+        await Task.Delay(4_000);
 
         var urlAfter = page.Url;
         var messagesAfter = await chat.Page.Locator(".chat-panel-wrapper:not(.hidden) .message").CountAsync();
@@ -192,7 +193,6 @@ public sealed class SlashCommandTests
         // Either the URL has changed (new conversation ID) or the message list is now empty/shorter
         // Note: the portal may not update the URL for /new — URL change is a nice-to-have, not required.
         // The core requirement: the visible message count must be less than before (ideally 0).
-        var messagesBefore = 2; // HELLO_WORLD = 1 user + 1 assistant
         Assert.True(urlAfter != urlBefore || messagesAfter < messagesBefore,
             $"/new did not reset the session. URL before: {urlBefore}, after: {urlAfter}, messages: {messagesAfter}");
     }

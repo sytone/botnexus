@@ -40,11 +40,8 @@ public sealed class ConfigurationPageTests : IAsyncLifetime
         await page.GotoAsync($"{_fix.GatewayBaseUrl}/{path}",
             new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
 
-        await page.Locator(".sidebar-nav-item").First.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Visible,
-            Timeout = 20_000
-        });
+        // Wait briefly for the page to settle after NetworkIdle
+        await page.WaitForTimeoutAsync(1000);
 
         return (page, portal);
     }

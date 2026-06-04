@@ -106,9 +106,8 @@ public sealed class PortalSettingsPanelTests : IAsyncLifetime
         var overlay = page.Locator(".portal-settings-overlay");
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
 
-        // Click in the top edge of the overlay — well above the centered settings panel content.
-        // Clicking at (640, 400) lands on the panel child which has stopPropagation; top of viewport avoids it.
-        await page.Mouse.ClickAsync(640, 10);
+        // Click in the top-left corner of the overlay — well outside the centered panel content.
+        await overlay.ClickAsync(new LocatorClickOptions { Position = new Position { X = 5, Y = 5 } });
 
         await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
     }

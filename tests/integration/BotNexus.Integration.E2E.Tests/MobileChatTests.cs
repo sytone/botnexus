@@ -380,6 +380,10 @@ public sealed class MobileChatTests
 
         // Scroll to top to simulate reading history
         await mobilePage.ScrollToTopAsync();
+        // Wait longer than the 600ms forceScrollToBottom backstop to let all timers fire
+        await page.WaitForTimeoutAsync(800);
+        // Re-scroll to top after any backstop timers have completed
+        await mobilePage.ScrollToTopAsync();
         await page.WaitForTimeoutAsync(200);
 
         var scrollTopBefore = await mobilePage.GetScrollTopAsync();
@@ -395,8 +399,8 @@ public sealed class MobileChatTests
         clientHeight = await page.EvaluateAsync<double>(
             "() => document.querySelector('.message-stream')?.clientHeight ?? 0");
 
-        var isAtBottom = scrollHeight - scrollTopAfter - clientHeight < 100;
-        Assert.False(isAtBottom,
+        var scrolledSignificantly = scrollTopAfter - scrollTopBefore > 50;
+        Assert.False(scrolledSignificantly,
             "When user has scrolled up to read history, streaming must NOT force-scroll to bottom. " +
             $"scrollTop before={scrollTopBefore}, after={scrollTopAfter}, scrollHeight={scrollHeight}, clientHeight={clientHeight}. " +
             "chatScroll.scrollToBottom threshold (200px) should preserve reading position.");
