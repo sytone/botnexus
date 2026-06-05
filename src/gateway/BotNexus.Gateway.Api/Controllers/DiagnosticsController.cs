@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>
-/// Lightweight diagnostics endpoint for portal client-side error reports.
+/// Lightweight diagnostics endpoint for channel-side error reports.
 /// Authenticated by <see cref="GatewayAuthMiddleware"/> (same as all other /api/* endpoints).
 /// </summary>
 [ApiController]
@@ -13,17 +13,17 @@ public sealed class DiagnosticsController(ILogger<DiagnosticsController> logger)
     private readonly ILogger<DiagnosticsController> _logger = logger;
 
     /// <summary>
-    /// Accepts a client-side error report from the portal UI and logs it at Error level.
+    /// Accepts an error report from any channel adapter and logs it at Error level.
     /// Authentication is enforced by <see cref="GatewayAuthMiddleware"/> for all /api/* paths.
     /// </summary>
-    [HttpPost("client-error")]
-    public IActionResult ReportClientError([FromBody] ClientErrorReport report)
+    [HttpPost("channel-error")]
+    public IActionResult ReportChannelError([FromBody] ChannelErrorReport report)
     {
         if (report is null)
             return BadRequest("Report body is required.");
 
         _logger.LogError(
-            "Client-side error reported. Agent={AgentId} Session={SessionId} Url={Url} UserAgent={UserAgent} Timestamp={Timestamp} Message={Message}\nComponentStack={ComponentStack}\nStackTrace={StackTrace}",
+            "Channel error reported. Agent={AgentId} Session={SessionId} Url={Url} UserAgent={UserAgent} Timestamp={Timestamp} Message={Message}\nComponentStack={ComponentStack}\nStackTrace={StackTrace}",
             report.AgentId,
             report.SessionId,
             report.Url,

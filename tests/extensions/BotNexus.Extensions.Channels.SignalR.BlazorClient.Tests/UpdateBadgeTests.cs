@@ -1,4 +1,4 @@
-﻿using Bunit;
+﻿﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +40,7 @@ public sealed class UpdateBadgeTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(restClient);
+        _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(_updateSvc);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));

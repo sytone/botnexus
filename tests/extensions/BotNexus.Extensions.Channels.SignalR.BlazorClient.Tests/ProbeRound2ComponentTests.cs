@@ -1,4 +1,4 @@
-﻿using Bunit;
+﻿﻿﻿using Bunit;
 using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
@@ -28,6 +28,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(_interaction);
         var restClient = Substitute.For<IGatewayRestClient>();
         _ctx.Services.AddSingleton(restClient);
+        _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -179,6 +180,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(hub);
         ctx.Services.AddSingleton(gatewayInfo);
         ctx.Services.AddSingleton(restClient);
+        ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());

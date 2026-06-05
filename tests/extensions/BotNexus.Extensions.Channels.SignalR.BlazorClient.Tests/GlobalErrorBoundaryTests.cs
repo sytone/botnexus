@@ -11,15 +11,17 @@ public sealed class GlobalErrorBoundaryTests : IDisposable
     private readonly BunitContext _ctx = new();
     private readonly IClientStateStore _store = Substitute.For<IClientStateStore>();
     private readonly IGatewayRestClient _restClient = Substitute.For<IGatewayRestClient>();
+    private readonly IChannelErrorReporter _errorReporter = Substitute.For<IChannelErrorReporter>();
 
     public GlobalErrorBoundaryTests()
     {
         _store.ActiveAgentId.Returns("agent-1");
-        _restClient.ReportClientErrorAsync(Arg.Any<ClientErrorReportDto>(), Arg.Any<CancellationToken>())
+        _errorReporter.ReportAsync(Arg.Any<ChannelErrorReportDto>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_restClient);
+        _ctx.Services.AddSingleton(_errorReporter);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

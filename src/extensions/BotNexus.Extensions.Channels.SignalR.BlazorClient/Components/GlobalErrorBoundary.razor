@@ -1,5 +1,5 @@
 @inject IJSRuntime JS
-@inject IGatewayRestClient RestClient
+@inject IChannelErrorReporter ErrorReporter
 @inject IClientStateStore Store
 @inherits ErrorBoundaryBase
 
@@ -52,7 +52,7 @@ else
             // JS interop may not be available in all error scenarios.
         }
 
-        var report = new ClientErrorReportDto
+        var report = new ChannelErrorReportDto
         {
             Message = exception.Message,
             StackTrace = exception.StackTrace,
@@ -62,7 +62,7 @@ else
             UserAgent = ua,
         };
 
-        await RestClient.ReportClientErrorAsync(report);
+        await ErrorReporter.ReportAsync(report);
     }
 
     private void ToggleDetail() => _showDetail = !_showDetail;

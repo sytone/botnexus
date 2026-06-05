@@ -115,8 +115,8 @@ public interface IGatewayRestClient
     /// <summary>DELETE /api/skills/{path}?force={force} — delete a file or directory from the skills dir.</summary>
     Task<bool> DeleteSkillItemAsync(string path, bool force = false, CancellationToken cancellationToken = default);
 
-    /// <summary>POST /api/diagnostics/client-error - report a portal client-side error to the gateway log.</summary>
-    Task ReportClientErrorAsync(ClientErrorReportDto report, CancellationToken cancellationToken = default);
+    /// <summary>POST /api/diagnostics/channel-error - report a channel-side error to the gateway log.</summary>
+    Task ReportChannelErrorAsync(ChannelErrorReportDto report, CancellationToken cancellationToken = default);
 
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
