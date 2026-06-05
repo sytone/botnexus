@@ -117,8 +117,10 @@
                                         .ThenByDescending(c => c.UpdatedAt))
                                     {
                                         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
-                                            <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
-                                                    @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
+                                            <a class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
+                                               href="chat/@Uri.EscapeDataString(activeAgent.AgentId)/@Uri.EscapeDataString(conversation.ConversationId)"
+                                               @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)"
+                                               @onclick:preventDefault="true">
                                                 <span class="conversation-list-item-main">
                                                     <span class="conversation-list-item-title">@conversation.Title</span>
 
@@ -143,7 +145,7 @@
                                                         @FormatConversationTimestamp(conversation.UpdatedAt)
                                                     </span>
                                                 </span>
-                                            </button>
+                                            </a>
                                             @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
                                             {
                                                 <button class="conversation-archive-btn"
