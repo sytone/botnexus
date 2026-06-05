@@ -148,6 +148,13 @@ public sealed class GatewaySettingsConfig
     /// Off by default; enable only for debugging unexpected provider responses.
     /// </summary>
     public bool EnableProviderRequestLogging { get; set; } = false;
+
+    /// <summary>
+    /// Server-wide datetime injection settings. When enabled, the current datetime is prepended
+    /// to every user message sent to the LLM so agents always know the current time.
+    /// Per-agent overrides take precedence over this world default.
+    /// </summary>
+    public DateTimeInjectionConfig? DateTimeInjection { get; set; }
 }
 
 /// <summary>
@@ -450,6 +457,8 @@ public sealed class AgentDefinitionConfig
     public SoulAgentConfig? Soul { get; set; }
     /// <summary>Heartbeat polling configuration.</summary>
     public HeartbeatAgentConfig? Heartbeat { get; set; }
+    /// <summary>Datetime injection configuration override for this agent. Overrides world default when set.</summary>
+    public DateTimeInjectionConfig? DateTimeInjection { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
