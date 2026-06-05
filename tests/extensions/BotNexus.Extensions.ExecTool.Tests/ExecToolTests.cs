@@ -438,17 +438,23 @@ public class ExecToolTests : IDisposable
     [InlineData("PATH")]
     [InlineData("Path")]
     [InlineData("path")]
-    public async Task PrepareArguments_RejectsPathEnvOverride(string key)
+    [InlineData("PATHEXT")]
+    [InlineData("pathext")]
+    [InlineData("COMSPEC")]
+    [InlineData("comspec")]
+    [InlineData("SYSTEMROOT")]
+    [InlineData("SystemRoot")]
+    [InlineData("systemroot")]
+    public async Task PrepareArguments_RejectsBlockedWindowsAndPathEnvOverride(string key)
     {
         var args = new Dictionary<string, object?>
         {
             ["command"] = new List<string> { "echo", "hi" },
-            ["env"] = new Dictionary<string, string> { [key] = "/usr/fake/bin" },
+            ["env"] = new Dictionary<string, string> { [key] = "C:\\evil\\bin" },
         };
 
         var act = () => _tool.PrepareArgumentsAsync(args);
-        var ex = await act.ShouldThrowAsync<ArgumentException>();
-        ex.Message.ShouldContain("PATH");
+        await act.ShouldThrowAsync<ArgumentException>();
     }
 
     [Theory]

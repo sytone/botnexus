@@ -528,10 +528,13 @@ public sealed class ExecTool : IAgentTool
     /// <item><c>LD_*</c> — Linux dynamic-linker control (e.g. <c>LD_PRELOAD</c>, <c>LD_LIBRARY_PATH</c>)</item>
     /// <item><c>DYLD_*</c> — macOS dynamic-linker control</item>
     /// <item><c>PATH</c> — executable search path; an agent override would redirect which binaries run</item>
+    /// <item><c>PATHEXT</c> — Windows list of executable extensions; override could make .txt executable</item>
+    /// <item><c>COMSPEC</c> — Windows path to cmd.exe; override redirects all cmd invocations</item>
+    /// <item><c>SystemRoot</c> — Windows system directory; override can redirect DLL loading</item>
     /// </list>
     /// </summary>
     public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_"];
-    public const string BlockedEnvPath = "PATH";
+    public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT"];
 
     /// <summary>
     /// Throws <see cref="ArgumentException"/> when <paramref name="key"/> is a blocked
@@ -540,11 +543,14 @@ public sealed class ExecTool : IAgentTool
     /// <exception cref="ArgumentException">The key matches a blocked prefix or exact name.</exception>
     public static void ValidateEnvKey(string key)
     {
-        if (string.Equals(key, BlockedEnvPath, StringComparison.OrdinalIgnoreCase))
+        foreach (var exact in BlockedEnvExact)
         {
-            throw new ArgumentException(
-                $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
-                "PATH overrides may redirect which executables are invoked.");
+            if (string.Equals(key, exact, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
+                    $"{exact} overrides may redirect binary resolution or system paths.");
+            }
         }
 
         foreach (var prefix in BlockedEnvPrefixes)
