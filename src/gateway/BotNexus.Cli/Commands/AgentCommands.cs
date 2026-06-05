@@ -1,6 +1,7 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Abstractions.Configuration;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 using ValidationResult = Spectre.Console.ValidationResult;
@@ -230,7 +231,13 @@ internal sealed class AgentCommands
             Description = string.IsNullOrWhiteSpace(description) ? null : description,
             Provider = provider,
             Model = model,
-            Enabled = enabled
+            Enabled = enabled,
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                Enabled = true,
+                IntervalMinutes = 30,
+                QuietHours = new QuietHoursConfig { Enabled = true, Start = "23:00", End = "07:00" }
+            }
         };
 
         var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
@@ -277,7 +284,13 @@ internal sealed class AgentCommands
             Emoji = string.IsNullOrWhiteSpace(emoji) ? null : emoji,
             Provider = provider,
             Model = model,
-            Enabled = enabled
+            Enabled = enabled,
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                Enabled = true,
+                IntervalMinutes = 30,
+                QuietHours = new QuietHoursConfig { Enabled = true, Start = "23:00", End = "07:00" }
+            }
         };
 
         var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);

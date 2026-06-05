@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -482,5 +482,84 @@ public sealed class AgentInteractionServiceTests
         Assert.Equal(2, conv.Messages.Count);
         Assert.Equal("Error", conv.Messages[1].Role);
         Assert.Contains("Steer failed", conv.Messages[1].Content);
+    }
+    // -- SelectConversationAsync stale streaming state tests (#789) --
+
+    [Fact]
+    public async Task SelectConversationAsync_StaleStreamingConversation_ClearsStreamingAndReloadsHistory()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-streaming"] = new ConversationState
+        {
+            ConversationId = "conv-streaming",
+            Title = "Stale streamer",
+            HistoryLoaded = true
+        };
+        agent.Conversations["conv-streaming"].StreamState.IsStreaming = true;
+
+        var freshHistory = new ConversationHistoryResponseDto(
+            "conv-streaming", TotalCount: 2, Offset: 0, Limit: 200,
+            Entries:
+            [
+                new ConversationHistoryEntryDto { Kind = "message", SessionId = "s1", Role = "user",      Content = "hello",     Timestamp = DateTimeOffset.UtcNow.AddSeconds(-5) },
+                new ConversationHistoryEntryDto { Kind = "message", SessionId = "s1", Role = "assistant", Content = "completed", Timestamp = DateTimeOffset.UtcNow }
+            ]);
+
+        _restClient.GetHistoryAsync("conv-streaming", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(freshHistory);
+
+        await _service.SelectConversationAsync("agent-1", "conv-streaming");
+
+        await _restClient.Received(1).GetHistoryAsync("conv-streaming", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        var convResult = agent.Conversations["conv-streaming"];
+        Assert.False(convResult.StreamState.IsStreaming);
+        Assert.Equal(2, convResult.Messages.Count);
+        Assert.Equal("completed", convResult.Messages[^1].Content);
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_AlreadyLoadedNonStreaming_DoesNotReloadHistory()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-idle"] = new ConversationState
+        {
+            ConversationId = "conv-idle",
+            Title = "Idle",
+            HistoryLoaded = true
+        };
+
+        await _service.SelectConversationAsync("agent-1", "conv-idle");
+
+        await _restClient.DidNotReceive().GetHistoryAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_StreamingAndNotLoaded_LoadsHistoryAndClearsStreaming()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-new-streaming"] = new ConversationState
+        {
+            ConversationId = "conv-new-streaming",
+            Title = "New streaming",
+            HistoryLoaded = false
+        };
+        agent.Conversations["conv-new-streaming"].StreamState.IsStreaming = true;
+
+        var historyResponse = new ConversationHistoryResponseDto(
+            "conv-new-streaming", TotalCount: 1, Offset: 0, Limit: 200,
+            Entries:
+            [
+                new ConversationHistoryEntryDto { Kind = "message", SessionId = "s1", Role = "user", Content = "go", Timestamp = DateTimeOffset.UtcNow }
+            ]);
+
+        _restClient.GetHistoryAsync("conv-new-streaming", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(historyResponse);
+
+        await _service.SelectConversationAsync("agent-1", "conv-new-streaming");
+
+        await _restClient.Received(1).GetHistoryAsync("conv-new-streaming", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        var conv = agent.Conversations["conv-new-streaming"];
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Single(conv.Messages);
     }
 }

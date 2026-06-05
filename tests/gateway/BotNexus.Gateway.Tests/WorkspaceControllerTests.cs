@@ -302,6 +302,61 @@ public sealed class WorkspaceControllerWriteTests
         fileSystem.File.ReadAllText(Path.Combine(WorkspacePath, "notes.md")).ShouldBe("new content");
     }
 
+    [Fact]
+    public void WriteFile_NoBomWritten_RawBytesDoNotStartWithUtf8BomBytes()
+    {
+        // Regression for #869: Encoding.UTF8 emits a UTF-8 BOM on Windows which breaks
+        // YAML frontmatter parsers (SkillParser, YAML loaders). The workspace editor must
+        // write BOM-free UTF-8 so any consumer can parse the file without special handling.
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        controller.WriteFile("agent-a", "skill.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "---\nname: test\n---\nbody" });
+
+        var bytes = fileSystem.File.ReadAllBytes(Path.Combine(WorkspacePath, "skill.md"));
+        // UTF-8 BOM is 0xEF 0xBB 0xBF
+        bytes.Length.ShouldBeGreaterThan(0);
+        (bytes[0] == 0xEF && bytes.Length > 2 && bytes[1] == 0xBB && bytes[2] == 0xBF).ShouldBeFalse(
+            "WriteFile must not emit a UTF-8 BOM");
+        // Verify content is readable (no invisible prefix)
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
+        text.ShouldStartWith("---");
+    }
+
+    [Fact]
+    public void WriteFile_ContentWithLeadingBom_BomNotDoubled()
+    {
+        // If content arrives already containing a BOM (from a client-side quirk), WriteAllText
+        // with BOM-free encoding must not add a second BOM. The written bytes should contain
+        // exactly one BOM sequence.
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        // Content with an explicit BOM prefix
+        var contentWithBom = "\uFEFF# title";
+        controller.WriteFile("agent-a", "bom-input.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = contentWithBom });
+
+        var bytes = fileSystem.File.ReadAllBytes(Path.Combine(WorkspacePath, "bom-input.md"));
+        // BOM-free encoding writes the content as-is. If content had a BOM character, it is
+        // preserved as a Unicode code point (3 bytes 0xEF 0xBB 0xBF) but there is exactly one.
+        // Double-BOM would be 6 bytes of BOM at the start, which should never occur.
+        var bomCount = 0;
+        for (var i = 0; i <= bytes.Length - 3; i++)
+        {
+            if (bytes[i] == 0xEF && bytes[i + 1] == 0xBB && bytes[i + 2] == 0xBF)
+                bomCount++;
+        }
+        bomCount.ShouldBeLessThanOrEqualTo(1, "WriteFile must not double-add a BOM");
+    }
+
     // ── sad paths ─────────────────────────────────────────────────────────────
 
     [Fact]
