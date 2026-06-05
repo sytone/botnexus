@@ -85,6 +85,90 @@ public sealed class ConversationsControllerHistoryTests
         actionResult.ShouldBeOfType<NotFoundResult>();
     }
 
+    /// <summary>
+    /// Regression test for #732: a cron session whose conversation_id column is NULL
+    /// in the sessions table is invisible to ListByConversationAsync. The history endpoint
+    /// must fall back to conversation.ActiveSessionId so the user can see messages that
+    /// were written before the conversation-linkage migration (or by cron paths that do not
+    /// yet stamp the foreign key).
+    /// </summary>
+    [Fact]
+    public async Task GetHistory_OrphanedSession_FallsBackToActiveSessionId_WhenLinkedSessionsEmpty()
+    {
+        var conversationId = ConversationId.From("c_history_orphan");
+        var orphanSessionId = SessionId.From("s-orphan-no-conv-id");
+        var sessions = new InMemorySessionStore();
+
+        // Session has NO conversation_id stamp — simulates the pre-migration / cron-path gap.
+        var session = await sessions.GetOrCreateAsync(orphanSessionId, AgentId.From("aurum"));
+        // Deliberately do NOT set session.Session.ConversationId — leaves it as default (uninitialized)
+        for (var i = 0; i < 5; i++)
+        {
+            session.AddEntry(new SessionEntry
+            {
+                Role = i % 2 == 0 ? MessageRole.User : MessageRole.Assistant,
+                Content = $"orphan-msg-{i}",
+                Timestamp = DateTimeOffset.UtcNow.AddMinutes(i)
+            });
+        }
+        await sessions.SaveAsync(session);
+
+        // Conversation points to the orphaned session via ActiveSessionId
+        var conversation = CreateConversation(conversationId, "aurum", orphanSessionId);
+        var controller = new ConversationsController(new StubConversationStore(conversation), sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(5);
+        response.Entries.Count.ShouldBe(5);
+        response.Entries[0].Content.ShouldBe("orphan-msg-0");
+        response.Entries[^1].Content.ShouldBe("orphan-msg-4");
+    }
+
+    [Fact]
+    public async Task GetHistory_OrphanedSession_ReturnsEmpty_WhenNoActiveSessionId()
+    {
+        // Conversation has no sessions AND no ActiveSessionId — must return 0 entries, not 404.
+        var conversationId = ConversationId.From("c_history_orphan_no_fallback");
+        var sessions = new InMemorySessionStore();
+        var conversation = CreateConversation(conversationId, "aurum"); // no activeSessionId
+        var controller = new ConversationsController(new StubConversationStore(conversation), sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(0);
+        response.Entries.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHistory_OrphanedSession_DoesNotDuplicateEntries_WhenSessionAlsoLinked()
+    {
+        // Edge case: session has both a conversation_id stamp AND appears as ActiveSessionId.
+        // Entries must not be doubled.
+        var conversationId = ConversationId.From("c_history_no_dup");
+        var sessionId = SessionId.From("s-linked-and-active");
+        var sessions = new InMemorySessionStore();
+
+        var session = await sessions.GetOrCreateAsync(sessionId, AgentId.From("quill"));
+        session.Session.ConversationId = conversationId; // properly linked
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "msg-1", Timestamp = DateTimeOffset.UtcNow });
+        await sessions.SaveAsync(session);
+
+        var conversation = CreateConversation(conversationId, "quill", sessionId);
+        var controller = new ConversationsController(new StubConversationStore(conversation), sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(1); // must not double-count
+        response.Entries[0].Content.ShouldBe("msg-1");
+    }
+
     [Fact]
     public async Task Archive_SealsActiveSessionWithoutDeletingIt()
     {

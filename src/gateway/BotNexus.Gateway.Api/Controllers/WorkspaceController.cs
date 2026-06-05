@@ -322,7 +322,10 @@ public sealed class WorkspaceController : ControllerBase
         if (!string.IsNullOrEmpty(parentDir) && !_fileSystem.Directory.Exists(parentDir))
             return BadRequest(new { error = "Parent directory does not exist." });
 
-        _fileSystem.File.WriteAllText(resolvedFinalPath, request.Content, Encoding.UTF8);
+        // Use BOM-free UTF-8: Encoding.UTF8 emits a BOM on Windows which breaks YAML
+        // frontmatter parsers (e.g. SkillParser) and agent workspace file consumers.
+        var noBomUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        _fileSystem.File.WriteAllText(resolvedFinalPath, request.Content, noBomUtf8);
         return NoContent();
     }
 
