@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
@@ -58,6 +59,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly ISessionCompactionCoordinator _compactionCoordinator;
     private readonly IConversationStore? _conversationStore;
     private readonly DefaultInboundMessageOrchestrator _orchestrator;
+    private readonly IOptions<PlatformConfig>? _platformConfig;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -77,7 +79,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IPreCompactionMemoryFlusher? memoryFlusher = null,
         IAgentRegistry? registry = null,
         ISessionCompactionCoordinator? compactionCoordinator = null,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        IOptions<PlatformConfig>? platformConfig = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -95,6 +98,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _memoryFlusher = memoryFlusher;
         _registry = registry;
         _conversationStore = conversationStore;
+        _platformConfig = platformConfig;
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
         // one; build a fallback from the deps we already have so behaviour
@@ -463,6 +467,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }, cancellationToken);
 
                 var sessionSaved = false;
+                var agentDescriptor = _registry?.Get(AgentId.From(agentId));
                 var resolvedChannel = ResolveChannelAdapter(message.ChannelType);
                 _logger.LogInformation("Channel resolution: type='{ChannelType}' found={Found} streaming={Streaming} streamEvents={StreamEvents}",
                     message.ChannelType,
@@ -512,7 +517,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         }
                     }
 
-                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts);
+                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
                         session,
@@ -584,7 +589,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }
                 else
                 {
-                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts);
+                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
                     var response = await handle.PromptAsync(userMessage, cancellationToken);
                     if (IsHeartbeatAck(response.Content))
                     {
@@ -1158,15 +1163,62 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// Builds a <see cref="AgentUserMessage"/> from an inbound message, attaching any image
     /// content parts as <see cref="AgentImageContent"/> so vision-capable models receive them.
     /// Falls back to a plain text <see cref="AgentUserMessage"/> when no image parts are present.
+    /// When datetime injection is configured, prepends the current datetime to the message content
+    /// inside a <c>&lt;currentdatetime&gt;</c> XML tag before sending to the provider.
+    /// The raw session-store entry is NOT modified.
     /// </summary>
-    private static AgentUserMessage BuildUserMessage(
+    private AgentUserMessage BuildUserMessage(
         InboundMessage message,
-        IReadOnlyList<MessageContentPart>? contentParts)
+        IReadOnlyList<MessageContentPart>? contentParts,
+        AgentDescriptor? descriptor = null)
     {
+        var content = InjectDateTimeIfEnabled(message.Content, descriptor);
         var images = BuildImageContent(contentParts);
         return images is { Count: > 0 }
-            ? new AgentUserMessage(message.Content, images)
-            : new AgentUserMessage(message.Content);
+            ? new AgentUserMessage(content, images)
+            : new AgentUserMessage(content);
+    }
+
+    /// <summary>
+    /// Resolves the effective datetime injection config for the given agent descriptor,
+    /// applies it to the raw user content, and returns the (possibly prefixed) result.
+    /// When injection is disabled or not configured, returns the original content unchanged.
+    /// </summary>
+    internal string InjectDateTimeIfEnabled(string content, AgentDescriptor? descriptor)
+    {
+        var worldInjection = _platformConfig?.Value.Gateway?.DateTimeInjection;
+        var agentInjection = descriptor?.DateTimeInjection;
+
+        // Per-agent override supersedes world default when present.
+        // An agent with Enabled=false explicitly disables injection even if world default is on.
+        var effective = agentInjection ?? worldInjection;
+        if (effective is null || !effective.Enabled)
+            return content;
+
+        // Resolve timezone: agent override > world DateTimeInjection timezone > world DefaultTimezone > UTC.
+        var tzId = agentInjection?.Timezone
+            ?? worldInjection?.Timezone
+            ?? _platformConfig?.Value.Gateway?.DefaultTimezone
+            ?? "UTC";
+
+        TimeZoneInfo tz;
+        try
+        {
+            tz = TimeZoneInfo.FindSystemTimeZoneById(tzId);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            tz = TimeZoneInfo.Utc;
+        }
+
+        var now = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
+        var offset = tz.GetUtcOffset(now);
+        var offsetStr = offset >= TimeSpan.Zero
+            ? $"+{offset:hh\\:mm}"
+            : $"-{offset.Negate():hh\\:mm}";
+        var dateTimeStr = $"{now:yyyy-MM-ddTHH:mm:ss}{offsetStr} ({tzId})";
+
+        return $"<currentdatetime>{dateTimeStr}</currentdatetime>\n{content}";
     }
 
     private static IReadOnlyList<AgentImageContent>? BuildImageContent(
