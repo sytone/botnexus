@@ -69,6 +69,24 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         => AcceptAsync(message, cancellationToken);
 
     /// <inheritdoc />
+    public bool Post(InboundMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (!message.Sender.IsValid)
+        {
+            throw new ArgumentException(
+                $"InboundMessage.Sender must be a valid CitizenId; got default(CitizenId). " +
+                $"Channel '{message.ChannelType}' producer must populate it (see #526).",
+                nameof(message));
+        }
+
+        var queueKey = GetQueueKey(message);
+        var queueState = _sessionQueues.GetOrAdd(queueKey, CreateSessionQueueState);
+        var queueItem = new QueuedInboundMessage(message);
+        return queueState.Queue.Writer.TryWrite(queueItem);
+    }
+
+    /// <inheritdoc />
     public async Task<InboundDispatchResult> AcceptAsync(
         InboundMessage message,
         CancellationToken cancellationToken = default)

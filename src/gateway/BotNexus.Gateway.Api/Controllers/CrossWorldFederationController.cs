@@ -147,11 +147,28 @@ public sealed class CrossWorldFederationController(
     {
         var sessionId = session.SessionId;
 
-        session.AddEntry(new SessionEntry
+        // Idempotency guard (#566): if the sender retries with the same TurnId and the
+        // last USER history entry already carries that key, skip the append. This prevents
+        // duplicate user-turn entries when the sender cancels mid-turn and retries with
+        // the same RemoteSessionId. The guard is a no-op when TurnId is null (legacy
+        // senders or single-turn exchanges without retry semantics).
+        // Note: check the last USER entry (not the absolute last entry, which may be an
+        // assistant response from the previous turn's completion).
+        var alreadyAppended = !string.IsNullOrEmpty(request.TurnId)
+            && session.GetHistorySnapshot()
+                .LastOrDefault(e => e.Role == MessageRole.User)
+                    is { } lastUserEntry
+            && lastUserEntry.TurnIdempotencyKey == request.TurnId;
+
+        if (!alreadyAppended)
         {
-            Role = MessageRole.User,
-            Content = request.Message
-        });
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = request.Message,
+                TurnIdempotencyKey = request.TurnId
+            });
+        }
 
         // Persist BEFORE invoking the supervisor — same race fix the sender PR (#548) applies.
         // A concurrent reader (background flush, portal page-load) must never see this session
@@ -223,8 +240,24 @@ public sealed class CrossWorldFederationController(
             // final turn via CloseAfterResponse (single-shot / max-turns) — archive the
             // receiver-side conversation. Otherwise just clear ActiveSessionId so the portal
             // stops rendering it as "in flight" while the sender pauses between turns.
+            //
+            // Seal-when-archived rule (#626): whenever ArchiveOnExchangeEndAsync fires (for
+            // either reason) we also seal the session so the state machine is consistent.
+            // An Archived conversation with an Active session allows a follow-up sender relay
+            // to resurrect ActiveSessionId on an Archived conversation, which is structurally
+            // inconsistent and portal-visible. The exchangeFinished branch already seals above;
+            // we seal here for the CloseAfterResponse-only path.
             if (exchangeFinished || request.CloseAfterResponse)
             {
+                if (!exchangeFinished)
+                {
+                    // CloseAfterResponse forced archive but the target did not invoke
+                    // finish_agent_exchange. Seal the session now so the receiver-side
+                    // state machine matches: Archived conversation  +  Sealed session.
+                    session.Status = GatewaySessionStatus.Sealed;
+                    session.Metadata["conversationStatus"] = "sealed";
+                    await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+                }
                 await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             }
             else
@@ -237,7 +270,8 @@ public sealed class CrossWorldFederationController(
                 Response = response.Content ?? string.Empty,
                 // Surface the finish state on the wire so the sender's loop sees a non-"active"
                 // status when the target has explicitly closed the exchange.
-                Status = exchangeFinished ? "sealed" : "active",
+                // After #626 fix: CloseAfterResponse also seals, so surface "sealed" for that path too.
+                Status = (exchangeFinished || request.CloseAfterResponse) ? "sealed" : "active",
                 SessionId = sessionId.Value,
                 ExchangeFinished = exchangeFinished,
                 FinishReason = exchangeFinished ? finishReason : null,

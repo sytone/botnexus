@@ -164,6 +164,17 @@ internal sealed class InitCommand
                 {
                     ["enabled"] = true,
                     ["indexing"] = "auto"
+                },
+                ["heartbeat"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["enabled"] = true,
+                    ["intervalMinutes"] = 30,
+                    ["quietHours"] = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["enabled"] = true,
+                        ["start"] = "23:00",
+                        ["end"] = "07:00"
+                    }
                 }
             };
             // Insert defaults as the first key

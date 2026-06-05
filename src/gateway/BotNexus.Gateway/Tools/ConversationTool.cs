@@ -4,10 +4,10 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
-using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -22,7 +22,7 @@ public sealed class ConversationTool(
     ConversationAccessLevel accessLevel = ConversationAccessLevel.Own,
     IReadOnlyList<string>? allowedAgents = null,
     ISessionStore? sessionStore = null,
-    IChannelDispatcher? channelDispatcher = null,
+    IInboundMessageOrchestrator? messageOrchestrator = null,
     IConversationChangeNotifier? changeNotifier = null) : IAgentTool
 {
     public string Name => "conversation";
@@ -121,8 +121,8 @@ public sealed class ConversationTool(
         if (string.IsNullOrWhiteSpace(message))
             throw new ArgumentException("message must not be empty.");
 
-        if (channelDispatcher is null)
-            throw new InvalidOperationException("Channel dispatcher is required to send a message to a conversation.");
+        if (messageOrchestrator is null)
+            throw new InvalidOperationException("Message orchestrator is required to send a message to a conversation.");
 
         if (sessionStore is null)
             throw new InvalidOperationException("Session store is required to send a message to a conversation.");
@@ -157,7 +157,7 @@ public sealed class ConversationTool(
             await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
         }
 
-        await channelDispatcher.DispatchAsync(
+        messageOrchestrator.Post(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("internal"),
@@ -174,8 +174,7 @@ public sealed class ConversationTool(
                     ["messageType"] = "message",
                     ["source"] = "conversation-tool-message"
                 }
-            },
-            ct).ConfigureAwait(false);
+            });
 
         return TextResult(JsonSerializer.Serialize(new
         {
@@ -281,9 +280,11 @@ public sealed class ConversationTool(
 
             // Trigger agent turn: dispatch a synthetic inbound message so the agent
             // processes the seeded user message rather than it sitting silently in history.
-            if (channelDispatcher is not null)
+            // Post() is fire-and-forget so the calling agent is not blocked waiting for
+            // the spawned agent turn to complete (fixes #728).
+            if (messageOrchestrator is not null)
             {
-                await channelDispatcher.DispatchAsync(
+                messageOrchestrator.Post(
                     new InboundMessage
                     {
                         ChannelType = ChannelKey.From("internal"),
@@ -300,8 +301,7 @@ public sealed class ConversationTool(
                             ["messageType"] = "message",
                             ["source"] = "conversation-tool-new"
                         }
-                    },
-                    ct).ConfigureAwait(false);
+                    });
             }
         }
 
