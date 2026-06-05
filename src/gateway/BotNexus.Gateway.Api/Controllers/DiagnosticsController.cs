@@ -24,15 +24,23 @@ public sealed class DiagnosticsController(ILogger<DiagnosticsController> logger)
 
         _logger.LogError(
             "Channel error reported. Agent={AgentId} Session={SessionId} Url={Url} UserAgent={UserAgent} Timestamp={Timestamp} Message={Message}\nComponentStack={ComponentStack}\nStackTrace={StackTrace}",
-            report.AgentId,
-            report.SessionId,
-            report.Url,
-            report.UserAgent,
+            Sanitise(report.AgentId),
+            Sanitise(report.SessionId),
+            Sanitise(report.Url),
+            Sanitise(report.UserAgent),
             report.Timestamp,
-            report.Message,
-            report.ComponentStack,
-            report.StackTrace);
+            Sanitise(report.Message),
+            Sanitise(report.ComponentStack),
+            Sanitise(report.StackTrace));
 
         return Ok();
     }
+
+    /// <summary>
+    /// Strips newline and carriage-return characters from a user-supplied string to prevent
+    /// log injection (CodeQL: cs/log-forging). Null-safe.
+    /// </summary>
+    private static string? Sanitise(string? value) =>
+        value?.Replace("\r", string.Empty, StringComparison.Ordinal)
+              .Replace("\n", " ", StringComparison.Ordinal);
 }
