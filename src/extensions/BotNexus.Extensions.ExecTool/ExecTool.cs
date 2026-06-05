@@ -112,6 +112,13 @@ public sealed class ExecTool : IAgentTool
         var input = ReadOptionalString(arguments, "input");
         var background = ReadOptionalBool(arguments, "background") ?? false;
         var env = ReadOptionalStringDictionary(arguments, "env");
+        if (env is not null)
+        {
+            foreach (var key in env.Keys)
+            {
+                ValidateEnvKey(key);
+            }
+        }
 
         var workingDir = ReadOptionalString(arguments, "workingDir");
         if (!string.IsNullOrWhiteSpace(workingDir))
@@ -513,6 +520,43 @@ public sealed class ExecTool : IAgentTool
     }
 
     #endregion
+
+    /// <summary>
+    /// Blocked environment variable key prefixes and exact names that must not be overridden
+    /// by agent-supplied <c>env</c> arguments.
+    /// <list type="bullet">
+    /// <item><c>LD_*</c> — Linux dynamic-linker control (e.g. <c>LD_PRELOAD</c>, <c>LD_LIBRARY_PATH</c>)</item>
+    /// <item><c>DYLD_*</c> — macOS dynamic-linker control</item>
+    /// <item><c>PATH</c> — executable search path; an agent override would redirect which binaries run</item>
+    /// </list>
+    /// </summary>
+    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_"];
+    public const string BlockedEnvPath = "PATH";
+
+    /// <summary>
+    /// Throws <see cref="ArgumentException"/> when <paramref name="key"/> is a blocked
+    /// environment variable name.
+    /// </summary>
+    /// <exception cref="ArgumentException">The key matches a blocked prefix or exact name.</exception>
+    public static void ValidateEnvKey(string key)
+    {
+        if (string.Equals(key, BlockedEnvPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
+                "PATH overrides may redirect which executables are invoked.");
+        }
+
+        foreach (var prefix in BlockedEnvPrefixes)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
+                    $"{prefix}* variables control the dynamic linker and may be used for code injection.");
+            }
+        }
+    }
 
     /// <summary>Details metadata returned alongside the tool result (not sent to the LLM).</summary>
     public sealed record ExecToolDetails(int ExitCode, string Termination, int? Pid = null);
