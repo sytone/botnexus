@@ -229,8 +229,14 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var cut = _ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));
 
-        var newConvBtn = cut.Find(".conversation-new-btn");
-        await cut.InvokeAsync(() => cut.Find(".conversation-new-btn").Click());
+        // Find and click atomically inside InvokeAsync — avoids event-handler-ID staleness
+        // that occurs when WaitForState triggers a render cycle between WaitForState completion
+        // and the subsequent InvokeAsync dispatch.
+        await cut.InvokeAsync(() =>
+        {
+            cut.WaitForState(() => cut.FindAll(".conversation-new-btn").Count > 0);
+            cut.Find(".conversation-new-btn").Click();
+        });
 
         await _interaction.Received(1).CreateConversationAsync("a-1");
     }

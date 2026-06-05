@@ -775,4 +775,64 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal(originalUpdatedAt, conv.UpdatedAt);
     }
 
+
+    // #668 - TurnEnd: portal should clear IsStreaming on tool-only turns
+    // that emit no MessageEnd.
+
+    [Fact]
+    public void HandleTurnEnd_WhenStillStreaming_ClearsStreamingState()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        // Simulate a tool-only turn in progress.
+        agent.IsStreaming = true;
+        agent.ProcessingStage = "Running tools";
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "partial";
+        conv.StreamState.ThinkingBuffer = "thinking";
+
+        _handler.HandleTurnEnd(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+
+        Assert.False(agent.IsStreaming);
+        Assert.Null(agent.ProcessingStage);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Equal("", conv.StreamState.Buffer);
+        Assert.Equal("", conv.StreamState.ThinkingBuffer);
+    }
+
+    [Fact]
+    public void HandleTurnEnd_WhenNotStreaming_IsNoOp()
+    {
+        // If MessageEnd already cleared IsStreaming, HandleTurnEnd should be a no-op.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = false;
+        conv.StreamState.IsStreaming = false;
+        var msgCountBefore = conv.Messages.Count;
+
+        _handler.HandleTurnEnd(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+
+        Assert.False(agent.IsStreaming);
+        Assert.Equal(msgCountBefore, conv.Messages.Count); // no phantom message added
+    }
+
+    [Fact]
+    public void HandleTurnEnd_ToolOnlyTurn_DoesNotAddVisibleMessage()
+    {
+        // Tool-only turns (e.g. cron NO_REPLY) should NOT add any user-visible message.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "NO_REPLY";
+        var msgCountBefore = conv.Messages.Count;
+
+        _handler.HandleTurnEnd(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+
+        // Streaming cleared, no new message added.
+        Assert.False(agent.IsStreaming);
+        Assert.Equal(msgCountBefore, conv.Messages.Count);
+    }
+
 }

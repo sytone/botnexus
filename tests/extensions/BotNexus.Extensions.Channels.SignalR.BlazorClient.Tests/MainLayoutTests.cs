@@ -537,6 +537,9 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => dropdown.Change("a-2"));
 
         // Assert: SelectConversationAsync was called for Beta's auto-selected conversation.
+        // OnAgentSelected is async -- wrap in WaitForAssertion so bUnit waits for the async
+        // event handler to complete before asserting. Without this, the assertion can race
+        // the async continuation on slow CI runners and report a false negative (#828).
         cut.WaitForAssertion(() => _interaction.Received(1).SelectConversationAsync("a-2", "c-2"));
     }
 

@@ -147,11 +147,28 @@ public sealed class CrossWorldFederationController(
     {
         var sessionId = session.SessionId;
 
-        session.AddEntry(new SessionEntry
+        // Idempotency guard (#566): if the sender retries with the same TurnId and the
+        // last USER history entry already carries that key, skip the append. This prevents
+        // duplicate user-turn entries when the sender cancels mid-turn and retries with
+        // the same RemoteSessionId. The guard is a no-op when TurnId is null (legacy
+        // senders or single-turn exchanges without retry semantics).
+        // Note: check the last USER entry (not the absolute last entry, which may be an
+        // assistant response from the previous turn's completion).
+        var alreadyAppended = !string.IsNullOrEmpty(request.TurnId)
+            && session.GetHistorySnapshot()
+                .LastOrDefault(e => e.Role == MessageRole.User)
+                    is { } lastUserEntry
+            && lastUserEntry.TurnIdempotencyKey == request.TurnId;
+
+        if (!alreadyAppended)
         {
-            Role = MessageRole.User,
-            Content = request.Message
-        });
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = request.Message,
+                TurnIdempotencyKey = request.TurnId
+            });
+        }
 
         // Persist BEFORE invoking the supervisor — same race fix the sender PR (#548) applies.
         // A concurrent reader (background flush, portal page-load) must never see this session

@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using BotNexus.Cli.Services;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -347,9 +347,38 @@ internal sealed class GatewayCommand
         switch (status.State)
         {
             case GatewayState.Running when status.Pid.HasValue:
+                if (status.ProbeResult == GatewayProbeResult.ReachableNoAuth)
+                {
+                    // Process is alive but gateway is rejecting requests with 401/403.
+                    // Distinguish clearly from healthy -- user needs to fix auth config.
+                    if (interactive)
+                    {
+                        var authContent =
+                            $"[yellow]\u25cf Running (auth error)[/]\n\n" +
+                            $"[dim]PID:[/]    [yellow]{status.Pid.Value}[/]\n" +
+                            (status.Uptime.HasValue ? $"[dim]Uptime:[/] [dim]{FormatUptime(status.Uptime.Value)}[/]\n" : string.Empty) +
+                            "[yellow]Warning:[/] Gateway returned HTTP 401/403 -- API token may be missing or invalid.\n" +
+                            "[dim]Check your config.json apiKey or set BOTNEXUS_API_KEY if required.[/]";
+                        AnsiConsole.Write(new Panel(authContent.TrimEnd())
+                        {
+                            Border = BoxBorder.Rounded,
+                            Padding = new Padding(1, 0)
+                        });
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]\u25cf[/] Gateway is running (auth error)");
+                        AnsiConsole.MarkupLine($"  PID:    [yellow]{status.Pid.Value}[/]");
+                        if (status.Uptime.HasValue)
+                            AnsiConsole.MarkupLine($"  Uptime: [dim]{FormatUptime(status.Uptime.Value)}[/]");
+                        AnsiConsole.MarkupLine("[yellow]Warning:[/] Gateway returned HTTP 401/403 -- API token may be missing or invalid.");
+                    }
+                    return 2; // distinct exit code: running but not authenticated
+                }
+
                 if (interactive)
                 {
-                    var content = $"[green]● Running[/]\n\n" +
+                    var content = $"[green]\u25cf Running[/]\n\n" +
                         $"[dim]PID:[/]    [yellow]{status.Pid.Value}[/]\n" +
                         (status.Uptime.HasValue ? $"[dim]Uptime:[/] [dim]{FormatUptime(status.Uptime.Value)}[/]" : string.Empty);
                     AnsiConsole.Write(new Panel(content.TrimEnd())
@@ -360,7 +389,7 @@ internal sealed class GatewayCommand
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"[green]●[/] Gateway is running");
+                    AnsiConsole.MarkupLine($"[green]\u25cf[/] Gateway is running");
                     AnsiConsole.MarkupLine($"  PID:    [yellow]{status.Pid.Value}[/]");
                     if (status.Uptime.HasValue)
                         AnsiConsole.MarkupLine($"  Uptime: [dim]{FormatUptime(status.Uptime.Value)}[/]");

@@ -19,17 +19,23 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     // Allows tests to inject a custom WaitForExit implementation to simulate timeout scenarios
     // without relying on OS-level process termination timing.
     private readonly Func<Process, int, bool>? _waitForExitOverride;
+    // Injectable HttpClient for status probe -- allows tests to mock HTTP responses.
+    private readonly HttpClient _probeClient;
+    // Default health URL used for status probing when no override is provided.
+    internal const string DefaultHealthUrl = "http://localhost:5005/health";
 
     public GatewayProcessManager(
         IHealthChecker healthChecker,
         ILogger<GatewayProcessManager> logger,
         TimeSpan? waitForExitTimeout = null,
-        Func<Process, int, bool>? waitForExitOverride = null)
+        Func<Process, int, bool>? waitForExitOverride = null,
+        HttpClient? probeClient = null)
     {
         _healthChecker = healthChecker;
         _logger = logger;
         _waitForExitTimeout = waitForExitTimeout ?? TimeSpan.FromSeconds(5);
         _waitForExitOverride = waitForExitOverride;
+        _probeClient = probeClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
     }
 
     /// <summary>
@@ -362,13 +368,64 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             _logger.LogDebug("Cannot read start time for PID {Pid}", pid.Value);
         }
 
+        // Probe the gateway HTTP endpoint to distinguish running+authenticated vs
+        // running+no-auth (returns 401/403) vs running+unreachable (wrong port/not bound).
+        var probeResult = await ProbeGatewayAsync(DefaultHealthUrl, CancellationToken.None);
+
+        var message = probeResult switch
+        {
+            GatewayProbeResult.Healthy => uptime.HasValue
+                ? $"Running for {uptime.Value:hh\\:mm\\:ss}"
+                : "Running (uptime unknown)",
+            GatewayProbeResult.ReachableNoAuth =>
+                "Running but authentication is not configured or token is invalid (HTTP 401/403)",
+            GatewayProbeResult.Unreachable =>
+                "Running (process alive) but HTTP endpoint is not reachable at the default port",
+            _ => "Running (probe inconclusive)"
+        };
+
         return new GatewayStatus(
             State: GatewayState.Running,
             Pid: pid.Value,
             Uptime: uptime,
-            Message: uptime.HasValue
-                ? $"Running for {uptime.Value:hh\\:mm\\:ss}"
-                : "Running (uptime unknown)");
+            Message: message,
+            ProbeResult: probeResult);
+    }
+
+    /// <summary>
+    /// Probes the gateway HTTP health endpoint and classifies the response.
+    /// Returns <see cref="GatewayProbeResult.Healthy"/> on 2xx,
+    /// <see cref="GatewayProbeResult.ReachableNoAuth"/> on 401/403,
+    /// and <see cref="GatewayProbeResult.Unreachable"/> on connection failure or timeout.
+    /// </summary>
+    internal async Task<GatewayProbeResult> ProbeGatewayAsync(string healthUrl, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _probeClient.GetAsync(healthUrl, cancellationToken);
+            if (response.IsSuccessStatusCode)
+                return GatewayProbeResult.Healthy;
+
+            var status = (int)response.StatusCode;
+            if (status == 401 || status == 403)
+            {
+                _logger.LogDebug("Gateway health probe returned {StatusCode} -- auth not configured", status);
+                return GatewayProbeResult.ReachableNoAuth;
+            }
+
+            _logger.LogDebug("Gateway health probe returned unexpected status {StatusCode}", status);
+            return GatewayProbeResult.Healthy; // reachable, treat as healthy for status purposes
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug("Gateway health probe connection failed: {Message}", ex.Message);
+            return GatewayProbeResult.Unreachable;
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogDebug("Gateway health probe timed out");
+            return GatewayProbeResult.Unreachable;
+        }
     }
 
     /// <summary>
