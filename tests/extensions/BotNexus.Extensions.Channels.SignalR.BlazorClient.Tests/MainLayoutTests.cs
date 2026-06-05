@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -38,6 +38,7 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(restClient);
+        _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -511,7 +512,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Switching_agent_triggers_history_load_for_active_conversation()
+    public async Task Switching_agent_triggers_history_load_for_active_conversation()
     {
         // Arrange: two agents, each with a default conversation auto-selected via SeedConversations
         _store.SeedAgents([
@@ -528,9 +529,13 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        // Act: switch to agent a-2 via dropdown
+        // Act: switch to agent a-2 via dropdown.
+        // InvokeAsync ensures the bUnit renderer flushes the full async OnAgentSelected
+        // pipeline (including the await inside) before we assert. This is required because
+        // GlobalErrorBoundary (now wrapping @Body) uses ErrorBoundaryBase, which changes
+        // how bUnit dispatches async component updates.
         var dropdown = cut.Find(".agent-dropdown-select");
-        dropdown.Change("a-2");
+        await cut.InvokeAsync(() => dropdown.Change("a-2"));
 
         // Assert: SelectConversationAsync was called for Beta's auto-selected conversation.
         // OnAgentSelected is async -- wrap in WaitForAssertion so bUnit waits for the async

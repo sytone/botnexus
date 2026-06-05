@@ -1,4 +1,4 @@
-﻿using Bunit;
+﻿﻿﻿using Bunit;
 using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
@@ -28,6 +28,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(_interaction);
         var restClient = Substitute.For<IGatewayRestClient>();
         _ctx.Services.AddSingleton(restClient);
+        _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -179,6 +180,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(hub);
         ctx.Services.AddSingleton(gatewayInfo);
         ctx.Services.AddSingleton(restClient);
+        ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -229,8 +231,14 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var cut = _ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));
 
-        var newConvBtn = cut.Find(".conversation-new-btn");
-        await cut.InvokeAsync(() => newConvBtn.Click());
+        // Find and click atomically inside InvokeAsync — avoids event-handler-ID staleness
+        // that occurs when WaitForState triggers a render cycle between WaitForState completion
+        // and the subsequent InvokeAsync dispatch.
+        await cut.InvokeAsync(() =>
+        {
+            cut.WaitForState(() => cut.FindAll(".conversation-new-btn").Count > 0);
+            cut.Find(".conversation-new-btn").Click();
+        });
 
         await _interaction.Received(1).CreateConversationAsync("a-1");
     }
