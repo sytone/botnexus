@@ -3,6 +3,7 @@ using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using BotNexus.Extensions.Channels.SignalR;
 using NSubstitute;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -660,6 +661,68 @@ public sealed class ChatPanelTests : IDisposable
         await _interaction.Received(1).RespondToAskUserAsync("conv-1", "req-1", "My answer", null, false);
         Assert.Null(_store.GetPendingAskUser("conv-1"));
         Assert.Contains(_store.GetMessages("conv-1"), message => message.Content.Contains("You answered:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenInputIsSlashCompact_RoutesToCompactSession_NotSendMessage()
+    {
+        // #618: typing /compact and clicking Send must invoke CompactSessionAsync, NOT
+        // SendMessageAsync. Before the fix, SendMessage() would forward the raw text to the
+        // gateway and the LLM would receive "/compact" as a plain user message.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        _interaction.CompactSessionAsync("agent-1").Returns(Task.FromResult<CompactSessionResult?>(null));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var input = cut.Find(".chat-input");
+        input.Input("/compact");
+
+        await cut.InvokeAsync(() => cut.Find(".send-btn").Click());
+
+        await _interaction.Received(1).CompactSessionAsync("agent-1");
+        await _interaction.DidNotReceive().SendMessageAsync("agent-1", "/compact");
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenInputIsSlashNew_RoutesToResetSession_NotSendMessage()
+    {
+        // #618: /new must call ResetSessionAsync, not SendMessageAsync.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        _interaction.ResetSessionAsync("agent-1").Returns(Task.CompletedTask);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var input = cut.Find(".chat-input");
+        input.Input("/new");
+
+        await cut.InvokeAsync(() => cut.Find(".send-btn").Click());
+
+        await _interaction.Received(1).ResetSessionAsync("agent-1");
+        await _interaction.DidNotReceive().SendMessageAsync("agent-1", "/new");
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenInputIsNormalText_SendsMessageNormally()
+    {
+        // #618: regression guard -- normal messages must still be routed as before.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        _interaction.SendMessageAsync("agent-1", "Hello world").Returns(Task.CompletedTask);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var input = cut.Find(".chat-input");
+        input.Input("Hello world");
+
+        await cut.InvokeAsync(() => cut.Find(".send-btn").Click());
+
+        await _interaction.Received(1).SendMessageAsync("agent-1", "Hello world");
+        await _interaction.DidNotReceive().CompactSessionAsync(Arg.Any<string>());
     }
 
 }

@@ -799,6 +799,20 @@ private bool IsStreaming =>
         if (string.IsNullOrEmpty(text) || !IsConnected)
             return;
 
+        // #618: if the input exactly matches a known slash command, route through the
+        // command dispatcher rather than sending as a plain message. This handles the case
+        // where the user types the command directly and clicks Send (bypassing the command
+        // palette selection flow that would normally call ExecuteCommand).
+        var slashMatch = s_allCommands.FirstOrDefault(
+            c => string.Equals(c.Name, text, StringComparison.OrdinalIgnoreCase));
+        if (slashMatch is not null)
+        {
+            _inputText = "";
+            _showCommandPalette = false;
+            await ExecuteCommand(slashMatch);
+            return;
+        }
+
         _inputText = "";
         _showCommandPalette = false;
         _forceScrollNext = true;
