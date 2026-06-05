@@ -10,6 +10,7 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddScoped<GatewayHubConnection>();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
+builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
 builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
