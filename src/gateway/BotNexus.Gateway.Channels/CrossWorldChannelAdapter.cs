@@ -72,7 +72,8 @@ public sealed class CrossWorldChannelAdapter(
                 ConversationId = conversationId,
                 SourceSessionId = sourceSessionId,
                 RemoteSessionId = remoteSessionId,
-                CloseAfterResponse = closeAfterResponse
+                CloseAfterResponse = closeAfterResponse,
+                TurnId = TryGetMetadata(message.Metadata, "turnId")
             }, options: JsonOptions)
         };
 

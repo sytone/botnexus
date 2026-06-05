@@ -40,6 +40,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnError += HandleError;
         _hub.OnUserInputRequired += HandleUserInputRequired;
         _hub.OnTurnInterrupted += HandleTurnInterrupted;
+        _hub.OnTurnEnd += HandleTurnEnd;
         _hub.OnSessionReset += HandleSessionReset;
         _hub.OnSubAgentSpawned += HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted += HandleSubAgentCompleted;
@@ -333,6 +334,38 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         _store.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Handles a <c>TurnEnd</c> event: the agent turn completed fully.
+    /// For tool-only turns (NO_REPLY or agent runs that only call tools and return nothing),
+    /// no <c>MessageEnd</c> is sent, so IsStreaming may still be true. TurnEnd is the
+    /// reliable signal to clear it (#668).
+    /// </summary>
+    public void HandleTurnEnd(AgentStreamEvent evt)
+    {
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+
+        // Only take action if still streaming -- if MessageEnd already cleared it, this is a no-op.
+        if (!agent.IsStreaming) return;
+
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId)
+            ?? agent!.ActiveConversationId;
+        if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
+        {
+            // A tool-only turn may have buffered content (e.g. a partial NO_REPLY).
+            // Clear it without adding a message -- the turn produced no user-visible output.
+            conv.StreamState.Buffer = "";
+            conv.StreamState.ThinkingBuffer = "";
+            conv.StreamState.IsStreaming = false;
+        }
+
+        agent.IsStreaming = false;
+        agent.ProcessingStage = null;
+        _store.NotifyChanged();
+
+        // Drain any deferred conversation refreshes (same as MessageEnd path).
+        DrainPendingConversationRefreshes(agentId!);
     }
     public void HandleUserInputRequired(AgentStreamEvent evt)
     {
@@ -868,6 +901,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnError -= HandleError;
         _hub.OnUserInputRequired -= HandleUserInputRequired;
         _hub.OnTurnInterrupted -= HandleTurnInterrupted;
+        _hub.OnTurnEnd -= HandleTurnEnd;
         _hub.OnSessionReset -= HandleSessionReset;
         _hub.OnSubAgentSpawned -= HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted -= HandleSubAgentCompleted;
@@ -881,4 +915,5 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnDisconnected -= HandleDisconnected;
     }
 }
+
 
