@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -6,7 +6,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// All portal REST traffic. Implements <see cref="IGatewayRestClient"/>.
 /// Base URL must be set via <see cref="Configure"/> before any calls are made.
 /// </summary>
-public sealed class GatewayRestClient : IGatewayRestClient
+public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporter
 {
     private readonly HttpClient _http;
     private string? _apiBaseUrl;
@@ -327,4 +327,25 @@ public sealed class GatewayRestClient : IGatewayRestClient
         return $"{requestPath}/{string.Join("/", encodedSegments)}";
     }
 
+
+    /// <inheritdoc />
+    public async Task ReportChannelErrorAsync(ChannelErrorReportDto report, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_apiBaseUrl))
+            return;
+
+        try
+        {
+            var url = string.Concat(_apiBaseUrl, "diagnostics/channel-error");
+            await _http.PostAsJsonAsync(url, report, cancellationToken);
+        }
+        catch
+        {
+            // Best-effort: never throw from error reporting.
+        }
+    }
+
+    /// <inheritdoc cref="IChannelErrorReporter.ReportAsync" />
+    Task IChannelErrorReporter.ReportAsync(ChannelErrorReportDto report, CancellationToken cancellationToken)
+        => ReportChannelErrorAsync(report, cancellationToken);
 }
