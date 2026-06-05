@@ -607,6 +607,45 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Conversation_list_items_render_as_anchor_elements()
+    {
+        // #699: conversation items must be <a> elements so the browser exposes
+        // "Open in new tab" on right-click and supports Ctrl+click / middle-click.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // The conversation list item button must be rendered as an <a> tag
+        var anchor = cut.Find(".conversation-list-item-btn");
+        Assert.Equal("a", anchor.TagName.ToLowerInvariant());
+    }
+
+    [Fact]
+    public void Conversation_list_items_have_correct_href()
+    {
+        // #699: the href must point to the routable /chat/{agentId}/{conversationId} path
+        // so the browser can open the conversation directly via right-click.
+        const string agentId = "a-1";
+        const string convId = "c-1";
+        _store.SeedAgents([new AgentSummary(agentId, "Alpha")]);
+        _store.SeedConversations(agentId, [
+            new ConversationSummaryDto(convId, agentId, "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = agentId;
+
+        var cut = RenderLayout();
+
+        var anchor = cut.Find(".conversation-list-item-btn");
+        var href = anchor.GetAttribute("href");
+        Assert.NotNull(href);
+        Assert.Contains($"chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(convId)}", href);
+    }
+
+    [Fact]
     public void Restart_Gateway_button_is_not_rendered()
     {
         // #794: the Restart Gateway button was removed because it killed the gateway
