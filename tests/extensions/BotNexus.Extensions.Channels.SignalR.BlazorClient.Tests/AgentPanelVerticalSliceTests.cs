@@ -114,6 +114,73 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         Assert.NotNull(cut.Find("[data-testid='agent-panel-conversation'] .chat-panel"));
     }
 
+    // #637 — AgentPanel tab URL deep-link fixes
+
+    [Fact]
+    public void Workspace_query_parameter_activates_workspace_tab_for_regular_agent()
+    {
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=workspace");
+
+        var cut = RenderHomeForAgentConversation();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='workspace']")));
+    }
+
+    [Fact]
+    public void SubAgent_workspace_tab_url_is_suppressed_to_conversation()
+    {
+        // Register agent-1 as a sub-agent
+        _store.RegisterSession("agent-1", "session-sub-1", "signalr", "agent-subagent");
+
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=workspace");
+
+        var cut = RenderHomeForAgentConversation();
+
+        // Sub-agent should not show workspace; fall back to conversation
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='conversation']")));
+    }
+
+    [Fact]
+    public void Tab_is_reapplied_when_store_changes_after_initial_render()
+    {
+        // Start with agent-1 as a regular agent and canvas tab in URL
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=canvas");
+
+        var cut = RenderHomeForAgentConversation();
+
+        // Canvas tab should be active for regular agent
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='canvas']")));
+
+        // Simulate agent becoming a sub-agent after data arrives (store change)
+        _store.RegisterSession("agent-1", "session-sub-1", "signalr", "agent-subagent");
+        _store.NotifyChanged();
+
+        // Sub-agent canvas IS allowed (only workspace/reports suppressed), so canvas remains
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='canvas']")));
+    }
+
+    [Fact]
+    public void SubAgent_reports_tab_url_is_suppressed_to_conversation()
+    {
+        // Register agent-1 as a sub-agent
+        _store.RegisterSession("agent-1", "session-sub-1", "signalr", "agent-subagent");
+
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=reports");
+
+        var cut = RenderHomeForAgentConversation();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='conversation']")));
+    }
+
     [Fact]
     public void App_css_contains_agent_panel_mobile_responsive_hooks()
     {
