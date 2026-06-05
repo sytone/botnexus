@@ -431,6 +431,99 @@ public class ExecToolTests : IDisposable
     }
 
     #endregion
+
+    #region Env variable injection guard tests (#666)
+
+    [Theory]
+    [InlineData("PATH")]
+    [InlineData("Path")]
+    [InlineData("path")]
+    [InlineData("PATHEXT")]
+    [InlineData("pathext")]
+    [InlineData("COMSPEC")]
+    [InlineData("comspec")]
+    [InlineData("SYSTEMROOT")]
+    [InlineData("SystemRoot")]
+    [InlineData("systemroot")]
+    public async Task PrepareArguments_RejectsBlockedWindowsAndPathEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "C:\\evil\\bin" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("LD_LIBRARY_PATH")]
+    [InlineData("ld_preload")]
+    public async Task PrepareArguments_RejectsLdPrefixEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "/tmp/evil.so" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("LD_");
+    }
+
+    [Theory]
+    [InlineData("DYLD_INSERT_LIBRARIES")]
+    [InlineData("DYLD_LIBRARY_PATH")]
+    [InlineData("dyld_insert_libraries")]
+    public async Task PrepareArguments_RejectsDyldPrefixEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "/tmp/evil.dylib" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("DYLD_");
+    }
+
+    [Fact]
+    public async Task PrepareArguments_AllowsSafeEnvOverrides()
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string>
+            {
+                ["MY_APP_ENV"] = "production",
+                ["CUSTOM_TOKEN"] = "abc123",
+            },
+        };
+
+        // Should not throw
+        var result = await _tool.PrepareArgumentsAsync(args);
+        result.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void ValidateEnvKey_DirectCall_BlocksLD_PRELOAD()
+    {
+        var act = () => ExecTool.ValidateEnvKey("LD_PRELOAD");
+        act.ShouldThrow<ArgumentException>();
+    }
+
+    [Fact]
+    public void ValidateEnvKey_DirectCall_AllowsBenignKey()
+    {
+        // Should not throw
+        ExecTool.ValidateEnvKey("MY_CUSTOM_VAR");
+    }
+
+    #endregion
 }
 
 public class ConditionalFactAttribute : FactAttribute
