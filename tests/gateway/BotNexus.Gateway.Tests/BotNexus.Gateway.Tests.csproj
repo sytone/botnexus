@@ -47,5 +47,6 @@
 
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Configs\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
