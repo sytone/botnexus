@@ -511,7 +511,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Switching_agent_triggers_history_load_for_active_conversation()
+    public async Task Switching_agent_triggers_history_load_for_active_conversation()
     {
         // Arrange: two agents, each with a default conversation auto-selected via SeedConversations
         _store.SeedAgents([
@@ -528,14 +528,15 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        // Act: switch to agent a-2 via dropdown
+        // Act: switch to agent a-2 via dropdown.
+        // InvokeAsync ensures the bUnit renderer flushes the full async OnAgentSelected
+        // pipeline (including the await inside) before we assert. This is required because
+        // GlobalErrorBoundary (now wrapping @Body) uses ErrorBoundaryBase, which changes
+        // how bUnit dispatches async component updates.
         var dropdown = cut.Find(".agent-dropdown-select");
-        dropdown.Change("a-2");
+        await cut.InvokeAsync(() => dropdown.Change("a-2"));
 
         // Assert: SelectConversationAsync was called for Beta's auto-selected conversation.
-        // WaitForAssertion used because OnAgentSelected is async -- the call completes
-        // after the event fires and may not have landed by the time the check runs on
-        // single-vCPU CI runners.
         cut.WaitForAssertion(() => _interaction.Received(1).SelectConversationAsync("a-2", "c-2"));
     }
 
