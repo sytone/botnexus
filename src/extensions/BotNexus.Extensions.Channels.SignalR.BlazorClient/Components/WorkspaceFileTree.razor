@@ -1,4 +1,4 @@
-@if (Entries.Count == 0)
+﻿@if (Entries.Count == 0)
 {
     <div class="workspace-state">Workspace is empty.</div>
 }
@@ -10,6 +10,7 @@ else
             var fullPath = BuildPath(ParentPath, entry.Name);
             var isDirectory = IsDirectory(entry);
             var isExpanded = isDirectory && IsExpanded(fullPath);
+            var isProtected = !isDirectory && IsProtectedFile(entry.Name);
             var rowCss = isDirectory
                 ? "workspace-tree-row workspace-tree-directory"
                 : $"workspace-tree-row workspace-tree-file {(IsSelected(fullPath) ? "selected" : string.Empty)}";
@@ -34,12 +35,18 @@ else
                         }
                         <span class="workspace-tree-name">@entry.Name</span>
                     </button>
+                    @{
+                        var deleteTitle = isProtected ? (entry.Name + " is a protected file and cannot be deleted.") : ("Delete " + fullPath);
+                        var deleteLabel = isProtected ? ("Cannot delete protected file " + entry.Name) : ("Delete " + fullPath);
+                        var deleteCss = isProtected ? "workspace-tree-delete workspace-tree-delete-disabled" : "workspace-tree-delete";
+                    }
                     <button type="button"
-                            class="workspace-tree-delete"
-                            title="Delete @fullPath"
-                            aria-label="Delete @fullPath"
+                            class="@deleteCss"
+                            title="@deleteTitle"
+                            aria-label="@deleteLabel"
+                            disabled="@isProtected"
                             @onclick:stopPropagation="true"
-                            @onclick="() => OnDeleteRequested.InvokeAsync(fullPath)">
+                            @onclick="() => { if (!isProtected) OnDeleteRequested.InvokeAsync(fullPath); }">
                         🗑
                     </button>
                 </div>
@@ -139,6 +146,23 @@ else
 
     private string? GetDirectoryError(string path) =>
         DirectoryErrorProvider?.Invoke(path);
+
+    /// <summary>
+    /// Core agent identity files that cannot be deleted via the portal.
+    /// Must be kept in sync with WorkspaceController.ProtectedFiles on the gateway.
+    /// </summary>
+    private static readonly IReadOnlySet<string> ProtectedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "SOUL.md",
+        "IDENTITY.md",
+        "MEMORY.md",
+        "AGENTS.md",
+        "USER.md",
+        "WORLD.md",
+        "TOOLS.md"
+    };
+
+    private static bool IsProtectedFile(string fileName) => ProtectedFileNames.Contains(fileName);
 
     private static string BuildPath(string parent, string name) =>
         string.IsNullOrWhiteSpace(parent) ? name : $"{parent.TrimEnd('/')}/{name}";

@@ -1,4 +1,4 @@
-using BotNexus.Domain.Primitives;
+﻿using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
@@ -302,6 +302,61 @@ public sealed class WorkspaceControllerWriteTests
         fileSystem.File.ReadAllText(Path.Combine(WorkspacePath, "notes.md")).ShouldBe("new content");
     }
 
+    [Fact]
+    public void WriteFile_NoBomWritten_RawBytesDoNotStartWithUtf8BomBytes()
+    {
+        // Regression for #869: Encoding.UTF8 emits a UTF-8 BOM on Windows which breaks
+        // YAML frontmatter parsers (SkillParser, YAML loaders). The workspace editor must
+        // write BOM-free UTF-8 so any consumer can parse the file without special handling.
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        controller.WriteFile("agent-a", "skill.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "---\nname: test\n---\nbody" });
+
+        var bytes = fileSystem.File.ReadAllBytes(Path.Combine(WorkspacePath, "skill.md"));
+        // UTF-8 BOM is 0xEF 0xBB 0xBF
+        bytes.Length.ShouldBeGreaterThan(0);
+        (bytes[0] == 0xEF && bytes.Length > 2 && bytes[1] == 0xBB && bytes[2] == 0xBF).ShouldBeFalse(
+            "WriteFile must not emit a UTF-8 BOM");
+        // Verify content is readable (no invisible prefix)
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
+        text.ShouldStartWith("---");
+    }
+
+    [Fact]
+    public void WriteFile_ContentWithLeadingBom_BomNotDoubled()
+    {
+        // If content arrives already containing a BOM (from a client-side quirk), WriteAllText
+        // with BOM-free encoding must not add a second BOM. The written bytes should contain
+        // exactly one BOM sequence.
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        // Content with an explicit BOM prefix
+        var contentWithBom = "\uFEFF# title";
+        controller.WriteFile("agent-a", "bom-input.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = contentWithBom });
+
+        var bytes = fileSystem.File.ReadAllBytes(Path.Combine(WorkspacePath, "bom-input.md"));
+        // BOM-free encoding writes the content as-is. If content had a BOM character, it is
+        // preserved as a Unicode code point (3 bytes 0xEF 0xBB 0xBF) but there is exactly one.
+        // Double-BOM would be 6 bytes of BOM at the start, which should never occur.
+        var bomCount = 0;
+        for (var i = 0; i <= bytes.Length - 3; i++)
+        {
+            if (bytes[i] == 0xEF && bytes[i + 1] == 0xBB && bytes[i + 2] == 0xBF)
+                bomCount++;
+        }
+        bomCount.ShouldBeLessThanOrEqualTo(1, "WriteFile must not double-add a BOM");
+    }
+
     // ── sad paths ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -391,6 +446,100 @@ public sealed class WorkspaceControllerWriteTests
         });
 
         var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
+
+        return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
+    }
+}
+
+public sealed class WorkspaceControllerProtectedFileTests
+{
+    private const string WorkspacePath = @"C:\workspace\agent-a";
+
+    [Theory]
+    [InlineData("SOUL.md")]
+    [InlineData("soul.md")]  // case-insensitive
+    [InlineData("IDENTITY.md")]
+    [InlineData("MEMORY.md")]
+    [InlineData("AGENTS.md")]
+    [InlineData("USER.md")]
+    [InlineData("WORLD.md")]
+    [InlineData("TOOLS.md")]
+    [InlineData("HEARTBEAT.md")]
+    [InlineData("heartbeat.md")]  // case-insensitive
+    public void DeleteItem_ProtectedFile_Returns403(string fileName)
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, fileName)] = new("protected content")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", fileName, force: false);
+
+        var statusResult = result.ShouldBeOfType<ObjectResult>();
+        statusResult.StatusCode.ShouldBe(403);
+        // File should still exist (not deleted)
+        fileSystem.File.Exists(System.IO.Path.Combine(WorkspacePath, fileName)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DeleteItem_ProtectedFile_InSubdirectory_Returns403()
+    {
+        // Protection is filename-based, so playbook/SOUL.md is also protected
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, "playbook", "SOUL.md")] = new("protected")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "playbook/SOUL.md", force: false);
+
+        var statusResult = result.ShouldBeOfType<ObjectResult>();
+        statusResult.StatusCode.ShouldBe(403);
+    }
+
+    [Fact]
+    public void DeleteItem_NonProtectedFile_DeletesSuccessfully()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, "notes.md")] = new("hello")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "notes.md", force: false);
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.File.Exists(System.IO.Path.Combine(WorkspacePath, "notes.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ProtectedFiles_Set_ContainsAllExpectedFiles()
+    {
+        // Ensure the protected set is consistent and contains the expected entries
+        WorkspaceController.ProtectedFiles.ShouldContain("SOUL.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("IDENTITY.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("MEMORY.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("AGENTS.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("USER.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("WORLD.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("TOOLS.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("HEARTBEAT.md");
+    }
+
+    private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new Moq.Mock<IAgentWorkspaceManager>();
         workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
 
         return new WorkspaceController(registry, workspaceManager.Object, fileSystem);

@@ -22,6 +22,23 @@ public sealed class WorkspaceController : ControllerBase
     private const int MaximumFileReadBytes = 512 * 1024;
 
     /// <summary>
+    /// Core agent identity and configuration files that cannot be deleted via the workspace API.
+    /// These files define the agent's personality, memory, and operating instructions.
+    /// Matches are case-insensitive filename comparisons only (not path comparisons).
+    /// </summary>
+    public static readonly IReadOnlySet<string> ProtectedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "SOUL.md",
+        "IDENTITY.md",
+        "MEMORY.md",
+        "AGENTS.md",
+        "USER.md",
+        "WORLD.md",
+        "TOOLS.md",
+        "HEARTBEAT.md"
+    };
+
+    /// <summary>
     /// Returns true if <paramref name="path"/> is an absolute/rooted path on any platform.
     /// <see cref="System.IO.Path"/> only recognises the host OS convention;
     /// this helper additionally catches Windows drive-letter paths when running on Linux.
@@ -261,6 +278,12 @@ public sealed class WorkspaceController : ControllerBase
         if (!validator.CanWrite(resolvedFinalPath))
             return Forbid();
 
+        // Protect core agent identity / config files from deletion via the API.
+        // Filename-only check (case-insensitive) so e.g. playbook/SOUL.md is also protected.
+        var fileName = _fileSystem.Path.GetFileName(resolvedFinalPath);
+        if (ProtectedFiles.Contains(fileName))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = $"'{fileName}' is a protected file and cannot be deleted." });
+
         if (_fileSystem.Directory.Exists(resolvedFinalPath))
         {
             var isEmpty = !_fileSystem.Directory.EnumerateFileSystemEntries(resolvedFinalPath).Any();
@@ -322,7 +345,10 @@ public sealed class WorkspaceController : ControllerBase
         if (!string.IsNullOrEmpty(parentDir) && !_fileSystem.Directory.Exists(parentDir))
             return BadRequest(new { error = "Parent directory does not exist." });
 
-        _fileSystem.File.WriteAllText(resolvedFinalPath, request.Content, Encoding.UTF8);
+        // Use BOM-free UTF-8: Encoding.UTF8 emits a BOM on Windows which breaks YAML
+        // frontmatter parsers (e.g. SkillParser) and agent workspace file consumers.
+        var noBomUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        _fileSystem.File.WriteAllText(resolvedFinalPath, request.Content, noBomUtf8);
         return NoContent();
     }
 

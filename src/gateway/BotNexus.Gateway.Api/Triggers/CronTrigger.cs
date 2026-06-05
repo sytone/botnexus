@@ -27,7 +27,8 @@ public sealed class CronTrigger(
     IAgentSupervisor supervisor,
     IConversationStore conversations,
     ISessionStore sessions,
-    ILogger<CronTrigger> logger) : IInternalTrigger
+    ILogger<CronTrigger> logger,
+    IConversationChangeNotifier? changeNotifier = null) : IInternalTrigger
 {
     /// <summary>
     /// Gets the trigger type identifier.
@@ -148,6 +149,25 @@ public sealed class CronTrigger(
                     pinned.Status = ConversationStatus.Active;
                     pinned.UpdatedAt = DateTimeOffset.UtcNow;
                     await conversations.SaveAsync(pinned, ct).ConfigureAwait(false);
+
+                    // Notify the portal so the conversation reappears in the sidebar without
+                    // requiring a page reload. Best-effort: failure here must not block the
+                    // cron turn. (#864)
+                    if (changeNotifier is not null)
+                    {
+                        try
+                        {
+                            await changeNotifier.NotifyConversationChangedAsync(
+                                "updated", agentId.Value, pinned.ConversationId.Value, ct)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex,
+                                "CronTrigger: non-fatal failure sending reactivation notification for conversation {ConversationId}",
+                                pinned.ConversationId);
+                        }
+                    }
                 }
                 return pinned;
             }

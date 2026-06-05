@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -224,6 +224,16 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 }
             }
             catch { /* canvas fetch is best-effort */ }
+        }
+
+        // Fix #789: if the conversation was streaming when the user navigated away, a
+        // terminal SignalR event (MessageEnd/Error/TurnInterrupted) may have been missed.
+        // Reset stale streaming state and force a history reload so the UI reflects the
+        // actual server-side turn result rather than a perpetual in-progress spinner.
+        if (conv is not null && conv.StreamState.IsStreaming)
+        {
+            conv.StreamState.IsStreaming = false;
+            conv.HistoryLoaded = false; // force reload below
         }
 
         // Load history if not already loaded
