@@ -87,7 +87,15 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     /// <inheritdoc />
     public IReadOnlyList<AgentDescriptor> GetAll()
     {
-        lock (_sync) return [.. _agents.Values];
+        lock (_sync)
+        {
+            // Sort rule: agents with Order set come first (ascending Order, then DisplayName).
+            // Agents with no Order set follow (sorted by DisplayName).
+            return [.. _agents.Values
+                .OrderBy(a => a.Order.HasValue ? 0 : 1)
+                .ThenBy(a => a.Order ?? int.MaxValue)
+                .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase)];
+        }
     }
 
     /// <inheritdoc />

@@ -351,6 +351,19 @@ public sealed class ConversationsController : ControllerBase
         var convId = ConversationId.From(conversationId);
         var linkedSessions = await _sessions.ListByConversationAsync(convId, cancellationToken: cancellationToken);
 
+        // Fallback for #732: cron sessions and sessions created before the conversation-linkage
+        // migration may have conversation_id = NULL in the sessions table. ListByConversationAsync
+        // filters on that column and returns nothing, leaving the history endpoint empty even
+        // though the conversation has messages. When the indexed query returns no sessions,
+        // fall back to loading conversation.ActiveSessionId directly — provided it is not already
+        // included in the linked set (dedup guard).
+        if (linkedSessions.Count == 0 && conversation.ActiveSessionId is { } fallbackSessionId)
+        {
+            var fallbackSession = await _sessions.GetAsync(fallbackSessionId, cancellationToken);
+            if (fallbackSession is not null)
+                linkedSessions = [fallbackSession];
+        }
+
         // Assemble flat list of history entries with boundary markers between sessions
         var allEntries = new List<ConversationHistoryEntry>();
 
