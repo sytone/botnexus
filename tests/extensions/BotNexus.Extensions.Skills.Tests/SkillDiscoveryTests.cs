@@ -1,4 +1,7 @@
 using BotNexus.Extensions.Skills;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Extensions.Skills.Tests;
@@ -168,4 +171,86 @@ public sealed class SkillDiscoveryTests
             """);
     }
 
+    // ── warning-log tests (issue #870) ───────────────────────────────────────
+
+    [Fact]
+    public void Discover_SkillWithMissingDescription_EmitsWarning()
+    {
+        // A SKILL.md with a name but no description should be skipped with a LogWarning.
+        var dir = Path.Combine(TempDir, "warn-no-desc");
+        var skillDir = Path.Combine(dir, "my-skill");
+        _fileSystem.Directory.CreateDirectory(skillDir);
+        _fileSystem.File.WriteAllText(Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: my-skill\n---\nBody without description.");
+
+        var logger = new CapturingLogger();
+        var skills = SkillDiscovery.Discover(dir, null, null, _fileSystem, logger);
+
+        skills.ShouldBeEmpty();
+        logger.Warnings.ShouldContain(w => w.Contains("my-skill") && w.Contains("description"));
+    }
+
+    [Fact]
+    public void Discover_SkillWithInvalidName_EmitsWarning()
+    {
+        // Directory name "bad name" (space) should fail SkillParser.IsValidName.
+        var dir = Path.Combine(TempDir, "warn-bad-name");
+        var skillDir = Path.Combine(dir, "bad name");
+        _fileSystem.Directory.CreateDirectory(skillDir);
+        _fileSystem.File.WriteAllText(Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: bad name\ndescription: desc\n---\nBody.");
+
+        var logger = new CapturingLogger();
+        var skills = SkillDiscovery.Discover(dir, null, null, _fileSystem, logger);
+
+        skills.ShouldBeEmpty();
+        logger.Warnings.ShouldNotBeEmpty("Expected a warning for invalid skill name");
+    }
+
+    [Fact]
+    public void Discover_ValidSkill_EmitsNoWarning()
+    {
+        // A well-formed skill must never emit any warnings.
+        var dir = Path.Combine(TempDir, "warn-valid");
+        CreateSkill(dir, "my-skill", "A valid description");
+
+        var logger = new CapturingLogger();
+        var skills = SkillDiscovery.Discover(dir, null, null, _fileSystem, logger);
+
+        skills.ShouldHaveSingleItem();
+        logger.Warnings.ShouldBeEmpty("No warnings expected for a valid skill");
+    }
+
+    [Fact]
+    public void Discover_SkillWithNullLogger_DoesNotThrow()
+    {
+        // Passing null for logger must be safe (backward compat with all existing call sites).
+        var dir = Path.Combine(TempDir, "warn-null-logger");
+        var skillDir = Path.Combine(dir, "my-skill");
+        _fileSystem.Directory.CreateDirectory(skillDir);
+        // Malformed SKILL.md so a warning would normally fire if logger were wired
+        _fileSystem.File.WriteAllText(Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: my-skill\n---\nNo description.");
+
+        // Should not throw even though skill is invalid and logger is null
+        Should.NotThrow(() => SkillDiscovery.Discover(dir, null, null, _fileSystem, logger: null));
+    }
+
+}
+
+/// <summary>
+/// Minimal logger that captures Warning-level messages for test assertions.
+/// </summary>
+public sealed class CapturingLogger : ILogger
+{
+    public List<string> Warnings { get; } = new();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => NullLogger.Instance.BeginScope(state);
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (logLevel >= LogLevel.Warning)
+            Warnings.Add(formatter(state, exception));
+    }
 }

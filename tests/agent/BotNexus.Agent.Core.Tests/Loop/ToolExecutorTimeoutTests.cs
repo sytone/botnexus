@@ -191,13 +191,16 @@ public sealed class ToolExecutorTimeoutTests
     [Fact]
     public async Task ExplicitTimeoutArgument_ExceedsSafetyCap_IsHonoured()
     {
+        // Tool would be killed by a 100ms safety cap but survives when the agent
+        // passes timeout: 5 (5 seconds). Uses a probe for deterministic completion.
+        var enteredTool = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProbe = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completedNormally = false;
 
-        // Tool that runs for 200ms — would be killed by a 100ms safety cap
-        // but should succeed when the agent passes timeout: 5 (5 seconds)
         var tool = CreateTool("slow-shell", async ct =>
         {
-            await Task.Delay(200, ct);
+            enteredTool.TrySetResult(true);
+            await releaseProbe.Task.WaitAsync(ct);
             completedNormally = true;
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
         });
@@ -210,8 +213,12 @@ public sealed class ToolExecutorTimeoutTests
             toolTimeout: TimeSpan.FromMilliseconds(100)); // safety cap is only 100ms
         var context = new AgentContext(null, [], [tool]);
 
-        var results = await ToolExecutor.ExecuteAsync(
-            context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+        var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseProbe.TrySetResult(true);
+
+        var results = await executeTask;
 
         completedNormally.ShouldBeTrue();
         results.ShouldHaveSingleItem();
@@ -222,13 +229,17 @@ public sealed class ToolExecutorTimeoutTests
     [Fact]
     public async Task ToolDefaultTimeout_OverridesSafetyCap_LongToolCompletes()
     {
+        // Tool declares DefaultTimeout = 5s; safety cap is only 100ms.
+        // The probe releases after the test confirms the call started, so
+        // no wall-clock race: the tool "blocks" until we let it go.
+        var enteredTool = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProbe = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completedNormally = false;
 
-        // Tool takes 200ms but the safety cap is only 100ms
-        // Tool declares DefaultTimeout = 5s → executor should use 5s not 100ms
         var tool = CreateToolWithDefaultTimeout("slow-tool", TimeSpan.FromSeconds(5), async ct =>
         {
-            await Task.Delay(200, ct);
+            enteredTool.TrySetResult(true);
+            await releaseProbe.Task.WaitAsync(ct);
             completedNormally = true;
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
         });
@@ -237,8 +248,13 @@ public sealed class ToolExecutorTimeoutTests
         var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromMilliseconds(100));
         var context = new AgentContext(null, [], [tool]);
 
-        var results = await ToolExecutor.ExecuteAsync(
-            context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+        var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        // Wait until the tool is running, then release it deterministically.
+        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseProbe.TrySetResult(true);
+
+        var results = await executeTask;
 
         completedNormally.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
@@ -248,26 +264,34 @@ public sealed class ToolExecutorTimeoutTests
     [Fact]
     public async Task ToolDefaultTimeout_SmallerThanSafetyCap_SafetyCapWins()
     {
-        // Tool declares 50ms default but safety cap is 500ms
-        // Tool runs for 200ms — should complete fine (both limits are above 200ms is wrong)
-        // Actually: safety cap 500ms > tool default 50ms → safety cap wins → tool gets 500ms
-        // Tool finishes in 200ms → success
+        // Tool declares 50ms default but safety cap is 5s.
+        // Safety cap (5s) > tool default (50ms) → executor uses 5s → tool gets to complete.
+        // Uses a probe so completion is deterministic, not a wall-clock race.
+        var enteredTool = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProbe = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completedNormally = false;
+
         var tool = CreateToolWithDefaultTimeout("quick-tool", TimeSpan.FromMilliseconds(50), async ct =>
         {
-            await Task.Delay(200, ct);
+            enteredTool.TrySetResult(true);
+            await releaseProbe.Task.WaitAsync(ct);
             completedNormally = true;
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
         });
 
         var msg = CreateAssistant("tc-1", "quick-tool");
-        var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromMilliseconds(500));
+        // Safety cap is large enough that the executor must not kill the tool before the probe fires.
+        var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromSeconds(5));
         var context = new AgentContext(null, [], [tool]);
 
-        var results = await ToolExecutor.ExecuteAsync(
-            context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+        var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
 
-        // Safety cap (500ms) > tool default (50ms) → executor uses 500ms → 200ms tool succeeds
+        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseProbe.TrySetResult(true);
+
+        var results = await executeTask;
+
+        // Safety cap (5s) > tool default (50ms) → executor uses 5s → 200ms-equivalent probe succeeds
         completedNormally.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
     }

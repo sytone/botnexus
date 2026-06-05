@@ -49,15 +49,30 @@ public enum GatewayState
 }
 
 /// <summary>
+/// Result of a health probe against a running gateway HTTP endpoint.
+/// </summary>
+public enum GatewayProbeResult
+{
+    /// <summary>Probe succeeded: gateway is reachable and authenticated.</summary>
+    Healthy,
+    /// <summary>Gateway is reachable but returned an auth error (401/403). Token missing or invalid.</summary>
+    ReachableNoAuth,
+    /// <summary>Gateway process is running but the HTTP endpoint is not reachable (wrong port, not bound yet).</summary>
+    Unreachable,
+}
+
+/// <summary>
 /// Current status of the gateway process.
 /// </summary>
 /// <param name="State">Current lifecycle state.</param>
 /// <param name="Pid">Process ID, if running.</param>
 /// <param name="Uptime">How long the gateway has been running, if known.</param>
 /// <param name="Message">Diagnostic message with additional context.</param>
+/// <param name="ProbeResult">HTTP probe result when process is alive; null when gateway is not running.</param>
 public record GatewayStatus(
     GatewayState State,
     int? Pid,
     TimeSpan? Uptime,
-    string? Message
+    string? Message,
+    GatewayProbeResult? ProbeResult = null
 );

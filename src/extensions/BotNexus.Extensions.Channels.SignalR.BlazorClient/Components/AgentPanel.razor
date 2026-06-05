@@ -66,6 +66,9 @@
     public string AgentId { get; set; } = default!;
 
     private AgentPanelTab _activeTab = AgentPanelTab.Conversation;
+    // Track whether the agent was a sub-agent last time we checked, so we can
+    // re-apply tab suppression when agent data arrives after the URL tab was set.
+    private bool? _lastIsSubAgent;
 
     private AgentState? Agent => Store.GetAgent(AgentId);
     private string DisplayName => Agent?.DisplayName ?? AgentId;
@@ -88,7 +91,9 @@
     protected override void OnInitialized()
     {
         Nav.LocationChanged += HandleLocationChanged;
+        Store.OnChanged += HandleStoreChanged;
         ApplyTabFromUri(Nav.Uri);
+        _lastIsSubAgent = CurrentAgent is not null ? IsSubAgent : null;
     }
 
     protected override void OnParametersSet()
@@ -99,12 +104,32 @@
     public void Dispose()
     {
         Nav.LocationChanged -= HandleLocationChanged;
+        Store.OnChanged -= HandleStoreChanged;
     }
 
     private void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         var previous = _activeTab;
         ApplyTabFromUri(e.Location);
+        if (previous != _activeTab)
+            _ = InvokeAsync(StateHasChanged);
+    }
+
+    // Re-apply tab when agent data first arrives (or changes) so sub-agent
+    // suppression is applied correctly even if agent was null at URL parse time.
+    // Store.OnChanged is Action (not Func<Task>) so this must be void.
+    private void HandleStoreChanged()
+    {
+        var currentIsSubAgent = CurrentAgent is not null ? IsSubAgent : (bool?)null;
+        if (currentIsSubAgent == _lastIsSubAgent)
+    
+
+        _lastIsSubAgent = currentIsSubAgent;
+
+        // If agent data just arrived, re-apply tab from URL so the correct
+        // tab is shown without waiting for a navigation event.
+        var previous = _activeTab;
+        ApplyTabFromUri(Nav.Uri);
         if (previous != _activeTab)
             _ = InvokeAsync(StateHasChanged);
     }
@@ -135,11 +160,18 @@
 
         if (TryParseTab(tabValue, out var parsed))
         {
-            // Suppress Workspace/Reports tabs for sub-agents
-            if (IsSubAgent && (parsed == AgentPanelTab.Workspace || parsed == AgentPanelTab.Reports))
+            // Only suppress Workspace/Reports for sub-agents when agent data is already
+            // available. If the agent hasn't loaded yet, preserve the requested tab;
+            // HandleStoreChanged will re-apply suppression once data arrives.
+            if (CurrentAgent is not null && IsSubAgent &&
+                (parsed == AgentPanelTab.Workspace || parsed == AgentPanelTab.Reports))
+            {
                 _activeTab = AgentPanelTab.Conversation;
+            }
             else
+            {
                 _activeTab = parsed;
+            }
         }
     }
 

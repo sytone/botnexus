@@ -46,6 +46,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the gateway notifies that a previous turn was interrupted by a restart.</summary>
     public event Action<AgentStreamEvent>? OnTurnInterrupted;
 
+    /// <summary>Raised when the agent turn has fully completed (including tool-only turns that produce no MessageEnd).</summary>
+    public event Action<AgentStreamEvent>? OnTurnEnd;
+
     /// <summary>Raised when a sub-agent is spawned.</summary>
     public event Action<SubAgentEventPayload>? OnSubAgentSpawned;
 
@@ -118,6 +121,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<AgentStreamEvent>("Error", e => OnError?.Invoke(e));
         _connection.On<AgentStreamEvent>("UserInputRequired", e => OnUserInputRequired?.Invoke(e));
         _connection.On<AgentStreamEvent>("TurnInterrupted", e => OnTurnInterrupted?.Invoke(e));
+        _connection.On<AgentStreamEvent>("TurnEnd", e => OnTurnEnd?.Invoke(e));
         _connection.On<SubAgentEventPayload>("SubAgentSpawned", p => OnSubAgentSpawned?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentCompleted", p => OnSubAgentCompleted?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));

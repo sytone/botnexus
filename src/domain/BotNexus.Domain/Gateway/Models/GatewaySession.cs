@@ -332,6 +332,15 @@ public sealed record SessionEntry
     /// the most recent summary stays LLM-visible.
     /// </summary>
     public bool IsHistory { get; init; }
+
+    /// <summary>
+    /// Optional idempotency key for this user turn. When supplied by the sender
+    /// (e.g. the cross-world relay path), the receiver checks whether the last
+    /// user entry in the transcript already carries the same key before appending.
+    /// Prevents duplicate user turns on cancel-and-retry. Null for all non-relay
+    /// turns; ignored by the LLM context builder.
+    /// </summary>
+    public string? TurnIdempotencyKey { get; init; }
 }
 
 /// <summary>
