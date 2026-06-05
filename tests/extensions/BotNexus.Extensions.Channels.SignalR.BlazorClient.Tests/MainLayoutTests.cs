@@ -73,11 +73,11 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Clicking_burger_opens_sidebar()
+    public async Task Clicking_burger_opens_sidebar()
     {
         var cut = RenderLayout();
 
-        cut.Find(".burger-btn").Click();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-open");
     }
