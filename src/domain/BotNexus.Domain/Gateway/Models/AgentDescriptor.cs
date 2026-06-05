@@ -46,6 +46,12 @@ public sealed record AgentDescriptor : ICitizen
     public string? Description { get; init; }
 
     /// <summary>
+    /// Optional display order. Lower values sort first. When null the agent sorts
+    /// alphabetically after all agents that have an explicit order value.
+    /// </summary>
+    public int? Order { get; init; }
+
+    /// <summary>
     /// The LLM model identifier this agent uses by default (e.g., "claude-sonnet-4-20250514").
     /// Can be overridden per-session.
     /// </summary>
