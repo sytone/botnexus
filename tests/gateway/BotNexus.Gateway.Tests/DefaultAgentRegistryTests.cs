@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Abstractions.Activity;
+﻿using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -208,4 +208,89 @@ public sealed class DefaultAgentRegistryTests
             yield break;
         }
     }
+}
+
+public sealed class DefaultAgentRegistryOrderTests
+{
+    [Fact]
+    public void GetAll_WithNoOrderSet_ReturnsSortedAlphabetically()
+    {
+        var registry = CreateRegistry();
+        registry.Register(CreateDescriptor("b-agent", "Bravo"));
+        registry.Register(CreateDescriptor("a-agent", "Alpha"));
+        registry.Register(CreateDescriptor("c-agent", "Charlie"));
+
+        var result = registry.GetAll();
+
+        result.Select(a => a.DisplayName).ShouldBe(new[] { "Alpha", "Bravo", "Charlie" });
+    }
+
+    [Fact]
+    public void GetAll_WithOrderSet_PutsOrderedAgentsFirst()
+    {
+        var registry = CreateRegistry();
+        registry.Register(CreateDescriptor("unordered-agent", "Zulu", order: null));
+        registry.Register(CreateDescriptor("second-agent", "Beta", order: 2));
+        registry.Register(CreateDescriptor("first-agent", "Alpha", order: 1));
+
+        var result = registry.GetAll();
+
+        result[0].DisplayName.ShouldBe("Alpha"); // order 1
+        result[1].DisplayName.ShouldBe("Beta");  // order 2
+        result[2].DisplayName.ShouldBe("Zulu");  // no order -> alphabetical after
+    }
+
+    [Fact]
+    public void GetAll_WithSameOrder_SortsAlphabeticallyAsSecondary()
+    {
+        var registry = CreateRegistry();
+        registry.Register(CreateDescriptor("b-agent", "Bravo", order: 1));
+        registry.Register(CreateDescriptor("a-agent", "Alpha", order: 1));
+
+        var result = registry.GetAll();
+
+        result[0].DisplayName.ShouldBe("Alpha");
+        result[1].DisplayName.ShouldBe("Bravo");
+    }
+
+    [Fact]
+    public void GetAll_WithNegativeOrder_SortsBeforePositiveOrder()
+    {
+        var registry = CreateRegistry();
+        registry.Register(CreateDescriptor("positive-agent", "Positive", order: 5));
+        registry.Register(CreateDescriptor("negative-agent", "Negative", order: -1));
+
+        var result = registry.GetAll();
+
+        result[0].DisplayName.ShouldBe("Negative"); // order -1
+        result[1].DisplayName.ShouldBe("Positive"); // order 5
+    }
+
+    [Fact]
+    public void GetAll_WithAllUnordered_ReturnsCaseInsensitiveAlphabetical()
+    {
+        var registry = CreateRegistry();
+        registry.Register(CreateDescriptor("z-agent", "zebra"));
+        registry.Register(CreateDescriptor("a-agent", "Alpha"));
+        registry.Register(CreateDescriptor("m-agent", "mango"));
+
+        var result = registry.GetAll();
+
+        result.Select(a => a.DisplayName).ShouldBe(
+            new[] { "Alpha", "mango", "zebra" },
+            ignoreOrder: false);
+    }
+
+    private static DefaultAgentRegistry CreateRegistry()
+        => new(Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultAgentRegistry>.Instance);
+
+    private static AgentDescriptor CreateDescriptor(string agentId, string displayName, int? order = null)
+        => new()
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From(agentId),
+            DisplayName = displayName,
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            Order = order
+        };
 }

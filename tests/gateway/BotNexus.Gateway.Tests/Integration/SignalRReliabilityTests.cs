@@ -715,6 +715,12 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
             Messages.Add(message);
             return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
+
+        public bool Post(InboundMessage message)
+        {
+            Messages.Add(message);
+            return true;
+        }
     }
 
     private sealed record MuteByAddressCall(AgentId? AgentId, ChannelKey ChannelType, ChannelAddress ChannelAddress);
@@ -766,3 +772,4 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         }
     }
 }
+

@@ -112,6 +112,10 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
             AgentStreamEventType.Error => client.Error(enrichedEvent),
             AgentStreamEventType.UserInputRequired => client.UserInputRequired(enrichedEvent),
             AgentStreamEventType.TurnInterrupted => client.TurnInterrupted(enrichedEvent),
+            // TurnEnd is emitted when the agent's full turn completes (including tool-only turns
+            // where no MessageEnd is sent). Without this, the portal never clears IsStreaming
+            // for tool-only cron or background turns, leaving a permanent spinner (#668).
+            AgentStreamEventType.TurnEnd => client.TurnEnd(enrichedEvent),
             _ => Task.CompletedTask
         };
     }

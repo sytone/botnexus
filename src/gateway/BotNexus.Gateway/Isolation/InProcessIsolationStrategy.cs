@@ -19,6 +19,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Agents;
@@ -170,8 +171,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
-            var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
             var conversationChangeNotifier = _serviceProvider.GetService<IConversationChangeNotifier>();
+            var messageOrchestrator = _serviceProvider.GetService<IInboundMessageOrchestrator>();
             tools.Add(new ConversationTool(
                 conversationStore,
                 descriptor.AgentId,
@@ -179,7 +180,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 conversationAccessLevel,
                 conversationAllowedAgents,
                 sessionStore,
-                conversationDispatcher,
+                messageOrchestrator,
                 conversationChangeNotifier));
         }
 

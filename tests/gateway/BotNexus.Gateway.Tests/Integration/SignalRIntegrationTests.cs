@@ -774,6 +774,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             Messages.Add(message);
             return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
+
+        public bool Post(InboundMessage message)
+        {
+            Messages.Add(message);
+            return true;
+        }
     }
 
     private sealed class AbortAwareSupervisor(string agentId, string sessionId) : IAgentSupervisor

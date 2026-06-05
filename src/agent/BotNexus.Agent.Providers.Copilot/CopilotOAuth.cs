@@ -22,6 +22,14 @@ public static class CopilotOAuth
     private const string AccessTokenUrl = "https://github.com/login/oauth/access_token";
     private const string CopilotTokenUrl = "https://api.github.com/copilot_internal/v2/token";
 
+    /// <summary>
+    /// Maximum valid Unix timestamp (seconds) for an expiry claim.
+    /// Values beyond this exceed <see cref="DateTimeOffset.MaxValue"/> and will cause
+    /// <see cref="DateTimeOffset.FromUnixTimeSeconds"/> to throw.
+    /// A crafted JWT with an out-of-range <c>exp</c> is treated as invalid and forces a refresh.
+    /// </summary>
+    public static readonly long MaxValidExpiresAt = DateTimeOffset.MaxValue.ToUnixTimeSeconds();
+
     private static readonly HttpClient SharedClient = new(new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(5)
@@ -131,14 +139,26 @@ public static class CopilotOAuth
         if (!credentialsMap.TryGetValue(provider, out var credentials))
             return null;
 
-        // Refresh if expired or within 60s of expiry
-        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= credentials.ExpiresAt - 60)
+        // Refresh if expired, within 60s of expiry, or if ExpiresAt is out of the valid range.
+        // An out-of-range ExpiresAt (e.g. from a crafted JWT with a huge exp claim) would cause
+        // DateTimeOffset.FromUnixTimeSeconds to throw — treat it as invalid and force a refresh.
+        if (!IsExpiresAtInRange(credentials.ExpiresAt) ||
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= credentials.ExpiresAt - 60)
         {
             credentials = await RefreshAsync(credentials, ct);
         }
 
         return (credentials, credentials.AccessToken);
     }
+
+    /// <summary>
+    /// Returns true when <paramref name="expiresAt"/> is within the range accepted by
+    /// <see cref="DateTimeOffset.FromUnixTimeSeconds"/>: strictly positive and not greater than
+    /// <see cref="MaxValidExpiresAt"/>.  Values outside this range indicate a malformed or
+    /// deliberately crafted token and must be treated as immediately expired.
+    /// </summary>
+    public static bool IsExpiresAtInRange(long expiresAt)
+        => expiresAt > 0 && expiresAt <= MaxValidExpiresAt;
 
     private static async Task<(string Token, long ExpiresAt, string? ApiEndpoint)> ExchangeForCopilotTokenAsync(
         string githubToken, CancellationToken ct)
@@ -167,7 +187,18 @@ public static class CopilotOAuth
         long expiresAt;
         if (json.TryGetProperty("expires_at", out var expiresAtEl) && expiresAtEl.ValueKind == JsonValueKind.Number)
         {
-            expiresAt = expiresAtEl.GetInt64();
+            var rawExpiresAt = expiresAtEl.GetInt64();
+            // Reject out-of-range exp claims: a value <= 0 or beyond DateTimeOffset.MaxValue indicates a
+            // malformed or crafted response. Fall back to the refresh_in-derived expiry instead.
+            if (IsExpiresAtInRange(rawExpiresAt))
+            {
+                expiresAt = rawExpiresAt;
+            }
+            else
+            {
+                var refreshIn = json.TryGetProperty("refresh_in", out var refreshInEl) ? refreshInEl.GetInt32() : 1500;
+                expiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshIn).ToUnixTimeSeconds();
+            }
         }
         else
         {
