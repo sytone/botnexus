@@ -465,6 +465,8 @@ public sealed class WorkspaceControllerProtectedFileTests
     [InlineData("USER.md")]
     [InlineData("WORLD.md")]
     [InlineData("TOOLS.md")]
+    [InlineData("HEARTBEAT.md")]
+    [InlineData("heartbeat.md")]  // case-insensitive
     public void DeleteItem_ProtectedFile_Returns403(string fileName)
     {
         var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
@@ -523,6 +525,7 @@ public sealed class WorkspaceControllerProtectedFileTests
         WorkspaceController.ProtectedFiles.ShouldContain("USER.md");
         WorkspaceController.ProtectedFiles.ShouldContain("WORLD.md");
         WorkspaceController.ProtectedFiles.ShouldContain("TOOLS.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("HEARTBEAT.md");
     }
 
     private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)

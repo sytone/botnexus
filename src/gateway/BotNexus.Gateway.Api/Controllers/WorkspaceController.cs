@@ -34,7 +34,8 @@ public sealed class WorkspaceController : ControllerBase
         "AGENTS.md",
         "USER.md",
         "WORLD.md",
-        "TOOLS.md"
+        "TOOLS.md",
+        "HEARTBEAT.md"
     };
 
     /// <summary>
