@@ -366,6 +366,46 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.touch", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = GetConversationLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var updatedAt = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE conversations
+                SET updated_at = $updatedAt
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+            command.Parameters.AddWithValue("$id", conversationId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // Keep the in-memory cache consistent so subsequent GetAsync / ListAsync
+            // calls return the updated timestamp without a disk round-trip.
+            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            {
+                var touched = CloneConversation(cached);
+                touched.UpdatedAt = updatedAt;
+                _cache[conversationId.Value] = touched;
+            }
+        }
+        finally
+        {
+            conversationLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,

@@ -124,6 +124,20 @@ public interface IConversationStore
         CancellationToken ct = default);
 
     /// <summary>
+    /// Updates the <see cref="Conversation.UpdatedAt"/> timestamp to <see cref="DateTimeOffset.UtcNow"/>
+    /// without loading or rewriting the full conversation state.
+    /// <para>
+    /// Intended for high-frequency call sites such as the message processing loop where
+    /// bumping a timestamp is appropriate but a full <see cref="SaveAsync"/> round-trip
+    /// (which reloads the cache and rewrites all columns) is unnecessary overhead.
+    /// </para>
+    /// <para>Silently no-ops when the conversation does not exist.</para>
+    /// </summary>
+    /// <param name="conversationId">The conversation to touch.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task TouchAsync(ConversationId conversationId, CancellationToken ct = default);
+
+    /// <summary>
     /// Returns lightweight summaries for all <em>active</em> conversations across the world,
     /// ordered most-recently-updated first.
     /// </summary>

@@ -160,6 +160,20 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return;
+            await WriteFileAsync(conversation with { UpdatedAt = DateTimeOffset.UtcNow }, ct).ConfigureAwait(false);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
     public async Task AddParticipantsAsync(
         ConversationId conversationId,
         IEnumerable<SessionParticipant> participants,

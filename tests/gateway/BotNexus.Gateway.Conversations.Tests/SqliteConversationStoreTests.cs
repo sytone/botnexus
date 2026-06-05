@@ -638,6 +638,55 @@ public sealed class SqliteConversationStoreTests
         numericAgain!.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("12345/topic:67"));
     }
 
+    // ── TouchAsync ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task TouchAsync_UpdatesUpdatedAtAndCacheEntry()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-a"), "title");
+        var before = DateTimeOffset.UtcNow.AddSeconds(-10);
+        conversation.UpdatedAt = before;
+        await store.CreateAsync(conversation);
+
+        await store.TouchAsync(conversation.ConversationId);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.UpdatedAt.ShouldBeGreaterThan(before);
+    }
+
+    [Fact]
+    public async Task TouchAsync_IsIdempotentAndDoesNotThrowForMissingConversation()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        // Touch a conversation that does not exist -- must not throw
+        var fakeId = ConversationId.From("conv-nonexistent");
+        await store.TouchAsync(fakeId); // no exception expected
+    }
+
+    [Fact]
+    public async Task TouchAsync_CacheReflectsUpdatedAt_AfterTouchWithoutFullReload()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-a"), "title");
+        await store.CreateAsync(conversation);
+
+        // Load into cache
+        _ = await store.GetAsync(conversation.ConversationId);
+        var before = (await store.GetAsync(conversation.ConversationId))!.UpdatedAt;
+
+        await Task.Delay(5); // ensure clock advances at least 1ms
+        await store.TouchAsync(conversation.ConversationId);
+
+        // GetAsync must return the updated timestamp from cache without a disk reload
+        var after = (await store.GetAsync(conversation.ConversationId))!.UpdatedAt;
+        after.ShouldBeGreaterThan(before);
+    }
+
     private static string TempDb()
         => Path.Combine(Path.GetTempPath(), $"bn-conv-test-{Guid.NewGuid():N}.db");
 

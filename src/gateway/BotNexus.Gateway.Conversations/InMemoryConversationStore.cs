@@ -109,6 +109,14 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        if (_conversations.TryGetValue(conversationId.Value, out var existing))
+            _conversations[conversationId.Value] = existing with { UpdatedAt = DateTimeOffset.UtcNow };
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public async Task AddParticipantsAsync(
         ConversationId conversationId,
         IEnumerable<SessionParticipant> participants,
