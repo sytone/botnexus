@@ -81,7 +81,16 @@ public sealed class CronTrigger(
         else
             session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
-        if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
+        // Only claim ActiveSessionId if no human (SignalR) session currently holds it.
+        // A cron session must never evict a human session from the portal-facing pointer.
+        // If a user has intentionally pinned a cron job to their conversation, the cron
+        // messages still appear live (SignalR routes by ConversationId group, not session),
+        // but the portal stays connected to the human session. (#867)
+        var existingIsHumanSession = conversation.ActiveSessionId is { } existingId
+            && !existingId.Value.StartsWith("cron:", StringComparison.Ordinal);
+
+        if (!existingIsHumanSession &&
+            (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId))
         {
             conversation.ActiveSessionId = sessionId;
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
