@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -532,8 +532,11 @@ public sealed class MainLayoutTests : IDisposable
         var dropdown = cut.Find(".agent-dropdown-select");
         dropdown.Change("a-2");
 
-        // Assert: SelectConversationAsync was called for Beta's auto-selected conversation
-        _interaction.Received(1).SelectConversationAsync("a-2", "c-2");
+        // Assert: SelectConversationAsync was called for Beta's auto-selected conversation.
+        // WaitForAssertion used because OnAgentSelected is async -- the call completes
+        // after the event fires and may not have landed by the time the check runs on
+        // single-vCPU CI runners.
+        cut.WaitForAssertion(() => _interaction.Received(1).SelectConversationAsync("a-2", "c-2"));
     }
 
     [Fact]
