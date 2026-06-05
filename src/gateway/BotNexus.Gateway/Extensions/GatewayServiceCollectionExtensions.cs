@@ -566,6 +566,7 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IFileSystem>())));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, ConfigNormalisationHostedService>());
         return services;
     }
 }

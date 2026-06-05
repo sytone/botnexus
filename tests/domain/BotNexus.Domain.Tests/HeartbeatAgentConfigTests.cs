@@ -14,7 +14,7 @@ public sealed class HeartbeatAgentConfigTests
         config.QuietHours.ShouldBeNull();
         config.ActiveHours.ShouldBeNull();
         config.Prompt.ShouldBeNull();
-        config.Enabled.ShouldBeFalse();
+        config.Enabled.ShouldBeTrue(); // changed to true by default (issue #822)
         config.AckMaxChars.ShouldBe(300);
     }
 

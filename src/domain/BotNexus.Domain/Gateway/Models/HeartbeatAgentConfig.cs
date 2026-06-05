@@ -7,7 +7,7 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed class HeartbeatAgentConfig
 {
     /// <summary>Whether heartbeat polling is enabled.</summary>
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Minutes between heartbeat polls. Default: 30.</summary>
     public int IntervalMinutes { get; set; } = 30;
