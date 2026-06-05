@@ -171,6 +171,52 @@ public class CopilotOAuthTests
         result!.Value.ApiKey.ShouldBe("token-a");
     }
 
+    // --- ExpiresAt bounds validation tests (#648) ---
+
+    [Fact]
+    public void IsExpiresAtInRange_ValidFutureTimestamp_ReturnsTrue()
+    {
+        var future = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        CopilotOAuth.IsExpiresAtInRange(future).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsExpiresAtInRange_Zero_ReturnsFalse()
+    {
+        CopilotOAuth.IsExpiresAtInRange(0).ShouldBeFalse("ExpiresAt=0 forces refresh, not treated as in-range");
+    }
+
+    [Fact]
+    public void IsExpiresAtInRange_Negative_ReturnsFalse()
+    {
+        CopilotOAuth.IsExpiresAtInRange(-1).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsExpiresAtInRange_MaxValidValue_ReturnsTrue()
+    {
+        CopilotOAuth.IsExpiresAtInRange(CopilotOAuth.MaxValidExpiresAt).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsExpiresAtInRange_BeyondMaxValid_ReturnsFalse()
+    {
+        // A crafted JWT with exp beyond DateTimeOffset.MaxValue must be treated as invalid.
+        // DateTimeOffset.FromUnixTimeSeconds would throw ArgumentOutOfRangeException for such values.
+        var outOfRange = CopilotOAuth.MaxValidExpiresAt + 1;
+        CopilotOAuth.IsExpiresAtInRange(outOfRange).ShouldBeFalse(
+            "exp beyond DateTimeOffset.MaxValue would crash FromUnixTimeSeconds");
+    }
+
+    [Theory]
+    [InlineData(long.MaxValue)]
+    [InlineData(9_999_999_999_999L)]
+    public void IsExpiresAtInRange_ExtremelyLargeValues_ReturnsFalse(long extreme)
+    {
+        CopilotOAuth.IsExpiresAtInRange(extreme).ShouldBeFalse(
+            "extremely large exp values must be rejected to prevent perpetual-valid bypass");
+    }
+
     // --- OAuthCredentials with-expressions (record mutation) ---
 
     [Fact]
