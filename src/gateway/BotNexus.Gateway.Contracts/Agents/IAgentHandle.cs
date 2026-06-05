@@ -97,4 +97,18 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task that completes when the message is queued.</returns>
     Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Atomically aborts the current agent run (if any) and injects a new steering direction.
+    /// The new direction is queued immediately after abort completes so the agent resumes
+    /// with the redirected goal rather than continuing the abandoned turn.
+    /// </summary>
+    /// <param name="message">The new direction to inject after aborting the current run.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the abort is issued and the steer is queued.</returns>
+    /// <remarks>
+    /// This is the Phase 1a contract definition (Issue #799, Part of #704).
+    /// Implementation is wired in Issue #800.
+    /// </remarks>
+    Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default);
 }
