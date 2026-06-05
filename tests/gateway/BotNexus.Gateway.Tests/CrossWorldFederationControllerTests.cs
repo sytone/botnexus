@@ -1587,6 +1587,92 @@ public sealed class CrossWorldFederationControllerTests
         session.Metadata.ShouldContainKey("error");
     }
 
+    // --- Dedup / idempotency tests (#566) ---
+
+    [Fact]
+    public async Task RelayAsync_RetryWithSameTurnId_DoesNotDuplicateUserTurn()
+    {
+        // When the sender cancels mid-turn and retries with the same RemoteSessionId
+        // and TurnId, the receiver must not append the user turn again.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // First call: sends message with TurnId
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "Hello world", turnId: "turn-001"),
+            CancellationToken.None);
+        var firstOk = firstResponse.Result.ShouldBeOfType<OkObjectResult>();
+        var remoteSessionId = firstOk.Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        // Verify first call created exactly 1 user entry
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        var historyBefore = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        historyBefore.Count.ShouldBe(1);
+        historyBefore[0].TurnIdempotencyKey.ShouldBe("turn-001");
+
+        // Second call: same TurnId, same session - simulates cancel-and-retry
+        await controller.RelayAsync(
+            BuildRequest(message: "Hello world", remoteSessionId: remoteSessionId, turnId: "turn-001"),
+            CancellationToken.None);
+
+        // User turn count must still be 1 - not duplicated
+        session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        var historyAfter = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        historyAfter.Count.ShouldBe(1, "Retry with the same TurnId must not append a duplicate user turn.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_RetryWithDifferentTurnId_AppendsNewUserTurn()
+    {
+        // A second turn with a DIFFERENT TurnId (new intent) must append normally.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "Turn one", turnId: "turn-001"),
+            CancellationToken.None);
+        var remoteSessionId = firstResponse.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        // Second turn with different TurnId
+        await controller.RelayAsync(
+            BuildRequest(message: "Turn two", remoteSessionId: remoteSessionId, turnId: "turn-002"),
+            CancellationToken.None);
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        var userTurns = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        userTurns.Count.ShouldBe(2, "A new TurnId means a new intent - must append.");
+        userTurns[0].TurnIdempotencyKey.ShouldBe("turn-001");
+        userTurns[1].TurnIdempotencyKey.ShouldBe("turn-002");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WithoutTurnId_AppendsUserTurnNormally()
+    {
+        // Legacy senders (no TurnId) must still append the user turn on every call.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "no-turnid"),
+            CancellationToken.None);
+        var remoteSessionId = firstResponse.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        await controller.RelayAsync(
+            BuildRequest(message: "no-turnid", remoteSessionId: remoteSessionId),
+            CancellationToken.None);
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        var userTurns = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        userTurns.Count.ShouldBe(2, "Legacy callers without TurnId must always append.");
+    }
+
     private static CrossWorldFederationController BuildControllerCore(
         ISessionStore sessions,
         IConversationStore conversations,
@@ -1710,7 +1796,8 @@ public sealed class CrossWorldFederationControllerTests
         string? remoteSessionId = null,
         string? sourceSessionId = null,
         string sourceAgentId = SourceAgentId,
-        bool closeAfterResponse = false)
+        bool closeAfterResponse = false,
+        string? turnId = null)
         => new()
         {
             SourceWorldId = SourceWorldId,
@@ -1720,7 +1807,8 @@ public sealed class CrossWorldFederationControllerTests
             ConversationId = "sender-conv-id",
             SourceSessionId = sourceSessionId,
             RemoteSessionId = remoteSessionId,
-            CloseAfterResponse = closeAfterResponse
+            CloseAfterResponse = closeAfterResponse,
+            TurnId = turnId
         };
 }
 
