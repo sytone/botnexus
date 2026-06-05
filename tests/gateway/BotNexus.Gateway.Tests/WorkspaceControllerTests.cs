@@ -1,4 +1,4 @@
-using BotNexus.Domain.Primitives;
+﻿using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
@@ -391,6 +391,97 @@ public sealed class WorkspaceControllerWriteTests
         });
 
         var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
+
+        return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
+    }
+}
+
+public sealed class WorkspaceControllerProtectedFileTests
+{
+    private const string WorkspacePath = @"C:\workspace\agent-a";
+
+    [Theory]
+    [InlineData("SOUL.md")]
+    [InlineData("soul.md")]  // case-insensitive
+    [InlineData("IDENTITY.md")]
+    [InlineData("MEMORY.md")]
+    [InlineData("AGENTS.md")]
+    [InlineData("USER.md")]
+    [InlineData("WORLD.md")]
+    [InlineData("TOOLS.md")]
+    public void DeleteItem_ProtectedFile_Returns403(string fileName)
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, fileName)] = new("protected content")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", fileName, force: false);
+
+        var statusResult = result.ShouldBeOfType<ObjectResult>();
+        statusResult.StatusCode.ShouldBe(403);
+        // File should still exist (not deleted)
+        fileSystem.File.Exists(System.IO.Path.Combine(WorkspacePath, fileName)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DeleteItem_ProtectedFile_InSubdirectory_Returns403()
+    {
+        // Protection is filename-based, so playbook/SOUL.md is also protected
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, "playbook", "SOUL.md")] = new("protected")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "playbook/SOUL.md", force: false);
+
+        var statusResult = result.ShouldBeOfType<ObjectResult>();
+        statusResult.StatusCode.ShouldBe(403);
+    }
+
+    [Fact]
+    public void DeleteItem_NonProtectedFile_DeletesSuccessfully()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [System.IO.Path.Combine(WorkspacePath, "notes.md")] = new("hello")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "notes.md", force: false);
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.File.Exists(System.IO.Path.Combine(WorkspacePath, "notes.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ProtectedFiles_Set_ContainsAllExpectedFiles()
+    {
+        // Ensure the protected set is consistent and contains the expected entries
+        WorkspaceController.ProtectedFiles.ShouldContain("SOUL.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("IDENTITY.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("MEMORY.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("AGENTS.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("USER.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("WORLD.md");
+        WorkspaceController.ProtectedFiles.ShouldContain("TOOLS.md");
+    }
+
+    private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new Moq.Mock<IAgentWorkspaceManager>();
         workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
 
         return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
