@@ -478,32 +478,10 @@ public sealed class CronTriggerTests
             ActiveSessionId = humanSessionId,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
-=======
-    // ── #864 reactivation notify tests ─────────────────────────────────────
-
-    /// <summary>
-    /// Regression test for #864: when CronTrigger reactivates an archived pinned conversation,
-    /// it must fire a SignalR notification via IConversationChangeNotifier so the portal
-    /// sidebar reflects the conversation status change without a page reload.
-    /// </summary>
-    [Fact]
-    public async Task CreateSessionAsync_PinnedArchivedConversation_FiresReactivationNotify()
-    {
-        var archivedConversation = new Conversation
-        {
-            ConversationId = ConversationId.From("conv:archived-notify-test"),
-            AgentId = AgentId.From("agent-n"),
-            Title = "Archived Job",
-            IsDefault = false,
-            Status = ConversationStatus.Archived,
-            CreatedAt = DateTimeOffset.UtcNow.AddDays(-7),
-            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-7)
->>>>>>> origin/main
         };
 
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
         conversationStore
-<<<<<<< HEAD
             .Setup(s => s.GetAsync(pinnedConversation.ConversationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(pinnedConversation);
 
@@ -546,69 +524,10 @@ public sealed class CronTriggerTests
             ActiveSessionId = null,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
-=======
-            .Setup(s => s.GetAsync(archivedConversation.ConversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(archivedConversation);
-
-        var notifier = new Mock<IConversationChangeNotifier>();
-        notifier
-            .Setup(n => n.NotifyConversationChangedAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var trigger = new CronTrigger(
-            supervisor.Object,
-            conversationStore.Object,
-            sessionStore.Object,
-            NullLogger<CronTrigger>.Instance,
-            notifier.Object);
-
-        await trigger.CreateSessionAsync(
-            AgentId.From("agent-n"),
-            "Run archived job",
-            request: new InternalTriggerRequest
-            {
-                CronJobId = JobId.From("job-archived"),
-                ConversationId = archivedConversation.ConversationId
-            });
-
-        // The archived conversation must be reactivated to Active
-        archivedConversation.Status.ShouldBe(ConversationStatus.Active,
-            "CronTrigger must reactivate an archived pinned conversation (#864)");
-
-        // The notifier must fire exactly once with the correct parameters
-        notifier.Verify(
-            n => n.NotifyConversationChangedAsync(
-                "updated",
-                "agent-n",
-                archivedConversation.ConversationId.Value,
-                It.IsAny<CancellationToken>()),
-            Times.Once,
-            "IConversationChangeNotifier must be called once when an archived conversation is reactivated (#864)");
-    }
-
-    /// <summary>
-    /// When no IConversationChangeNotifier is injected (null), reactivating an archived
-    /// conversation must not throw -- the notifier is optional for backward compatibility.
-    /// </summary>
-    [Fact]
-    public async Task CreateSessionAsync_PinnedArchivedConversation_NoNotifier_DoesNotThrow()
-    {
-        var archivedConversation = new Conversation
-        {
-            ConversationId = ConversationId.From("conv:archived-no-notifier"),
-            AgentId = AgentId.From("agent-nn"),
-            Title = "Archived Job No Notifier",
-            IsDefault = false,
-            Status = ConversationStatus.Archived,
-            CreatedAt = DateTimeOffset.UtcNow.AddDays(-7),
-            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-7)
->>>>>>> origin/main
         };
 
         var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
         conversationStore
-<<<<<<< HEAD
             .Setup(s => s.GetAsync(cronConversation.ConversationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(cronConversation);
 
@@ -667,7 +586,91 @@ public sealed class CronTriggerTests
         humanConversation.ActiveSessionId.ShouldNotBeNull(
             "Cron should claim ActiveSessionId when it is null — no human session to protect");
         humanConversation.ActiveSessionId!.Value.Value.ShouldStartWith("cron:");
-=======
+    }
+
+    // ── #864 reactivation notify tests ───────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for #864: when CronTrigger reactivates an archived pinned conversation,
+    /// it must fire a SignalR notification via IConversationChangeNotifier so the portal
+    /// sidebar reflects the conversation status change without a page reload.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_PinnedArchivedConversation_FiresReactivationNotify()
+    {
+        var archivedConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:archived-notify-test"),
+            AgentId = AgentId.From("agent-n"),
+            Title = "Archived Job",
+            IsDefault = false,
+            Status = ConversationStatus.Archived,
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-7),
+            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-7)
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(archivedConversation.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(archivedConversation);
+
+        var notifier = new Mock<IConversationChangeNotifier>();
+        notifier
+            .Setup(n => n.NotifyConversationChangedAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(
+            supervisor.Object,
+            conversationStore.Object,
+            sessionStore.Object,
+            NullLogger<CronTrigger>.Instance,
+            notifier.Object);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-n"),
+            "Run archived job",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-archived"),
+                ConversationId = archivedConversation.ConversationId
+            });
+
+        // The archived conversation must be reactivated to Active
+        archivedConversation.Status.ShouldBe(ConversationStatus.Active,
+            "CronTrigger must reactivate an archived pinned conversation (#864)");
+
+        // The notifier must fire exactly once with the correct parameters
+        notifier.Verify(
+            n => n.NotifyConversationChangedAsync(
+                "updated",
+                "agent-n",
+                archivedConversation.ConversationId.Value,
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "IConversationChangeNotifier must be called once when an archived conversation is reactivated (#864)");
+    }
+
+    /// <summary>
+    /// When no IConversationChangeNotifier is injected (null), reactivating an archived
+    /// conversation must not throw -- the notifier is optional for backward compatibility.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_PinnedArchivedConversation_NoNotifier_DoesNotThrow()
+    {
+        var archivedConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:archived-no-notifier"),
+            AgentId = AgentId.From("agent-nn"),
+            Title = "Archived Job No Notifier",
+            IsDefault = false,
+            Status = ConversationStatus.Archived,
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-7),
+            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-7)
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
             .Setup(s => s.GetAsync(archivedConversation.ConversationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(archivedConversation);
 
@@ -690,7 +693,6 @@ public sealed class CronTriggerTests
 
         archivedConversation.Status.ShouldBe(ConversationStatus.Active,
             "Conversation must still be reactivated even when notifier is absent");
->>>>>>> origin/main
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
