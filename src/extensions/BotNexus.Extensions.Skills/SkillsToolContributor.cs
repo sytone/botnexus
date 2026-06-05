@@ -22,6 +22,9 @@ public sealed class SkillsToolContributor : IAgentToolContributor
         var workspaceSkillsDir = Path.Combine(context.WorkspacePath, "skills");
         var config = ResolveExtensionConfig<SkillsConfig>(context.Descriptor, "botnexus-skills");
 
+        // Seed the global skills directory with an example skill on first use.
+        SkillsSeeder.EnsureGlobalSkillsSeed(globalSkillsDir);
+
         IReadOnlyList<IAgentTool> tools =
         [
             new SkillTool(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, config)
