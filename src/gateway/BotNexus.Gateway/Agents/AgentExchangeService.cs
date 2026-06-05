@@ -333,6 +333,11 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 var isFinalTurn = string.IsNullOrWhiteSpace(request.Objective)
                                   || turn == request.MaxTurns - 1;
 
+                // Per-turn idempotency key: the receiver uses this to skip re-appending the user
+                // turn if the same key is already the last history entry. Prevents duplicate user
+                // turns when the sender cancels mid-turn and retries with the same RemoteSessionId.
+                var turnId = Guid.NewGuid().ToString("N");
+
                 var relayResponse = await _crossWorldChannelAdapter.ExchangeAsync(
                     new OutboundMessage
                     {
@@ -350,7 +355,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
                             ["conversationId"] = conversation.ConversationId.Value,
                             ["sourceSessionId"] = sessionId.Value,
                             ["remoteSessionId"] = remoteSessionId,
-                            ["closeAfterResponse"] = isFinalTurn
+                            ["closeAfterResponse"] = isFinalTurn,
+                            ["turnId"] = turnId
                         }
                     },
                     cancellationToken).ConfigureAwait(false);
