@@ -1,4 +1,4 @@
-using BotNexus.Domain;
+﻿using BotNexus.Domain;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -1273,6 +1273,73 @@ public sealed class CrossWorldFederationControllerTests
         var session = await sessions.GetAsync(existence[0].SessionId);
         session.ShouldNotBeNull();
         session!.Status.ShouldBe(GatewaySessionStatus.Sealed);
+    }
+
+
+    // #626 seal-when-archived behaviour pins
+    //
+    // Issue #626: When CloseAfterResponse=true && exchangeFinished=false the receiver archives
+    // the conversation but previously left the session Active. A follow-up relay could then
+    // resurrect ActiveSessionId on an Archived conversation, which is structurally inconsistent
+    // and portal-visible. Fix: apply the "seal-when-archived" rule - whenever
+    // ArchiveOnExchangeEndAsync fires, also seal the session.
+
+    /// <summary>
+    /// Behaviour pin for #626: when CloseAfterResponse=true and the target agent did NOT invoke
+    /// finish_agent_exchange, the receiver must seal the session (not just archive the conversation).
+    /// The combination Archived+Active is a state-machine inconsistency.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_CloseAfterResponse_WithoutFinishTool_SealsSession()
+    {
+        // Arrange: single-shot relay (closeAfterResponse=true); target does NOT invoke finish_agent_exchange.
+        var (controller, sessions, conversations, _) = BuildController(replyContent: "ack");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // Act
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        // Assert: conversation is Archived (P9-C, already tested elsewhere)
+        var convs = await conversations.ListAsync();
+        convs[0].Status.ShouldBe(ConversationStatus.Archived,
+            "P9-C prerequisite: conversation must be archived on CloseAfterResponse=true.");
+
+        // Assert: session must also be Sealed (#626)
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1);
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            "#626: CloseAfterResponse forces archive; the session must also be Sealed so the state " +
+            "machine is consistent. An Archived conversation with an Active session would allow " +
+            "a follow-up sender relay to resurrect ActiveSessionId on an Archived conversation.");
+    }
+
+    /// <summary>
+    /// Behaviour pin for #626: the response Status field must be "sealed" when CloseAfterResponse
+    /// forces archive (even though the target did not invoke finish_agent_exchange).
+    /// The sender loop uses this field to decide whether to stop or retry.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_CloseAfterResponse_WithoutFinishTool_ResponseStatusIsSealed()
+    {
+        var (controller, _, _, _) = BuildController(replyContent: "done");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+
+        payload.Status.ShouldBe("sealed",
+            "#626: when CloseAfterResponse forces a terminal archive, the wire Status must be " +
+            """\"sealed\"" so the sender loop does not spin on a false \"active\" result. """ +
+            "ExchangeFinished remains false (the target never called finish_agent_exchange).");
+        payload.ExchangeFinished.ShouldBeFalse(
+            "ExchangeFinished must remain false even when CloseAfterResponse seals the session - " +
+            "the target did not invoke finish_agent_exchange.");
     }
 
     // ─── end P9-C receiver pins ──────────────────────────────────────────────────────────
