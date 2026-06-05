@@ -230,7 +230,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));
 
         var newConvBtn = cut.Find(".conversation-new-btn");
-        await cut.InvokeAsync(() => newConvBtn.Click());
+        await cut.InvokeAsync(() => cut.Find(".conversation-new-btn").Click());
 
         await _interaction.Received(1).CreateConversationAsync("a-1");
     }

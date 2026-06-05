@@ -111,13 +111,13 @@ public sealed class UpdateBadgeTests : IDisposable
     // ──────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void MainLayout_UpdateBadge_Click_ShowsConfirmationDialog()
+    public async Task MainLayout_UpdateBadge_Click_ShowsConfirmationDialog()
     {
         _updateSvc.Status.Returns(MakeStatus(isUpdateAvailable: true));
 
         var cut = RenderLayout();
 
-        cut.Find(".update-badge").Click();
+        await cut.InvokeAsync(() => cut.Find(".update-badge").Click());
 
         // A confirmation dialog must appear after clicking the badge
         cut.Find(".update-confirm-dialog");
