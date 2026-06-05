@@ -1,25 +1,22 @@
 using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Abstractions.Agents;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
-/// Runs once at gateway startup — after agents have been loaded — and normalises
-/// any agent config JSON files that are missing expected default blocks.
-/// Currently normalises: the <c>heartbeat</c> key.
+/// Runs once at gateway startup and normalises <c>config.json</c> to ensure
+/// expected default blocks are present.
+/// Currently normalises: injects a default <c>heartbeat</c> block into
+/// <c>agents.defaults</c> if the key is absent.
 /// </summary>
 /// <remarks>
-/// This service is intentionally narrow: it only injects keys that are
-/// absent from the file. Explicitly-set values are never overwritten.
-/// It targets individual agent JSON files loaded by
-/// <see cref="FileAgentConfigurationSource"/>, not <c>config.json</c>.
+/// This service targets the single root <c>config.json</c> — the only agent
+/// configuration file in BotNexus. It never overwrites explicitly-set values.
 /// </remarks>
 internal sealed class ConfigNormalisationHostedService(
-    IEnumerable<IAgentConfigurationSource> sources,
     IFileSystem fileSystem,
     ILogger<ConfigNormalisationHostedService> logger) : IHostedService
 {
@@ -29,63 +26,62 @@ internal sealed class ConfigNormalisationHostedService(
     private readonly IFileSystem _fileSystem = fileSystem;
     private readonly ILogger<ConfigNormalisationHostedService> _logger = logger;
 
-    // Resolve the directory paths that the FileAgentConfigurationSource instances are watching.
-    private readonly string[] _agentDirectories = sources
-        .OfType<FileAgentConfigurationSource>()
-        .Select(s => s.DirectoryPath)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToArray();
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        foreach (var directory in _agentDirectories)
-        {
-            if (!_fileSystem.Directory.Exists(directory))
-                continue;
-
-            foreach (var filePath in _fileSystem.Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await TryNormaliseFileAsync(filePath, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        var configPath = PlatformConfigLoader.GetDefaultConfigPath(_fileSystem);
+        await TryNormaliseConfigAsync(configPath, cancellationToken).ConfigureAwait(false);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private async Task TryNormaliseFileAsync(string filePath, CancellationToken cancellationToken)
+    private async Task TryNormaliseConfigAsync(string configPath, CancellationToken cancellationToken)
     {
+        if (!_fileSystem.File.Exists(configPath))
+            return;
+
         try
         {
-            var rawJson = await _fileSystem.File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+            var rawJson = await _fileSystem.File.ReadAllTextAsync(configPath, cancellationToken).ConfigureAwait(false);
             var root = JsonNode.Parse(rawJson, nodeOptions: NodeOptions);
             if (root is not JsonObject obj)
                 return;
 
             var mutated = false;
 
-            // Inject heartbeat if absent
-            if (!obj.ContainsKey("heartbeat"))
+            // Ensure agents.defaults.heartbeat is present
+            var agents = obj["agents"] as JsonObject;
+            if (agents is not null)
             {
-                obj["heartbeat"] = BuildDefaultHeartbeatBlock();
-                mutated = true;
+                var defaults = agents["defaults"] as JsonObject;
+                if (defaults is null)
+                {
+                    defaults = new JsonObject(NodeOptions);
+                    agents["defaults"] = defaults;
+                }
+
+                if (!defaults.ContainsKey("heartbeat"))
+                {
+                    defaults["heartbeat"] = BuildDefaultHeartbeatBlock();
+                    mutated = true;
+                    _logger.LogInformation("Injected default heartbeat block into agents.defaults in '{ConfigPath}'.", configPath);
+                }
             }
 
             if (!mutated)
                 return;
 
-            var agentId = obj["agentId"]?.GetValue<string>() ?? _fileSystem.Path.GetFileNameWithoutExtension(filePath);
             var updatedJson = obj.ToJsonString(WriteOptions);
 
-            // Write via temp file + atomic move
-            var dirName = _fileSystem.Path.GetDirectoryName(filePath) ?? string.Empty;
-            var tempPath = _fileSystem.Path.Combine(dirName, _fileSystem.Path.GetFileName(filePath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+            // Write via temp file + atomic move to avoid partial-write corruption
+            var dirName = _fileSystem.Path.GetDirectoryName(configPath) ?? string.Empty;
+            var tempPath = _fileSystem.Path.Combine(
+                dirName,
+                _fileSystem.Path.GetFileName(configPath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
 
             try
             {
                 await _fileSystem.File.WriteAllTextAsync(tempPath, updatedJson, cancellationToken).ConfigureAwait(false);
-                _fileSystem.File.Move(tempPath, filePath, overwrite: true);
-                _logger.LogInformation("Normalised heartbeat config for agent '{AgentId}'.", agentId);
+                _fileSystem.File.Move(tempPath, configPath, overwrite: true);
             }
             catch
             {
@@ -100,7 +96,7 @@ internal sealed class ConfigNormalisationHostedService(
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to normalise agent config file '{FilePath}'.", filePath);
+            _logger.LogWarning(ex, "Failed to normalise config file '{ConfigPath}'.", configPath);
         }
     }
 

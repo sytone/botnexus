@@ -1,8 +1,9 @@
 using System.Text.Json;
-using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
+using System.IO.Abstractions.TestingHelpers;
 using Shouldly;
 
 namespace BotNexus.Gateway.Tests.Configuration;
@@ -20,165 +21,168 @@ public sealed class ConfigNormalisationHostedServiceTests
     [Fact]
     public void HeartbeatAgentConfig_DefaultEnabled_IsTrue()
     {
-        var config = new BotNexus.Gateway.Abstractions.Models.HeartbeatAgentConfig();
+        var config = new HeartbeatAgentConfig();
         config.Enabled.ShouldBeTrue("Enabled should default to true (issue #822)");
     }
 
     [Fact]
     public void HeartbeatAgentConfig_DefaultIntervalMinutes_Is30()
     {
-        var config = new BotNexus.Gateway.Abstractions.Models.HeartbeatAgentConfig();
+        var config = new HeartbeatAgentConfig();
         config.IntervalMinutes.ShouldBe(30);
     }
 
     // -------------------------------------------------------------------------
-    // Normalisation: missing heartbeat block is injected
+    // Normalisation: missing heartbeat block in agents.defaults is injected
     // -------------------------------------------------------------------------
 
     [Fact]
-    public async Task StartAsync_AgentFileMissingHeartbeat_InjectsDefaultHeartbeatBlock()
+    public async Task StartAsync_ConfigMissingAgentsDefaultsHeartbeat_InjectsDefaultHeartbeatBlock()
     {
-        // Arrange
-        var dir = CreateTempDirectory();
-        try
-        {
-            var agentJson = """
-                {
-                  "agentId": "alpha",
+        // Arrange — config.json has agents but no agents.defaults.heartbeat
+        var configJson = """
+            {
+              "configVersion": 1,
+              "agents": {
+                "defaults": {
+                  "provider": "github-copilot"
+                },
+                "alpha": {
+                  "enabled": true,
                   "displayName": "Alpha",
-                  "modelId": "gpt-4.1",
-                  "apiProvider": "github-copilot"
+                  "model": "gpt-4.1"
                 }
-                """;
-            var filePath = Path.Combine(dir, "alpha.json");
-            await File.WriteAllTextAsync(filePath, agentJson);
+              }
+            }
+            """;
+        var (service, fs, configPath) = BuildService(configJson);
 
-            var (service, _) = BuildService(dir);
+        // Act
+        await service.StartAsync(CancellationToken.None);
 
-            // Act
-            await service.StartAsync(CancellationToken.None);
-
-            // Assert — heartbeat block must now be present
-            var updatedJson = await File.ReadAllTextAsync(filePath);
-            using var doc = JsonDocument.Parse(updatedJson);
-            doc.RootElement.TryGetProperty("heartbeat", out var heartbeat).ShouldBeTrue("heartbeat block should be injected");
-            heartbeat.GetProperty("enabled").GetBoolean().ShouldBeTrue();
-            heartbeat.GetProperty("intervalMinutes").GetInt32().ShouldBe(30);
-            heartbeat.GetProperty("quietHours").GetProperty("start").GetString().ShouldBe("23:00");
-            heartbeat.GetProperty("quietHours").GetProperty("end").GetString().ShouldBe("07:00");
-        }
-        finally
-        {
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-        }
+        // Assert — agents.defaults.heartbeat is now present
+        var updatedJson = fs.File.ReadAllText(configPath);
+        using var doc = JsonDocument.Parse(updatedJson);
+        var defaults = doc.RootElement.GetProperty("agents").GetProperty("defaults");
+        defaults.TryGetProperty("heartbeat", out var heartbeat).ShouldBeTrue("heartbeat block should be injected into agents.defaults");
+        heartbeat.GetProperty("enabled").GetBoolean().ShouldBeTrue();
+        heartbeat.GetProperty("intervalMinutes").GetInt32().ShouldBe(30);
+        heartbeat.GetProperty("quietHours").GetProperty("start").GetString().ShouldBe("23:00");
+        heartbeat.GetProperty("quietHours").GetProperty("end").GetString().ShouldBe("07:00");
     }
 
     [Fact]
-    public async Task StartAsync_AgentFileHasHeartbeat_IsNotOverwritten()
+    public async Task StartAsync_ConfigHasAgentsDefaultsHeartbeat_IsNotOverwritten()
     {
-        // Arrange — agent already has an explicit heartbeat block with custom values
-        var dir = CreateTempDirectory();
-        try
-        {
-            var agentJson = """
-                {
-                  "agentId": "beta",
-                  "displayName": "Beta",
-                  "modelId": "gpt-4.1",
-                  "apiProvider": "github-copilot",
+        // Arrange — config.json already has agents.defaults.heartbeat with custom values
+        var configJson = """
+            {
+              "configVersion": 1,
+              "agents": {
+                "defaults": {
                   "heartbeat": {
                     "enabled": false,
                     "intervalMinutes": 60
                   }
                 }
-                """;
-            var filePath = Path.Combine(dir, "beta.json");
-            await File.WriteAllTextAsync(filePath, agentJson);
+              }
+            }
+            """;
+        var (service, fs, configPath) = BuildService(configJson);
 
-            var (service, _) = BuildService(dir);
+        // Act
+        await service.StartAsync(CancellationToken.None);
 
-            // Act
-            await service.StartAsync(CancellationToken.None);
-
-            // Assert — explicit values not overwritten
-            var updatedJson = await File.ReadAllTextAsync(filePath);
-            using var doc = JsonDocument.Parse(updatedJson);
-            var heartbeat = doc.RootElement.GetProperty("heartbeat");
-            heartbeat.GetProperty("enabled").GetBoolean().ShouldBeFalse("explicit enabled=false must not be overwritten");
-            heartbeat.GetProperty("intervalMinutes").GetInt32().ShouldBe(60, "explicit intervalMinutes=60 must not be overwritten");
-        }
-        finally
-        {
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-        }
+        // Assert — explicit values must not be overwritten
+        var updatedJson = fs.File.ReadAllText(configPath);
+        using var doc = JsonDocument.Parse(updatedJson);
+        var heartbeat = doc.RootElement.GetProperty("agents").GetProperty("defaults").GetProperty("heartbeat");
+        heartbeat.GetProperty("enabled").GetBoolean().ShouldBeFalse("explicit enabled=false must not be overwritten");
+        heartbeat.GetProperty("intervalMinutes").GetInt32().ShouldBe(60, "explicit intervalMinutes=60 must not be overwritten");
     }
 
     [Fact]
-    public async Task StartAsync_MissingDirectory_DoesNotThrow()
+    public async Task StartAsync_MissingConfigFile_DoesNotThrow()
     {
-        // Arrange — use a path that doesn't exist
-        var nonExistentDir = Path.Combine(Path.GetTempPath(), "botnexus-norm-test-nonexistent-" + Guid.NewGuid().ToString("N"));
-        var (service, _) = BuildService(nonExistentDir);
+        // Arrange — config.json does not exist
+        var fs = new MockFileSystem();
+        var service = new ConfigNormalisationHostedService(fs, NullLogger<ConfigNormalisationHostedService>.Instance);
 
-        // Act & Assert — should not throw
+        // Act & Assert — should not throw even if config.json is absent
         await Should.NotThrowAsync(() => service.StartAsync(CancellationToken.None));
     }
 
     [Fact]
-    public async Task StartAsync_MultipleFiles_NormalisesOnlyMissingHeartbeats()
+    public async Task StartAsync_NoAgentsSection_DoesNotModifyConfig()
     {
-        // Arrange — two agent files: one with, one without heartbeat
-        var dir = CreateTempDirectory();
-        try
-        {
-            var fileWithout = Path.Combine(dir, "alpha.json");
-            var fileWith = Path.Combine(dir, "beta.json");
+        // Arrange — config.json has no agents block
+        var configJson = """
+            {
+              "configVersion": 1,
+              "gateway": {}
+            }
+            """;
+        var (service, fs, configPath) = BuildService(configJson);
+        var originalJson = fs.File.ReadAllText(configPath);
 
-            await File.WriteAllTextAsync(fileWithout,
-                """{"agentId":"alpha","displayName":"Alpha","modelId":"gpt-4.1","apiProvider":"github-copilot"}""");
-            await File.WriteAllTextAsync(fileWith,
-                """{"agentId":"beta","displayName":"Beta","modelId":"gpt-4.1","apiProvider":"github-copilot","heartbeat":{"enabled":false}}""");
+        // Act
+        await service.StartAsync(CancellationToken.None);
 
-            var (service, _) = BuildService(dir);
+        // Assert — file unchanged (no agents block means nothing to normalise)
+        var resultJson = fs.File.ReadAllText(configPath);
+        resultJson.ShouldBe(originalJson, "file should be unchanged when agents block is absent");
+    }
 
-            // Act
-            await service.StartAsync(CancellationToken.None);
+    [Fact]
+    public async Task StartAsync_NoAgentsDefaultsSection_CreatesDefaultsAndInjectsHeartbeat()
+    {
+        // Arrange — config.json has agents but no agents.defaults key
+        var configJson = """
+            {
+              "configVersion": 1,
+              "agents": {
+                "alpha": {
+                  "enabled": true,
+                  "displayName": "Alpha",
+                  "model": "gpt-4.1",
+                  "provider": "github-copilot"
+                }
+              }
+            }
+            """;
+        var (service, fs, configPath) = BuildService(configJson);
 
-            // Assert alpha: heartbeat injected
-            using var docAlpha = JsonDocument.Parse(await File.ReadAllTextAsync(fileWithout));
-            docAlpha.RootElement.TryGetProperty("heartbeat", out _).ShouldBeTrue("alpha should have heartbeat injected");
+        // Act
+        await service.StartAsync(CancellationToken.None);
 
-            // Assert beta: heartbeat unchanged (still enabled=false, no quietHours added)
-            using var docBeta = JsonDocument.Parse(await File.ReadAllTextAsync(fileWith));
-            var betaHb = docBeta.RootElement.GetProperty("heartbeat");
-            betaHb.GetProperty("enabled").GetBoolean().ShouldBeFalse("beta heartbeat.enabled must not be changed");
-            betaHb.TryGetProperty("quietHours", out _).ShouldBeFalse("beta should not have quietHours added");
-        }
-        finally
-        {
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-        }
+        // Assert — defaults block created and heartbeat injected
+        var updatedJson = fs.File.ReadAllText(configPath);
+        using var doc = JsonDocument.Parse(updatedJson);
+        var agents = doc.RootElement.GetProperty("agents");
+        agents.TryGetProperty("defaults", out var defaults).ShouldBeTrue("defaults block should be created");
+        defaults.TryGetProperty("heartbeat", out var heartbeat).ShouldBeTrue("heartbeat should be injected");
+        heartbeat.GetProperty("enabled").GetBoolean().ShouldBeTrue();
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static string CreateTempDirectory()
+    /// <summary>
+    /// Creates a <see cref="ConfigNormalisationHostedService"/> backed by a
+    /// <see cref="MockFileSystem"/> containing a <c>config.json</c> at the
+    /// default path for the current user.
+    /// </summary>
+    private static (ConfigNormalisationHostedService service, MockFileSystem fs, string configPath) BuildService(
+        string configJsonContent)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "botnexus-norm-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
+        var fs = new MockFileSystem();
+        var configPath = PlatformConfigLoader.GetDefaultConfigPath(fs);
+        var dir = System.IO.Path.GetDirectoryName(configPath)!;
+        fs.Directory.CreateDirectory(dir);
+        fs.File.WriteAllText(configPath, configJsonContent);
 
-    private static (ConfigNormalisationHostedService service, IFileSystem fileSystem) BuildService(string directory)
-    {
-        var realFs = new System.IO.Abstractions.FileSystem();
-        var sources = new IAgentConfigurationSource[]
-        {
-            new FileAgentConfigurationSource(directory, NullLogger<FileAgentConfigurationSource>.Instance, realFs)
-        };
-        var service = new ConfigNormalisationHostedService(sources, realFs, NullLogger<ConfigNormalisationHostedService>.Instance);
-        return (service, realFs);
+        var service = new ConfigNormalisationHostedService(fs, NullLogger<ConfigNormalisationHostedService>.Instance);
+        return (service, fs, configPath);
     }
 }
