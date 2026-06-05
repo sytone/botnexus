@@ -23,6 +23,9 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
     };
 
     private readonly string _directoryPath = Path.GetFullPath(directoryPath);
+
+    /// <summary>The resolved absolute path to the agent configuration directory.</summary>
+    public string DirectoryPath => _directoryPath;
     private readonly ILogger<FileAgentConfigurationSource> _logger = logger;
     private readonly IFileSystem _fileSystem = fileSystem;
 
