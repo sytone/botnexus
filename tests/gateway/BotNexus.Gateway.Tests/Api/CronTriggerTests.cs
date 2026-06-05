@@ -340,6 +340,123 @@ public sealed class CronTriggerTests
         request.ResolvedConversationId.ShouldBe(pinnedConversation.ConversationId);
     }
 
+    // ── #656 ordering tests ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for #656: user entry must NOT be in session history when the
+    /// agent handle is created. Adding it before GetOrCreateAsync causes the model to
+    /// receive a duplicate user message, which suppresses tool call execution.
+    /// The test verifies ordering: metadata-only save → handle creation → transcript save.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_AgentHandleCreated_WithNoUserEntryInHistory()
+    {
+        var sessionStore = new Mock<ISessionStore>(MockBehavior.Strict);
+        var conversationStore = new Mock<IConversationStore>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        var handle = new Mock<IAgentHandle>();
+
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "assistant-response" });
+
+        // Track calls in order: [0] = GetOrCreate, [1] = first Save (metadata), [2] = GetOrCreate via supervisor, [3] = second Save (transcript)
+        var callLog = new List<string>();
+        GatewaySession? capturedSession = null;
+
+        sessionStore
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns<SessionId, AgentId, CancellationToken>((sid, aid, _) =>
+            {
+                capturedSession = new GatewaySession { SessionId = sid, AgentId = aid };
+                callLog.Add("GetOrCreate");
+                return Task.FromResult(capturedSession);
+            });
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+                callLog.Add($"Save:history={s.History.Count}"))
+            .Returns(Task.CompletedTask);
+
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+        conversationStore.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callLog.Add("Supervisor.GetOrCreate"))
+            .ReturnsAsync(handle.Object);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Scheduled prompt",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-x"), JobName = "Test job" });
+
+        // Expected order: GetOrCreate (session store), Save (metadata only, 0 entries),
+        //                 Supervisor.GetOrCreate (handle creation), Save (transcript, 2 entries)
+        callLog.ShouldBe(
+            ["GetOrCreate", "Save:history=0", "Supervisor.GetOrCreate", "Save:history=2"],
+            "User entry must not exist in session at handle-creation time — duplicate user message suppresses tool calls (#656)");
+    }
+
+    /// <summary>
+    /// Regression test for #656: both user and assistant entries must appear in the final
+    /// session save, with the user entry stamped Trigger = Cron.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_FinalSessionSave_ContainsBothUserAndAssistantEntries()
+    {
+        var sessionStore = new Mock<ISessionStore>();
+        var conversationStore = new Mock<IConversationStore>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        var handle = new Mock<IAgentHandle>();
+
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "model-answer" });
+
+        GatewaySession? lastSavedSession = null;
+
+        sessionStore
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns<SessionId, AgentId, CancellationToken>((sid, aid, _) =>
+                Task.FromResult(new GatewaySession { SessionId = sid, AgentId = aid }));
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+        conversationStore.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-b"),
+            "Do the thing",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-y"), JobName = "Nightly task" });
+
+        lastSavedSession.ShouldNotBeNull();
+        lastSavedSession!.History.Count.ShouldBe(2, "Final save must contain exactly user + assistant entries");
+
+        var userEntry = lastSavedSession.History.FirstOrDefault(e => e.Role == MessageRole.User);
+        var assistantEntry = lastSavedSession.History.FirstOrDefault(e => e.Role == MessageRole.Assistant);
+
+        userEntry.ShouldNotBeNull();
+        userEntry!.Content.ShouldBe("Do the thing");
+        userEntry.Trigger.ShouldBe(TriggerType.Cron, "User entry must carry Cron trigger stamp (P9-E)");
+
+        assistantEntry.ShouldNotBeNull();
+        assistantEntry!.Content.ShouldBe("model-answer");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildStandardMocks()

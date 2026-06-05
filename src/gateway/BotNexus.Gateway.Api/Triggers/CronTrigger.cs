@@ -88,20 +88,27 @@ public sealed class CronTrigger(
             await conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
         }
 
+        // Save session metadata before creating the agent handle so the handle picks up
+        // the correct conversation binding and model override — but do NOT add the user
+        // entry yet. Adding it here would cause the handle to load it as prior history
+        // and then receive the same prompt again via PromptAsync, giving the model a
+        // duplicate user message and suppressing tool call execution. (#656)
+        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
+        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
         // P9-E (#645): stamp Cron on the user entry. Cron is a proxy for the citizen
         // who scheduled the job — the persisted trigger marks the originating proxy
         // so audit/UI can render the right badge without sniffing SessionType.
+        // Persisted AFTER PromptAsync so session history never contains the user entry
+        // as prior context when the agent handle is created for this run.
         session.AddEntry(new SessionEntry
         {
             Role = MessageRole.User,
             Content = prompt,
             Trigger = TriggerType.Cron
         });
-        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
-
-        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
-
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
