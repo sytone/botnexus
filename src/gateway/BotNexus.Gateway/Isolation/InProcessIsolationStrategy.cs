@@ -976,6 +976,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Phase 1a stub: contract defined in Issue #799 (Part of #704).
+    /// Full implementation wired in Issue #800.
+    /// </remarks>
+    public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException(
+            "InterruptAndSteerAsync is not yet implemented. See Issue #800 (feat/interrupt-steer-agent-core).");
+
+    /// <inheritdoc />
     public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
     {
         _agent.FollowUp(new AgentCoreUserMessage(message));

@@ -457,6 +457,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
             => StreamAsync(message.Content, ct);
 
         public Task AbortAsync(CancellationToken ct) { IsRunning = false; return Task.CompletedTask; }
+        public Task InterruptAndSteerAsync(string message, CancellationToken ct = default) => throw new NotImplementedException();
         public Task SteerAsync(string message, CancellationToken ct) => Task.CompletedTask;
         public Task FollowUpAsync(string message, CancellationToken ct) => Task.CompletedTask;
         public Task FollowUpAsync(AgentMessage message, CancellationToken ct) => Task.CompletedTask;
