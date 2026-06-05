@@ -106,6 +106,7 @@ public sealed class PlatformConfigAgentSource(
                 Memory = CloneMemoryConfig(effectiveConfig.Memory),
                 Soul = CloneSoulConfig(effectiveConfig.Soul),
                 Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
+                DateTimeInjection = effectiveConfig.DateTimeInjection,
                 SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
                 ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
