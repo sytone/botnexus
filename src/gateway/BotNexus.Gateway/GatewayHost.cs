@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
@@ -601,7 +601,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         {
                             ChannelType = message.ChannelType,
                             ChannelAddress = message.ChannelAddress,
-                            Content = response.Content,
+                            Content = ch.SupportsThinkingDisplay
+                                ? response.Content
+                                : AssistantTextSanitizer.StripThinkingTags(response.Content),
                             SessionId = sessionId,
                             // Binding-aware fields from originating binding fix #126:
                             // ensure replies carry the binding's decoration. Native sub-addresses
