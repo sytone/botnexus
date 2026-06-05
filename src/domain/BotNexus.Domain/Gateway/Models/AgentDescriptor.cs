@@ -1,4 +1,4 @@
-using BotNexus.Domain.Primitives;
+﻿using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Security;
 
@@ -156,4 +156,6 @@ public sealed record AgentDescriptor : ICitizen
     /// </summary>
     public IReadOnlyDictionary<string, System.Text.Json.JsonElement> ExtensionConfig { get; init; } =
         new Dictionary<string, System.Text.Json.JsonElement>();
+/// <summary>Conversation retention policy override for this agent. Null means world default applies.</summary>
+    public AgentConversationRetentionConfig? ConversationRetention { get; init; }
 }
