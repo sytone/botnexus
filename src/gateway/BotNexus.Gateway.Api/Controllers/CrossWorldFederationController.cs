@@ -216,6 +216,17 @@ public sealed class CrossWorldFederationController(
                 session.Status = GatewaySessionStatus.Sealed;
                 session.Metadata["conversationStatus"] = "sealed";
             }
+            else if (request.CloseAfterResponse)
+            {
+                // #626: seal-when-archived rule. When the sender declares this is the final turn
+                // (CloseAfterResponse=true) but the target did NOT invoke finish_agent_exchange,
+                // the conversation is still archived (P9-C pin below). The session must also be
+                // sealed so any follow-up relay with the same RemoteSessionId hits the
+                // ResolveSessionAsync 409 sealed-session guard instead of silently resurrecting
+                // an Active session on an Archived conversation — an inconsistent state.
+                session.Status = GatewaySessionStatus.Sealed;
+                session.Metadata["conversationStatus"] = "sealed";
+            }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             // P9-C: when the exchange is ending — either because the target invoked

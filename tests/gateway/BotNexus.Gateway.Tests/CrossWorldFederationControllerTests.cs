@@ -1130,6 +1130,61 @@ public sealed class CrossWorldFederationControllerTests
     }
 
     [Fact]
+    public async Task RelayAsync_WhenSenderSignalsCloseAfterResponse_SealsSession_EvenWithoutFinishTool()
+    {
+        // #626: seal-when-archived rule. CloseAfterResponse=true means the sender considers
+        // this exchange terminal. The conversation is archived (existing P9-C pin), and the
+        // session MUST also be sealed so any subsequent relay with the same RemoteSessionId
+        // hits the 409 sealed-session guard rather than silently resurrecting an Active session
+        // on an Archived conversation — a structurally inconsistent state.
+        var (controller, sessions, _, _) = BuildController(replyContent: "ack");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+
+        var stored = await sessions.GetAsync(SessionId.From(payload.SessionId), CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            customMessage: "#626: CloseAfterResponse=true MUST seal the session. Without this, a " +
+                "follow-up relay with the same RemoteSessionId would resurrect an Active session " +
+                "on an Archived conversation — a structurally inconsistent state.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WhenSenderSignalsCloseAfterResponse_RetryWithSameRemoteSessionId_Returns409()
+    {
+        // #626: integration of seal-when-archived with the 409 guard. Once CloseAfterResponse
+        // seals the session, a follow-up relay with the same RemoteSessionId must be rejected
+        // with 409 Conflict, just like the exchangeFinished=true case.
+        var (controller, sessions, _, _) = BuildController(replyContent: "ack");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+        var firstOk = firstResponse.Result.ShouldBeOfType<OkObjectResult>();
+        var firstPayload = firstOk.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        var sealedSessionId = firstPayload.SessionId;
+
+        // Confirm the session is sealed before the 409 assertion.
+        var stored = await sessions.GetAsync(SessionId.From(sealedSessionId), CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            customMessage: "PRECONDITION: CloseAfterResponse must seal the session after first relay.");
+
+        // Second relay reusing the same sealed RemoteSessionId must be rejected.
+        SetApiKeyHeader(controller, SharedApiKey);
+        var secondResponse = await controller.RelayAsync(
+            BuildRequest(remoteSessionId: sealedSessionId), CancellationToken.None);
+        secondResponse.Result.ShouldBeOfType<ConflictObjectResult>(
+            customMessage: "#626: a sealed session (from CloseAfterResponse) must block follow-up " +
+                "relays with the same RemoteSessionId with 409 Conflict.");
+    }
+
+    [Fact]
     public async Task RelayAsync_NonFinalRelay_DoesNotArchive_OnlyClearsActiveSession()
     {
         // Non-final relay (sender has more turns; target did not finish): the conversation
