@@ -39,7 +39,7 @@ public sealed class OAuthTokenCacheCompatibilityTests : IDisposable
         AppContext.BaseDirectory,
         "Fixtures",
         "Auth",
-        "precarveout-auth.json");
+        "precarveout-auth-fixture.json");
 
     private readonly string _rootPath;
     private readonly string _authFilePath;
