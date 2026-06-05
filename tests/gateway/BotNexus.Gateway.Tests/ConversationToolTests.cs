@@ -1,7 +1,7 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
-using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
@@ -152,13 +152,13 @@ public sealed class ConversationToolTests
         // Arrange
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
         var tool = new ConversationTool(
             conversationStore,
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: dispatcher);
+            messageOrchestrator: orchestrator);
 
         // Act
         var result = await tool.ExecuteAsync("call-1", Args(
@@ -172,15 +172,14 @@ public sealed class ConversationToolTests
         var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
 
         // Assert: dispatcher was called exactly once with the correct inbound message
-        await dispatcher.Received(1).DispatchAsync(
+        orchestrator.Received(1).Post(
             Arg.Is<InboundMessage>(m =>
                 m.RoutingHints != null &&
                 m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
                 m.Content == "Please investigate issue #285" &&
                 m.RoutingHints.RequestedSessionId != null && m.RoutingHints.RequestedSessionId.Value.Value == activeSessionId &&
                 m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId &&
-                m.ChannelType.Equals(ChannelKey.From("internal"))),
-            Arg.Any<CancellationToken>());
+                m.ChannelType.Equals(ChannelKey.From("internal"))));
     }
 
     [Fact]
@@ -194,7 +193,7 @@ public sealed class ConversationToolTests
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: null);
+            messageOrchestrator: null);
 
         // Act — must not throw
         var result = await tool.ExecuteAsync("call-1", Args(
@@ -219,21 +218,20 @@ public sealed class ConversationToolTests
         // Arrange
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
         var tool = new ConversationTool(
             conversationStore,
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: dispatcher);
+            messageOrchestrator: orchestrator);
 
         // Act
         await tool.ExecuteAsync("call-1", Args("new", agentId: "nova", displayName: "Empty conv"));
 
         // Assert: no dispatch when no message
-        await dispatcher.DidNotReceive().DispatchAsync(
-            Arg.Any<InboundMessage>(),
-            Arg.Any<CancellationToken>());
+        orchestrator.DidNotReceive().Post(
+            Arg.Any<InboundMessage>());
     }
 
     [Fact]
@@ -242,7 +240,7 @@ public sealed class ConversationToolTests
         // Arrange
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
         var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
 
         var tool = new ConversationTool(
@@ -250,7 +248,7 @@ public sealed class ConversationToolTests
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: dispatcher);
+            messageOrchestrator: orchestrator);
 
         // Act
         var result = await tool.ExecuteAsync("call-1", Args(
@@ -259,13 +257,12 @@ public sealed class ConversationToolTests
             message: "Hello Nova!"));
 
         // Assert: dispatcher called with the user message
-        await dispatcher.Received(1).DispatchAsync(
+        orchestrator.Received(1).Post(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Hello Nova!" &&
                 m.RoutingHints != null &&
                 m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
-                m.ChannelType == ChannelKey.From("internal")),
-            Arg.Any<CancellationToken>());
+                m.ChannelType == ChannelKey.From("internal")));
 
         // Result includes conversation and session IDs
         using var document = JsonDocument.Parse(ReadText(result));
@@ -285,7 +282,7 @@ public sealed class ConversationToolTests
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: null);
+            messageOrchestrator: null);
 
         Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
             "message",
@@ -306,7 +303,7 @@ public sealed class ConversationToolTests
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: null);
+            messageOrchestrator: null);
 
         Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
             "message",
@@ -321,7 +318,7 @@ public sealed class ConversationToolTests
     {
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
         var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
 
         // agent-a with Own access cannot message nova's conversation
@@ -330,7 +327,7 @@ public sealed class ConversationToolTests
             AgentId.From("agent-a"),
             accessLevel: ConversationAccessLevel.Own,
             sessionStore: sessionStore,
-            channelDispatcher: dispatcher);
+            messageOrchestrator: orchestrator);
 
         Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
             "message",
@@ -345,7 +342,7 @@ public sealed class ConversationToolTests
     {
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
 
         var session = await sessionStore.GetOrCreateAsync(SessionId.Create(), AgentId.From("nova"), default);
         var conversation = await conversationStore.CreateAsync(
@@ -361,7 +358,7 @@ public sealed class ConversationToolTests
             AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
-            channelDispatcher: dispatcher);
+            messageOrchestrator: orchestrator);
 
         var result = await tool.ExecuteAsync("call-1", Args(
             "message",
@@ -502,8 +499,7 @@ public sealed class ConversationToolTests
         await notifier.Received(1).NotifyConversationChangedAsync(
             "updated",
             "agent-a",
-            conversation.ConversationId.Value,
-            Arg.Any<CancellationToken>());
+            conversation.ConversationId.Value);
     }
 
     [Fact]
@@ -519,8 +515,7 @@ public sealed class ConversationToolTests
         await notifier.Received(1).NotifyConversationChangedAsync(
             "updated",
             "agent-a",
-            conversation.ConversationId.Value,
-            Arg.Any<CancellationToken>());
+            conversation.ConversationId.Value);
     }
 
     [Fact]
@@ -536,8 +531,7 @@ public sealed class ConversationToolTests
         await notifier.Received(1).NotifyConversationChangedAsync(
             "updated",
             "agent-a",
-            conversation.ConversationId.Value,
-            Arg.Any<CancellationToken>());
+            conversation.ConversationId.Value);
     }
 
     [Fact]
@@ -553,8 +547,7 @@ public sealed class ConversationToolTests
         await notifier.Received(1).NotifyConversationChangedAsync(
             "archived",
             "agent-a",
-            conversation.ConversationId.Value,
-            Arg.Any<CancellationToken>());
+            conversation.ConversationId.Value);
     }
 
     [Fact]
@@ -573,7 +566,7 @@ public sealed class ConversationToolTests
     {
         var store = new InMemoryConversationStore();
         var notifier = Substitute.For<IConversationChangeNotifier>();
-        notifier.NotifyConversationChangedAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+        notifier.NotifyConversationChangedAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromException(new InvalidOperationException("SignalR hub unavailable")));
         var conversation = await store.CreateAsync(CreateConversation("agent-a", "Chat", null));
         var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
@@ -591,3 +584,4 @@ public sealed class ConversationToolTests
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
 }
+

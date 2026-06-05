@@ -1,4 +1,4 @@
-using BotNexus.Domain;
+﻿using BotNexus.Domain;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -1275,6 +1275,73 @@ public sealed class CrossWorldFederationControllerTests
         session!.Status.ShouldBe(GatewaySessionStatus.Sealed);
     }
 
+
+    // #626 seal-when-archived behaviour pins
+    //
+    // Issue #626: When CloseAfterResponse=true && exchangeFinished=false the receiver archives
+    // the conversation but previously left the session Active. A follow-up relay could then
+    // resurrect ActiveSessionId on an Archived conversation, which is structurally inconsistent
+    // and portal-visible. Fix: apply the "seal-when-archived" rule - whenever
+    // ArchiveOnExchangeEndAsync fires, also seal the session.
+
+    /// <summary>
+    /// Behaviour pin for #626: when CloseAfterResponse=true and the target agent did NOT invoke
+    /// finish_agent_exchange, the receiver must seal the session (not just archive the conversation).
+    /// The combination Archived+Active is a state-machine inconsistency.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_CloseAfterResponse_WithoutFinishTool_SealsSession()
+    {
+        // Arrange: single-shot relay (closeAfterResponse=true); target does NOT invoke finish_agent_exchange.
+        var (controller, sessions, conversations, _) = BuildController(replyContent: "ack");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // Act
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        // Assert: conversation is Archived (P9-C, already tested elsewhere)
+        var convs = await conversations.ListAsync();
+        convs[0].Status.ShouldBe(ConversationStatus.Archived,
+            "P9-C prerequisite: conversation must be archived on CloseAfterResponse=true.");
+
+        // Assert: session must also be Sealed (#626)
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        existence.Count.ShouldBe(1);
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            "#626: CloseAfterResponse forces archive; the session must also be Sealed so the state " +
+            "machine is consistent. An Archived conversation with an Active session would allow " +
+            "a follow-up sender relay to resurrect ActiveSessionId on an Archived conversation.");
+    }
+
+    /// <summary>
+    /// Behaviour pin for #626: the response Status field must be "sealed" when CloseAfterResponse
+    /// forces archive (even though the target did not invoke finish_agent_exchange).
+    /// The sender loop uses this field to decide whether to stop or retry.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_CloseAfterResponse_WithoutFinishTool_ResponseStatusIsSealed()
+    {
+        var (controller, _, _, _) = BuildController(replyContent: "done");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(
+            BuildRequest(closeAfterResponse: true), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+
+        payload.Status.ShouldBe("sealed",
+            "#626: when CloseAfterResponse forces a terminal archive, the wire Status must be " +
+            """\"sealed\"" so the sender loop does not spin on a false \"active\" result. """ +
+            "ExchangeFinished remains false (the target never called finish_agent_exchange).");
+        payload.ExchangeFinished.ShouldBeFalse(
+            "ExchangeFinished must remain false even when CloseAfterResponse seals the session - " +
+            "the target did not invoke finish_agent_exchange.");
+    }
+
     // ─── end P9-C receiver pins ──────────────────────────────────────────────────────────
 
     // ---- helpers ----
@@ -1587,6 +1654,92 @@ public sealed class CrossWorldFederationControllerTests
         session.Metadata.ShouldContainKey("error");
     }
 
+    // --- Dedup / idempotency tests (#566) ---
+
+    [Fact]
+    public async Task RelayAsync_RetryWithSameTurnId_DoesNotDuplicateUserTurn()
+    {
+        // When the sender cancels mid-turn and retries with the same RemoteSessionId
+        // and TurnId, the receiver must not append the user turn again.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // First call: sends message with TurnId
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "Hello world", turnId: "turn-001"),
+            CancellationToken.None);
+        var firstOk = firstResponse.Result.ShouldBeOfType<OkObjectResult>();
+        var remoteSessionId = firstOk.Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        // Verify first call created exactly 1 user entry
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        var historyBefore = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        historyBefore.Count.ShouldBe(1);
+        historyBefore[0].TurnIdempotencyKey.ShouldBe("turn-001");
+
+        // Second call: same TurnId, same session - simulates cancel-and-retry
+        await controller.RelayAsync(
+            BuildRequest(message: "Hello world", remoteSessionId: remoteSessionId, turnId: "turn-001"),
+            CancellationToken.None);
+
+        // User turn count must still be 1 - not duplicated
+        session = await sessions.GetAsync(existence[0].SessionId);
+        session.ShouldNotBeNull();
+        var historyAfter = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        historyAfter.Count.ShouldBe(1, "Retry with the same TurnId must not append a duplicate user turn.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_RetryWithDifferentTurnId_AppendsNewUserTurn()
+    {
+        // A second turn with a DIFFERENT TurnId (new intent) must append normally.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "Turn one", turnId: "turn-001"),
+            CancellationToken.None);
+        var remoteSessionId = firstResponse.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        // Second turn with different TurnId
+        await controller.RelayAsync(
+            BuildRequest(message: "Turn two", remoteSessionId: remoteSessionId, turnId: "turn-002"),
+            CancellationToken.None);
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        var userTurns = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        userTurns.Count.ShouldBe(2, "A new TurnId means a new intent - must append.");
+        userTurns[0].TurnIdempotencyKey.ShouldBe("turn-001");
+        userTurns[1].TurnIdempotencyKey.ShouldBe("turn-002");
+    }
+
+    [Fact]
+    public async Task RelayAsync_WithoutTurnId_AppendsUserTurnNormally()
+    {
+        // Legacy senders (no TurnId) must still append the user turn on every call.
+        var (controller, sessions, _, _) = BuildController();
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var firstResponse = await controller.RelayAsync(
+            BuildRequest(message: "no-turnid"),
+            CancellationToken.None);
+        var remoteSessionId = firstResponse.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<CrossWorldRelayResponse>().SessionId;
+
+        await controller.RelayAsync(
+            BuildRequest(message: "no-turnid", remoteSessionId: remoteSessionId),
+            CancellationToken.None);
+
+        var existence = await sessions.GetExistenceAsync(AgentId.From(TargetAgentId), new ExistenceQuery());
+        var session = await sessions.GetAsync(existence[0].SessionId);
+        var userTurns = session!.GetHistorySnapshot().Where(e => e.Role == MessageRole.User).ToList();
+        userTurns.Count.ShouldBe(2, "Legacy callers without TurnId must always append.");
+    }
+
     private static CrossWorldFederationController BuildControllerCore(
         ISessionStore sessions,
         IConversationStore conversations,
@@ -1710,7 +1863,8 @@ public sealed class CrossWorldFederationControllerTests
         string? remoteSessionId = null,
         string? sourceSessionId = null,
         string sourceAgentId = SourceAgentId,
-        bool closeAfterResponse = false)
+        bool closeAfterResponse = false,
+        string? turnId = null)
         => new()
         {
             SourceWorldId = SourceWorldId,
@@ -1720,7 +1874,8 @@ public sealed class CrossWorldFederationControllerTests
             ConversationId = "sender-conv-id",
             SourceSessionId = sourceSessionId,
             RemoteSessionId = remoteSessionId,
-            CloseAfterResponse = closeAfterResponse
+            CloseAfterResponse = closeAfterResponse,
+            TurnId = turnId
         };
 }
 

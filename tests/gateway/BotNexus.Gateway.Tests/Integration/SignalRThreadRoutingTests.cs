@@ -271,5 +271,11 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
             lock (_messages) { _messages.Add(message); }
             return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
+
+        public bool Post(InboundMessage message)
+        {
+            lock (_messages) { _messages.Add(message); }
+            return true;
+        }
     }
 }

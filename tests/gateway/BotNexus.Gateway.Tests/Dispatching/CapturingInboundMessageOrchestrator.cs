@@ -66,4 +66,15 @@ public sealed class CapturingInboundMessageOrchestrator : IInboundMessageOrchest
     {
         await AcceptAsync(message, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Fire-and-forget enqueue: records the message and returns <see langword="true"/>
+    /// (always succeeds in the test fake — no capacity limit).
+    /// </summary>
+    public bool Post(InboundMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        _captured.Enqueue(message);
+        return true;
+    }
 }

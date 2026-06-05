@@ -45,4 +45,18 @@ public interface IInboundMessageOrchestrator
     /// list is populated only for <see cref="InboundDispatchStatus.Accepted"/>.
     /// </returns>
     Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fire-and-forget enqueue: writes the message onto the per-session queue and
+    /// returns immediately without awaiting the processing outcome. Use this when
+    /// the caller must not block on agent execution (e.g. the conversation tool
+    /// seeding a message into another agent's conversation).
+    /// </summary>
+    /// <param name="message">Inbound message from the transport layer.</param>
+    /// <returns>
+    /// <see langword="true"/> if the message was accepted onto the queue;
+    /// <see langword="false"/> if the queue was full (backpressure: caller may
+    /// surface a busy indication and ask the user to retry).
+    /// </returns>
+    bool Post(InboundMessage message);
 }

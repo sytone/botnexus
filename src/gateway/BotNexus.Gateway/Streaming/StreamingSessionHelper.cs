@@ -32,6 +32,8 @@ public static class StreamingSessionHelper
         options ??= new StreamingSessionOptions();
         var streamedContent = new StringBuilder();
         var streamedHistory = new List<SessionEntry>();
+        var hadThinkingContent = false;
+        var hadMessageEnd = false;
 
         await foreach (var evt in stream.WithCancellation(cancellationToken))
         {
@@ -39,6 +41,12 @@ public static class StreamingSessionHelper
             {
                 case AgentStreamEventType.ContentDelta when evt.ContentDelta is not null:
                     streamedContent.Append(evt.ContentDelta);
+                    break;
+                case AgentStreamEventType.ThinkingDelta when evt.ThinkingContent is not null:
+                    hadThinkingContent = true;
+                    break;
+                case AgentStreamEventType.MessageEnd:
+                    hadMessageEnd = true;
                     break;
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
                     streamedHistory.Add(new SessionEntry
@@ -108,7 +116,23 @@ public static class StreamingSessionHelper
         // (single-turn runs, or the last partial turn before AgentEnd).
         session.AddEntries(streamedHistory);
         if (streamedContent.Length > 0)
+        {
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+        }
+        else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
+        {
+            // The model produced only reasoning/thinking blocks and no visible text or tool calls.
+            // Without this sentinel the session transcript ends with the user message and no
+            // assistant reply, so the next turn replays the abandoned user prompt, causing
+            // duplicate-message confusion and skipped tool calls (same pattern as #656).
+            // Surface a system entry so the conversation is in a known good state.
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "Agent produced only reasoning content and could not generate a visible response. Please try again or rephrase your message."
+            });
+        }
+
         // Remove crash sentinel on clean completion (#363).
         session.RemoveCrashSentinels();
         await sessionStore.SaveAsync(session, cancellationToken);
