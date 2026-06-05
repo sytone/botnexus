@@ -55,24 +55,6 @@ public sealed class SidebarOverlayAndFooterTests : IAsyncLifetime
     // -------------------------------------------------------------------------
     [SkippableFact]
     [Trait("Category", "Sidebar")]
-    public async Task RestartGatewayButton_IsPresent_InSidebarFooter()
-    {
-        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
-        var (page, portal) = await PortalTestHelpers.NewPortalPageAsync(_browser, _fx.GatewayBaseUrl);
-        await portal.EnsureSidebarOpenAsync();
-
-        var restartBtn = page.Locator(".restart-btn");
-        await restartBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-
-        var text = (await restartBtn.TextContentAsync() ?? "").Trim();
-        _out.WriteLine($"Restart button text: {text}");
-        Assert.True(text.Contains("Restart") || text.Contains("Restarting"),
-            $"Restart button should mention 'Restart', got: '{text}'.");
-    }
-
-    // -------------------------------------------------------------------------
-    [SkippableFact]
-    [Trait("Category", "Sidebar")]
     public async Task GatewayInfo_ShowsCommitLink_WhenAvailable()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");

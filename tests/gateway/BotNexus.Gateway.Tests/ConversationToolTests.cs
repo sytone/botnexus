@@ -2,6 +2,7 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
@@ -485,6 +486,107 @@ public sealed class ConversationToolTests
         var result = await tool.PrepareArgumentsAsync(Args("archive"));
         result.ShouldNotBeNull();
     }
+
+    // --- Notifier tests (#697) ---
+
+    [Fact]
+    public async Task SetTitle_FiresUpdatedNotification()
+    {
+        var store = new InMemoryConversationStore();
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Old", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
+
+        await tool.ExecuteAsync("call-1", Args("set_title", displayName: "New Title"));
+
+        await notifier.Received(1).NotifyConversationChangedAsync(
+            "updated",
+            "agent-a",
+            conversation.ConversationId.Value,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetPurpose_FiresUpdatedNotification()
+    {
+        var store = new InMemoryConversationStore();
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Chat", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
+
+        await tool.ExecuteAsync("call-1", Args("set_purpose", purpose: "New purpose"));
+
+        await notifier.Received(1).NotifyConversationChangedAsync(
+            "updated",
+            "agent-a",
+            conversation.ConversationId.Value,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Set_FiresUpdatedNotification()
+    {
+        var store = new InMemoryConversationStore();
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Chat", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "set", ["instructions"] = "Be brief" });
+
+        await notifier.Received(1).NotifyConversationChangedAsync(
+            "updated",
+            "agent-a",
+            conversation.ConversationId.Value,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Archive_FiresArchivedNotification()
+    {
+        var store = new InMemoryConversationStore();
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Old Chat", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
+
+        await tool.ExecuteAsync("call-1", Args("archive"));
+
+        await notifier.Received(1).NotifyConversationChangedAsync(
+            "archived",
+            "agent-a",
+            conversation.ConversationId.Value,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetTitle_WithoutNotifier_DoesNotThrow()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Old", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
+
+        // No changeNotifier injected - should not throw
+        await Should.NotThrowAsync(() => tool.ExecuteAsync("call-1", Args("set_title", displayName: "New")));
+    }
+
+    [Fact]
+    public async Task NotifierFailure_DoesNotPropagate_SetTitle()
+    {
+        var store = new InMemoryConversationStore();
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        notifier.NotifyConversationChangedAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("SignalR hub unavailable")));
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Chat", null));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId, changeNotifier: notifier);
+
+        // Notifier failure must not propagate to the caller
+        await Should.NotThrowAsync(() => tool.ExecuteAsync("call-1", Args("set_title", displayName: "New")));
+
+        // Mutation still persisted despite notifier failure
+        var updated = await store.GetAsync(conversation.ConversationId);
+        updated.ShouldNotBeNull();
+        updated.Title.ShouldBe("New");
+    }
+
 
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;

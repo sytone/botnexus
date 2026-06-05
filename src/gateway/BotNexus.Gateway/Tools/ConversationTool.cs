@@ -22,7 +22,8 @@ public sealed class ConversationTool(
     ConversationAccessLevel accessLevel = ConversationAccessLevel.Own,
     IReadOnlyList<string>? allowedAgents = null,
     ISessionStore? sessionStore = null,
-    IChannelDispatcher? channelDispatcher = null) : IAgentTool
+    IChannelDispatcher? channelDispatcher = null,
+    IConversationChangeNotifier? changeNotifier = null) : IAgentTool
 {
     public string Name => "conversation";
     public string Label => "Conversation Context";
@@ -202,6 +203,7 @@ public sealed class ConversationTool(
         conversation.Title = title.Trim();
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
+        await NotifyBestEffortAsync("updated", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(ToToolResponse(conversation), JsonOptions));
     }
 
@@ -215,6 +217,7 @@ public sealed class ConversationTool(
         conversation.Purpose = string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim();
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
+        await NotifyBestEffortAsync("updated", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(ToToolResponse(conversation), JsonOptions));
     }
 
@@ -316,6 +319,7 @@ public sealed class ConversationTool(
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
         }
         await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
+        await NotifyBestEffortAsync("updated", conversation, ct).ConfigureAwait(false);
         return TextResult("Conversation updated.");
     }
 
@@ -324,6 +328,7 @@ public sealed class ConversationTool(
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
         await conversationStore.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+        await NotifyBestEffortAsync("archived", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(new
         {
             conversationId = conversation.ConversationId.Value,
@@ -399,6 +404,21 @@ public sealed class ConversationTool(
 
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);
+
+    private async Task NotifyBestEffortAsync(string changeType, Conversation conversation, CancellationToken ct)
+    {
+        if (changeNotifier is null)
+            return;
+        try
+        {
+            await changeNotifier.NotifyConversationChangedAsync(changeType, conversation.AgentId.Value, conversation.ConversationId.Value, ct)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Notification is best-effort: a SignalR hub failure must not fail the agent tool call.
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

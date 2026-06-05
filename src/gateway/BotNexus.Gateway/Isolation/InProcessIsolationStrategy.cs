@@ -171,6 +171,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
             var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
+            var conversationChangeNotifier = _serviceProvider.GetService<IConversationChangeNotifier>();
             tools.Add(new ConversationTool(
                 conversationStore,
                 descriptor.AgentId,
@@ -178,7 +179,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 conversationAccessLevel,
                 conversationAllowedAgents,
                 sessionStore,
-                conversationDispatcher));
+                conversationDispatcher,
+                conversationChangeNotifier));
         }
 
         var includeAskUser = effectiveToolIds.Count == 0
