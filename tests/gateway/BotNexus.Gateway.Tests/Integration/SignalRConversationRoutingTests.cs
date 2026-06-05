@@ -267,5 +267,12 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
             Messages.Add(message);
             return Task.FromResult(InboundDispatchResult.Accepted(Array.Empty<DispatchResult>()));
         }
+
+        public bool Post(InboundMessage message)
+        {
+            Messages.Add(message);
+            return true;
+        }
     }
 }
+
