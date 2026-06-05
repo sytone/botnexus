@@ -297,4 +297,80 @@ public sealed class DefaultInboundMessageOrchestratorTests
             DisplayPrefix: null);
         return new DispatchResult(context, source, resolution);
     }
+
+    [Fact]
+    public void Post_ValidMessage_ReturnsTrueAndQueuesWithoutBlocking()
+    {
+        // Post must return synchronously (not await processor completion).
+        // We verify only the return value here; the processor contract is tested
+        // via AcceptAsync tests which confirm the queue worker runs ProcessAsync.
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(new InboundProcessingOutcome(EmptyDispatches, false));
+
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        var result = orchestrator.Post(CreateMessage("addr-post"));
+
+        // Post returns true = message was accepted onto the queue.
+        result.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Post_NullMessage_Throws()
+    {
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        Should.Throw<ArgumentNullException>(() => orchestrator.Post(null!));
+    }
+
+    [Fact]
+    public void Post_InvalidSender_Throws()
+    {
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        var message = new InboundMessage
+        {
+            ChannelType = ChannelKey.From("test"),
+            ChannelAddress = ChannelAddress.From("addr-1"),
+            SenderId = "sender-1",
+            Sender = default, // invalid
+            Content = "hi"
+        };
+
+        Should.Throw<ArgumentException>(() => orchestrator.Post(message));
+    }
+
+    [Fact]
+    public void Post_WhenQueueFull_ReturnsFalse()
+    {
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        // Capacity 1 so we can fill it with the first Post
+        var processorGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                await processorGate.Task;
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance, queueCapacity: 1);
+
+        var first = orchestrator.Post(CreateMessage("addr-full"));
+        var second = orchestrator.Post(CreateMessage("addr-full"));
+
+        first.ShouldBeTrue();
+        second.ShouldBeFalse(); // queue is full
+
+        // Unblock the processor to avoid test hang
+        processorGate.TrySetResult(true);
+    }
 }
