@@ -90,9 +90,41 @@ public static class SkillParser
     private static Dictionary<string, string> ParseFrontmatter(string frontmatter)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in frontmatter.Split('\n'))
+        var lines = frontmatter.Split('\n');
+
+        string? pendingBlockKey = null;     // key waiting for block scalar content
+        bool pendingBlockIsFolded = false;  // true = '>' (fold newlines), false = '|' (preserve)
+        var pendingBlockLines = new List<string>();
+
+        void FlushPendingBlock()
         {
-            // Skip indented lines (they belong to metadata or list blocks)
+            if (pendingBlockKey is null) return;
+            var value = pendingBlockIsFolded
+                ? string.Join(" ", pendingBlockLines).TrimEnd()
+                : string.Join("\n", pendingBlockLines).TrimEnd();
+            if (!string.IsNullOrWhiteSpace(value))
+                result[pendingBlockKey] = value;
+            pendingBlockKey = null;
+            pendingBlockLines.Clear();
+        }
+
+        foreach (var line in lines)
+        {
+            // Collecting indented block scalar content
+            if (pendingBlockKey is not null)
+            {
+                if (line.Length > 0 && (line[0] == ' ' || line[0] == '\t'))
+                {
+                    // Strip one level of leading whitespace (common indentation)
+                    pendingBlockLines.Add(line.TrimStart());
+                    continue;
+                }
+
+                // First non-indented line ends the block
+                FlushPendingBlock();
+            }
+
+            // Skip remaining indented lines that aren't block scalar content
             if (line.Length > 0 && (line[0] == ' ' || line[0] == '\t'))
                 continue;
 
@@ -101,12 +133,35 @@ public static class SkillParser
                 continue;
 
             var key = line[..sep].Trim();
-            var value = line[(sep + 1)..].Trim().Trim('"', '\'');
+            var rawValue = line[(sep + 1)..].Trim().Trim('"', '\'');
 
-            // Skip block-level keys (metadata:, etc. with no inline value)
-            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
-                result[key] = value;
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+
+            // Detect block scalar indicators
+            if (rawValue == "|")
+            {
+                pendingBlockKey = key;
+                pendingBlockIsFolded = false;
+                pendingBlockLines.Clear();
+                continue;
+            }
+
+            if (rawValue == ">")
+            {
+                pendingBlockKey = key;
+                pendingBlockIsFolded = true;
+                pendingBlockLines.Clear();
+                continue;
+            }
+
+            // Skip block-level keys (e.g. metadata:) with no inline value
+            if (!string.IsNullOrWhiteSpace(rawValue))
+                result[key] = rawValue;
         }
+
+        // Flush any block scalar that ended at EOF
+        FlushPendingBlock();
 
         return result;
     }

@@ -73,11 +73,11 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Clicking_burger_opens_sidebar()
+    public async Task Clicking_burger_opens_sidebar()
     {
         var cut = RenderLayout();
 
-        cut.Find(".burger-btn").Click();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-open");
     }
@@ -612,6 +612,45 @@ public sealed class MainLayoutTests : IDisposable
 
         // Dropdown should be visible on desktop
         cut.Find(".agent-dropdown-select");
+    }
+
+    [Fact]
+    public void Conversation_list_items_render_as_anchor_elements()
+    {
+        // #699: conversation items must be <a> elements so the browser exposes
+        // "Open in new tab" on right-click and supports Ctrl+click / middle-click.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // The conversation list item button must be rendered as an <a> tag
+        var anchor = cut.Find(".conversation-list-item-btn");
+        Assert.Equal("a", anchor.TagName.ToLowerInvariant());
+    }
+
+    [Fact]
+    public void Conversation_list_items_have_correct_href()
+    {
+        // #699: the href must point to the routable /chat/{agentId}/{conversationId} path
+        // so the browser can open the conversation directly via right-click.
+        const string agentId = "a-1";
+        const string convId = "c-1";
+        _store.SeedAgents([new AgentSummary(agentId, "Alpha")]);
+        _store.SeedConversations(agentId, [
+            new ConversationSummaryDto(convId, agentId, "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = agentId;
+
+        var cut = RenderLayout();
+
+        var anchor = cut.Find(".conversation-list-item-btn");
+        var href = anchor.GetAttribute("href");
+        Assert.NotNull(href);
+        Assert.Contains($"chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(convId)}", href);
     }
 
     [Fact]
