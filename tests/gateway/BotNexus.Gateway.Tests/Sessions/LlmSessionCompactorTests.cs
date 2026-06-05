@@ -538,4 +538,136 @@ public sealed class LlmSessionCompactorTests
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
             "historical entries must not contribute to the token budget");
     }
+
+    // ─── Issue #665: Session compactor continuity audit ──────────────────────
+
+    /// <summary>
+    /// Fresh-session path: the summarization prompt must include ALL visible history entries.
+    /// No entries should be silently dropped before the cursor — this is the BotNexus
+    /// equivalent of OpenClaw's "context IS now injected" assertion.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_FreshSession_SummarizationPromptContainsAllVisibleEntries()
+    {
+        var session = CreateSession(
+            ("user", "first message"),
+            ("assistant", "first response"),
+            ("user", "second message"),
+            ("assistant", "second response"),
+            ("user", "recent message"));
+
+        string? capturedPrompt = null;
+        var compactor = CreateCompactorCapturingPrompt("summary", prompt => capturedPrompt = prompt);
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        capturedPrompt.ShouldNotBeNull("LLM must have been called with a summarization prompt");
+
+        // All 4 summarized entries must appear in the prompt
+        capturedPrompt!.ShouldContain("first message");
+        capturedPrompt.ShouldContain("first response");
+        capturedPrompt.ShouldContain("second message");
+        capturedPrompt.ShouldContain("second response");
+        // The preserved tail (recent message) is NOT sent to the LLM — it stays in history
+        // and the EntriesPreserved count accounts for it
+        result.EntriesPreserved.ShouldBeGreaterThan(0);
+    }
+
+    /// <summary>
+    /// Post-compaction path: on a second compaction cycle, IsHistory entries must NOT appear
+    /// in the summarization prompt. Only the compaction summary + post-summary entries are sent.
+    /// This mirrors OpenClaw's "only messages newer than the binding timestamp are replayed" fix.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_PostCompactionSession_HistoryEntriesAbsentFromSummarizationPrompt()
+    {
+        // Cycle 1: compact a session
+        var session = CreateSession(
+            ("user", "old-u1"),
+            ("assistant", "old-a1"),
+            ("user", "old-u2"),
+            ("assistant", "old-a2"),
+            ("user", "mid"),
+            ("assistant", "mid-response"));
+
+        var cycle1 = await CreateCompactor("cycle-1-summary").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+        session.ReplaceHistory(cycle1.CompactedHistory!);
+
+        // Add fresh turns after cycle 1
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "new-u3" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "new-a3" },
+            new SessionEntry { Role = MessageRole.User, Content = "new-u4" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "new-a4" },
+            new SessionEntry { Role = MessageRole.User, Content = "preserve-this" }
+        });
+
+        // Cycle 2: capture the prompt
+        string? capturedPrompt2 = null;
+        var compactor2 = CreateCompactorCapturingPrompt("cycle-2-summary", prompt => capturedPrompt2 = prompt);
+        var cycle2 = await compactor2.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        cycle2.Succeeded.ShouldBeTrue();
+        capturedPrompt2.ShouldNotBeNull();
+
+        // IsHistory entries from cycle 1 must NOT appear in cycle 2 prompt
+        capturedPrompt2!.ShouldNotContain("old-u1");
+        capturedPrompt2.ShouldNotContain("old-a1");
+        capturedPrompt2.ShouldNotContain("old-u2");
+        capturedPrompt2.ShouldNotContain("old-a2");
+
+        // The cycle-1 summary IS included (it's visible, carries the folded context)
+        capturedPrompt2.ShouldContain("cycle-1-summary");
+
+        // New turns after cycle 1 must be in the prompt (or preserved — at least one is sent)
+        var promptContainsNewTurns =
+            capturedPrompt2.Contains("new-u3") ||
+            capturedPrompt2.Contains("new-a3") ||
+            capturedPrompt2.Contains("new-u4") ||
+            capturedPrompt2.Contains("new-a4");
+        promptContainsNewTurns.ShouldBeTrue("new post-compaction turns must be included in cycle-2 prompt or preserved");
+    }
+
+    private static LlmSessionCompactor CreateCompactorCapturingPrompt(
+        string summary,
+        Action<string> onPromptCaptured)
+    {
+        var providers = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+        models.Register(TestModel.Provider, TestModel);
+
+        var provider = new Mock<IApiProvider>();
+        provider.SetupGet(item => item.Api).Returns(TestModel.Api);
+        provider.Setup(item => item.StreamSimple(
+                It.IsAny<LlmModel>(),
+                It.IsAny<Context>(),
+                It.IsAny<SimpleStreamOptions?>()))
+            .Returns<LlmModel, Context, SimpleStreamOptions?>((_, ctx, _) =>
+            {
+                // Capture the summarization prompt from the first user message
+                var firstUser = ctx.Messages.OfType<UserMessage>().FirstOrDefault();
+                if (firstUser?.Content is UserMessageContent umc)
+                    onPromptCaptured(umc.Text ?? string.Empty);
+                return CreateStream(summary);
+            });
+
+        providers.Register(provider.Object);
+
+        var llmClient = new LlmClient(providers, models);
+        return new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
+    }
 }

@@ -134,6 +134,12 @@ public sealed record AgentDescriptor : ICitizen
     /// <summary>Heartbeat polling configuration for this agent. Null means heartbeat is disabled.</summary>
     public HeartbeatAgentConfig? Heartbeat { get; init; }
 
+    /// <summary>
+    /// Datetime injection configuration for this agent.
+    /// When non-null, overrides the world-level <see cref="GatewaySettingsConfig.DateTimeInjection"/> setting.
+    /// </summary>
+    public DateTimeInjectionConfig? DateTimeInjection { get; init; }
+
     /// <summary>Session access level for this agent's session tool. Defaults to "own".</summary>
     public string SessionAccessLevel { get; init; } = "own";
 
