@@ -457,7 +457,138 @@ public sealed class CronTriggerTests
         assistantEntry!.Content.ShouldBe("model-answer");
     }
 
-    // ── #864 reactivation notify tests ─────────────────────────────────────
+    // ── #867 session ownership tests ────────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for #867: cron session must NOT overwrite ActiveSessionId when
+    /// a human (SignalR) session already holds it. The cron messages still flow to the
+    /// portal via the ConversationId group — the pointer just stays on the human session.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_HumanSessionHoldsActiveSessionId_DoesNotOverwrite()
+    {
+        var humanSessionId = SessionId.From("signalr:abc123");
+        var pinnedConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:human-conv"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Human conversation",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            ActiveSessionId = humanSessionId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(pinnedConversation.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pinnedConversation);
+
+        var savedConversations = new List<Conversation>();
+        conversationStore
+            .Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => savedConversations.Add(c))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Cron task",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-x"),
+                ConversationId = pinnedConversation.ConversationId
+            });
+
+        // ActiveSessionId must remain pointing at the human session — never the cron session
+        pinnedConversation.ActiveSessionId.ShouldBe(humanSessionId,
+            "Cron session must not overwrite ActiveSessionId when a human session holds it (#867)");
+    }
+
+    /// <summary>
+    /// #867: cron fires on its own cronconv: conversation — ActiveSessionId MUST be stamped
+    /// (no human session is being displaced).
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_CronOwnsConversation_StampsActiveSessionId()
+    {
+        var cronConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("cronconv:farnsworth:job-heartbeat"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Heartbeat",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            ActiveSessionId = null,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(cronConversation.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cronConversation);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "heartbeat",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-heartbeat"),
+                ConversationId = cronConversation.ConversationId
+            });
+
+        // ActiveSessionId should now be set to the cron session
+        cronConversation.ActiveSessionId.ShouldNotBeNull(
+            "Cron session should stamp ActiveSessionId when no human session holds it");
+        cronConversation.ActiveSessionId!.Value.Value.ShouldStartWith("cron:");
+    }
+
+    /// <summary>
+    /// #867: cron fires on a human conversation whose ActiveSessionId is NULL
+    /// (no human session is connected) — cron SHOULD claim it.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NullActiveSessionId_CronClaimsIt()
+    {
+        var humanConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:unattended-conv"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Unattended conversation",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            ActiveSessionId = null,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        conversationStore
+            .Setup(s => s.GetAsync(humanConversation.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(humanConversation);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "post summary",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-summary"),
+                ConversationId = humanConversation.ConversationId
+            });
+
+        humanConversation.ActiveSessionId.ShouldNotBeNull(
+            "Cron should claim ActiveSessionId when it is null — no human session to protect");
+        humanConversation.ActiveSessionId!.Value.Value.ShouldStartWith("cron:");
+    }
+
+    // ── #864 reactivation notify tests ───────────────────────────────────────
 
     /// <summary>
     /// Regression test for #864: when CronTrigger reactivates an archived pinned conversation,

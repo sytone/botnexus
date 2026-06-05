@@ -135,4 +135,87 @@ public sealed class SkillParserTests
         var skill = SkillParser.Parse("actual-dir", markdown, "/s/actual-dir", SkillSource.Global);
         skill.Name.ShouldBe("declared-name");
     }
+
+    // -------------------------------------------------------------------------
+    // Block scalar tests (issue #876)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_LiteralBlockScalar_PreservesNewlines()
+    {
+        var markdown = """
+            ---
+            name: my-skill
+            description: |
+              This skill does something
+              across multiple lines.
+            ---
+            # Content
+            """;
+
+        var skill = SkillParser.Parse("my-skill", markdown, "/s/my-skill", SkillSource.Global);
+
+        skill.Description.ShouldContain("This skill does something");
+        skill.Description.ShouldContain("across multiple lines.");
+        // Literal block: newlines preserved
+        skill.Description.ShouldContain("\n");
+    }
+
+    [Fact]
+    public void Parse_FoldedBlockScalar_CollapsesNewlinesToSpaces()
+    {
+        var markdown = """
+            ---
+            name: my-skill
+            description: >
+              This skill does something
+              across multiple lines.
+            ---
+            # Content
+            """;
+
+        var skill = SkillParser.Parse("my-skill", markdown, "/s/my-skill", SkillSource.Global);
+
+        skill.Description.ShouldContain("This skill does something");
+        skill.Description.ShouldContain("across multiple lines.");
+        // Folded block: newlines collapsed to spaces
+        skill.Description.ShouldNotContain("\n");
+    }
+
+    [Fact]
+    public void Parse_BlockScalar_DoesNotAffectSingleLineValues()
+    {
+        var markdown = """
+            ---
+            name: my-skill
+            description: A simple single-line description
+            ---
+            Content.
+            """;
+
+        var skill = SkillParser.Parse("my-skill", markdown, "/s/my-skill", SkillSource.Global);
+
+        skill.Description.ShouldBe("A simple single-line description");
+    }
+
+    [Fact]
+    public void Parse_BlockScalar_MixedFrontmatter_ParsesAllFields()
+    {
+        var markdown = """
+            ---
+            name: complex-skill
+            description: |
+              First line.
+              Second line.
+            license: MIT
+            ---
+            Content.
+            """;
+
+        var skill = SkillParser.Parse("complex-skill", markdown, "/s/complex-skill", SkillSource.Global);
+
+        skill.Description.ShouldContain("First line.");
+        skill.Description.ShouldContain("Second line.");
+        skill.License.ShouldBe("MIT");
+    }
 }
