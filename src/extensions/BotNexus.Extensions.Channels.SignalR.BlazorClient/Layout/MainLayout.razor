@@ -1,4 +1,4 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IClientStateStore Store
@@ -284,7 +284,9 @@
 
         @* Main canvas — @Body renders here *@
         <main class="main-canvas">
+            <GlobalErrorBoundary>
             @Body
+            </GlobalErrorBoundary>
         </main>
     </div>
 </div>
