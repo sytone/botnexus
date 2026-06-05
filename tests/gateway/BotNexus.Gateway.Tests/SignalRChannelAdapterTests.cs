@@ -82,4 +82,37 @@ public sealed class SignalRChannelAdapterTests
                 It.Is<AgentStreamEvent>(evt => evt.Type == AgentStreamEventType.UserInputRequired)),
             Times.Once);
     }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TurnEnd_RoutesToConversationGroupAndCallsTurnEnd()
+    {
+        // #668: TurnEnd must be forwarded to the SignalR group so the portal clears
+        // IsStreaming on tool-only turns that produce no MessageEnd.
+        var clientProxy = new Mock<IGatewayHubClient>();
+        clientProxy.Setup(proxy => proxy.TurnEnd(It.IsAny<AgentStreamEvent>()))
+            .Returns(Task.CompletedTask);
+
+        var clients = new Mock<IHubClients<IGatewayHubClient>>();
+        clients.Setup(value => value.Group("conversation:conv-2")).Returns(clientProxy.Object);
+
+        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
+        hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
+
+        var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-2"),
+            SessionId.From("sess-2"),
+            ChannelAddress.From("addr-2"),
+            null);
+
+        var streamEvent = new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd };
+        await adapter.SendStreamEventAsync(target, streamEvent);
+
+        // TurnEnd must route to the conversation group and call TurnEnd on the client.
+        clientProxy.Verify(proxy => proxy.TurnEnd(It.Is<AgentStreamEvent>(evt =>
+            evt.Type == AgentStreamEventType.TurnEnd &&
+            evt.ConversationId == ConversationId.From("conv-2") &&
+            evt.SessionId == SessionId.From("sess-2"))), Times.Once);
+    }
+
 }
