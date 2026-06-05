@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -327,4 +327,21 @@ public sealed class GatewayRestClient : IGatewayRestClient
         return $"{requestPath}/{string.Join("/", encodedSegments)}";
     }
 
+
+    /// <inheritdoc />
+    public async Task ReportClientErrorAsync(ClientErrorReportDto report, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_apiBaseUrl))
+            return;
+
+        try
+        {
+            var url = string.Concat(_apiBaseUrl, "diagnostics/client-error");
+            await _http.PostAsJsonAsync(url, report, cancellationToken);
+        }
+        catch
+        {
+            // Best-effort: never throw from error reporting.
+        }
+    }
 }
