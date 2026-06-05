@@ -656,6 +656,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 // Outbound fan-out: deliver response to other bindings in the conversation
                 await FanOutResponseAsync(message, sessionId, cancellationToken);
 
+                // Bump UpdatedAt on the conversation so the portal list ordering and
+                // retention thresholds reflect the time of the last message, not the
+                // last explicit metadata edit (#890). Best-effort: failures must not
+                // surface as turn failures.
+                await TouchConversationAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
+
                 await _activity.PublishAsync(new GatewayActivity
                 {
                     Type = GatewayActivityType.AgentCompleted,
@@ -1028,6 +1034,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             session.ConversationId,
             [new SessionParticipant { CitizenId = callerCitizenId }],
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Best-effort bump of <see cref="Conversation.UpdatedAt"/> after a completed turn.
+    /// Failures are logged at debug level and swallowed so turn delivery is never impacted (#890).
+    /// No-ops when no conversation store is wired (legacy test compositions).
+    /// </summary>
+    private async Task TouchConversationAsync(ConversationId conversationId, CancellationToken cancellationToken)
+    {
+        if (!conversationId.IsInitialized() || _conversationStore is null)
+            return;
+        try
+        {
+            await _conversationStore.TouchAsync(conversationId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Failed to touch conversation UpdatedAt for {ConversationId}; portal list ordering may be stale.",
+                conversationId);
+        }
     }
 
     private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)

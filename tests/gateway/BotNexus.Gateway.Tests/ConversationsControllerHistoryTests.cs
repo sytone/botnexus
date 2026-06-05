@@ -298,6 +298,9 @@ public sealed class ConversationsControllerHistoryTests
         public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
+            => Task.CompletedTask;
+
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => throw new NotSupportedException();
 

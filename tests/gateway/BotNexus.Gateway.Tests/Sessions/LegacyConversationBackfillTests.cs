@@ -799,6 +799,7 @@ public sealed class LegacyConversationBackfillTests
         public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default) => Inner.ArchiveAsync(conversationId, ct);
         public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
             => Inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
+        public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default) => Inner.TouchAsync(conversationId, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => Inner.GetSummariesAsync(ct);
     }
