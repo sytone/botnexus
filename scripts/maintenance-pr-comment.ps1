@@ -126,13 +126,19 @@ if ($existingBody) {
 $newBody = New-Body $historyBlock
 
 # ---------------------------------------------------------------------------
-# 6. Diff -- skip update if body is identical (ignoring last-updated timestamp)
+# 6. Diff -- skip update if substantive content is identical
+#    Strip both the history block AND the footer timestamp before comparing.
+#    A timestamp-only change is not worth patching.
 # ---------------------------------------------------------------------------
-function Strip-Timestamp([string]$body) {
-    $body -replace '\*Farnsworth \(autonomous maintenance\).+\*', ''
+function Strip-Volatile([string]$body) {
+    # Remove the history block (lines between the two --- dividers)
+    $body = $body -replace '(?s)(---\n)((?:- .+\n?)+)(---)', '${1}${3}'
+    # Remove the footer timestamp line
+    $body = $body -replace '\*Farnsworth \(autonomous maintenance\).+\*', ''
+    $body
 }
 
-if ($existingBody -and ((Strip-Timestamp $existingBody) -eq (Strip-Timestamp $newBody))) {
+if ($existingBody -and ((Strip-Volatile $existingBody) -eq (Strip-Volatile $newBody))) {
     @{ action = 'skipped'; commentId = $existingId; pr = $PR } | ConvertTo-Json -Compress
     exit 0
 }
