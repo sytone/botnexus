@@ -348,15 +348,23 @@ public sealed class DefaultInboundMessageOrchestratorTests
     }
 
     [Fact]
-    public void Post_WhenQueueFull_ReturnsFalse()
+    public async Task Post_WhenQueueFull_ReturnsFalse()
     {
         var processor = Substitute.For<IInboundMessageProcessor>();
-        // Capacity 1 so we can fill it with the first Post
+        // Capacity 1.  Strategy:
+        //   1. Post first message   -> channel buffer has 1 item
+        //   2. Wait until worker dequeues it (enters ProcessAsync) -> buffer empty
+        //   3. Post second message  -> buffer has 1 item again
+        //   4. Post third message   -> buffer full, TryWrite returns false
+        // Without step 2 the worker drains the buffer before step 3, making
+        // the capacity assertion racy.
+        var processorStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var processorGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         processor
             .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
             .Returns(async _ =>
             {
+                processorStarted.TrySetResult(true);
                 await processorGate.Task;
                 return new InboundProcessingOutcome(EmptyDispatches, false);
             });
@@ -364,11 +372,20 @@ public sealed class DefaultInboundMessageOrchestratorTests
         var orchestrator = new DefaultInboundMessageOrchestrator(
             processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance, queueCapacity: 1);
 
+        // 1. First Post fills the buffer
         var first = orchestrator.Post(CreateMessage("addr-full"));
-        var second = orchestrator.Post(CreateMessage("addr-full"));
-
         first.ShouldBeTrue();
-        second.ShouldBeFalse(); // queue is full
+
+        // 2. Wait until worker has consumed the first item (buffer now empty, worker in ProcessAsync)
+        await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // 3. Second Post fills the buffer again
+        var second = orchestrator.Post(CreateMessage("addr-full"));
+        second.ShouldBeTrue();
+
+        // 4. Third Post: buffer is at capacity -> TryWrite returns false
+        var third = orchestrator.Post(CreateMessage("addr-full"));
+        third.ShouldBeFalse(); // queue is full
 
         // Unblock the processor to avoid test hang
         processorGate.TrySetResult(true);
