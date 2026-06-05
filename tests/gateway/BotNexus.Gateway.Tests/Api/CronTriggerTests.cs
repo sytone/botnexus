@@ -545,7 +545,7 @@ public sealed class CronTriggerTests
         // ActiveSessionId should now be set to the cron session
         cronConversation.ActiveSessionId.ShouldNotBeNull(
             "Cron session should stamp ActiveSessionId when no human session holds it");
-        cronConversation.ActiveSessionId!.Value.ShouldStartWith("cron:");
+        cronConversation.ActiveSessionId!.Value.Value.ShouldStartWith("cron:");
     }
 
     /// <summary>
@@ -585,7 +585,7 @@ public sealed class CronTriggerTests
 
         humanConversation.ActiveSessionId.ShouldNotBeNull(
             "Cron should claim ActiveSessionId when it is null — no human session to protect");
-        humanConversation.ActiveSessionId!.Value.ShouldStartWith("cron:");
+        humanConversation.ActiveSessionId!.Value.Value.ShouldStartWith("cron:");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
