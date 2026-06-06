@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IClientStateStore Store
@@ -9,6 +9,7 @@
 @inject GatewayHubConnection Hub
 @inject IUpdateStatusService UpdateStatus
 @inject IJSRuntime JS
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -25,6 +26,10 @@
             <span class="banner-logo">🤖</span>
             <span class="banner-title">BotNexus</span>
             <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;&#xFE0F;</button>
+            @if (Prefs.Current.DebugModeEnabled)
+            {
+                <button class="banner-debug-btn" @onclick="OpenDebug" title="Debug inspector" data-testid="banner-debug-btn">&#x1F50D;</button>
+            }
         </div>
     </header>
 
@@ -309,6 +314,7 @@
         UpdateStatus.StatusChanged += HandleStateChanged;
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
+        Prefs.OnChanged += HandleStateChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -318,6 +324,7 @@
             var stored = await JS.InvokeAsync<string?>("localStorage.getItem", SidebarKey);
             _sidebarOpen = stored == "true";
             _isMobile = await JS.InvokeAsync<bool>("chatScroll.isMobileView");
+            await Prefs.LoadAsync();
             // Re-render immediately after mobile detection so layout responds without waiting for gateway load.
             StateHasChanged();
 
@@ -578,6 +585,12 @@
         return local.ToString("MMM d HH:mm");
     }
 
+    private void OpenDebug()
+    {
+        // TODO: open SessionDebugPanel for active session once #768 panel is wired (#772 AC)
+        // For now this is a no-op placeholder -- the button visibility is the primary deliverable
+    }
+
     private void OpenSettings() => _settingsPanel?.Open();
 
     private void ShowUpdateConfirm() => _showUpdateConfirm = true;
@@ -598,6 +611,7 @@
         UpdateStatus.StatusChanged -= HandleStateChanged;
         ExtensionFeatures.OnChanged -= HandleStateChanged;
         Hub.OnAgentsChanged -= HandleSidebarAgentsChanged;
+        Prefs.OnChanged -= HandleStateChanged;
     }
 
     private bool IsAgentActive(string agentId)

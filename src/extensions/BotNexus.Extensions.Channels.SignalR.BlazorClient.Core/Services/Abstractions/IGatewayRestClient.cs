@@ -118,6 +118,13 @@ public interface IGatewayRestClient
     /// <summary>POST /api/diagnostics/channel-error - report a channel-side error to the gateway log.</summary>
     Task ReportChannelErrorAsync(ChannelErrorReportDto report, CancellationToken cancellationToken = default);
 
+    /// <summary>GET /api/sessions/{sessionId}/debug?offset={offset}&amp;limit={limit}</summary>
+    Task<SessionDebugSnapshotDto?> GetSessionDebugAsync(
+        string sessionId,
+        int offset = 0,
+        int limit = 50,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }

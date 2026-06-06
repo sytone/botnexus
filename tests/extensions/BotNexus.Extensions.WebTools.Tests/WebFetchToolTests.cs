@@ -171,25 +171,80 @@ public class WebFetchToolTests
     [InlineData("http://localhost/")]
     [InlineData("http://0.0.0.0/")]
     [InlineData("http://[::1]/")]
+    [InlineData("http://100.64.0.1/cgn")]
+    [InlineData("http://172.16.0.1/internal")]
+    [InlineData("http://metadata.google.internal/computeMetadata/v1/")]
     [Trait("Category", "Security")]
-    [Trait("Category", "SecurityGap")]
-    public async Task ExecuteAsync_WithPrivateOrLoopbackTargets_CurrentBehaviorDoesNotBlock(string url)
+    public async Task PrepareArgumentsAsync_WithPrivateOrImdsTarget_Throws(string url)
     {
-        var handler = new MockHttpMessageHandler();
-        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>internal resource</body></html>", "text/html");
-        using var tool = CreateTool(handler);
-        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = url });
+        using var tool = CreateTool(new MockHttpMessageHandler());
 
-        var result = await tool.ExecuteAsync("call-1", args);
+        var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = url });
 
-        result.Content[0].Value.ShouldContain("internal resource");
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("blocked");
+    }
+
+    [Theory]
+    [InlineData("https://example.com")]
+    [InlineData("https://api.github.com")]
+    [InlineData("http://httpbin.org/get")]
+    [Trait("Category", "Security")]
+    public async Task PrepareArgumentsAsync_WithPublicUrl_DoesNotThrow(string url)
+    {
+        using var tool = CreateTool(new MockHttpMessageHandler());
+
+        var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = url });
+
+        await act.ShouldNotThrowAsync();
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1/admin")]
+    [InlineData("http://10.0.0.1/internal")]
+    [Trait("Category", "Security")]
+    public async Task PrepareArgumentsAsync_AllowPrivateNetworks_PermitsPrivateUrls(string url)
+    {
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var config = new WebFetchConfig
+        {
+            MaxLengthChars = 20_000,
+            TimeoutSeconds = 5,
+            AllowPrivateNetworks = true
+        };
+        using var tool = new WebFetchTool(config, httpClient);
+
+        var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = url });
+
+        await act.ShouldNotThrowAsync();
     }
 
     [Fact]
     [Trait("Category", "Security")]
-    [Trait("Category", "SecurityGap")]
-    public async Task ExecuteAsync_WithDnsRebindingStyleHost_CurrentBehaviorDoesNotBlock()
+    public async Task PrepareArgumentsAsync_WithAdditionalBlockedHost_Throws()
     {
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var config = new WebFetchConfig
+        {
+            MaxLengthChars = 20_000,
+            TimeoutSeconds = 5,
+            AdditionalBlockedHosts = ["blocked-internal.corp.example"]
+        };
+        using var tool = new WebFetchTool(config, httpClient);
+
+        var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://blocked-internal.corp.example/secret" });
+
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("blocked");
+    }
+
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_WithDnsRebindingStyleHost_AllowedByDefault()
+    {
+        // External hostnames that happen to look suspicious are allowed by default --
+        // blocking requires DNS resolution which we cannot do synchronously. The protection
+        // against IP-level IMDS addresses is what matters.
         var handler = new MockHttpMessageHandler();
         handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>dns content</body></html>", "text/html");
         using var tool = CreateTool(handler);
@@ -222,9 +277,10 @@ public class WebFetchToolTests
 
     [Fact]
     [Trait("Category", "Security")]
-    [Trait("Category", "SecurityGap")]
-    public async Task ExecuteAsync_WithRedirectToPrivateIp_CurrentBehaviorNotBlocked()
+    public async Task ExecuteAsync_WithRedirectResponse_ReturnsHttpStatus()
     {
+        // Redirect following is blocked at the HttpClient level (no AutoRedirect).
+        // The non-success 302 response is returned as-is.
         var handler = new MockHttpMessageHandler();
         handler.EnqueueResponse(System.Net.HttpStatusCode.Redirect, string.Empty, "text/plain", headers: new Dictionary<string, string>
         {
