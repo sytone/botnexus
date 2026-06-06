@@ -108,6 +108,14 @@ public sealed record AgentDescriptor : ICitizen
     public string IsolationStrategy { get; init; } = "in-process";
 
     /// <summary>
+    /// Prompt caching retention policy for this agent.
+    /// When <see langword="null"/>, the provider default (<c>short</c>) is used.
+    /// Valid values: <c>"none"</c>, <c>"short"</c>, <c>"long"</c>.
+    /// Set to <c>"none"</c> to disable prompt caching for this agent.
+    /// </summary>
+    public string? CacheRetentionMode { get; init; }
+
+    /// <summary>
     /// Maximum concurrent sessions allowed for this agent.
     /// Zero means unlimited.
     /// </summary>

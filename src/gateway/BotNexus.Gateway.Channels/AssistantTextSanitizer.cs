@@ -51,4 +51,27 @@ public static class AssistantTextSanitizer
 
         return stripped.Trim();
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="text"/> contains only thinking/reasoning
+    /// block(s) with no user-visible content outside them.
+    /// A response that strips to empty or whitespace-only is considered thinking-only.
+    /// </summary>
+    /// <param name="text">The raw assistant text to inspect.</param>
+    /// <returns>
+    /// <see langword="true"/> when the text is non-empty, contains at least one thinking block,
+    /// and produces no user-visible content after stripping those blocks.
+    /// </returns>
+    public static bool IsThinkingOnlyResponse(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        // Must contain at least one thinking block; otherwise it is simply an empty response.
+        if (!text.Contains("<thinking>", StringComparison.OrdinalIgnoreCase) &&
+            !text.Contains("<thinking>", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return string.IsNullOrWhiteSpace(StripThinkingTags(text));
+    }
 }
