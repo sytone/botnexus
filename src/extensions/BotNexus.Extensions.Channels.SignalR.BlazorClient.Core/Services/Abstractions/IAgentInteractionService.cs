@@ -11,6 +11,7 @@ public interface IAgentInteractionService
     Task SteerAsync(string agentId, string content);
     Task FollowUpAsync(string agentId, string content);
     Task AbortAsync(string agentId);
+    Task InterruptAndSteerAsync(string agentId, string message);
     Task ResetSessionAsync(string agentId);
     Task<CompactSessionResult?> CompactSessionAsync(string agentId);
     Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true);

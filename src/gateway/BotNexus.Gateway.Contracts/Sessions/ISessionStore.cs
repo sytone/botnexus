@@ -132,4 +132,16 @@ public interface ISessionStore
         string status,
         CancellationToken cancellationToken = default)
         => Task.CompletedTask;
+
+    /// <summary>
+    /// Returns the persisted sub-agent session rows for a given parent session,
+    /// ordered by <c>started_at</c> ascending.
+    /// Implementations that do not support sub-agent persistence return an empty list.
+    /// </summary>
+    /// <param name="sessionId">The parent session whose sub-agent history to retrieve.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(
+        SessionId sessionId,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
 }
