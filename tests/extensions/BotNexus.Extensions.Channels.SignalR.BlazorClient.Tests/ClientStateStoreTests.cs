@@ -42,13 +42,47 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
-    public void UpsertAgent_replaces_or_adds_agent()
+    public void UpsertAgent_adds_new_agent()
     {
         var store = new ClientStateStore();
 
         store.UpsertAgent(new AgentState { AgentId = "a-1", DisplayName = "Agent", IsConnected = true });
 
         Assert.True(store.GetAgent("a-1")?.IsConnected);
+        Assert.Equal("Agent", store.GetAgent("a-1")?.DisplayName);
+    }
+
+    [Fact]
+    public void UpsertAgent_merges_metadata_without_destroying_conversations()
+    {
+        var store = new ClientStateStore();
+        store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "General")]);
+        store.SetActiveConversation("a-1", "c-1");
+
+        // Simulate a refresh that upserts with updated metadata
+        store.UpsertAgent(new AgentState { AgentId = "a-1", DisplayName = "Alpha Updated", Emoji = "\ud83d\ude80", IsConnected = true });
+
+        var agent = store.GetAgent("a-1");
+        Assert.NotNull(agent);
+        Assert.Equal("Alpha Updated", agent.DisplayName);
+        Assert.Equal("\ud83d\ude80", agent.Emoji);
+        Assert.True(agent.IsConnected);
+        // Critical: conversations and active selection must be preserved
+        Assert.Single(agent.Conversations);
+        Assert.Equal("c-1", agent.ActiveConversationId);
+    }
+
+    [Fact]
+    public void UpsertAgent_preserves_session_id_on_existing_agent()
+    {
+        var store = new ClientStateStore();
+        store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        store.GetAgent("a-1")!.SessionId = "session-123";
+
+        store.UpsertAgent(new AgentState { AgentId = "a-1", DisplayName = "Alpha", IsConnected = true });
+
+        Assert.Equal("session-123", store.GetAgent("a-1")?.SessionId);
     }
 
     [Fact]
