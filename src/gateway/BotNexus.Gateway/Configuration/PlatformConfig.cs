@@ -443,6 +443,9 @@ public sealed class AgentDefinitionConfig
     public List<string>? SubAgentRoles { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
     public string? IsolationStrategy { get; set; }
+    /// <summary>Prompt caching retention policy for this agent. Null means provider default (short) is used.</summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.CacheRetention>))]
+    public BotNexus.Agent.Providers.Core.Models.CacheRetention? CacheRetention { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>
     public int? MaxConcurrentSessions { get; set; }
     /// <summary>Agent-level metadata.</summary>
