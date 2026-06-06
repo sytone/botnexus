@@ -68,7 +68,11 @@ internal static class MessageConverter
 
         var usage = providerMessage.Usage is null
             ? null
-            : new AgentUsage(providerMessage.Usage.Input, providerMessage.Usage.Output);
+            : new AgentUsage(
+                InputTokens: providerMessage.Usage.Input,
+                OutputTokens: providerMessage.Usage.Output,
+                CacheRead: providerMessage.Usage.CacheRead > 0 ? (int?)providerMessage.Usage.CacheRead : null,
+                CacheWrite: providerMessage.Usage.CacheWrite > 0 ? (int?)providerMessage.Usage.CacheWrite : null);
 
         return new AssistantAgentMessage(
             Content: text,
@@ -144,7 +148,9 @@ internal static class MessageConverter
             {
                 Input = assistant.Usage.InputTokens ?? 0,
                 Output = assistant.Usage.OutputTokens ?? 0,
-                TotalTokens = (assistant.Usage.InputTokens ?? 0) + (assistant.Usage.OutputTokens ?? 0)
+                TotalTokens = (assistant.Usage.InputTokens ?? 0) + (assistant.Usage.OutputTokens ?? 0),
+                CacheRead = assistant.Usage.CacheRead ?? 0,
+                CacheWrite = assistant.Usage.CacheWrite ?? 0
             };
 
         return new ProviderAssistantMessage(

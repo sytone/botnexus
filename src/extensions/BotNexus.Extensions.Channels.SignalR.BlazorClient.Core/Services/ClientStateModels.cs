@@ -89,6 +89,18 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Thinking content attached to this assistant message (from ThinkingDelta events).</summary>
     public string? ThinkingContent { get; init; }
 
+    /// <summary>Input token count for this assistant message (null if not available).</summary>
+    public int? InputTokens { get; init; }
+
+    /// <summary>Output token count for this assistant message (null if not available).</summary>
+    public int? OutputTokens { get; init; }
+
+    /// <summary>Tokens read from the provider prompt cache (null if not available).</summary>
+    public int? CacheRead { get; init; }
+
+    /// <summary>Tokens written to the provider prompt cache (null if not available).</summary>
+    public int? CacheWrite { get; init; }
+
     /// <summary>Message kind: "message" (default) or "boundary" (session divider).</summary>
     public string Kind { get; init; } = "message";
 

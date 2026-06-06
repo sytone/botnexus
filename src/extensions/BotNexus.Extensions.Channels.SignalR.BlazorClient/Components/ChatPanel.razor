@@ -1,4 +1,4 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -244,6 +244,27 @@
                                         @onclick="() => CopyMessage(msg.Id, msg.Content)">
                                     @(_copiedMessageId == msg.Id ? "✓" : "📋")
                                 </button>
+                            }
+                            @if (msg.Role == "Assistant" && (msg.InputTokens.HasValue || msg.CacheRead.HasValue || msg.CacheWrite.HasValue))
+                            {
+                                <span class="msg-token-stats" data-testid="msg-token-stats" title="Token usage for this message">
+                                    @if (msg.InputTokens.HasValue)
+                                    {
+                                        <span class="token-stat">in:@msg.InputTokens</span>
+                                    }
+                                    @if (msg.OutputTokens.HasValue)
+                                    {
+                                        <span class="token-stat">out:@msg.OutputTokens</span>
+                                    }
+                                    @if (msg.CacheRead.HasValue && msg.CacheRead.Value > 0)
+                                    {
+                                        <span class="token-stat cache-read" title="Cache read tokens">↩@msg.CacheRead</span>
+                                    }
+                                    @if (msg.CacheWrite.HasValue && msg.CacheWrite.Value > 0)
+                                    {
+                                        <span class="token-stat cache-write" title="Cache write tokens">↪@msg.CacheWrite</span>
+                                    }
+                                </span>
                             }
                         </div>
                     </div>
