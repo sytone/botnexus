@@ -208,8 +208,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         finally { sessionLock.Release(); }
     }
 
-    protected override async Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
-    {
+    protected override Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
+        => RetryOnTransientAsync(async () =>
+        {
         // EnumerateSessionsAsync reads across all sessions — safe without per-session lock under WAL
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var connection = CreateConnection();
@@ -236,8 +237,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
             }
         }
 
-        return sessions;
-    }
+        return (IReadOnlyList<GatewaySession>)sessions;
+        }, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Returns sessions for a single conversation, using the
@@ -1027,6 +1028,47 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     private SqliteConnection CreateConnection() => new(_connectionString);
+
+    // SQLite error codes that indicate a transient condition safe to retry.
+    private static readonly int[] TransientSqliteErrorCodes = [5 /* BUSY */, 10 /* IOERR */];
+
+    /// <summary>
+    /// Executes <paramref name="operation"/> with up to <paramref name="maxAttempts"/> retries
+    /// on transient SQLite errors (BUSY=5, IOERR=10). Waits ~50ms × 2^attempt between retries.
+    /// After all retries are exhausted, wraps the last exception in
+    /// <see cref="SessionStoreUnavailableException"/>.
+    /// </summary>
+    private static async Task<T> RetryOnTransientAsync<T>(
+        Func<Task<T>> operation,
+        int maxAttempts = 3,
+        CancellationToken cancellationToken = default)
+    {
+        Exception? lastEx = null;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                return await operation().ConfigureAwait(false);
+            }
+            catch (SqliteException ex) when (TransientSqliteErrorCodes.Contains(ex.SqliteErrorCode))
+            {
+                lastEx = ex;
+                var delayMs = 50 * (1 << attempt); // 50ms, 100ms, 200ms
+                await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        throw new SessionStoreUnavailableException(
+            $"Session store unavailable after {maxAttempts} attempts.", lastEx!);
+    }
+
+    private static async Task RetryOnTransientAsync(
+        Func<Task> operation,
+        int maxAttempts = 3,
+        CancellationToken cancellationToken = default)
+        => await RetryOnTransientAsync(
+            async () => { await operation().ConfigureAwait(false); return 0; },
+            maxAttempts,
+            cancellationToken).ConfigureAwait(false);
 
     private static DateTimeOffset ParseTimestamp(string? timestamp)
         => DateTimeOffset.TryParse(timestamp, out var parsed)
