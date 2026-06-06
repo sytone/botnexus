@@ -114,6 +114,27 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     // ── Session management ────────────────────────────────────────────────
 
+
+    public async Task InterruptAndSteerAsync(string agentId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+
+        var agent = _store.GetAgent(agentId);
+        if (agent?.ActiveConversationSessionId is null) return;
+
+        AppendUserMessage(agentId, "[redirect] " + message);
+
+        try
+        {
+            var delivered = await _hub.InterruptAndSteerAsync(agentId, agent.ActiveConversationSessionId!, message);
+            if (!delivered)
+                AppendError(agentId, "Interrupt not delivered - agent was not running.");
+        }
+        catch (Exception ex)
+        {
+            AppendError(agentId, "Interrupt and steer failed: " + ex.Message);
+        }
+    }
     public async Task ResetSessionAsync(string agentId)
     {
         var agent = _store.GetAgent(agentId);

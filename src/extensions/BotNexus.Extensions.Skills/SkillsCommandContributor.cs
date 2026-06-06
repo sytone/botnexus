@@ -34,7 +34,23 @@ public sealed class SkillsCommandContributor : ICommandContributor
                     Description = "Unload a skill from this session.",
                     Arguments = [new CommandArgumentDescriptor { Name = "name", Description = "Skill name.", Required = true }]
                 },
-                new SubCommandDescriptor { Name = "reload", Description = "Re-discover skills from disk." }
+                new SubCommandDescriptor { Name = "reload", Description = "Re-discover skills from disk." },
+                new SubCommandDescriptor
+                {
+                    Name = "create",
+                    Description = "Create a new skill (requires AllowSkillCreation = true).",
+                    Arguments = [new CommandArgumentDescriptor { Name = "name", Description = "Skill name (lowercase, hyphens only).", Required = true }]
+                },
+                new SubCommandDescriptor
+                {
+                    Name = "delete",
+                    Description = "Delete an existing skill (requires AllowSkillDeletion = true). Pass --confirm to execute.",
+                    Arguments =
+                    [
+                        new CommandArgumentDescriptor { Name = "name", Description = "Skill name.", Required = true },
+                        new CommandArgumentDescriptor { Name = "--confirm", Description = "Confirm deletion (required).", Required = false }
+                    ]
+                }
             ]
         }
     ];
@@ -55,18 +71,126 @@ public sealed class SkillsCommandContributor : ICommandContributor
             return Error("Command Not Found", $"Unknown skills command: {commandName}");
         }
 
+        var subCommand = (context.SubCommand ?? "list").ToLowerInvariant();
+
+        // create and delete route through SkillManagerTool, not SkillTool
+        if (subCommand is "create" or "delete")
+            return await ExecuteWriteCommandAsync(subCommand, context, cancellationToken).ConfigureAwait(false);
+
         if (!TryResolveTool(context, out var skillTool, out var errorResult))
             return errorResult!;
 
         var resolvedTool = skillTool;
-        return (context.SubCommand ?? "list").ToLowerInvariant() switch
+        return subCommand switch
         {
             "list" => BuildListResult(resolvedTool, context.AgentId),
             "info" => BuildInfoResult(resolvedTool, context.Arguments),
             "add" => await AddSkillAsync(resolvedTool, context.Arguments, cancellationToken).ConfigureAwait(false),
             "remove" => RemoveSkill(resolvedTool, context.Arguments),
             "reload" => ReloadSkills(resolvedTool),
-            _ => Error("Invalid Sub-command", "Usage: /skills [list|info <name>|add <name>|remove <name>|reload]")
+            _ => Error("Invalid Sub-command", "Usage: /skills [list|info <name>|add <name>|remove <name>|reload|create <name>|delete <name> --confirm]")
+        };
+    }
+
+    // ── create / delete (SkillManagerTool path) ────────────────────────────
+
+    private static async Task<CommandResult> ExecuteWriteCommandAsync(
+        string subCommand,
+        CommandExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.ResolveSessionTool is null)
+            return Error("Skills Unavailable", "No active session tool resolver. Open an agent session and try again.");
+
+        var managerTool = context.ResolveSessionTool("skill_manage") as SkillManagerTool;
+
+        if (subCommand == "create")
+            return await ExecuteCreateAsync(managerTool, context.Arguments, cancellationToken).ConfigureAwait(false);
+
+        return await ExecuteDeleteAsync(managerTool, context.Arguments, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task<CommandResult> ExecuteCreateAsync(
+        SkillManagerTool? managerTool,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        if (managerTool is null)
+        {
+            return Task.FromResult(Error(
+                "Skill Creation Disabled",
+                "Skill creation is not enabled for this agent. Set AllowSkillCreation = true in the agent's botnexus-skills extension config to enable it."));
+        }
+
+        var skillName = args.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(skillName))
+            return Task.FromResult(Error("Missing Argument", "Usage: /skills create <name>"));
+
+        // Prompt the agent to supply the SKILL.md content via skill_manage tool call
+        return Task.FromResult(new CommandResult
+        {
+            Title = $"Create Skill: {skillName}",
+            Body = $"""
+                    To create skill '{skillName}', call the skill_manage tool with:
+                      action: "create"
+                      name: "{skillName}"
+                      content: "<full SKILL.md content including YAML frontmatter>"
+
+                    The SKILL.md must include at minimum:
+                      ---
+                      name: {skillName}
+                      description: <short description>
+                      ---
+
+                      <skill body>
+
+                    The skill will be validated and security-scanned before being written.
+                    """,
+            IsError = false
+        });
+    }
+
+    private static async Task<CommandResult> ExecuteDeleteAsync(
+        SkillManagerTool? managerTool,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        if (managerTool is null)
+        {
+            return Error(
+                "Skill Deletion Disabled",
+                "Skill deletion is not enabled for this agent. Set AllowSkillDeletion = true in the agent's botnexus-skills extension config to enable it.");
+        }
+
+        var skillName = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(skillName))
+            return Error("Missing Argument", "Usage: /skills delete <name> [--confirm]");
+
+        var confirmed = args.Any(a => string.Equals(a, "--confirm", StringComparison.OrdinalIgnoreCase));
+        if (!confirmed)
+        {
+            return new CommandResult
+            {
+                Title = $"Confirm Delete: {skillName}",
+                Body = $"Are you sure you want to permanently delete skill '{skillName}'? This cannot be undone.\nRun: /skills delete {skillName} --confirm",
+                IsError = false
+            };
+        }
+
+        var toolArgs = new Dictionary<string, object?> { ["action"] = "delete", ["name"] = skillName };
+        var toolResult = await managerTool.ExecuteAsync(
+            toolCallId: "skills-command-delete",
+            arguments: toolArgs,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var content = toolResult.Content?.FirstOrDefault()?.Value ?? string.Empty;
+        var isError = content.StartsWith("Error: ", StringComparison.Ordinal);
+
+        return new CommandResult
+        {
+            Title = isError ? "Delete Failed" : $"Skill Deleted: {skillName}",
+            Body = content,
+            IsError = isError
         };
     }
 

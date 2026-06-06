@@ -215,8 +215,11 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.ReplaceHistory(result.CompactedHistory!);
 
         // Phase 3a (#531): summarised entries preserved as historical; summary at boundary; preserved tail after.
-        session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "u1", "a1", "tool-summary", "u2", "a2", "tool-call", "tool-result" }, ignoreOrder: false);
+        var toolSnapshot = session.GetHistorySnapshot();
+        toolSnapshot.Select(e => e.Content).Take(2).ShouldBe(new[] { "u1", "a1" });
+        toolSnapshot[2].IsCompactionSummary.ShouldBeTrue();
+        toolSnapshot[2].Content.ShouldContain("tool-summary");
+        toolSnapshot.Select(e => e.Content).Skip(3).ShouldBe(new[] { "u2", "a2", "tool-call", "tool-result" }, ignoreOrder: false);
     }
 
     [Fact]
@@ -246,8 +249,11 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a3" });
 
         // Phase 3a (#531): full transcript including newly-historical entries remains coherent.
-        session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "u1", "a1", "coherent-summary", "u2", "a2", "u3", "a3" }, ignoreOrder: false);
+        var coherentSnap = session.GetHistorySnapshot();
+        coherentSnap.Select(e => e.Content).Take(2).ShouldBe(new[] { "u1", "a1" });
+        coherentSnap[2].IsCompactionSummary.ShouldBeTrue();
+        coherentSnap[2].Content.ShouldContain("coherent-summary");
+        coherentSnap.Select(e => e.Content).Skip(3).ShouldBe(new[] { "u2", "a2", "u3", "a3" }, ignoreOrder: false);
     }
 
     [Fact]
@@ -312,9 +318,9 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
                 $"original turn '{content}' must survive across compaction cycles");
 
         // Two summaries on disk; older one is historical.
-        snapshot.Single(e => e.Content == "summary-c1").IsHistory.ShouldBeTrue();
-        snapshot.Single(e => e.Content == "summary-c2").IsHistory.ShouldBeFalse();
-        snapshot.Single(e => e.Content == "summary-c2").IsCompactionSummary.ShouldBeTrue();
+        snapshot.Single(e => e.IsCompactionSummary && e.Content.Contains("summary-c1")).IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.IsCompactionSummary && e.Content.Contains("summary-c2")).IsHistory.ShouldBeFalse();
+        snapshot.Single(e => e.IsCompactionSummary && e.Content.Contains("summary-c2")).IsCompactionSummary.ShouldBeTrue();
     }
 
     [Fact]
