@@ -3434,6 +3434,7 @@ details[open] > .thinking-summary::before {
     color: var(--text-secondary);
     font-size: 0.82rem;
     text-align: left;
+    text-decoration: none; /* suppress anchor underline when rendered as <a> (#935) */
     cursor: pointer;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
     gap: 0.2rem;

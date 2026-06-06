@@ -52,7 +52,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
 
         _fileSystem.Directory.CreateDirectory(_directoryPath);
 
-        return new FileConfigurationWatcher(_directoryPath, _fileSystem, onChanged, LoadAsync, _logger);
+        return new FileConfigurationWatcher(_directoryPath, _fileSystem, onChanged, LoadAsync, _logger, reloadDebounceMs: 2000);
     }
 
     private async Task<AgentDescriptor?> TryLoadDescriptorAsync(string configPath, CancellationToken cancellationToken)
@@ -246,7 +246,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             _ => element.GetRawText()
         };
 
-    private sealed class FileConfigurationWatcher : IDisposable
+    internal sealed class FileConfigurationWatcher : IDisposable
     {
         private readonly IFileSystemWatcher _watcher;
         private readonly Timer _timer;
@@ -255,6 +255,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         private readonly Func<CancellationToken, Task<IReadOnlyList<AgentDescriptor>>> _loadAsync;
         private readonly ILogger _logger;
         private readonly SemaphoreSlim _reloadGate = new(1, 1);
+        private readonly int _reloadDebounceMs;
+        private int _pendingEventCount;
         private bool _disposed;
 
         public FileConfigurationWatcher(
@@ -262,12 +264,14 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             IFileSystem fileSystem,
             Action<IReadOnlyList<AgentDescriptor>> onChanged,
             Func<CancellationToken, Task<IReadOnlyList<AgentDescriptor>>> loadAsync,
-            ILogger logger)
+            ILogger logger,
+            int reloadDebounceMs = 2000)
         {
             _directoryPath = directoryPath;
             _onChanged = onChanged;
             _loadAsync = loadAsync;
             _logger = logger;
+            _reloadDebounceMs = reloadDebounceMs;
 
             _watcher = fileSystem.FileSystemWatcher.New(directoryPath, "*.*");
             _watcher.IncludeSubdirectories = true;
@@ -300,10 +304,20 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             => _ = ((FileConfigurationWatcher)state!).ReloadAsync();
 
         private void OnChanged(object sender, FileSystemEventArgs args)
-            => QueueReload();
+        {
+            if (!IsAgentDefinitionFile(_directoryPath, args.FullPath))
+                return;
+
+            QueueReload();
+        }
 
         private void OnRenamed(object sender, RenamedEventArgs args)
-            => QueueReload();
+        {
+            if (!IsAgentDefinitionFile(_directoryPath, args.FullPath) && !IsAgentDefinitionFile(_directoryPath, args.OldFullPath))
+                return;
+
+            QueueReload();
+        }
 
         private void OnError(object sender, ErrorEventArgs args)
         {
@@ -311,12 +325,53 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             QueueReload();
         }
 
+        /// <summary>
+        /// Returns true if the file is an agent definition file (*.json or *.md)
+        /// directly in an agent subdirectory or the root config dir.
+        /// Workspace subdirectory writes (e.g. workspace/, tmp/, memory/) are excluded.
+        /// </summary>
+        internal static bool IsAgentDefinitionFile(string directoryPath, string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath))
+                return false;
+
+            var ext = Path.GetExtension(fullPath);
+            if (!ext.Equals(".json", StringComparison.OrdinalIgnoreCase) &&
+                !ext.Equals(".md", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Accept files at depth 0 (directly in root config dir) or depth 1
+            // (directly in an agent subdirectory, e.g. agents/farnsworth/config.json)
+            var dir = Path.GetDirectoryName(fullPath);
+            if (dir is null)
+                return false;
+
+            var normalRoot = directoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalDir = dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            // Depth 0: file is directly in directoryPath
+            if (string.Equals(normalDir, normalRoot, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Depth 1: file is in an immediate subdirectory of directoryPath
+            var parent = Path.GetDirectoryName(normalDir);
+            return parent is not null &&
+                   string.Equals(parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                       normalRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
         private void QueueReload()
         {
             if (_disposed)
                 return;
 
-            _timer.Change(TimeSpan.FromMilliseconds(250), Timeout.InfiniteTimeSpan);
+            var count = Interlocked.Increment(ref _pendingEventCount);
+            if (count > 1)
+            {
+                _logger.LogDebug("Agent config watcher debounced {Count} events into 1 reload.", count);
+            }
+
+            _timer.Change(TimeSpan.FromMilliseconds(_reloadDebounceMs), Timeout.InfiniteTimeSpan);
         }
 
         private async Task ReloadAsync()
@@ -326,6 +381,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
 
             if (!await _reloadGate.WaitAsync(0))
                 return;
+
+            Interlocked.Exchange(ref _pendingEventCount, 0);
 
             try
             {

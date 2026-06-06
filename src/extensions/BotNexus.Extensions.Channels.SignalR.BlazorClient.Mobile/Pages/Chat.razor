@@ -32,6 +32,16 @@ else
         .OrderByDescending(c => c.UpdatedAt)
         .ToList() ?? [];
     <div class="mobile-app">
+        <!-- DISCONNECTED INDICATOR -->
+        @if (!PortalLoad.IsSignalRConnected)
+        {
+            <div class="disconnected-bar" data-testid="disconnected-bar">
+                &#x26A0; Disconnected
+                <button class="reconnect-inline-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Reconnect">
+                    @(_isRefreshing ? "&#x21BB;" : "Reconnect")
+                </button>
+            </div>
+        }
         <!-- TOP BAR -->
         <div class="top-bar">
             <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
@@ -46,6 +56,9 @@ else
                     <option value="@conv.ConversationId">@conv.Title</option>
                 }
             </select>
+            <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh" data-testid="refresh-btn" title="Refresh conversations">
+                @(_isRefreshing ? "&#x21BB;" : "&#x21BA;")
+            </button>
             <div class="overflow-menu-wrapper">
                 <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">&#x22EF;</button>
                 @if (_menuOpen)
@@ -161,10 +174,13 @@ else
 
     private string _inputText = "";
     private bool _isSending;
+    private bool _isRefreshing;
     private bool _menuOpen;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
     private ChatMessage? _modalToolMessage;
+    private DotNetObjectReference<Chat>? _dotNetRef;
+    private bool _appResumeListenerRegistered;
 
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
@@ -177,6 +193,7 @@ else
     protected override void OnInitialized()
     {
         PortalLoad.OnReadyChanged += HandleReadyChanged;
+        PortalLoad.OnConnectionStateChanged += HandleConnectionStateChanged;
         Store.OnChanged += HandleStateChanged;
     }
 
@@ -214,6 +231,18 @@ else
                 ? Store.GetMessages(_lastActiveConversationId).Count
                 : 0;
             await ForceScrollToBottomAsync();
+
+            // Register visibilitychange listener for app-resume reconnect (mobile PWA).
+            if (!_appResumeListenerRegistered)
+            {
+                try
+                {
+                    _dotNetRef = DotNetObjectReference.Create(this);
+                    await JS.InvokeVoidAsync("BotNexusAppResume.initialize", _dotNetRef);
+                    _appResumeListenerRegistered = true;
+                }
+                catch { /* JS not ready or not available in test context */ }
+            }
         }
     }
 
@@ -247,6 +276,46 @@ else
             });
         }
         catch (ObjectDisposedException) { }
+    }
+
+    private void HandleConnectionStateChanged() =>
+        _ = InvokeAsync(StateHasChanged);
+
+    /// <summary>
+    /// Called from JavaScript when the Page Visibility API reports the app has returned
+    /// to the foreground (e.g. after being backgrounded in a PWA or mobile browser).
+    /// Re-fetches conversation data and reconnects SignalR if disconnected.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnAppResumed()
+    {
+        await PortalLoad.RefreshAsync();
+        await InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            await ForceScrollToBottomAsync();
+        });
+    }
+
+    /// <summary>
+    /// Handles the manual refresh button tap: re-fetches data and reconnects.
+    /// Shows a brief spinning indicator while in progress.
+    /// </summary>
+    private async Task ManualRefreshAsync()
+    {
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        StateHasChanged();
+        try
+        {
+            await PortalLoad.RefreshAsync();
+            await ForceScrollToBottomAsync();
+        }
+        finally
+        {
+            _isRefreshing = false;
+            StateHasChanged();
+        }
     }
 
     /// <summary>
@@ -471,5 +540,7 @@ else
     {
         Store.OnChanged -= HandleStateChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
+        PortalLoad.OnConnectionStateChanged -= HandleConnectionStateChanged;
+        _dotNetRef?.Dispose();
     }
 }

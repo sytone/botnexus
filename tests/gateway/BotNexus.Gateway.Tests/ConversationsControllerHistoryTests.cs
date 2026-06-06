@@ -307,4 +307,89 @@ public sealed class ConversationsControllerHistoryTests
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(BotNexus.Domain.World.CitizenId citizen, CancellationToken ct = default)
             => throw new NotSupportedException();
     }
+
+    /// <summary>
+    /// Regression tests for #773: NO_REPLY assistant entries must be stripped from conversation history
+    /// so cron wakeups that had nothing to say don't appear as blank turns in the portal.
+    /// </summary>
+    [Fact]
+    public async Task GetHistory_FiltersOutNoReplyAssistantEntries()
+    {
+        var conversationId = ConversationId.From("c_noreply_filter");
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-noreply-1"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+
+        // Interleave real messages with NO_REPLY turns
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "real question", Timestamp = DateTimeOffset.UtcNow.AddMinutes(1) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "real answer", Timestamp = DateTimeOffset.UtcNow.AddMinutes(2) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "another question", Timestamp = DateTimeOffset.UtcNow.AddMinutes(3) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "NO_REPLY", Timestamp = DateTimeOffset.UtcNow.AddMinutes(4) }); // cron NO_REPLY -- must be filtered
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "yet another", Timestamp = DateTimeOffset.UtcNow.AddMinutes(5) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "second real answer", Timestamp = DateTimeOffset.UtcNow.AddMinutes(6) });
+
+        await sessions.SaveAsync(session);
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        // 5 visible entries (1 NO_REPLY filtered out)
+        response!.TotalCount.ShouldBe(5);
+        response.Entries.ShouldNotContain(e => e.Content == "NO_REPLY");
+        response.Entries.ShouldContain(e => e.Content == "real answer");
+        response.Entries.ShouldContain(e => e.Content == "second real answer");
+    }
+
+    [Fact]
+    public async Task GetHistory_FiltersNoReplyWithWhitespace()
+    {
+        // NO_REPLY with surrounding whitespace/newlines should also be filtered (matches client-side Trim() behaviour)
+        var conversationId = ConversationId.From("c_noreply_whitespace");
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-noreply-2"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello", Timestamp = DateTimeOffset.UtcNow.AddMinutes(1) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "  NO_REPLY  ", Timestamp = DateTimeOffset.UtcNow.AddMinutes(2) }); // padded
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "NO_REPLY\n", Timestamp = DateTimeOffset.UtcNow.AddMinutes(3) }); // trailing newline
+
+        await sessions.SaveAsync(session);
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(1); // only the user message
+        response.Entries[0].Content.ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task GetHistory_DoesNotFilterUserEntriesNamedNoReply()
+    {
+        // A user message literally saying "NO_REPLY" should NOT be filtered (only assistant entries)
+        var conversationId = ConversationId.From("c_noreply_user_safe");
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-noreply-3"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "NO_REPLY", Timestamp = DateTimeOffset.UtcNow.AddMinutes(1) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "I understand you typed NO_REPLY", Timestamp = DateTimeOffset.UtcNow.AddMinutes(2) });
+
+        await sessions.SaveAsync(session);
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(2); // both entries preserved
+        response.Entries.ShouldContain(e => e.Content == "NO_REPLY" && e.Role == "user");
+        response.Entries.ShouldContain(e => e.Content == "I understand you typed NO_REPLY");
+    }
 }

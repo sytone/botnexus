@@ -384,10 +384,17 @@ public sealed class ConversationsController : ControllerBase
                 });
             }
 
-            // Append all history entries from this session
+            // Append all history entries from this session.
+            // Skip assistant entries whose content is exactly "NO_REPLY" (optionally padded with whitespace).
+            // These are deliberate cron no-ops that produced no user-facing output; including them in
+            // history would show blank turns in the portal for every cron wakeup that had nothing to say (#773).
             var snapshot = session.GetHistorySnapshot();
             foreach (var entry in snapshot)
             {
+                if (entry.Role == MessageRole.Assistant &&
+                    string.Equals(entry.Content?.Trim(), "NO_REPLY", StringComparison.Ordinal))
+                    continue;
+
                 allEntries.Add(new ConversationHistoryEntry
                 {
                     Kind = "message",
