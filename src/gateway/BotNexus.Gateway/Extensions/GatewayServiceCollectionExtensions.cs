@@ -165,6 +165,8 @@ public static class GatewayServiceCollectionExtensions
             var dispatcher = new HookDispatcher();
             dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
                 sp.GetRequiredService<ToolPolicyHookHandler>());
+            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                sp.GetRequiredService<AgentsMdPromptHookHandler>());
             return dispatcher;
         });
 
@@ -172,6 +174,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
         services.AddSingleton<ToolPolicyHookHandler>();
+        services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
         // Built-in isolation strategies
