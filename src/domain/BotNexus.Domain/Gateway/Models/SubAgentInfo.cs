@@ -28,6 +28,16 @@ public sealed record SubAgentInfo
     public string? Name { get; init; }
 
     /// <summary>
+    /// Gets the parent agent identifier. Populated at spawn time for session persistence.
+    /// </summary>
+    public string? ParentAgentId { get; init; }
+
+    /// <summary>
+    /// Gets the child agent identifier. Populated at spawn time for session persistence.
+    /// </summary>
+    public string? ChildAgentId { get; init; }
+
+    /// <summary>
     /// Gets the delegated task assigned to the sub-agent.
     /// </summary>
     public required string Task { get; init; }
