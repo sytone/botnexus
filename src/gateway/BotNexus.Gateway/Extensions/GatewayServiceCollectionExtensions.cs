@@ -191,7 +191,14 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
-        services.AddHostedService<InterruptedTurnNotificationService>();
+        services.AddHostedService(sp => new InterruptedTurnNotificationService(
+            sp.GetRequiredService<ISessionStore>(),
+            sp.GetRequiredService<IAgentRegistry>(),
+            sp.GetRequiredService<IActivityBroadcaster>(),
+            sp.GetRequiredService<IChannelManager>(),
+            sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
+            sp.GetService<IInboundMessageOrchestrator>(),
+            sp.GetService<IOptions<GatewayOptions>>()));
         services.AddHostedService<SessionCleanupService>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();
