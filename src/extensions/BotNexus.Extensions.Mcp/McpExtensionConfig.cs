@@ -46,6 +46,15 @@ public sealed class McpServerConfig
     public Dictionary<string, string>? Headers { get; set; }
 
     /// <summary>
+    /// Optional BotNexus provider key for auth injection (HTTP/SSE transport only).
+    /// When set, resolves a Bearer token via <c>GetProviderApiKeyAsync</c> at session start
+    /// and injects it as <c>Authorization: Bearer &lt;token&gt;</c>. An explicit
+    /// <see cref="Headers"/> Authorization value wins when both are present.
+    /// </summary>
+    [JsonPropertyName("auth")]
+    public string? Auth { get; set; }
+
+    /// <summary>
     /// Whether to inherit the parent process environment variables.
     /// Default: <c>true</c> for backward compatibility.
     /// <para>
