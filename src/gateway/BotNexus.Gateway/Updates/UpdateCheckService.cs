@@ -160,10 +160,15 @@ public sealed class UpdateCheckService : IUpdateCheckService, IHostedService, ID
             var cliPath = cfg.CliPath;
             var sourcePath = cfg.SourcePath;
 
+            // Append --channel only when a non-empty channel is configured.
+            var channelArg = !string.IsNullOrWhiteSpace(cfg.Channel)
+                ? $" --channel {cfg.Channel}"
+                : string.Empty;
+
             ProcessStartInfo startInfo;
             if (cliPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             {
-                startInfo = new ProcessStartInfo("dotnet", $"\"{cliPath}\" update --source \"{sourcePath}\" --target \"{targetPath}\" --port {port}")
+                startInfo = new ProcessStartInfo("dotnet", $"\"{cliPath}\" update --source \"{sourcePath}\" --target \"{targetPath}\" --port {port}{channelArg}")
                 {
                     UseShellExecute = true,
                     CreateNoWindow = true,
@@ -172,7 +177,7 @@ public sealed class UpdateCheckService : IUpdateCheckService, IHostedService, ID
             }
             else
             {
-                startInfo = new ProcessStartInfo($"\"{cliPath}\"", $"update --source \"{sourcePath}\" --target \"{targetPath}\" --port {port}")
+                startInfo = new ProcessStartInfo($"\"{cliPath}\"", $"update --source \"{sourcePath}\" --target \"{targetPath}\" --port {port}{channelArg}")
                 {
                     UseShellExecute = true,
                     CreateNoWindow = true,
@@ -315,6 +320,18 @@ public sealed class UpdateCheckService : IUpdateCheckService, IHostedService, ID
         if (!string.IsNullOrWhiteSpace(listenUrl) && Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri))
             return uri.Port > 0 ? uri.Port : 5005;
         return 5005;
+    }
+
+    /// <summary>
+    /// Builds the argument string for the CLI update command.
+    /// Exposed as internal so tests can assert the --channel flag is forwarded correctly.
+    /// </summary>
+    internal static string BuildUpdateArguments(string sourcePath, string targetPath, int port, string? channel)
+    {
+        var channelArg = !string.IsNullOrWhiteSpace(channel)
+            ? $" --channel {channel}"
+            : string.Empty;
+        return $"update --source \"{sourcePath}\" --target \"{targetPath}\" --port {port}{channelArg}";
     }
 
     private static string ShortSha(string? sha) =>

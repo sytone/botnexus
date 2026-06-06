@@ -361,4 +361,15 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
             $"{_apiBaseUrl}sessions/{Uri.EscapeDataString(sessionId)}/debug?offset={offset}&limit={limit}",
             cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SubAgentInfo>> ListSessionSubAgentsAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await _http.GetFromJsonAsync<IReadOnlyList<SubAgentInfo>>(
+            $"{_apiBaseUrl}sessions/{Uri.EscapeDataString(sessionId)}/subagents",
+            cancellationToken) ?? [];
+    }
 }
