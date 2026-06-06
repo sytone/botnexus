@@ -201,6 +201,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             ParentSessionId = request.ParentSessionId,
             ChildSessionId = childSessionId,
             Name = name,
+            ParentAgentId = request.ParentAgentId.Value,
+            ChildAgentId = childAgentId.Value,
             Task = request.Task,
             Model = modelOverride ?? configuredDefaultModel ?? baseDescriptor.ModelId,
             Archetype = archetype,
@@ -211,6 +213,16 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         if (!_subAgents.TryAdd(subAgentId, info))
             throw new InvalidOperationException($"Sub-agent '{subAgentId}' already exists.");
+
+        // Persist the sub-agent session row to sessions.db (best-effort; non-SQLite stores no-op).
+        if (_sessionStore is not null)
+        {
+            try { await _sessionStore.SaveSubAgentSessionAsync(info, ct).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist sub-agent session row for '{SubAgentId}'.", subAgentId);
+            }
+        }
 
         _parentAgentIds[subAgentId] = request.ParentAgentId;
         _childAgentIds[subAgentId] = childAgentId;
@@ -315,6 +327,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             subAgentId,
             requestingSessionId);
 
+        // Update the sub-agent session row with Killed status (best-effort).
+        if (_sessionStore is not null && updatedInfo.CompletedAt.HasValue)
+        {
+            try
+            {
+                await _sessionStore.UpdateSubAgentSessionAsync(
+                    subAgentId,
+                    updatedInfo.CompletedAt.Value,
+                    SubAgentStatus.Killed.ToString(),
+                    ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update sub-agent session row for '{SubAgentId}'.", subAgentId);
+            }
+        }
+
         _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
         await PublishLifecycleActivityAsync(
             GatewayActivityType.SubAgentKilled,
@@ -362,6 +391,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 out var updated))
         {
             return;
+        }
+
+        // Update the sub-agent session row with the final status (best-effort).
+        if (_sessionStore is not null && updated.CompletedAt.HasValue)
+        {
+            try
+            {
+                await _sessionStore.UpdateSubAgentSessionAsync(
+                    subAgentId,
+                    updated.CompletedAt.Value,
+                    updated.Status.ToString(),
+                    ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update sub-agent session row for '{SubAgentId}'.", subAgentId);
+            }
         }
 
         _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
