@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Abstractions.Channels;
+﻿using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
@@ -63,6 +63,7 @@ public static class GatewayServiceCollectionExtensions
     {
         services.AddOptions<GatewayOptions>();
         services.AddOptions<SessionCleanupOptions>();
+        services.AddOptions<ConversationRetentionOptions>();
         services.AddOptions<SessionWarmupOptions>();
         services.AddOptions<DelayToolOptions>();
         services.AddOptions<FileWatcherToolOptions>();
@@ -76,6 +77,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentOptions>(config.GetSection("gateway:subAgents"));
             services.Configure<DelayToolOptions>(config.GetSection("gateway:delayTool"));
             services.Configure<FileWatcherToolOptions>(config.GetSection("gateway:fileWatcherTool"));
+            services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
 
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
@@ -191,6 +193,7 @@ public static class GatewayServiceCollectionExtensions
             serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddHostedService<InterruptedTurnNotificationService>();
         services.AddHostedService<SessionCleanupService>();
+        services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
         // Auto-update: register once as singleton, expose as interface and hosted service.

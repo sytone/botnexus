@@ -334,6 +334,19 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     trigger_type TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS sub_agent_sessions (
+                    id TEXT PRIMARY KEY,
+                    parent_session_id TEXT NOT NULL,
+                    parent_agent_id TEXT NOT NULL,
+                    child_agent_id TEXT NOT NULL,
+                    archetype TEXT,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'Active'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sub_agent_sessions_parent ON sub_agent_sessions(parent_session_id);
+                CREATE INDEX IF NOT EXISTS idx_sub_agent_sessions_child ON sub_agent_sessions(child_agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
                 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
                 """;

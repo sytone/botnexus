@@ -1916,6 +1916,8 @@ file sealed class ThrowingArchiveConversationStore : IConversationStore
     }
     public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
         => _inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
+    public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
+        => _inner.TouchAsync(conversationId, ct);
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         => _inner.GetSummariesAsync(ct);
 }
