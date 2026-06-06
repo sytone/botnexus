@@ -575,6 +575,45 @@ public sealed class InProcessIsolationStrategyTests
             AgentToolUpdateCallback? onUpdate = null)
             => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
     }
+
+    // #803 -- CacheRetention forwarding from AgentDescriptor to GenerationSettings
+
+    [Fact]
+    public async Task CreateAsync_WithCacheRetentionNoneInDescriptor_SetsNoneCacheRetentionOnOptions()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-cr"),
+            DisplayName = "Cache Retention Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "Test.",
+            CacheRetentionMode = "none"
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cr") });
+
+        var options = GetAgentOptions(handle);
+        options.GenerationSettings.CacheRetention.ShouldBe(CacheRetention.None);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutCacheRetentionInDescriptor_DefaultsToShortCacheRetention()
+    {
+        // When descriptor.CacheRetention is null, the strategy must fall back to Short (provider default).
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor(); // CacheRetention = null
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cr2") });
+
+        var options = GetAgentOptions(handle);
+        options.GenerationSettings.CacheRetention.ShouldBe(CacheRetention.Short);
+    }
 }
 
 file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>

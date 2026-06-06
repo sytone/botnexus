@@ -73,11 +73,30 @@ public sealed record AgentStreamEvent
     [JsonPropertyName("errorMessage")]
     public string? ErrorMessage { get; init; }
 
+    [JsonPropertyName("usage")]
+    public StreamUsagePayload? Usage { get; init; }
+
     [JsonPropertyName("metadata")]
     public IReadOnlyDictionary<string, JsonElement>? Metadata { get; init; }
 
     [JsonPropertyName("userInputRequest")]
     public AskUserRequestPayload? UserInputRequest { get; init; }
+}
+
+/// <summary>Token usage emitted with MessageEnd events.</summary>
+public sealed record StreamUsagePayload
+{
+    [JsonPropertyName("inputTokens")]
+    public int? InputTokens { get; init; }
+
+    [JsonPropertyName("outputTokens")]
+    public int? OutputTokens { get; init; }
+
+    [JsonPropertyName("cacheRead")]
+    public int? CacheRead { get; init; }
+
+    [JsonPropertyName("cacheWrite")]
+    public int? CacheWrite { get; init; }
 }
 
 public sealed record AskUserRequestPayload
