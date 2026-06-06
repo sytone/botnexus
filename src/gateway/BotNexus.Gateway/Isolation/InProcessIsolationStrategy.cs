@@ -883,8 +883,17 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         ToolIsError = toolEnd.IsError,
                         MessageId = messageId
                     },
-                    MessageEndEvent end when end.Message is AssistantAgentMessage
-                        => new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = messageId },
+                    MessageEndEvent end when end.Message is AssistantAgentMessage assistant
+                        => new AgentStreamEvent
+                        {
+                            Type = AgentStreamEventType.MessageEnd,
+                            MessageId = messageId,
+                            Usage = assistant.Usage is null ? null : new AgentResponseUsage(
+                                InputTokens: assistant.Usage.InputTokens,
+                                OutputTokens: assistant.Usage.OutputTokens,
+                                CacheRead: assistant.Usage.CacheRead,
+                                CacheWrite: assistant.Usage.CacheWrite)
+                        },
                     TurnEndEvent
                         => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
                     _ => null
