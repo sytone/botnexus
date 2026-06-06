@@ -7,6 +7,7 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Agent.Providers.Core.Logging;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -231,6 +232,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
     apiProviders.Register(new AnthropicProvider(httpClient));
+    apiProviders.Register(new CopilotMessagesProvider(httpClient));
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>()));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>()));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
