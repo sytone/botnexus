@@ -161,6 +161,18 @@ public abstract class SessionStoreBase : ISessionStore
 
     protected abstract Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken);
 
+    /// <inheritdoc />
+    public virtual Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public virtual Task UpdateSubAgentSessionAsync(
+        string subAgentId,
+        DateTimeOffset endedAt,
+        string status,
+        CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);
 }
