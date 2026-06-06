@@ -19,4 +19,7 @@ public interface IPortalPreferencesService
 
     /// <summary>Update the expanding-input preference and persist.</summary>
     Task SetExpandingInputAsync(bool enabled);
+
+    /// <summary>Update the debug-mode preference and persist.</summary>
+    Task SetDebugModeAsync(bool enabled);
 }
