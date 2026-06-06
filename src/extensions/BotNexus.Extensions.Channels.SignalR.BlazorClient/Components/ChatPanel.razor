@@ -1,4 +1,4 @@
-﻿@inject IJSRuntime JS
+@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -245,30 +245,29 @@
                                     @(_copiedMessageId == msg.Id ? "✓" : "📋")
                                 </button>
                             }
-                            @if (msg.Role == "Assistant" && (msg.InputTokens.HasValue || msg.CacheRead.HasValue || msg.CacheWrite.HasValue))
-                            {
-                                <span class="msg-token-stats" data-testid="msg-token-stats" title="Token usage for this message">
-                                    @if (msg.InputTokens.HasValue)
-                                    {
-                                        <span class="token-stat">in:@msg.InputTokens</span>
-                                    }
-                                    @if (msg.OutputTokens.HasValue)
-                                    {
-                                        <span class="token-stat">out:@msg.OutputTokens</span>
-                                    }
-                                    @if (msg.CacheRead.HasValue && msg.CacheRead.Value > 0)
-                                    {
-                                        <span class="token-stat cache-read" title="Cache read tokens">↩@msg.CacheRead</span>
-                                    }
-                                    @if (msg.CacheWrite.HasValue && msg.CacheWrite.Value > 0)
-                                    {
-                                        <span class="token-stat cache-write" title="Cache write tokens">↪@msg.CacheWrite</span>
-                                    }
-                                </span>
-                            }
                         </div>
                     </div>
-                    @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                    @if (msg.Role == "Assistant" && (msg.InputTokens.HasValue || msg.CacheRead.HasValue || msg.CacheWrite.HasValue))
+                    {
+                        <div class="msg-token-stats" data-testid="msg-token-stats" title="Token usage for this message">
+                            @if (msg.InputTokens.HasValue)
+                            {
+                                <span class="token-stat token-stat-input" data-testid="token-stat-input" title="Input tokens">&#8679; @(msg.InputTokens.Value.ToString("N0"))</span>
+                            }
+                            @if (msg.OutputTokens.HasValue)
+                            {
+                                <span class="token-stat token-stat-output" data-testid="token-stat-output" title="Output tokens">&#8681; @(msg.OutputTokens.Value.ToString("N0"))</span>
+                            }
+                            @if (msg.CacheRead.HasValue && msg.CacheRead.Value > 0)
+                            {
+                                <span class="token-stat token-stat-cache-read" data-testid="token-stat-cache-read" title="Cache read tokens">&#127991; @(msg.CacheRead.Value.ToString("N0"))</span>
+                            }
+                            @if (msg.CacheWrite.HasValue && msg.CacheWrite.Value > 0)
+                            {
+                                <span class="token-stat token-stat-cache-write" data-testid="token-stat-cache-write" title="Cache write tokens">&#128204; @(msg.CacheWrite.Value.ToString("N0"))</span>
+                            }
+                        </div>
+                    }                    @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
                         <div class="msg-content">@((MarkupString)rendered)</div>
                     }
