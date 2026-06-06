@@ -454,13 +454,17 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             ToolTimeout: ResolveToolTimeout(descriptor));
 
         var agent = new BotNexus.Agent.Core.Agent(options);
-        IAgentHandle handle = new InProcessAgentHandle(
+        var inProcessHandle = new InProcessAgentHandle(
             agent,
             descriptor.AgentId,
             context.SessionId,
             _logger,
             tools,
-            extensionResourcesToDispose);
+            extensionResourcesToDispose)
+        {
+            RenderedSystemPrompt = enrichedSystemPrompt
+        };
+        IAgentHandle handle = inProcessHandle;
 
         _logger.LogWarning(
             "Created agent handle for '{AgentId}' session '{SessionId}' with {ToolCount} tools: {ToolNames}",
@@ -660,6 +664,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public AgentId AgentId { get; }
+
+    /// <summary>
+    /// The system prompt that was rendered and injected into the agent at creation time.
+    /// Populated by <see cref="InProcessIsolationStrategy.CreateAsync"/> immediately after
+    /// <see cref="IContextBuilder.BuildSystemPromptAsync"/> returns so that the supervisor
+    /// can stamp <see cref="GatewaySession.LastRenderedSystemPrompt"/> without round-tripping
+    /// through the isolation strategy contract.
+    /// </summary>
+    internal string? RenderedSystemPrompt { get; set; }
 
     /// <inheritdoc />
     public SessionId SessionId { get; }
