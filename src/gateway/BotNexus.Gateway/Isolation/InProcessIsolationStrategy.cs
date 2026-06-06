@@ -447,20 +447,32 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             ToolExecutionMode: ToolExecutionMode.Parallel,
             BeforeToolCall: beforeToolCall,
             AfterToolCall: afterToolCall,
-            GenerationSettings: new SimpleStreamOptions(),
+            GenerationSettings: new SimpleStreamOptions
+            {
+                // Parse per-agent cacheRetentionMode string ("none", "short", "long").
+                // Falls back to Short when absent or unrecognised.
+                CacheRetention = Enum.TryParse<BotNexus.Agent.Providers.Core.Models.CacheRetention>(
+                    descriptor.CacheRetentionMode, ignoreCase: true, out var parsedRetention)
+                    ? parsedRetention
+                    : BotNexus.Agent.Providers.Core.Models.CacheRetention.Short
+            },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId.Value,
             ToolTimeout: ResolveToolTimeout(descriptor));
 
         var agent = new BotNexus.Agent.Core.Agent(options);
-        IAgentHandle handle = new InProcessAgentHandle(
+        var inProcessHandle = new InProcessAgentHandle(
             agent,
             descriptor.AgentId,
             context.SessionId,
             _logger,
             tools,
-            extensionResourcesToDispose);
+            extensionResourcesToDispose)
+        {
+            RenderedSystemPrompt = enrichedSystemPrompt
+        };
+        IAgentHandle handle = inProcessHandle;
 
         _logger.LogWarning(
             "Created agent handle for '{AgentId}' session '{SessionId}' with {ToolCount} tools: {ToolNames}",
@@ -660,6 +672,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public AgentId AgentId { get; }
+
+    /// <summary>
+    /// The system prompt that was rendered and injected into the agent at creation time.
+    /// Populated by <see cref="InProcessIsolationStrategy.CreateAsync"/> immediately after
+    /// <see cref="IContextBuilder.BuildSystemPromptAsync"/> returns so that the supervisor
+    /// can stamp <see cref="GatewaySession.LastRenderedSystemPrompt"/> without round-tripping
+    /// through the isolation strategy contract.
+    /// </summary>
+    internal string? RenderedSystemPrompt { get; set; }
 
     /// <inheritdoc />
     public SessionId SessionId { get; }
@@ -862,8 +883,17 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         ToolIsError = toolEnd.IsError,
                         MessageId = messageId
                     },
-                    MessageEndEvent end when end.Message is AssistantAgentMessage
-                        => new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = messageId },
+                    MessageEndEvent end when end.Message is AssistantAgentMessage assistant
+                        => new AgentStreamEvent
+                        {
+                            Type = AgentStreamEventType.MessageEnd,
+                            MessageId = messageId,
+                            Usage = assistant.Usage is null ? null : new AgentResponseUsage(
+                                InputTokens: assistant.Usage.InputTokens,
+                                OutputTokens: assistant.Usage.OutputTokens,
+                                CacheRead: assistant.Usage.CacheRead,
+                                CacheWrite: assistant.Usage.CacheWrite)
+                        },
                     TurnEndEvent
                         => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
                     _ => null
