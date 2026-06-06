@@ -29,6 +29,8 @@ using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Gateway.Services;
 
 namespace BotNexus.Gateway;
 
@@ -60,6 +62,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IConversationStore? _conversationStore;
     private readonly DefaultInboundMessageOrchestrator _orchestrator;
     private readonly IOptions<PlatformConfig>? _platformConfig;
+    private readonly ConversationAutoTitleService? _autoTitleService;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -80,7 +83,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IAgentRegistry? registry = null,
         ISessionCompactionCoordinator? compactionCoordinator = null,
         IConversationStore? conversationStore = null,
-        IOptions<PlatformConfig>? platformConfig = null)
+        IOptions<PlatformConfig>? platformConfig = null,
+        LlmClient? llmClient = null,
+        IConversationChangeNotifier? conversationChangeNotifier = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -99,6 +104,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _registry = registry;
         _conversationStore = conversationStore;
         _platformConfig = platformConfig;
+        // Wire up the auto-title service when the required dependencies are present.
+        if (llmClient is not null && conversationStore is not null)
+        {
+            _autoTitleService = new ConversationAutoTitleService(
+                conversationStore,
+                llmClient,
+                _logger,
+                conversationChangeNotifier);
+        }
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
         // one; build a fallback from the deps we already have so behaviour
@@ -662,6 +676,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 // surface as turn failures.
                 await TouchConversationAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
 
+                // Auto-generate conversation title after the first user+assistant exchange
+                // if the title is still the default value (#739). Best-effort fire-and-forget.
+                TryTriggerAutoTitle(session, agentId);
+
                 await _activity.PublishAsync(new GatewayActivity
                 {
                     Type = GatewayActivityType.AgentCompleted,
@@ -1058,12 +1076,39 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         }
     }
 
+    /// <summary>
+    /// Fires auto-title generation if this is the first user+assistant exchange in the session
+    /// and the conversation title is still at its default value. No-op when auto-title is not
+    /// wired or the conversation is not initialised.
+    /// </summary>
+    private void TryTriggerAutoTitle(GatewaySession session, string agentIdValue)
+    {
+        if (_autoTitleService is null || !session.ConversationId.IsInitialized())
+            return;
+
+        // Only fire on the first exchange: exactly 1 user entry + at least 1 assistant entry.
+        var userEntries = session.History.Count(e => e.Role == MessageRole.User);
+        var assistantEntries = session.History.Count(e => e.Role == MessageRole.Assistant);
+        if (userEntries != 1 || assistantEntries < 1)
+            return;
+
+        var userText = session.History
+            .FirstOrDefault(e => e.Role == MessageRole.User)?.Content ?? string.Empty;
+        var assistantText = session.History
+            .LastOrDefault(e => e.Role == MessageRole.Assistant)?.Content ?? string.Empty;
+
+        var titlingModel = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
+
+        _autoTitleService.TriggerBestEffort(
+            session.ConversationId,
+            Domain.Primitives.AgentId.From(agentIdValue),
+            userText,
+            assistantText,
+            titlingModel);
+    }
+
     private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)
     {
-        // Phase 5 / F-6 step 2 (#554): sub-agent classification is driven by the
-        // typed AgentDescriptor.Kind signal sourced from IAgentRegistry rather than
-        // the legacy SessionId.IsSubAgent substring check. The substring path is
-        // deleted from this method — pinned by AgentKindArchitectureTests.
         var descriptor = _registry?.Get(session.AgentId);
         if (descriptor is { Kind: AgentKind.SubAgent })
             return SessionType.AgentSubAgent;
