@@ -1,9 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <AssemblyName>BotNexus.Agent.Providers.Anthropic.Messages</AssemblyName>
-  </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>

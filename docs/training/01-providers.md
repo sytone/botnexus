@@ -29,21 +29,15 @@ public interface IApiProvider
 
 | Provider class | `Api` value | Constructor parameters | Notes |
 |---|---|---|---|
-| `AnthropicProvider` | `"anthropic-messages"` | `HttpClient` | Anthropic Messages API (refactored into specialized components) |
-| `OpenAICompletionsProvider` | `"openai-completions"` | `HttpClient`, `ILogger<OpenAICompletionsProvider>` | OpenAI Chat Completions API |
-| `OpenAIResponsesProvider` | `"openai-responses"` | `HttpClient`, `ILogger<OpenAIResponsesProvider>` | OpenAI Responses API (GPT-5 series) |
+| `AnthropicProvider` | `"anthropic-messages"` | `HttpClient` | Anthropic Messages API (direct vendor) |
+| `OpenAICompletionsProvider` | `"openai-completions"` | `HttpClient`, `ILogger<OpenAICompletionsProvider>` | OpenAI Chat Completions API (direct vendor) |
+| `OpenAIResponsesProvider` | `"openai-responses"` | `HttpClient`, `ILogger<OpenAIResponsesProvider>` | OpenAI Responses API (GPT-5 series, direct vendor) |
 | `OpenAICompatProvider` | `"openai-compat"` | `HttpClient` | Any OpenAI-compatible endpoint |
-| `CopilotProvider` *(static)* | — | — | Utility class; provides `ResolveApiKey()` and `ApplyDynamicHeaders()` |
+| `CopilotMessagesProvider` | `"github-copilot-messages"` | `HttpClient` | GitHub Copilot Anthropic-Messages transport (Claude on Copilot) |
+| `CopilotResponsesProvider` | `"github-copilot-responses"` | `HttpClient`, `ILogger<CopilotResponsesProvider>` | GitHub Copilot Responses transport (gpt-5.x on Copilot) |
+| `CopilotCompletionsProvider` | `"github-copilot-completions"` | `HttpClient`, `ILogger<CopilotCompletionsProvider>` | GitHub Copilot Chat Completions transport (gemini/grok/gpt-4.x on Copilot) |
 
-`CopilotProvider` is **not** an `IApiProvider` implementation. It is a static helper that the Copilot host uses to resolve API keys from the environment (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) and to inject dynamic headers before requests are sent through one of the other providers.
-
-```csharp
-// CopilotProvider resolves keys with a cascading fallback
-string? key = CopilotProvider.ResolveApiKey(configuredApiKey: null);
-
-// Apply request headers for a given message list
-CopilotProvider.ApplyDynamicHeaders(request.Headers, messages);
-```
+The three `Copilot*Provider` classes are first-class `IApiProvider` implementations carved out so the agent core has no cross-provider dependency on the Anthropic or OpenAI projects (issue #810). They always use Bearer auth with the Copilot OAuth access token and unconditionally apply the Copilot dynamic headers (`X-Initiator`, `Openai-Intent`, and `Copilot-Vision-Request` when images are present).
 
 > **Key takeaway:** A provider is a thin adapter between BotNexus's internal message model and a vendor's HTTP API. Implement `IApiProvider`, return an `LlmStream`, and the rest of the system handles everything else.
 
