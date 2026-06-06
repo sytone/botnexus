@@ -60,4 +60,58 @@ public sealed class AssistantTextSanitizerTests
         var text = "<thinking>Only reasoning, no actual response.</thinking>";
         AssistantTextSanitizer.StripThinkingTags(text).ShouldBe(string.Empty);
     }
+
+    // --- IsThinkingOnlyResponse ---
+
+    [Fact]
+    public void IsThinkingOnlyResponse_EmptyString_ReturnsFalse()
+    {
+        // Empty string has no thinking block, so it is not a thinking-only response.
+        AssistantTextSanitizer.IsThinkingOnlyResponse(string.Empty).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_NullString_ReturnsFalse()
+    {
+        AssistantTextSanitizer.IsThinkingOnlyResponse(null!).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_PlainTextNoThinking_ReturnsFalse()
+    {
+        // Plain response with no thinking tags is not thinking-only.
+        AssistantTextSanitizer.IsThinkingOnlyResponse("Here is the answer.").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_ThinkingBlockWithVisibleText_ReturnsFalse()
+    {
+        // Contains a thinking block but also has visible text outside it.
+        var text = "<thinking>I should reason carefully.</thinking>Here is the answer.";
+        AssistantTextSanitizer.IsThinkingOnlyResponse(text).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_OnlyThinkingBlock_ReturnsTrue()
+    {
+        // Response consists solely of a thinking block with no visible text.
+        var text = "<thinking>Only reasoning, no actual response.</thinking>";
+        AssistantTextSanitizer.IsThinkingOnlyResponse(text).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_AnthropicPrefixedOnlyThinkingBlock_ReturnsTrue()
+    {
+        // Anthropic-prefixed variant with no visible content.
+        var text = "<thinking>Extended reasoning only.</thinking>";
+        AssistantTextSanitizer.IsThinkingOnlyResponse(text).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsThinkingOnlyResponse_ThinkingBlockPlusWhitespace_ReturnsTrue()
+    {
+        // Whitespace around the thinking block is not user-visible content.
+        var text = "  <thinking>Reasoning here.</thinking>  ";
+        AssistantTextSanitizer.IsThinkingOnlyResponse(text).ShouldBeTrue();
+    }
 }
