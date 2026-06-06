@@ -209,6 +209,67 @@ public sealed class SessionsController : ControllerBase
     }
 
     /// <summary>
+    /// Gets debug information for a specific session: system prompt, paginated history, and metadata.
+    /// </summary>
+    /// <param name="sessionId">Session identifier.</param>
+    /// <param name="offset">Zero-based history offset (default 0).</param>
+    /// <param name="limit">Maximum number of history entries to return (default 50, max 200).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Debug snapshot: session fields, system prompt, history, metadata.</returns>
+    [HttpGet("{sessionId}/debug")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<object>> GetDebug(
+        string sessionId,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        var boundedLimit = Math.Min(Math.Max(limit, 1), 200);
+        var boundedOffset = Math.Max(offset, 0);
+
+        var totalCount = session.History.Count;
+        var entries = session.GetHistorySnapshot(boundedOffset, boundedLimit);
+
+        // LastRenderedSystemPrompt is stamped by InProcessAgentHandle after BuildSystemPromptAsync
+        // (PR #901 / issue #766). Returns null until that PR merges and the handle has been initialised.
+        // Use reflection-safe property access so this compiles before #901 lands.
+        var promptType = session.GetType().GetProperty("LastRenderedSystemPrompt");
+        var capturedAtType = session.GetType().GetProperty("LastRenderedSystemPromptAt");
+        var systemPrompt = promptType?.GetValue(session) as string;
+        var systemPromptCapturedAt = capturedAtType?.GetValue(session) as DateTimeOffset?;
+
+        var result = new
+        {
+            sessionId = session.SessionId.Value,
+            agentId = session.AgentId.Value,
+            status = session.Status.ToString(),
+            sessionType = session.SessionType.Value,
+            createdAt = session.CreatedAt,
+            updatedAt = session.UpdatedAt,
+            messageCount = session.MessageCount,
+            conversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : (string?)null,
+            channelType = session.ChannelType?.Value,
+            systemPrompt = systemPrompt,
+            systemPromptCapturedAt = systemPromptCapturedAt,
+            history = new
+            {
+                totalCount,
+                offset = boundedOffset,
+                limit = boundedLimit,
+                entries
+            },
+            metadata = session.Metadata
+        };
+
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Gets metadata for a specific session.
     /// </summary>
     /// <param name="sessionId">Session identifier.</param>
