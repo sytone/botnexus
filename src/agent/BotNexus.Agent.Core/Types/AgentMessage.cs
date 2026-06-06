@@ -24,7 +24,13 @@ public record AgentImageContent(string Value);
 /// </summary>
 /// <param name="InputTokens">The input token count when available.</param>
 /// <param name="OutputTokens">The output token count when available.</param>
-public record AgentUsage(int? InputTokens = null, int? OutputTokens = null);
+/// <param name="CacheRead">Tokens read from the provider prompt cache (e.g. Anthropic cache_read_input_tokens).</param>
+/// <param name="CacheWrite">Tokens written to the provider prompt cache (e.g. Anthropic cache_creation_input_tokens).</param>
+public record AgentUsage(
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheRead = null,
+    int? CacheWrite = null);
 
 /// <summary>
 /// Represents a user-authored message with optional images.
