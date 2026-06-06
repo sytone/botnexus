@@ -597,13 +597,32 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
                     else if (ResolveChannelAdapter(message.ChannelType) is { } ch)
                     {
+                        // Detect thinking-only responses: when the model returns only a
+                        // reasoning/thinking block with no user-visible content, StripThinkingTags
+                        // produces an empty string. Delivering an empty message would leave the
+                        // user with no reply and the conversation apparently stuck (#849).
+                        // Fall back to a stall notice so the turn completes gracefully.
+                        var outboundContent = ch.SupportsThinkingDisplay
+                            ? response.Content
+                            : AssistantTextSanitizer.StripThinkingTags(response.Content);
+
+                        if (!ch.SupportsThinkingDisplay &&
+                            string.IsNullOrWhiteSpace(outboundContent) &&
+                            AssistantTextSanitizer.IsThinkingOnlyResponse(response.Content))
+                        {
+                            _logger.LogWarning(
+                                "Agent '{AgentId}' session '{SessionId}' returned a thinking-only response " +
+                                "(no user-visible content after stripping reasoning blocks). " +
+                                "Sending stall notice to prevent stuck conversation.",
+                                agentId, sessionId);
+                            outboundContent = "[I wasn't able to generate a response. Please try again.]"; // #849
+                        }
+
                         await ch.SendAsync(new OutboundMessage
                         {
                             ChannelType = message.ChannelType,
                             ChannelAddress = message.ChannelAddress,
-                            Content = ch.SupportsThinkingDisplay
-                                ? response.Content
-                                : AssistantTextSanitizer.StripThinkingTags(response.Content),
+                            Content = outboundContent,
                             SessionId = sessionId,
                             // Binding-aware fields from originating binding fix #126:
                             // ensure replies carry the binding's decoration. Native sub-addresses
