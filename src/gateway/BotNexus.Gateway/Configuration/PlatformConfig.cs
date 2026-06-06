@@ -198,6 +198,12 @@ public sealed class AutoUpdateConfig
     /// </summary>
     public string? SourcePath { get; set; }
 
+    /// <summary>
+    /// Update channel to forward to the CLI update command. Typical values: <c>stable</c>, <c>beta</c>, <c>dev</c>.
+    /// When null or empty the CLI default channel is used.
+    /// </summary>
+    public string? Channel { get; set; }
+
     /// <summary>Seconds to wait after returning 202 before calling StopApplication(). Minimum 1. Defaults to 2.</summary>
     public int ShutdownDelaySeconds { get; set; } = 2;
 }
