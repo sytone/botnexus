@@ -40,4 +40,8 @@
     <EmbeddedResource Include="Templates\*.md" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+  </ItemGroup>
+
 </Project>
