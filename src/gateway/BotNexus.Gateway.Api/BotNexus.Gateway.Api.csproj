@@ -37,6 +37,7 @@
     <ProjectReference Include="..\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Webhooks\BotNexus.Gateway.Webhooks.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.GitHubModels\BotNexus.Agent.Providers.GitHubModels.csproj" />
