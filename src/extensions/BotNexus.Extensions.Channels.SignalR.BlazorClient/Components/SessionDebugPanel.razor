@@ -1,0 +1,113 @@
+@inject IGatewayRestClient GatewayRestClient
+@implements IDisposable
+
+@if (!string.IsNullOrWhiteSpace(SessionId))
+{
+    <div class="session-debug-panel" data-testid="session-debug-panel">
+        <div class="session-debug-header">
+            <h3 class="session-debug-title">Session Debug</h3>
+            <button class="session-debug-close" @onclick="OnClose" title="Close" data-testid="session-debug-close">&#x2715;</button>
+        </div>
+
+        @if (_isLoading)
+        {
+            <div class="session-debug-loading">Loading session…</div>
+        }
+        else if (_loadError is not null)
+        {
+            <div class="session-debug-error" data-testid="session-debug-error">@_loadError</div>
+        }
+        else if (_snapshot is not null)
+        {
+            <div class="session-debug-tabs" data-testid="session-debug-tabs">
+                <button class="session-debug-tab @(_activeTab == "overview" ? "active" : "")"
+                        data-testid="session-debug-tab-overview"
+                        @onclick='() => _activeTab = "overview"'>Overview</button>
+                <button class="session-debug-tab @(_activeTab == "metadata" ? "active" : "")"
+                        data-testid="session-debug-tab-metadata"
+                        @onclick='() => _activeTab = "metadata"'>Metadata</button>
+            </div>
+
+            @if (_activeTab == "overview")
+            {
+                <table class="session-debug-table" data-testid="session-debug-overview">
+                    <tbody>
+                        <tr><th>Session ID</th><td data-testid="session-id">@_snapshot.SessionId</td></tr>
+                        <tr><th>Agent</th><td data-testid="agent-id">@_snapshot.AgentId</td></tr>
+                        <tr><th>Status</th><td data-testid="status">@_snapshot.Status</td></tr>
+                        <tr><th>Type</th><td data-testid="session-type">@_snapshot.SessionType</td></tr>
+                        <tr><th>Created</th><td data-testid="created-at">@_snapshot.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+                        <tr><th>Updated</th><td data-testid="updated-at">@_snapshot.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+                        <tr><th>Messages</th><td data-testid="message-count">@_snapshot.MessageCount</td></tr>
+                        <tr><th>Conversation</th><td data-testid="conversation-id">@(_snapshot.ConversationId ?? "—")</td></tr>
+                        <tr><th>Channel</th><td data-testid="channel-type">@(_snapshot.ChannelType ?? "—")</td></tr>
+                    </tbody>
+                </table>
+            }
+            else if (_activeTab == "metadata")
+            {
+                @if (_snapshot.Metadata is null || _snapshot.Metadata.Count == 0)
+                {
+                    <div class="session-debug-empty" data-testid="session-debug-metadata-empty">No metadata entries.</div>
+                }
+                else
+                {
+                    <table class="session-debug-table" data-testid="session-debug-metadata">
+                        <thead>
+                            <tr><th>Key</th><th>Value</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var kv in _snapshot.Metadata)
+                            {
+                                <tr>
+                                    <td class="session-debug-meta-key" data-testid="meta-key">@kv.Key</td>
+                                    <td class="session-debug-meta-value" data-testid="meta-value">@(kv.Value?.ToString() ?? "null")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? SessionId { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private SessionDebugSnapshotDto? _snapshot;
+    private bool _isLoading;
+    private string? _loadError;
+    private string _activeTab = "overview";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SessionId))
+            return;
+
+        _isLoading = true;
+        _loadError = null;
+        _snapshot = null;
+        _activeTab = "overview";
+        StateHasChanged();
+
+        try
+        {
+            _snapshot = await GatewayRestClient.GetSessionDebugAsync(SessionId);
+            if (_snapshot is null)
+                _loadError = "Session not found.";
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Unable to load session: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    public void Dispose() { }
+}

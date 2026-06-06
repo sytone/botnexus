@@ -348,4 +348,17 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     /// <inheritdoc cref="IChannelErrorReporter.ReportAsync" />
     Task IChannelErrorReporter.ReportAsync(ChannelErrorReportDto report, CancellationToken cancellationToken)
         => ReportChannelErrorAsync(report, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<SessionDebugSnapshotDto?> GetSessionDebugAsync(
+        string sessionId,
+        int offset = 0,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await _http.GetFromJsonAsync<SessionDebugSnapshotDto>(
+            $"{_apiBaseUrl}sessions/{Uri.EscapeDataString(sessionId)}/debug?offset={offset}&limit={limit}",
+            cancellationToken);
+    }
 }
