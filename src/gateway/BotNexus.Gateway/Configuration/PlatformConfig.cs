@@ -611,4 +611,14 @@ public sealed class AuxiliaryConfig
     /// When null or empty the primary session model is used as fallback.
     /// </summary>
     public string? Titling { get; set; }
+
+    /// <summary>
+    /// Model ID to use for session compaction summarisation (cheap/fast auxiliary model).
+    /// Supports any registered provider model ID (e.g. "gpt-4o-mini", "claude-haiku-3-5").
+    /// When null or empty the primary <see cref="CompactionOptions.SummarizationModel"/> or
+    /// the compactor's default waterfall is used.
+    /// If the resolved auxiliary model has a smaller context window than the compaction
+    /// threshold, a startup warning is emitted but the gateway continues to run.
+    /// </summary>
+    public string? Compression { get; set; }
 }
