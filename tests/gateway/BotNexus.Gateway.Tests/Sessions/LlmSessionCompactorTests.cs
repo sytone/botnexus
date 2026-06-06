@@ -72,10 +72,14 @@ public sealed class LlmSessionCompactorTests
 
         // Phase 3a (#531): summarised entries are kept in the session store with IsHistory=true,
         // the summary entry sits at the boundary, then the preserved tail follows.
-        session.GetHistorySnapshot().Select(entry => entry.Content).ToList().ShouldBe(
-            new[] { "u1", "a1", "t1", "summary-u1", "u2", "a2", "t2", "u3", "a3" }, ignoreOrder: false);
-        session.GetHistorySnapshot().Take(3).ShouldAllBe(e => e.IsHistory);
-        session.GetHistorySnapshot().Skip(3).ShouldAllBe(e => !e.IsHistory);
+        // The summary content is the guardrail prefix + raw LLM summary (#669).
+        var snapshot = session.GetHistorySnapshot();
+        snapshot.Select(e => e.Content).Take(3).ShouldBe(new[] { "u1", "a1", "t1" });
+        snapshot[3].Content.ShouldStartWith(LlmSessionCompactor.SummaryPrefix);
+        snapshot[3].Content.ShouldContain("summary-u1");
+        snapshot.Select(e => e.Content).Skip(4).ShouldBe(new[] { "u2", "a2", "t2", "u3", "a3" });
+        snapshot.Take(3).ShouldAllBe(e => e.IsHistory);
+        snapshot.Skip(3).ShouldAllBe(e => !e.IsHistory);
     }
 
     [Fact]
@@ -101,12 +105,15 @@ public sealed class LlmSessionCompactorTests
 
         session.ReplaceHistory(result.CompactedHistory!);
 
-        session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ToList().ShouldBe(new[] { "older", "older-response", "structured summary", "recent", "recent-response" }, ignoreOrder: false);
-        session.GetHistorySnapshot()[0].IsHistory.ShouldBeTrue();
-        session.GetHistorySnapshot()[1].IsHistory.ShouldBeTrue();
-        session.GetHistorySnapshot()[2].IsCompactionSummary.ShouldBeTrue();
-        session.GetHistorySnapshot()[2].IsHistory.ShouldBeFalse();
+        var snap2 = session.GetHistorySnapshot();
+        snap2.Select(e => e.Content).Take(2).ShouldBe(new[] { "older", "older-response" });
+        snap2[2].Content.ShouldStartWith(LlmSessionCompactor.SummaryPrefix);
+        snap2[2].Content.ShouldContain("structured summary");
+        snap2.Select(e => e.Content).Skip(3).ShouldBe(new[] { "recent", "recent-response" });
+        snap2[0].IsHistory.ShouldBeTrue();
+        snap2[1].IsHistory.ShouldBeTrue();
+        snap2[2].IsCompactionSummary.ShouldBeTrue();
+        snap2[2].IsHistory.ShouldBeFalse();
     }
 
     [Fact]
@@ -174,7 +181,8 @@ public sealed class LlmSessionCompactorTests
         summaryEntry.Role.ShouldBe(MessageRole.System);
         summaryEntry.IsCompactionSummary.ShouldBeTrue();
         summaryEntry.IsHistory.ShouldBeFalse();
-        summaryEntry.Content.ShouldBe("compacted");
+        summaryEntry.Content.ShouldStartWith(LlmSessionCompactor.SummaryPrefix);
+        summaryEntry.Content.ShouldContain("compacted");
     }
 
     [Fact]
@@ -198,7 +206,11 @@ public sealed class LlmSessionCompactorTests
         result.Summary.Length.ShouldBe(40);
 
         session.ReplaceHistory(result.CompactedHistory!);
-        session.GetHistorySnapshot().Single(e => e.IsCompactionSummary).Content.Length.ShouldBe(40);
+        var compactEntry = session.GetHistorySnapshot().Single(e => e.IsCompactionSummary);
+        // The prefix is prepended; raw LLM summary is capped at MaxSummaryChars (#669).
+        compactEntry.Content.ShouldStartWith(LlmSessionCompactor.SummaryPrefix);
+        compactEntry.Content.ShouldContain(new string('x', 40));
+        compactEntry.Content.Length.ShouldBeGreaterThan(40);
     }
 
     /// <summary>
@@ -434,8 +446,8 @@ public sealed class LlmSessionCompactorTests
         session.ReplaceHistory(result2.CompactedHistory!);
 
         var snapshot = session.GetHistorySnapshot();
-        snapshot.Where(e => e.Content == "summary-1").Single().IsHistory.ShouldBeTrue();
-        snapshot.Where(e => e.Content == "summary-2").Single().IsHistory.ShouldBeFalse();
+        snapshot.Where(e => e.IsCompactionSummary && e.Content.Contains("summary-1")).Single().IsHistory.ShouldBeTrue();
+        snapshot.Where(e => e.IsCompactionSummary && e.Content.Contains("summary-2")).Single().IsHistory.ShouldBeFalse();
         // u1/a1/u2/a2 all preserved
         snapshot.Select(e => e.Content).ShouldContain("u1");
         snapshot.Select(e => e.Content).ShouldContain("a1");
@@ -640,6 +652,96 @@ public sealed class LlmSessionCompactorTests
             capturedPrompt2.Contains("new-u4") ||
             capturedPrompt2.Contains("new-a4");
         promptContainsNewTurns.ShouldBeTrue("new post-compaction turns must be included in cycle-2 prompt or preserved");
+    }
+
+    // ─── Issue #669: compaction guardrail prefix + structured template ────────
+
+    /// <summary>Compaction summary entry must start with the guardrail prefix to prevent
+    /// the agent from resuming stale tasks after a context window handoff.</summary>
+    [Fact]
+    public async Task CompactAsync_SummaryEntry_BeginsWithGuardrailPrefix()
+    {
+        var session = CreateSession(
+            ("user", "do something"),
+            ("assistant", "done"),
+            ("user", "keep me"));
+        var compactor = CreateCompactor("raw-llm-output");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var summaryEntry = result.CompactedHistory!.Single(e => e.IsCompactionSummary);
+        summaryEntry.Content.ShouldStartWith(LlmSessionCompactor.SummaryPrefix);
+        summaryEntry.Content.ShouldContain("raw-llm-output");
+        // The raw LLM output (result.Summary) is NOT prefixed -- prefix lives in history only.
+        result.Summary.ShouldBe("raw-llm-output");
+    }
+
+    /// <summary>The summarization prompt must request the 5 structured sections from the spec.</summary>
+    [Fact]
+    public async Task CompactAsync_SummarizationPrompt_HasFiveStructuredSections()
+    {
+        var session = CreateSession(
+            ("user", "build it"),
+            ("assistant", "building"),
+            ("user", "recent"));
+        string? capturedPrompt = null;
+        var compactor = CreateCompactorCapturingPrompt("summary", p => capturedPrompt = p);
+
+        await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        capturedPrompt.ShouldNotBeNull();
+        capturedPrompt!.ShouldContain("## Resolved");
+        capturedPrompt.ShouldContain("## Active Task");
+        capturedPrompt.ShouldContain("## In Progress");
+        capturedPrompt.ShouldContain("## Pending User Asks");
+        capturedPrompt.ShouldContain("## Remaining Work");
+    }
+
+    /// <summary>Guardrail prefix must be visible in the LLM message list when the session is projected.
+    /// On the NEXT compaction cycle the prefix appears in the summarization prompt,
+    /// proving it will be LLM-visible during normal operation.</summary>
+    [Fact]
+    public async Task CompactAsync_GuardrailPrefix_IsVisibleInSubsequentCompactionPrompt()
+    {
+        var session = CreateSession(
+            ("user", "old-task"),
+            ("assistant", "old-result"),
+            ("user", "mid"));
+        // Cycle 1
+        var cycle1 = await CreateCompactor("cycle1-summary").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+        session.ReplaceHistory(cycle1.CompactedHistory!);
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "new-u" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "new-a" },
+            new SessionEntry { Role = MessageRole.User, Content = "preserve" }
+        });
+
+        // Cycle 2 -- capture prompt sent to LLM
+        string? prompt2 = null;
+        await CreateCompactorCapturingPrompt("cycle2-summary", p => prompt2 = p).CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        prompt2.ShouldNotBeNull();
+        // The guardrail prefix from cycle 1 must be present in the cycle 2 summarization prompt
+        // (it travels with the compaction entry content into the LLM context).
+        prompt2!.ShouldContain("[CONTEXT COMPACTION -- REFERENCE ONLY]");
     }
 
     private static LlmSessionCompactor CreateCompactorCapturingPrompt(
