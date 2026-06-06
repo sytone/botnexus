@@ -125,6 +125,11 @@ public interface IGatewayRestClient
         int limit = 50,
         CancellationToken cancellationToken = default);
 
+    /// <summary>GET /api/sessions/{sessionId}/subagents — returns the live sub-agents for a session.</summary>
+    Task<IReadOnlyList<SubAgentInfo>> ListSessionSubAgentsAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }

@@ -30,6 +30,9 @@
                 <button class="session-debug-tab @(_activeTab == "system-prompt" ? "active" : "")"
                         data-testid="session-debug-tab-system-prompt"
                         @onclick='() => _activeTab = "system-prompt"'>System Prompt</button>
+                <button class="session-debug-tab @(_activeTab == "sub-agents" ? "active" : "")"
+                        data-testid="session-debug-tab-sub-agents"
+                        @onclick='() => SelectSubAgentsTabAsync()'>Sub-Agents</button>
             </div>
 
             @if (_activeTab == "overview")
@@ -93,6 +96,35 @@
                     <pre class="session-debug-system-prompt" data-testid="session-debug-system-prompt-content">@_snapshot.SystemPrompt</pre>
                 }
             }
+            else if (_activeTab == "sub-agents")
+            {
+                @if (_isLoadingSubAgents)
+                {
+                    <div class="session-debug-loading" data-testid="session-debug-subagents-loading">Loading sub-agents…</div>
+                }
+                else if (_subAgents is null || _subAgents.Count == 0)
+                {
+                    <div class="session-debug-empty" data-testid="session-debug-subagents-empty">No sub-agents for this session.</div>
+                }
+                else
+                {
+                    <table class="session-debug-table" data-testid="session-debug-subagents">
+                        <thead>
+                            <tr><th>Sub-Agent ID</th><th>Status</th><th>Model</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var sa in _subAgents)
+                            {
+                                <tr>
+                                    <td data-testid="subagent-id">@sa.SubAgentId</td>
+                                    <td data-testid="subagent-status">@sa.Status</td>
+                                    <td data-testid="subagent-model">@(sa.Model ?? "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
         }
     </div>
 }
@@ -106,6 +138,8 @@
     private bool _isLoading;
     private string? _loadError;
     private string _activeTab = "overview";
+    private IReadOnlyList<SubAgentInfo>? _subAgents;
+    private bool _isLoadingSubAgents;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -116,6 +150,8 @@
         _loadError = null;
         _snapshot = null;
         _activeTab = "overview";
+        _subAgents = null;
+        _isLoadingSubAgents = false;
         StateHasChanged();
 
         try
@@ -135,6 +171,28 @@
     }
 
     public void Dispose() { }
+
+    private async Task SelectSubAgentsTabAsync()
+    {
+        _activeTab = "sub-agents";
+        if (_subAgents is not null)
+            return;
+
+        _isLoadingSubAgents = true;
+        StateHasChanged();
+        try
+        {
+            _subAgents = await GatewayRestClient.ListSessionSubAgentsAsync(SessionId!);
+        }
+        catch
+        {
+            _subAgents = [];
+        }
+        finally
+        {
+            _isLoadingSubAgents = false;
+        }
+    }
 
     private async Task CopySystemPromptAsync()
     {
