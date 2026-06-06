@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <RootNamespace>BotNexus.Agent.Providers.Copilot</RootNamespace>
-    <AssemblyName>BotNexus.Agent.Providers.Copilot.New</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
