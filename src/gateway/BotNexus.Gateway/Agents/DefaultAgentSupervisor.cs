@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Isolation;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Agents;
@@ -234,6 +235,16 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
             History = priorHistory
         };
         var handle = await strategy.CreateAsync(descriptor, context, cancellationToken);
+
+        // Stamp the last rendered system prompt on the session so the debug inspector
+        // can surface it. InProcessAgentHandle exposes RenderedSystemPrompt as an
+        // internal property; other strategies don't render prompts client-side.
+        if (existingSession is not null && handle is InProcessAgentHandle inProcess
+            && inProcess.RenderedSystemPrompt is { Length: > 0 })
+        {
+            existingSession.LastRenderedSystemPrompt = inProcess.RenderedSystemPrompt;
+            existingSession.LastRenderedSystemPromptAt = DateTimeOffset.UtcNow;
+        }
 
         var instance = new AgentInstance
         {

@@ -17,7 +17,8 @@ internal sealed class BuiltInCommandContributor(
     IAgentSupervisor agentSupervisor,
     ISessionStore sessionStore,
     IOptionsMonitor<CompactionOptions> compactionOptions,
-    IServiceProvider serviceProvider) : ICommandContributor
+    IServiceProvider serviceProvider,
+    ISessionCompactionCoordinator? compactionCoordinator = null) : ICommandContributor
 {
     private static readonly IReadOnlyList<CommandDescriptor> BuiltInCommands =
     [
@@ -57,6 +58,12 @@ internal sealed class BuiltInCommandContributor(
             Name = "/context",
             Description = "Show a breakdown of context window usage for the current session.",
             Category = "Session"
+        },
+        new CommandDescriptor
+        {
+            Name = "/compact",
+            Description = "Compact the current session context: summarise older messages to free context window.",
+            Category = "Session"
         }
     ];
 
@@ -74,6 +81,7 @@ internal sealed class BuiltInCommandContributor(
             "/new" => ExecuteNewSessionAsync(context, cancellationToken),
             "/reset" => Task.FromResult(ClientSideOnlyCommandResult()),
             "/context" => Task.FromResult(ExecuteContext(context)),
+            "/compact" => ExecuteCompactAsync(context, cancellationToken),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
@@ -302,4 +310,52 @@ internal sealed class BuiltInCommandContributor(
         Body = "This command executes client-side only.",
         IsError = true
     };
+
+    private async Task<CommandResult> ExecuteCompactAsync(
+        CommandExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(context.AgentId) || string.IsNullOrWhiteSpace(context.SessionId))
+        {
+            return new CommandResult
+            {
+                Title = "Compact Failed",
+                Body = "Cannot compact without an active session. Start a conversation first.",
+                IsError = true
+            };
+        }
+
+        if (compactionCoordinator is null)
+        {
+            return new CommandResult
+            {
+                Title = "Compact Failed",
+                Body = "Session compaction coordinator is not available in this gateway instance.",
+                IsError = true
+            };
+        }
+
+        var sessionId = SessionId.From(context.SessionId);
+        var session = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return new CommandResult
+            {
+                Title = "Compact Failed",
+                Body = "Session not found.",
+                IsError = true
+            };
+        }
+
+        var agentId = AgentId.From(context.AgentId);
+        var outcome = await compactionCoordinator.CompactAsync(agentId, session, cancellationToken).ConfigureAwait(false);
+        var notificationText = compactionCoordinator.BuildNotificationText(outcome);
+
+        return new CommandResult
+        {
+            Title = "Session Compacted",
+            Body = notificationText,
+            IsError = !outcome.Applied && outcome.FailureReason is not null
+        };
+    }
 }

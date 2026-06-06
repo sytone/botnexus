@@ -262,14 +262,13 @@ public sealed class GatewayStartupAndConfigurationTests
     }
 
     [Fact]
-    public void GatewayConfiguration_CopilotMessagesProvider_IsRegisteredAndAdditiveToAnthropicMessages()
+    public void GatewayConfiguration_CopilotMessagesProvider_IsRoutedFromBuiltInClaudeModels()
     {
-        // Phase 1a (#810): The carved-out CopilotMessagesProvider exists alongside
-        // AnthropicProvider. It is reachable under Api="github-copilot-messages" but
-        // BuiltInModels does NOT yet route any model to it — that is Phase 1b.
-        // This test pins the additive deployment contract: existing Claude-on-Copilot
-        // requests continue to route through AnthropicProvider (anthropic-messages),
-        // and the new provider is available for the upcoming routing flip.
+        // Phase 1b (#810): BuiltInModels now routes the Copilot Claude entries through the
+        // carved-out CopilotMessagesProvider (Api="github-copilot-messages"). Both providers
+        // remain registered so direct-Anthropic users are unaffected; the user-visible wire
+        // contract for Copilot Claude requests is pinned by Phase 0a + the Phase 1a parity
+        // tests, which both stayed green across this flip.
         using var httpClient = new HttpClient();
 
         var apiProviders = new ApiProviderRegistry();
@@ -289,14 +288,17 @@ public sealed class GatewayStartupAndConfigurationTests
         registeredApis.ShouldContain("anthropic-messages",
             "AnthropicProvider must remain registered — direct-Anthropic users depend on it.");
         registeredApis.ShouldContain("github-copilot-messages",
-            "Phase 1a registers CopilotMessagesProvider so Phase 1b can flip Claude models without code change.");
+            "CopilotMessagesProvider must remain registered so the Copilot Claude entries resolve.");
 
-        // BuiltInModels still routes Claude entries via anthropic-messages in Phase 1a.
-        // Phase 1b will flip these to github-copilot-messages.
-        var haiku = llmClient.Models.GetModel("github-copilot", "claude-haiku-4.5");
-        haiku.ShouldNotBeNull();
-        haiku!.Api.ShouldBe("anthropic-messages",
-            "Phase 1a is additive — model routing must not change yet.");
+        // After the Phase 1b flip, every Claude entry under github-copilot routes via
+        // github-copilot-messages. Spot-check one of each family.
+        foreach (var modelId in new[] { "claude-haiku-4.5", "claude-opus-4.6", "claude-sonnet-4.6" })
+        {
+            var model = llmClient.Models.GetModel("github-copilot", modelId);
+            model.ShouldNotBeNull($"BuiltInModels must register github-copilot/{modelId}");
+            model!.Api.ShouldBe("github-copilot-messages",
+                $"Phase 1b — github-copilot/{modelId} must route via the carved-out provider.");
+        }
     }
 
     [Fact]
