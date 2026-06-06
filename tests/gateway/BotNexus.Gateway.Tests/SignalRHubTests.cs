@@ -538,6 +538,49 @@ public sealed class SignalRHubTests
             .Message.ShouldBe("Session 'missing' not found.");
     }
 
+    [Fact]
+    public async Task InterruptAndSteer_WhenHandleExists_CallsInterruptAndSteerAsyncAndReturnsTrue()
+    {
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.InterruptAndSteerAsync("new direction", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(AgentId.From("agent-a"), SessionId.From("session-1")))
+            .Returns(handle.Object);
+
+        var hub = CreateHub(supervisor: supervisor.Object);
+
+        var result = await hub.InterruptAndSteer(AgentId.From("agent-a"), SessionId.From("session-1"), "new direction");
+
+        result.ShouldBeTrue();
+        handle.Verify(h => h.InterruptAndSteerAsync("new direction", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task InterruptAndSteer_WhenNoHandleExists_ReturnsFalseWithoutThrow()
+    {
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns((IAgentHandle?)null);
+
+        var hub = CreateHub(supervisor: supervisor.Object);
+
+        var result = await hub.InterruptAndSteer(AgentId.From("agent-a"), SessionId.From("missing"), "steer me");
+
+        result.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task InterruptAndSteer_NullOrEmptyMessage_ThrowsArgumentException()
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.InterruptAndSteer(AgentId.From("agent-a"), SessionId.From("session-1"), "");
+
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
     private static GatewayHub CreateHub(
         IHubCallerClients<IGatewayHubClient>? clients = null,
         IGroupManager? groups = null,
