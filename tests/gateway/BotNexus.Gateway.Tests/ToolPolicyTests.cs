@@ -238,4 +238,102 @@ public sealed class ToolPolicyTests
 
         handler.Priority.ShouldBeLessThan(0, "policy handler should run before other handlers");
     }
+
+    // ─── Issue #667: runtime-pinned tools bypass deny-list ──────────────────────
+
+    /// <summary>Static RuntimePinnedTools cannot be denied by per-agent deny-list config.</summary>
+    [Theory]
+    [InlineData("ask_user")]
+    [InlineData("canvas")]
+    [InlineData("memory_save")]
+    [InlineData("memory_search")]
+    [InlineData("memory_get")]
+    [InlineData("session")]
+    [InlineData("conversation")]
+    public void IsDenied_RuntimePinnedTool_ReturnsFalse_EvenWhenInDenyList(string toolName)
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["test-agent"] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig { Denied = [toolName] }
+                }
+            }
+        };
+        var provider = CreateProvider(config);
+
+        // Tool in deny-list but also in RuntimePinnedTools -- must not be denied.
+        provider.IsDenied(toolName, "test-agent").ShouldBeFalse(
+            $"runtime-pinned tool '{toolName}' must never be denied");
+    }
+
+    /// <summary>PinTool registers a dynamic pin; the pinned tool bypasses deny-list.</summary>
+    [Fact]
+    public void IsDenied_DynamicallyPinnedTool_ReturnsFalse_EvenWhenInDenyList()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["a"] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig { Denied = ["my_custom_tool"] }
+                }
+            }
+        };
+        var provider = CreateProvider(config);
+        provider.PinTool("my_custom_tool");
+
+        provider.IsDenied("my_custom_tool", "a").ShouldBeFalse(
+            "dynamically-pinned tool must bypass deny-list");
+    }
+
+    /// <summary>Non-pinned tools in the deny-list are still denied normally.</summary>
+    [Fact]
+    public void IsDenied_NonPinnedDeniedTool_ReturnsTrueAsNormal()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["a"] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig { Denied = ["some_blocked_tool"] }
+                }
+            }
+        };
+        var provider = CreateProvider(config);
+
+        provider.IsDenied("some_blocked_tool", "a").ShouldBeTrue();
+    }
+
+    /// <summary>ToolPolicyHookHandler does not deny runtime-pinned tools
+    /// even when they appear in the agent's deny-list.</summary>
+    [Fact]
+    public async Task HookHandler_RuntimePinnedTool_NotDenied_EvenWhenInDenyList()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["test-agent-pinned"] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig { Denied = ["ask_user"] }
+                }
+            }
+        };
+        var provider = CreateProvider(config);
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("test-agent-pinned"), "ask_user", "tc-pinned",
+            new Dictionary<string, object?> { ["prompt"] = "Are you sure?" });
+
+        var result = await handler.HandleAsync(evt);
+        result.ShouldBeNull("runtime-pinned ask_user must not be denied even when in deny-list");
+    }
 }
