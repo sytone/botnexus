@@ -80,6 +80,7 @@ public sealed class ConfigController : ControllerBase
     /// Update a config section.
     /// </summary>
     [HttpPut("{section}")]
+    [RequireAdmin]
     public async Task<ActionResult> UpdateSection(
         string section,
         [FromBody] JsonNode value,
@@ -98,6 +99,7 @@ public sealed class ConfigController : ControllerBase
     /// Update a specific entry within a config section (e.g., a single provider).
     /// </summary>
     [HttpPut("{section}/{key}")]
+    [RequireAdmin]
     public async Task<ActionResult> UpdateSectionEntry(
         string section,
         string key,
@@ -113,6 +115,7 @@ public sealed class ConfigController : ControllerBase
     /// Delete an entry from a config section.
     /// </summary>
     [HttpDelete("{section}/{key}")]
+    [RequireAdmin]
     public async Task<ActionResult> DeleteSectionEntry(
         string section,
         string key,

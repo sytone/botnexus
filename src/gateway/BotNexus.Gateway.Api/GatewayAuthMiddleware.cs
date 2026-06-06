@@ -13,7 +13,8 @@ namespace BotNexus.Gateway.Api;
 /// </summary>
 public sealed class GatewayAuthMiddleware
 {
-    internal const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
+    /// <summary>HTTP context item key used to store the authenticated <see cref="GatewayCallerIdentity"/>.</summary>
+    public const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
