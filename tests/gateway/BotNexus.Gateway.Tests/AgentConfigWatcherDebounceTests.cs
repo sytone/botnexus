@@ -7,10 +7,13 @@ namespace BotNexus.Gateway.Tests;
 /// Tests for the debounced agent config file watcher (#937).
 /// Uses the internal static IsAgentDefinitionFile method directly to avoid
 /// needing MockFileSystem to support FileSystemWatcher.
+///
+/// Paths are built with Path.Combine so tests pass on both Windows and Linux CI.
 /// </summary>
 public sealed class AgentConfigWatcherDebounceTests
 {
-    private const string AgentsRoot = @"C:\agents";
+    // Cross-platform root: e.g. /tmp/agents on Linux, C:\agents on Windows
+    private static readonly string AgentsRoot = Path.Combine(Path.GetTempPath(), "agents");
 
     // Shorthand helper
     private static bool IsDefinitionFile(string fullPath)
@@ -21,7 +24,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_WorkspaceSubdirectoryFile_ReturnsFalse()
     {
-        IsDefinitionFile(@"C:\agents\nova\workspace\memory\2026-01-01.md").ShouldBeFalse();
+        var path = Path.Combine(AgentsRoot, "nova", "workspace", "memory", "2026-01-01.md");
+        IsDefinitionFile(path).ShouldBeFalse();
     }
 
     // ── test 2: config.json at depth 1 triggers reload ───────────────────────
@@ -29,7 +33,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_AgentConfigJson_ReturnsTrue()
     {
-        IsDefinitionFile(@"C:\agents\nova\config.json").ShouldBeTrue();
+        var path = Path.Combine(AgentsRoot, "nova", "config.json");
+        IsDefinitionFile(path).ShouldBeTrue();
     }
 
     // ── test 3: SOUL.md at depth 1 triggers reload ───────────────────────────
@@ -37,7 +42,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_AgentRootMarkdown_ReturnsTrue()
     {
-        IsDefinitionFile(@"C:\agents\nova\SOUL.md").ShouldBeTrue();
+        var path = Path.Combine(AgentsRoot, "nova", "SOUL.md");
+        IsDefinitionFile(path).ShouldBeTrue();
     }
 
     // ── test 4: .txt or .log file does NOT trigger reload ────────────────────
@@ -45,7 +51,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_TxtFile_ReturnsFalse()
     {
-        IsDefinitionFile(@"C:\agents\nova\debug.log").ShouldBeFalse();
+        var path = Path.Combine(AgentsRoot, "nova", "debug.log");
+        IsDefinitionFile(path).ShouldBeFalse();
     }
 
     // ── test 5: tmp file in workspace subdirectory does NOT trigger reload ───
@@ -53,7 +60,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_TmpFileInWorkspace_ReturnsFalse()
     {
-        IsDefinitionFile(@"C:\agents\nova\workspace\tmp\script.ps1").ShouldBeFalse();
+        var path = Path.Combine(AgentsRoot, "nova", "workspace", "tmp", "script.ps1");
+        IsDefinitionFile(path).ShouldBeFalse();
     }
 
     // ── test 6: .md in workspace/playbook subdirectory does NOT trigger ──────
@@ -61,7 +69,8 @@ public sealed class AgentConfigWatcherDebounceTests
     [Fact]
     public void IsAgentDefinitionFile_MdInWorkspaceSubdir_ReturnsFalse()
     {
-        IsDefinitionFile(@"C:\agents\nova\workspace\playbook\ci-pr-monitor.md").ShouldBeFalse();
+        var path = Path.Combine(AgentsRoot, "nova", "workspace", "playbook", "ci-pr-monitor.md");
+        IsDefinitionFile(path).ShouldBeFalse();
     }
 
     // ── test 7: default debounce constant is 2000ms ──────────────────────────
