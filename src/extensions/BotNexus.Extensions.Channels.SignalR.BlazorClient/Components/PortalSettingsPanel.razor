@@ -20,6 +20,16 @@
                 <div class="portal-settings-hint">
                     Textarea grows as you type, up to @Prefs.Current.ExpandingInputMaxLines rows.
                 </div>
+                <div class="portal-settings-row">
+                    <label class="portal-settings-label">Debug Mode</label>
+                    <input type="checkbox"
+                           data-testid="debug-mode-toggle"
+                           checked="@Prefs.Current.DebugModeEnabled"
+                           @onchange="ToggleDebugMode" />
+                </div>
+                <div class="portal-settings-hint">
+                    When enabled, shows a debug icon in the banner for session inspection.
+                </div>
             </div>
         </div>
     </div>
@@ -49,6 +59,12 @@
     {
         var enabled = e.Value is bool b ? b : bool.Parse(e.Value?.ToString() ?? "false");
         await Prefs.SetExpandingInputAsync(enabled);
+    }
+
+    private async Task ToggleDebugMode(ChangeEventArgs e)
+    {
+        var enabled = e.Value is bool b ? b : bool.Parse(e.Value?.ToString() ?? "false");
+        await Prefs.SetDebugModeAsync(enabled);
     }
 
     private void HandleChanged() => InvokeAsync(StateHasChanged);
