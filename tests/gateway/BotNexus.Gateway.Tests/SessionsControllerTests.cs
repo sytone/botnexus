@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Http;
@@ -1215,5 +1216,39 @@ public sealed class SessionsControllerTests
         {
             HttpContext = httpContext
         };
+    }
+
+    // ── 503 retry tests (#936) ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task List_WhenStoreUnavailable_Returns503()
+    {
+        var store = new Mock<ISessionStore>();
+        store
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new SessionStoreUnavailableException("unavailable", new Exception("inner")));
+
+        var controller = new SessionsController(store.Object);
+
+        var result = await controller.List(null, cancellationToken: CancellationToken.None);
+
+        var statusResult = result as ObjectResult;
+        statusResult.ShouldNotBeNull();
+        statusResult!.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task List_WhenStoreAvailable_Returns200()
+    {
+        var store = new Mock<ISessionStore>();
+        store
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<GatewaySession>());
+
+        var controller = new SessionsController(store.Object);
+
+        var result = await controller.List(null, cancellationToken: CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
     }
 }

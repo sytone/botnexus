@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Sessions;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
@@ -56,7 +57,16 @@ public sealed class SessionsController : ControllerBase
         AgentId? parsedAgentId = null;
         if (!string.IsNullOrWhiteSpace(agentId))
             parsedAgentId = AgentId.From(agentId);
-        var sessions = await _sessions.ListAsync(parsedAgentId, cancellationToken);
+
+        IReadOnlyList<GatewaySession> sessions;
+        try
+        {
+            sessions = await _sessions.ListAsync(parsedAgentId, cancellationToken);
+        }
+        catch (SessionStoreUnavailableException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Session store temporarily unavailable. Please retry." });
+        }
         if (!includeInactive)
         {
             sessions = sessions
