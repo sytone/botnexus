@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Yaml\BotNexus.Yaml.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />

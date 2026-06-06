@@ -1111,7 +1111,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     public override async Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        await using var conn = new SqliteConnection(_connectionString);
+        await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var cmd = conn.CreateCommand();
@@ -1138,7 +1138,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        await using var conn = new SqliteConnection(_connectionString);
+        await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var cmd = conn.CreateCommand();
@@ -1153,4 +1153,43 @@ public sealed class SqliteSessionStore : SessionStoreBase
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(
+        SessionId sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, parent_session_id, parent_agent_id, child_agent_id,
+                   archetype, started_at, ended_at, status
+            FROM sub_agent_sessions
+            WHERE parent_session_id = $parentSessionId
+            ORDER BY started_at ASC
+            """;
+        command.Parameters.AddWithValue("$parentSessionId", sessionId.Value);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var results = new List<SubAgentSessionSummary>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var endedAt = reader.IsDBNull(6)
+                ? (DateTimeOffset?)null
+                : ParseTimestamp(reader.GetString(6));
+            results.Add(new SubAgentSessionSummary
+            {
+                SubAgentId      = reader.GetString(0),
+                ParentSessionId = reader.GetString(1),
+                ParentAgentId   = reader.GetString(2),
+                ChildAgentId    = reader.GetString(3),
+                Archetype       = reader.IsDBNull(4) ? null : reader.GetString(4),
+                StartedAt       = ParseTimestamp(reader.GetString(5)),
+                EndedAt         = endedAt,
+                Status          = reader.GetString(7),
+            });
+        }
+        return results;
+    }
 }

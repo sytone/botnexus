@@ -129,6 +129,30 @@ public sealed class SessionsController : ControllerBase
         return Ok(subAgents);
     }
 
+    /// <summary>
+    /// Returns historical sub-agent session rows for the given parent session from
+    /// the <c>sub_agent_sessions</c> store, ordered by <c>started_at</c> ascending.
+    /// Unlike <c>GET /subagents</c> (which returns live runtime state), this endpoint
+    /// returns persisted history including completed and failed runs.
+    /// </summary>
+    /// <param name="sessionId">The parent session ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>List of sub-agent session summaries.</returns>
+    [HttpGet("{sessionId}/subagents/history")]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentSessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<SubAgentSessionSummary>>> GetSubAgentHistory(
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        var history = await _sessions.ListSubAgentSessionsAsync(SessionId.From(sessionId), cancellationToken);
+        return Ok(history);
+    }
+
     /// <summary>Kills a sub-agent owned by the specified session.</summary>
     /// <summary>
     /// Executes kill sub agent.
