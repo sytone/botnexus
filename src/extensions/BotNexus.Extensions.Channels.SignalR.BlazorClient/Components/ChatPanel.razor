@@ -1,4 +1,4 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -245,6 +245,27 @@
                                     @(_copiedMessageId == msg.Id ? "✓" : "📋")
                                 </button>
                             }
+                            @if (msg.Role == "Assistant" && (msg.InputTokens.HasValue || msg.CacheRead.HasValue || msg.CacheWrite.HasValue))
+                            {
+                                <span class="msg-token-stats" data-testid="msg-token-stats" title="Token usage for this message">
+                                    @if (msg.InputTokens.HasValue)
+                                    {
+                                        <span class="token-stat">in:@msg.InputTokens</span>
+                                    }
+                                    @if (msg.OutputTokens.HasValue)
+                                    {
+                                        <span class="token-stat">out:@msg.OutputTokens</span>
+                                    }
+                                    @if (msg.CacheRead.HasValue && msg.CacheRead.Value > 0)
+                                    {
+                                        <span class="token-stat cache-read" title="Cache read tokens">↩@msg.CacheRead</span>
+                                    }
+                                    @if (msg.CacheWrite.HasValue && msg.CacheWrite.Value > 0)
+                                    {
+                                        <span class="token-stat cache-write" title="Cache write tokens">↪@msg.CacheWrite</span>
+                                    }
+                                </span>
+                            }
                         </div>
                     </div>
                     @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
@@ -330,6 +351,12 @@
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Redirect the agent's response (Shift+Enter for newline)">
                         🔀 Steer
+                    </button>
+                    <button class="interrupt-steer-btn"
+                            @onclick="InterruptAndSteer"
+                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                            title="Abort current turn and redirect with input message">
+                        Interrupt + Redirect
                     </button>
                     <button class="abort-btn"
                             @onclick="AbortAgent"
@@ -816,6 +843,15 @@ private bool IsStreaming =>
     }
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
+    private async Task InterruptAndSteer()
+    {
+        var message = _inputText.Trim();
+        if (string.IsNullOrWhiteSpace(message)) return;
+        _inputText = "";
+        UpdateCommandPalette();
+        await Interaction.InterruptAndSteerAsync(AgentId, message);
+    }
+
 
     private async Task HandleAskUserSubmit(AskUserPromptSubmission submission)
     {

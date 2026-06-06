@@ -161,6 +161,18 @@ public sealed class GatewaySession
     /// <summary>Number of entries in the conversation history.</summary>
     public int MessageCount => Session.MessageCount;
 
+    /// <summary>
+    /// The last system prompt rendered for this session at dispatch time.
+    /// In-memory only — cleared on gateway restart. Set by the isolation
+    /// strategy on handle creation so the debug inspector can retrieve it.
+    /// </summary>
+    public string? LastRenderedSystemPrompt { get; set; }
+
+    /// <summary>
+    /// The timestamp at which <see cref="LastRenderedSystemPrompt"/> was last captured.
+    /// </summary>
+    public DateTimeOffset? LastRenderedSystemPromptAt { get; set; }
+
     /// <summary>Session-level metadata for extensibility.</summary>
     public Dictionary<string, object?> Metadata
     {
