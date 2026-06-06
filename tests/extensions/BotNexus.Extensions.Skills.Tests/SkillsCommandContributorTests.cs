@@ -16,7 +16,7 @@ public sealed class SkillsCommandContributorTests
 
         var command = contributor.GetCommands().Single(value => value.Name == "/skills");
 
-        command.SubCommands!.Select(value => value.Name).ShouldBe(new[] { "list", "info", "add", "remove", "reload" });
+        command.SubCommands!.Select(value => value.Name).ShouldBe(new[] { "list", "info", "add", "remove", "reload", "create", "delete" });
     }
 
     [Fact]
@@ -256,5 +256,169 @@ public sealed class SkillsCommandContributorTests
         if (skillName is not null)
             dict["skillName"] = skillName;
         return dict;
+    }
+
+    // ── create / delete tests ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Create_WhenManagerToolNotAvailable_ReturnsDisabledError()
+    {
+        var contributor = CreateContributor();
+        // No skill_manage tool registered
+        var context = new CommandExecutionContext
+        {
+            RawInput = "/skills create my-skill",
+            SubCommand = "create",
+            Arguments = ["my-skill"],
+            AgentId = "test-agent",
+            SessionId = "session-1",
+            HomeDirectory = @"Q:\repos\botnexus",
+            ResolveSessionTool = _ => null
+        };
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("AllowSkillCreation");
+    }
+
+    [Fact]
+    public async Task Create_MissingName_ReturnsError()
+    {
+        var (contributor, _, managerTool) = CreateContributorWithBothTools();
+        var context = BuildWriteContext("create", [], managerTool);
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("name");
+    }
+
+    [Fact]
+    public async Task Create_WithName_ReturnsInstructionMessage()
+    {
+        var (contributor, _, managerTool) = CreateContributorWithBothTools();
+        var context = BuildWriteContext("create", ["my-skill"], managerTool);
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeFalse();
+        result.Body.ShouldContain("my-skill");
+        result.Body.ShouldContain("skill_manage");
+    }
+
+    [Fact]
+    public async Task Delete_WhenManagerToolNotAvailable_ReturnsDisabledError()
+    {
+        var contributor = CreateContributor();
+        var context = new CommandExecutionContext
+        {
+            RawInput = "/skills delete my-skill --confirm",
+            SubCommand = "delete",
+            Arguments = ["my-skill", "--confirm"],
+            AgentId = "test-agent",
+            SessionId = "session-1",
+            HomeDirectory = @"Q:\repos\botnexus",
+            ResolveSessionTool = _ => null
+        };
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("AllowSkillDeletion");
+    }
+
+    [Fact]
+    public async Task Delete_MissingName_ReturnsError()
+    {
+        var (contributor, _, managerTool) = CreateContributorWithBothTools();
+        var context = BuildWriteContext("delete", [], managerTool);
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Delete_WithoutConfirm_ReturnsConfirmationPrompt()
+    {
+        var (contributor, _, managerTool) = CreateContributorWithBothTools();
+        var context = BuildWriteContext("delete", ["my-skill"], managerTool);
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeFalse();
+        result.Body.ShouldContain("--confirm");
+    }
+
+    [Fact]
+    public async Task Delete_WithConfirm_AndSkillExists_ExecutesDelete()
+    {
+        // Arrange: create a real skill directory in a mock filesystem
+        var fs = new System.IO.Abstractions.TestingHelpers.MockFileSystem();
+        const string agentSkillsDir = @"C:\agent-skills";
+        const string skillName = "test-skill";
+        var skillDir = Path.Combine(agentSkillsDir, skillName);
+        fs.AddDirectory(skillDir);
+        fs.AddFile(Path.Combine(skillDir, "SKILL.md"), new System.IO.Abstractions.TestingHelpers.MockFileData("""
+            ---
+            name: test-skill
+            description: A test skill
+            ---
+            Body.
+            """));
+
+        var config = new SkillsConfig { AllowSkillCreation = true, AllowSkillDeletion = true };
+        var managerTool = new SkillManagerTool(agentSkillsDir, null, config, fs);
+        var contributor = CreateContributor();
+        var context = BuildWriteContext("delete", [skillName, "--confirm"], managerTool);
+
+        var result = await contributor.ExecuteAsync("/skills", context, CancellationToken.None);
+
+        result.IsError.ShouldBeFalse();
+        result.Title.ShouldContain(skillName);
+        fs.Directory.Exists(skillDir).ShouldBeFalse();
+    }
+
+    private static (ICommandContributor Contributor, SkillTool SkillTool, SkillManagerTool ManagerTool) CreateContributorWithBothTools()
+    {
+        var skills = new[]
+        {
+            MakeSkill("loaded-skill"),
+            MakeSkill("available-skill"),
+            MakeSkill("denied-skill")
+        };
+        var config = new SkillsConfig
+        {
+            AutoLoad = ["loaded-skill"],
+            Disabled = ["denied-skill"],
+            MaxLoadedSkills = 20,
+            MaxSkillContentChars = 100_000,
+            AllowSkillCreation = true,
+            AllowSkillDeletion = true
+        };
+        var skillTool = new SkillTool(skills, config);
+        var managerTool = new SkillManagerTool(null, null, config);
+
+        return (CreateContributor(), skillTool, managerTool);
+    }
+
+    private static CommandExecutionContext BuildWriteContext(
+        string subCommand,
+        string[] arguments,
+        SkillManagerTool managerTool)
+    {
+        return new CommandExecutionContext
+        {
+            RawInput = $"/skills {subCommand} {string.Join(" ", arguments)}".Trim(),
+            SubCommand = subCommand,
+            Arguments = arguments,
+            AgentId = "test-agent",
+            SessionId = "session-1",
+            HomeDirectory = @"Q:\repos\botnexus",
+            ResolveSessionTool = name => string.Equals(name, "skill_manage", StringComparison.OrdinalIgnoreCase)
+                ? managerTool
+                : null
+        };
     }
 }
