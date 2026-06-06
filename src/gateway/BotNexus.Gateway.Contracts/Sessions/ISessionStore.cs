@@ -108,4 +108,28 @@ public interface ISessionStore
         AgentId agentId,
         ExistenceQuery query,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists a new sub-agent session row when a sub-agent is spawned.
+    /// Implementations that do not support sub-agent session tracking may no-op.
+    /// </summary>
+    /// <param name="info">The sub-agent runtime info to persist.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    /// <summary>
+    /// Updates the sub-agent session row when the sub-agent completes, fails, times out, or is killed.
+    /// Implementations that do not support sub-agent session tracking may no-op.
+    /// </summary>
+    /// <param name="subAgentId">The sub-agent ID whose row to update.</param>
+    /// <param name="endedAt">When the sub-agent ended.</param>
+    /// <param name="status">The final status string (Completed, Failed, TimedOut, Killed).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task UpdateSubAgentSessionAsync(
+        string subAgentId,
+        DateTimeOffset endedAt,
+        string status,
+        CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
 }
