@@ -163,6 +163,11 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     public async Task AbortAsync(string agentId, string sessionId)
         => await _connection!.InvokeAsync("Abort", agentId, sessionId);
 
+    /// <summary>Atomically abort the current turn and steer the agent in a new direction.</summary>
+    /// <returns><c>true</c> when the interrupt was delivered to a live handle; <c>false</c> when the agent was idle.</returns>
+    public async Task<bool> InterruptAndSteerAsync(string agentId, string sessionId, string message)
+        => await _connection!.InvokeAsync<bool>("InterruptAndSteer", agentId, sessionId, message);
+
     /// <summary>Reset (archive) a session and start fresh.</summary>
     public async Task ResetSessionAsync(string agentId, string sessionId)
         => await _connection!.InvokeAsync("ResetSession", agentId, sessionId);
