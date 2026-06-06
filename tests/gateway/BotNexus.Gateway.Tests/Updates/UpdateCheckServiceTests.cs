@@ -288,6 +288,45 @@ public sealed class UpdateCheckServiceTests
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // Channel forwarding tests
+    // ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void BuildUpdateArguments_WithChannel_IncludesChannelFlag()
+    {
+        var args = UpdateCheckService.BuildUpdateArguments("/src", "/home", 5005, "beta");
+
+        args.ShouldContain("--channel beta");
+    }
+
+    [Fact]
+    public void BuildUpdateArguments_WithNullChannel_OmitsChannelFlag()
+    {
+        var args = UpdateCheckService.BuildUpdateArguments("/src", "/home", 5005, null);
+
+        args.ShouldNotContain("--channel");
+    }
+
+    [Fact]
+    public void BuildUpdateArguments_WithEmptyChannel_OmitsChannelFlag()
+    {
+        var args = UpdateCheckService.BuildUpdateArguments("/src", "/home", 5005, "   ");
+
+        args.ShouldNotContain("--channel");
+    }
+
+    [Theory]
+    [InlineData("stable")]
+    [InlineData("beta")]
+    [InlineData("dev")]
+    public void BuildUpdateArguments_KnownChannels_ForwardedVerbatim(string channel)
+    {
+        var args = UpdateCheckService.BuildUpdateArguments("/src", "/home", 5005, channel);
+
+        args.ShouldContain($"--channel {channel}");
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // Internal stub handler
     // ──────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
@@ -213,31 +213,6 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService(sp =>
             sp.GetRequiredService<Updates.UpdateCheckService>());
 
-        // Default agent configuration from BotNexusHome (~/.botnexus/agents/)
-        // This ensures agents created via the API are always persisted to disk.
-        // Platform config can override this with an explicit agentsDirectory.
-        if (services.All(descriptor => descriptor.ServiceType != typeof(IAgentConfigurationSource)))
-        {
-            services.AddSingleton<IAgentConfigurationSource>(serviceProvider =>
-            {
-                var home = serviceProvider.GetRequiredService<BotNexusHome>();
-                home.Initialize();
-                return new FileAgentConfigurationSource(
-                    home.AgentsPath,
-                    serviceProvider.GetRequiredService<ILogger<FileAgentConfigurationSource>>(),
-                    serviceProvider.GetRequiredService<IFileSystem>());
-            });
-            services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
-            {
-                var home = serviceProvider.GetRequiredService<BotNexusHome>();
-                var defaultConfigPath = Path.Combine(home.RootPath, "config.json");
-                var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
-                var writer = CreatePlatformConfigWriter(defaultConfigPath, fileSystem);
-                return new PlatformConfigAgentWriter(writer, home);
-            }));
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-        }
-
         return services;
     }
 
@@ -304,14 +279,6 @@ public static class GatewayServiceCollectionExtensions
 
         ConfigureSessionStore(services, config, configDirectory);
         ConfigureConversationStore(services, config, configDirectory);
-
-        var agentsDirectory = config.Gateway?.AgentsDirectory;
-        if (!string.IsNullOrWhiteSpace(agentsDirectory))
-        {
-            var agentsPath = ResolveConfiguredPath(configDirectory, agentsDirectory);
-            services.RemoveAll<IAgentConfigurationSource>();
-            services.AddFileAgentConfiguration(agentsPath);
-        }
 
         services.AddSingleton<IAgentConfigurationSource>(serviceProvider =>
             new PlatformConfigAgentSource(
@@ -548,38 +515,4 @@ public static class GatewayServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>
-    /// Registers a file-based agent configuration source.
-    /// </summary>
-    /// <param name="services">Service collection.</param>
-    /// <param name="path">Directory containing agent configuration files.</param>
-    public static IServiceCollection AddFileAgentConfiguration(this IServiceCollection services, string path)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-
-        string ResolvePath(IServiceProvider serviceProvider)
-        {
-            var hostEnvironment = serviceProvider.GetService<IHostEnvironment>();
-            return Path.IsPathRooted(path)
-                ? path
-                : Path.GetFullPath(Path.Combine(hostEnvironment?.ContentRootPath ?? AppContext.BaseDirectory, path));
-        }
-
-        services.AddSingleton<IAgentConfigurationSource>(serviceProvider =>
-        {
-            return new FileAgentConfigurationSource(
-                ResolvePath(serviceProvider),
-                serviceProvider.GetRequiredService<ILogger<FileAgentConfigurationSource>>(),
-                serviceProvider.GetRequiredService<IFileSystem>());
-        });
-        services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
-            new FileAgentConfigurationWriter(
-                ResolvePath(serviceProvider),
-                serviceProvider.GetRequiredService<BotNexusHome>(),
-                serviceProvider.GetRequiredService<IFileSystem>())));
-
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, ConfigNormalisationHostedService>());
-        return services;
-    }
 }

@@ -51,7 +51,11 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     public string? Error { get; private set; }
     public List<string> Log { get; } = new();
 
-    public IReadOnlyList<string> AgentIds { get; } = new[] { "alpha", "bravo", "charlie" };
+    // "assistant" is the default agent seeded by `botnexus init`. The fixture overrides
+    // gateway.defaultAgentId to AgentIds[0] ("alpha"), but "assistant" remains in the
+    // agent list and is rendered by the portal. Include it here so tests that assert
+    // agent presence or iterate over all agents see the full list.
+    public IReadOnlyList<string> AgentIds { get; } = new[] { "alpha", "bravo", "charlie", "assistant" };
     public IReadOnlyList<string> LocationNames { get; } = new[] { "workspace-tmp", "scratch" };
 
     private ProcessRunner.BackgroundProcess? _gateway;

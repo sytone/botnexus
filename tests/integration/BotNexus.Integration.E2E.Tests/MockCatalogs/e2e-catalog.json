@@ -30,13 +30,13 @@
     ],
 
     "TOOL_CALL_SEQUENCE": [
-      { "type": "text_delta", "delta": "Let me check that for you.", "delayMs": 40 },
+      { "type": "text_delta", "delta": "Let me check the current time for you.", "delayMs": 40 },
       { "type": "text_end" },
       {
         "type": "tool_call",
-        "toolName": "noop",
+        "toolName": "get_datetime",
         "toolCallId": "mock-tool-1",
-        "toolArguments": { "query": "demo" },
+        "toolArguments": { "timezone": "UTC" },
         "delayMs": 60
       },
       { "type": "text_delta", "delta": "Tool finished. ", "delayMs": 40 },
