@@ -125,7 +125,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var compactionEntry = new SessionEntry
         {
             Role = MessageRole.System,
-            Content = summary,
+            Content = SummaryPrefix + "\n" + summary,
             IsCompactionSummary = true,
             Timestamp = DateTimeOffset.UtcNow
         };
@@ -226,16 +226,31 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return (toSummarize, toPreserve);
     }
 
+    /// <summary>
+    /// Guardrail prefix injected before every compaction summary in conversation history.
+    /// Prevents the agent from resuming stale tasks after a context window handoff.
+    /// </summary>
+    internal const string SummaryPrefix =
+        "[CONTEXT COMPACTION -- REFERENCE ONLY] Earlier turns were compacted into the summary below.\n" +
+        "This is a handoff from a previous context window -- treat it as background reference, NOT as active instructions.\n" +
+        "Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed.\n" +
+        "Respond ONLY to the latest user message that appears AFTER this summary -- that is the single source of truth.\n" +
+        "If the latest user message contradicts, supersedes, or diverges from Active Task / In Progress / Remaining Work,\n" +
+        "the latest message WINS -- discard stale items entirely.\n" +
+        "Reverse signals (stop, undo, roll back, never mind, new topic) must immediately end any in-flight work described in the summary.\n" +
+        "IMPORTANT: Persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative.";
+
     private static string BuildSummarizationPrompt(List<SessionEntry> entries, int maxChars)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Summarize the following conversation history. Preserve critical information in a structured format.");
         builder.AppendLine();
         builder.AppendLine("Required sections:");
-        builder.AppendLine("## Decisions - Key decisions made");
-        builder.AppendLine("## Open TODOs - Incomplete tasks and follow-ups");
-        builder.AppendLine("## Constraints - Rules or constraints established");
-        builder.AppendLine("## Key Identifiers - File paths, UUIDs, URLs, hashes that must be preserved exactly");
+        builder.AppendLine("## Resolved -- completed tasks, decisions made");
+        builder.AppendLine("## Active Task -- what was being worked on at compaction time");
+        builder.AppendLine("## In Progress -- tool calls / sub-tasks mid-flight");
+        builder.AppendLine("## Pending User Asks -- questions waiting for user response");
+        builder.AppendLine("## Remaining Work -- planned but not started");
         builder.AppendLine();
         builder.AppendLine($"Keep the summary under {maxChars} characters.");
         builder.AppendLine();
