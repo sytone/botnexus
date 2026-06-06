@@ -395,6 +395,27 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
+    /// Interrupts the active agent turn and redirects it with a new message.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="message">The new direction message to steer the agent toward.</param>
+    /// <returns><c>true</c> if a running handle was found and interrupted; <c>false</c> if no active handle exists.</returns>
+    public async Task<bool> InterruptAndSteer(AgentId agentId, SessionId sessionId, string message)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
+
+        var handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
+        if (handle is null)
+            return false;
+
+        await handle.InterruptAndSteerAsync(message, Context.ConnectionAborted);
+        return true;
+    }
+
+    /// <summary>
     /// Executes follow up.
     /// </summary>
     /// <param name="agentId">The agent id.</param>

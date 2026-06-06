@@ -203,6 +203,104 @@ public static class PlatformConfigLoader
         fs.Directory.CreateDirectory(configDir);
     }
 
+    /// <summary>
+    /// Returns <c>true</c> when the loaded config looks clobbered or suspiciously minimal.
+    /// Heuristics:
+    /// <list type="bullet">
+    ///   <item>No agents, no providers, no channels, and no gateway settings (empty shell config).</item>
+    ///   <item>The raw JSON is shorter than <see cref="MinHealthyConfigLength"/> characters.</item>
+    /// </list>
+    /// Both heuristics must match to avoid false positives on genuinely empty configs.
+    /// </summary>
+    public static bool IsConfigSuspicious(PlatformConfig config, string rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(rawJson);
+
+        var hasNoAgents = config.Agents is null || config.Agents.Count == 0;
+        var hasNoProviders = config.Providers is null || config.Providers.Count == 0;
+        var hasNoChannels = config.Channels is null || config.Channels.Count == 0;
+        var hasNoGateway = config.Gateway is null;
+        var hasNoCron = config.Cron is null;
+
+        var structurallyEmpty = hasNoAgents && hasNoProviders && hasNoChannels && hasNoGateway && hasNoCron;
+        var physicallySmall = rawJson.Length < MinHealthyConfigLength;
+
+        return structurallyEmpty && physicallySmall;
+    }
+
+    /// <summary>Minimum character length below which a non-empty config is considered suspiciously small.</summary>
+    public const int MinHealthyConfigLength = 50;
+
+    /// <summary>
+    /// Attempts to find the most recent valid backup of <paramref name="configPath"/> in
+    /// the sibling <c>backups/</c> directory, validate it, and return the recovered config.
+    /// </summary>
+    /// <param name="configPath">Path to the primary config file (used to locate the backups directory).</param>
+    /// <param name="recoveredPath">When recovery succeeds, set to the path of the backup that was restored.</param>
+    /// <param name="fileSystem">Optional file-system abstraction (for testing).</param>
+    /// <returns>The recovered <see cref="PlatformConfig"/>, or <c>null</c> if no valid backup exists.</returns>
+    public static PlatformConfig? TryRecoverFromBackup(
+        string configPath,
+        out string? recoveredPath,
+        IFileSystem? fileSystem = null)
+    {
+        recoveredPath = null;
+        var fs = fileSystem ?? new FileSystem();
+        var configDirectory = Path.GetDirectoryName(configPath);
+        if (string.IsNullOrWhiteSpace(configDirectory))
+            return null;
+
+        var backupsDirectory = Path.Combine(configDirectory, "backups");
+        if (!fs.Directory.Exists(backupsDirectory))
+            return null;
+
+        // Find backup files ordered newest-first.
+        var backupFiles = fs.Directory
+            .GetFiles(backupsDirectory, "config-*.json")
+            .OrderByDescending(f => fs.File.GetLastWriteTimeUtc(f))
+            .ToList();
+
+        foreach (var backup in backupFiles)
+        {
+            try
+            {
+                using var stream = fs.File.OpenRead(backup);
+                using var reader = new StreamReader(stream);
+                var rawJson = reader.ReadToEnd();
+
+                if (rawJson.Length < MinHealthyConfigLength)
+                    continue;
+
+                var config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
+                    ?? new PlatformConfig();
+                config = MigrateLegacyGatewaySettings(config, rawJson);
+                ExtractAgentDefaults(config, rawJson);
+
+                if (IsConfigSuspicious(config, rawJson))
+                    continue;
+
+                var errors = new List<string>(PlatformConfigSchema.ValidateObject(config));
+                errors.AddRange(Validate(config));
+                if (errors.Count > 0)
+                    continue;
+
+                recoveredPath = backup;
+                return config;
+            }
+            catch (JsonException)
+            {
+                // Corrupt backup file -- try the next one.
+            }
+            catch (IOException)
+            {
+                // Unreadable backup -- try the next one.
+            }
+        }
+
+        return null;
+    }
+
     private static void ValidatePath(string? path, string fieldName, List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(path))
