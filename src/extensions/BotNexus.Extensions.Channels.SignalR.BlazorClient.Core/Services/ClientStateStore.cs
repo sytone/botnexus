@@ -55,7 +55,20 @@ public sealed class ClientStateStore : IClientStateStore
     /// <inheritdoc />
     public void UpsertAgent(AgentState agent)
     {
-        _agents[agent.AgentId] = agent;
+        if (_agents.TryGetValue(agent.AgentId, out var existing))
+        {
+            // Merge metadata without destroying local-only state (Conversations,
+            // ActiveConversationId, SessionId, Messages, StreamState, etc.).
+            existing.DisplayName = agent.DisplayName;
+            existing.Emoji = agent.Emoji;
+            existing.Description = agent.Description;
+            existing.IsConnected = agent.IsConnected;
+        }
+        else
+        {
+            _agents[agent.AgentId] = agent;
+        }
+
         NotifyChanged();
     }
 
