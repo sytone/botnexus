@@ -1090,6 +1090,89 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
     }
 
+    // #803 — CacheRetention per-agent config
+
+    [Fact]
+    public async Task LoadAsync_WithCacheRetentionNone_DescriptorHasCacheRetentionNone()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "CacheRetention": "none"
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.CacheRetentionMode.ShouldBe("none");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithCacheRetentionLong_DescriptorHasCacheRetentionLong()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "CacheRetention": "long"
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.CacheRetentionMode.ShouldBe("long");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithoutCacheRetention_DescriptorCacheRetentionIsNull()
+    {
+        // When cacheRetention is omitted, descriptor should be null (caller uses provider default).
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.CacheRetentionMode.ShouldBeNull();
+    }
+
     private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
     {
         private readonly IReadOnlyDictionary<string, string> _paths = paths;
