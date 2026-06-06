@@ -33,7 +33,11 @@ public sealed record AgentResponse
 /// <summary>
 /// Token usage information for an agent response.
 /// </summary>
-public sealed record AgentResponseUsage(int? InputTokens = null, int? OutputTokens = null);
+public sealed record AgentResponseUsage(
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheRead = null,
+    int? CacheWrite = null);
 /// <summary>
 /// Information about a tool call made during agent execution.
 /// </summary>

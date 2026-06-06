@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -247,7 +247,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         {
             conv.Messages.Add(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
             {
-                ThinkingContent = thinkingContent
+                ThinkingContent = thinkingContent,
+                InputTokens = evt.Usage?.InputTokens,
+                OutputTokens = evt.Usage?.OutputTokens,
+                CacheRead = evt.Usage?.CacheRead,
+                CacheWrite = evt.Usage?.CacheWrite
             });
         }
 
