@@ -6,6 +6,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.McpInvoke/BotNexus.Extensions.McpInvoke.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.WebTools/BotNexus.Extensions.WebTools.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ProcessTool/BotNexus.Extensions.ProcessTool.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.DataStore/BotNexus.Extensions.DataStore.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
@@ -68,6 +69,7 @@
   </Folder>
   <Folder Name="/tests/extensions/">
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.DataStore.Tests/BotNexus.Extensions.DataStore.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
