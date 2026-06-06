@@ -41,4 +41,18 @@ public sealed class GatewayOptions
     /// Options controlling the built-in file watcher tool.
     /// </summary>
     public FileWatcherToolOptions FileWatcherTool { get; set; } = new();
+
+    /// <summary>
+    /// When <see langword="true"/>, the gateway automatically re-dispatches the last user
+    /// message from sessions interrupted by an unclean restart. Defaults to
+    /// <see langword="false"/> until the replay path is confirmed stable.
+    /// </summary>
+    public bool AutoReplayInterruptedTurns { get; set; } = false;
+
+    /// <summary>
+    /// Maximum number of automatic replay attempts for a single interrupted session before
+    /// falling back to the notification-only path. Prevents infinite replay loops caused by
+    /// messages that always crash the agent.
+    /// </summary>
+    public int MaxAutoReplayAttempts { get; set; } = 2;
 }

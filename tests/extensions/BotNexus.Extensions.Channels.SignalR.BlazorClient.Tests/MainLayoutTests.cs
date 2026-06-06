@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -36,7 +36,9 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
-        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+        var mockPrefs = Substitute.For<IPortalPreferencesService>();
+        mockPrefs.Current.Returns(new PortalPreferences());
+        _ctx.Services.AddSingleton(mockPrefs);
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(http);

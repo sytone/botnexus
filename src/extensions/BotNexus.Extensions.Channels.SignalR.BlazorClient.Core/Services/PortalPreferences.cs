@@ -10,4 +10,7 @@ public sealed class PortalPreferences
 
     /// <summary>Maximum visible rows before the textarea scrolls internally.</summary>
     public int ExpandingInputMaxLines { get; set; } = 8;
+
+    /// <summary>Show the debug inspector panel entry point in the main layout. Default: false.</summary>
+    public bool DebugModeEnabled { get; set; } = false;
 }
