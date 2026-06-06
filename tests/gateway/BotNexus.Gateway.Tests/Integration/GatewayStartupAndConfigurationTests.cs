@@ -5,6 +5,7 @@ using BotNexus.Gateway;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.OpenAI;
@@ -258,6 +259,44 @@ public sealed class GatewayStartupAndConfigurationTests
         var copilotModel = llmClient.Models.GetModel("github-copilot", "gpt-4.1");
         copilotModel.ShouldNotBeNull();
         registeredApis.ShouldContain(copilotModel!.Api);
+    }
+
+    [Fact]
+    public void GatewayConfiguration_CopilotMessagesProvider_IsRegisteredAndAdditiveToAnthropicMessages()
+    {
+        // Phase 1a (#810): The carved-out CopilotMessagesProvider exists alongside
+        // AnthropicProvider. It is reachable under Api="github-copilot-messages" but
+        // BuiltInModels does NOT yet route any model to it — that is Phase 1b.
+        // This test pins the additive deployment contract: existing Claude-on-Copilot
+        // requests continue to route through AnthropicProvider (anthropic-messages),
+        // and the new provider is available for the upcoming routing flip.
+        using var httpClient = new HttpClient();
+
+        var apiProviders = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+
+        apiProviders.Register(new AnthropicProvider(httpClient));
+        apiProviders.Register(new CopilotMessagesProvider(httpClient));
+        apiProviders.Register(new OpenAICompletionsProvider(httpClient, NullLogger<OpenAICompletionsProvider>.Instance));
+        apiProviders.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
+        apiProviders.Register(new OpenAICompatProvider(httpClient));
+
+        new BuiltInModels().RegisterAll(models);
+
+        var llmClient = new LlmClient(apiProviders, models);
+        var registeredApis = llmClient.ApiProviders.GetAll().Select(provider => provider.Api).ToArray();
+
+        registeredApis.ShouldContain("anthropic-messages",
+            "AnthropicProvider must remain registered — direct-Anthropic users depend on it.");
+        registeredApis.ShouldContain("github-copilot-messages",
+            "Phase 1a registers CopilotMessagesProvider so Phase 1b can flip Claude models without code change.");
+
+        // BuiltInModels still routes Claude entries via anthropic-messages in Phase 1a.
+        // Phase 1b will flip these to github-copilot-messages.
+        var haiku = llmClient.Models.GetModel("github-copilot", "claude-haiku-4.5");
+        haiku.ShouldNotBeNull();
+        haiku!.Api.ShouldBe("anthropic-messages",
+            "Phase 1a is additive — model routing must not change yet.");
     }
 
     [Fact]
