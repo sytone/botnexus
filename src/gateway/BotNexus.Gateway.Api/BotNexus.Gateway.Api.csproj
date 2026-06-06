@@ -39,6 +39,7 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.GitHubModels\BotNexus.Agent.Providers.GitHubModels.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.IntegrationMock\BotNexus.Agent.Providers.IntegrationMock.csproj" />
   </ItemGroup>
 
