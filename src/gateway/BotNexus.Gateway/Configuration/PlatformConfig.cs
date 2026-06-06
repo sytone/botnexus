@@ -136,6 +136,12 @@ public sealed class GatewaySettingsConfig
     public AutoUpdateConfig? AutoUpdate { get; set; }
 
     /// <summary>
+    /// Auxiliary (cheap/fast) model configuration for background gateway tasks.
+    /// Currently used for: conversation title generation.
+    /// </summary>
+    public AuxiliaryConfig? Auxiliary { get; set; }
+
+    /// <summary>
     /// Server-wide default IANA timezone ID used when an agent has no Soul timezone configured.
     /// Falls back to UTC when null or invalid.
     /// Example: <c>"America/Los_Angeles"</c>.
@@ -449,6 +455,9 @@ public sealed class AgentDefinitionConfig
     public List<string>? SubAgentRoles { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
     public string? IsolationStrategy { get; set; }
+    /// <summary>Prompt caching retention policy for this agent. Null means provider default (short) is used.</summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.CacheRetention>))]
+    public BotNexus.Agent.Providers.Core.Models.CacheRetention? CacheRetention { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>
     public int? MaxConcurrentSessions { get; set; }
     /// <summary>Agent-level metadata.</summary>
@@ -588,4 +597,18 @@ public sealed class WorkspacePortalConfig
     /// Defaults to 524288 (512 KB). Set to 0 for no server-side limit.
     /// </summary>
     public int MaxReportFileSizeBytes { get; set; } = 512 * 1024;
+}
+
+/// <summary>
+/// Auxiliary (cheap/fast) model configuration for background gateway tasks.
+/// </summary>
+public sealed class AuxiliaryConfig
+{
+    /// <summary>
+    /// Model ID to use for auto-generating conversation titles after the first user+assistant
+    /// exchange. Supports any registered provider model ID (e.g. "gpt-4o-mini",
+    /// "claude-haiku-3-5", "gemini-2.0-flash-lite").
+    /// When null or empty the primary session model is used as fallback.
+    /// </summary>
+    public string? Titling { get; set; }
 }
