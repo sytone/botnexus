@@ -198,6 +198,12 @@ public sealed class AutoUpdateConfig
     /// </summary>
     public string? SourcePath { get; set; }
 
+    /// <summary>
+    /// Update channel to forward to the CLI update command. Typical values: <c>stable</c>, <c>beta</c>, <c>dev</c>.
+    /// When null or empty the CLI default channel is used.
+    /// </summary>
+    public string? Channel { get; set; }
+
     /// <summary>Seconds to wait after returning 202 before calling StopApplication(). Minimum 1. Defaults to 2.</summary>
     public int ShutdownDelaySeconds { get; set; } = 2;
 }
@@ -605,4 +611,14 @@ public sealed class AuxiliaryConfig
     /// When null or empty the primary session model is used as fallback.
     /// </summary>
     public string? Titling { get; set; }
+
+    /// <summary>
+    /// Model ID to use for session compaction summarisation (cheap/fast auxiliary model).
+    /// Supports any registered provider model ID (e.g. "gpt-4o-mini", "claude-haiku-3-5").
+    /// When null or empty the primary <see cref="CompactionOptions.SummarizationModel"/> or
+    /// the compactor's default waterfall is used.
+    /// If the resolved auxiliary model has a smaller context window than the compaction
+    /// threshold, a startup warning is emitted but the gateway continues to run.
+    /// </summary>
+    public string? Compression { get; set; }
 }

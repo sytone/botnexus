@@ -27,14 +27,17 @@ public sealed class SkillsConfig
 
     /// <summary>
     /// Allow the agent to create and edit skills via the skill_manage tool.
-    /// When false (default), the tool is not contributed and write operations are blocked.
+    /// Defaults to true -- the Skills extension is opt-in, so creation/editing should be
+    /// available by default when the extension is enabled.
+    /// Set to false to explicitly restrict write access to skills.
     /// </summary>
-    public bool AllowSkillCreation { get; set; } = false;
+    public bool AllowSkillCreation { get; set; } = true;
 
     /// <summary>
     /// Allow the agent to delete skills and remove supporting files via the skill_manage tool.
-    /// When false (default), delete and remove_file actions are blocked.
+    /// Defaults to true -- see <see cref="AllowSkillCreation"/> rationale.
     /// Requires <see cref="AllowSkillCreation"/> to also be true.
+    /// Set to false to explicitly prevent skill deletion.
     /// </summary>
-    public bool AllowSkillDeletion { get; set; } = false;
+    public bool AllowSkillDeletion { get; set; } = true;
 }

@@ -105,6 +105,18 @@ public sealed class MobileRefreshReconnectTests : IDisposable
         _portalLoad.Received(1).RefreshAsync(Arg.Any<CancellationToken>());
     }
 
+    // ── Refresh button renders Unicode not HTML entities ─────────────────────
+
+    [Fact]
+    public void Refresh_button_shows_unicode_arrow_not_html_entity()
+    {
+        var cut = _ctx.Render<Chat>();
+        var btn = cut.Find("[data-testid='refresh-btn']");
+        // Should render the actual Unicode character ↺ not the entity string
+        Assert.DoesNotContain("&#x21BA;", btn.InnerHtml);
+        Assert.Contains("\u21ba", btn.TextContent);
+    }
+
     // ── OnAppResumed invokes RefreshAsync ─────────────────────────────────────
 
     [Fact]

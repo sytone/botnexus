@@ -1,4 +1,4 @@
-﻿/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
+/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
 :root {
     --bg-primary: #1a1a2e;
@@ -1191,6 +1191,21 @@ html, body, #app {
     opacity: 0.7;
 }
 
+.msg-token-stats {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    opacity: 0.7;
+    flex-wrap: wrap;
+}
+
+.token-stat {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
 .msg-copy-btn {
     border: 1px solid var(--border);
     border-radius: 4px;
