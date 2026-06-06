@@ -46,27 +46,27 @@ public sealed class BuiltInModels
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.5", "Claude Sonnet 4.5", "github-copilot-messages", CopilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.6", "Claude Sonnet 4.6", "github-copilot-messages", CopilotBaseUrl, true, ["text", "image"], 1000000, 32000, headers: CopilotHeaders);
 
-        Register(modelRegistry, "github-copilot", "gemini-2.5-pro", "Gemini 2.5 Pro", "openai-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3-flash-preview", "Gemini 3 Flash", "openai-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3-pro-preview", "Gemini 3 Pro Preview", "openai-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "openai-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gemini-2.5-pro", "Gemini 2.5 Pro", "github-copilot-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gemini-3-flash-preview", "Gemini 3 Flash", "github-copilot-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gemini-3-pro-preview", "Gemini 3 Pro Preview", "github-copilot-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "github-copilot-completions", CopilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
 
-        Register(modelRegistry, "github-copilot", "gpt-4.1", "GPT-4.1", "openai-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 16384, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gpt-4o", "GPT-4o", "openai-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 4096, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gpt-4.1", "GPT-4.1", "github-copilot-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 16384, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "gpt-4o", "GPT-4o", "github-copilot-completions", CopilotBaseUrl, false, ["text", "image"], 128000, 4096, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
 
-        Register(modelRegistry, "github-copilot", "gpt-5", "GPT-5", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 128000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5-mini", "GPT-5-mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1", "GPT-5.1", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex", "GPT-5.1-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-max", "GPT-5.1-Codex-max", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-mini", "GPT-5.1-Codex-mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2", "GPT-5.2", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2-codex", "GPT-5.2-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.3-codex", "GPT-5.3-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5", "GPT-5", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 128000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5-mini", "GPT-5-mini", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.1", "GPT-5.1", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.1-codex", "GPT-5.1-Codex", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-max", "GPT-5.1-Codex-max", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-mini", "GPT-5.1-Codex-mini", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.2", "GPT-5.2", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.2-codex", "GPT-5.2-Codex", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.3-codex", "GPT-5.3-Codex", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "github-copilot-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
-        Register(modelRegistry, "github-copilot", "grok-code-fast-1", "Grok Code Fast 1", "openai-completions", CopilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, "github-copilot", "grok-code-fast-1", "Grok Code Fast 1", "github-copilot-completions", CopilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
     }
 
     private static void RegisterAnthropicModels(ModelRegistry modelRegistry)

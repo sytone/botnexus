@@ -456,3 +456,46 @@ body {
     font-size: 13px;
     text-align: center;
 }
+
+/* ── Refresh button (mobile header) ─────────────────────────────────────── */
+.refresh-btn {
+    background: none;
+    border: 1px solid rgba(100, 160, 220, 0.25);
+    border-radius: 6px;
+    color: #64a0dc;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px 8px;
+    line-height: 1;
+    flex-shrink: 0;
+    min-width: 36px;
+    touch-action: manipulation;
+}
+.refresh-btn:hover:not(:disabled) { background: rgba(100, 160, 220, 0.08); }
+.refresh-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Disconnected bar ────────────────────────────────────────────────────── */
+.disconnected-bar {
+    background: #3b1a1a;
+    border-bottom: 1px solid #7f2e2e;
+    color: #f87171;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 13px;
+    padding: 6px 12px;
+}
+
+.reconnect-inline-btn {
+    background: none;
+    border: 1px solid #f87171;
+    border-radius: 4px;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 8px;
+    touch-action: manipulation;
+}
+.reconnect-inline-btn:hover:not(:disabled) { background: rgba(248, 113, 113, 0.15); }
+.reconnect-inline-btn:disabled { opacity: 0.5; cursor: default; }

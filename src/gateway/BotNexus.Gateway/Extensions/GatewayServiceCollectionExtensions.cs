@@ -165,6 +165,8 @@ public static class GatewayServiceCollectionExtensions
             var dispatcher = new HookDispatcher();
             dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
                 sp.GetRequiredService<ToolPolicyHookHandler>());
+            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                sp.GetRequiredService<AgentsMdPromptHookHandler>());
             return dispatcher;
         });
 
@@ -172,6 +174,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
         services.AddSingleton<ToolPolicyHookHandler>();
+        services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
         // Built-in isolation strategies
@@ -191,7 +194,14 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
-        services.AddHostedService<InterruptedTurnNotificationService>();
+        services.AddHostedService(sp => new InterruptedTurnNotificationService(
+            sp.GetRequiredService<ISessionStore>(),
+            sp.GetRequiredService<IAgentRegistry>(),
+            sp.GetRequiredService<IActivityBroadcaster>(),
+            sp.GetRequiredService<IChannelManager>(),
+            sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
+            sp.GetService<IInboundMessageOrchestrator>(),
+            sp.GetService<IOptions<GatewayOptions>>()));
         services.AddHostedService<SessionCleanupService>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();

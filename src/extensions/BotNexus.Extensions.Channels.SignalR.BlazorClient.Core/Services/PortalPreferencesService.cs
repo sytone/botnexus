@@ -55,4 +55,12 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
         await SaveAsync();
         OnChanged.Invoke();
     }
+
+    /// <inheritdoc/>
+    public async Task SetDebugModeAsync(bool enabled)
+    {
+        _current.DebugModeEnabled = enabled;
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
 }

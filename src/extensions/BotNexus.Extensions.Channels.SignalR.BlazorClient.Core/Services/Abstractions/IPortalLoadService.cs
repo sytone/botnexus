@@ -14,8 +14,14 @@ public interface IPortalLoadService
     /// <summary>Non-null if startup failed.</summary>
     string? LoadError { get; }
 
+    /// <summary>True when the SignalR hub connection is in the Connected state.</summary>
+    bool IsSignalRConnected { get; }
+
     /// <summary>Raised when <see cref="IsReady"/>, <see cref="IsLoading"/>, or <see cref="LoadError"/> changes.</summary>
     event Action? OnReadyChanged;
+
+    /// <summary>Raised when <see cref="IsSignalRConnected"/> changes.</summary>
+    event Action? OnConnectionStateChanged;
 
     /// <summary>
     /// Executes the portal startup sequence: REST-first, SignalR-second.
@@ -26,4 +32,10 @@ public interface IPortalLoadService
     /// 5. IsReady = true
     /// </summary>
     Task InitializeAsync(string hubUrl, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Re-fetches agent and conversation data and reconnects SignalR if disconnected.
+    /// Intended for mobile app-resume and manual refresh flows.
+    /// </summary>
+    Task RefreshAsync(CancellationToken cancellationToken = default);
 }
