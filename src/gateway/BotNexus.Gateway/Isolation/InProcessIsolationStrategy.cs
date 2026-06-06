@@ -986,12 +986,23 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     /// <remarks>
-    /// Phase 1a stub: contract defined in Issue #799 (Part of #704).
-    /// Full implementation wired in Issue #800.
+    /// Atomically aborts the current run (if any), clears stale steering messages from the
+    /// abandoned direction, and enqueues the new direction so the agent resumes with the
+    /// redirected goal. Part of #704 Phase 1b (Issue #800).
     /// </remarks>
-    public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)
-        => throw new NotImplementedException(
-            "InterruptAndSteerAsync is not yet implemented. See Issue #800 (feat/interrupt-steer-agent-core).");
+    public async Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
+        // 1. Abort the current run (no-op when idle; cancels CTS and waits for run to settle).
+        await _agent.AbortAsync();
+
+        // 2. Discard stale steering messages queued for the abandoned direction.
+        _agent.ClearSteeringQueue();
+
+        // 3. Enqueue the new direction. The agent picks it up at the next steering drain point.
+        _agent.Steer(new AgentCoreUserMessage(message));
+    }
 
     /// <inheritdoc />
     public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
