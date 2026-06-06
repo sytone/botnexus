@@ -1,4 +1,4 @@
-﻿@inject IClientStateStore Store
+@inject IClientStateStore Store
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -56,7 +56,7 @@
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
                  role="tabpanel">
-            <CanvasPanel AgentId="@AgentId" />
+            <CanvasPanel AgentId="@AgentId" ConversationId="@Agent?.ActiveConversationId" />
         </section>
     </div>
 </div>
