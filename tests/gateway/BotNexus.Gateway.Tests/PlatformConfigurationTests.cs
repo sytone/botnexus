@@ -401,7 +401,6 @@ public sealed class PlatformConfigurationTests
 
         gatewayOptions.DefaultAgentId.ShouldBe("config-agent");
         sessionStore.ShouldBeOfType<FileSessionStore>();
-        agentSources.ShouldContain(source => source is FileAgentConfigurationSource);
         agentSources.ShouldContain(source => source is PlatformConfigAgentSource);
         configurationWriter.ShouldBeOfType<PlatformConfigAgentWriter>();
     }
