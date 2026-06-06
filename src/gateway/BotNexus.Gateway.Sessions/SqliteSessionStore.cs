@@ -1065,4 +1065,50 @@ public sealed class SqliteSessionStore : SessionStoreBase
         return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions) ?? [];
     }
 
+    /// <inheritdoc />
+    public override async Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO sub_agent_sessions
+                (id, parent_session_id, parent_agent_id, child_agent_id, archetype, started_at, ended_at, status)
+            VALUES
+                (@id, @parentSessionId, @parentAgentId, @childAgentId, @archetype, @startedAt, NULL, 'Active')
+            """;
+        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
+        cmd.Parameters.AddWithValue("@parentSessionId", info.ParentSessionId.Value);
+        cmd.Parameters.AddWithValue("@parentAgentId", info.ParentAgentId ?? string.Empty);
+        cmd.Parameters.AddWithValue("@childAgentId", info.ChildAgentId ?? string.Empty);
+        cmd.Parameters.AddWithValue("@archetype", info.Archetype.ToString());
+        cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
+        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async Task UpdateSubAgentSessionAsync(
+        string subAgentId,
+        DateTimeOffset endedAt,
+        string status,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE sub_agent_sessions
+            SET ended_at = @endedAt, status = @status
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", subAgentId);
+        cmd.Parameters.AddWithValue("@endedAt", endedAt.ToString("O"));
+        cmd.Parameters.AddWithValue("@status", status);
+        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
 }

@@ -30,6 +30,14 @@ self.addEventListener('fetch', event => {
     // Only handle GET requests
     if (event.request.method !== 'GET') return;
 
+    // Pass through top-level navigations directly to the network.
+    // HTTP auth challenges (Basic, NTLM, Negotiate) only trigger the browser's
+    // native credentials dialog when the response comes directly from the network.
+    // A cached response from the service worker suppresses the WWW-Authenticate
+    // header, leaving reverse-proxy deployments broken after the browser's auth
+    // cache expires. See: https://fetch.spec.whatwg.org/#concept-request-mode
+    if (event.request.mode === 'navigate') return;
+
     // Pass through SignalR/API requests
     const url = new URL(event.request.url);
     if (url.pathname.startsWith('/hub/') || url.pathname.startsWith('/api/')) return;
