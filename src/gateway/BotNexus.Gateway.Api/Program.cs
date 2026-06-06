@@ -8,6 +8,8 @@ using BotNexus.Gateway.Extensions;
 using BotNexus.Agent.Providers.Core.Logging;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Copilot.Messages;
+using BotNexus.Agent.Providers.Copilot.Responses;
+using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -237,6 +239,9 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>()));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>()));
 
+    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>()));
+    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>()));
+    apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
     serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
