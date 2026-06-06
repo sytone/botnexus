@@ -100,6 +100,9 @@ public sealed class PlatformConfigAgentSource(
                 IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
                     ? "in-process"
                     : effectiveConfig.IsolationStrategy,
+                CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
+                    ? effectiveConfig.CacheRetention.Value.ToString().ToLowerInvariant()
+                    : null,
                 MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
                 Metadata = metadata,
                 IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),

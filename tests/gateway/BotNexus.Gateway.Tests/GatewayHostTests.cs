@@ -2147,5 +2147,74 @@ public sealed class GatewayHostTests
             .ShouldBe(["user:hello", "assistant:normal-response"]);
         activity.Activities.Select(a => a.Type).ShouldContain(GatewayActivityType.AgentCompleted);
     }
+
+    // #849 -- thinking-only response stall detection
+
+    [Fact]
+    public async Task DispatchAsync_WhenAgentReturnsThinkingOnlyResponse_SendsStallNotice()
+    {
+        // Arrange: agent returns a response that consists solely of a thinking block.
+        // The channel does NOT support thinking display (most channels).
+        // Expected: stall notice delivered instead of empty message.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var thinkingOnlyContent = "<thinking>Only internal reasoning, no visible answer.</thinking>";
+        var handle = CreatePromptHandle("agent-a", "session-1", thinkingOnlyContent);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        // Explicitly confirm SupportsThinkingDisplay is false.
+        channel.SetupGet(c => c.SupportsThinkingDisplay).Returns(false);
+
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, new InMemorySessionStore(),
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        // Assert: channel received the stall notice, NOT the raw thinking block.
+        channel.Verify(c => c.SendAsync(
+            It.Is<OutboundMessage>(m =>
+                m.Content.Contains("wasn't able to generate",
+                    StringComparison.OrdinalIgnoreCase)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenChannelSupportsThinkingDisplay_ThinkingOnlyResponsePassedThrough()
+    {
+        // When the channel supports thinking display, thinking-only responses should pass
+        // through unchanged -- no stall substitution.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var thinkingOnlyContent = "<thinking>Only internal reasoning, no visible answer.</thinking>";
+        var handle = CreatePromptHandle("agent-a", "session-1", thinkingOnlyContent);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        channel.SetupGet(c => c.SupportsThinkingDisplay).Returns(true);
+
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, new InMemorySessionStore(),
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        // Assert: raw content passed through -- no stall notice injected.
+        channel.Verify(c => c.SendAsync(
+            It.Is<OutboundMessage>(m => m.Content == thinkingOnlyContent),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
 }
 
