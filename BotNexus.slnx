@@ -40,6 +40,7 @@
     <Project Path="src/gateway/BotNexus.Memory/BotNexus.Memory.csproj" />
     <Project Path="src/gateway/BotNexus.Tools/BotNexus.Tools.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Webhooks/BotNexus.Gateway.Webhooks.csproj" />
+    <Project Path="src/gateway/BotNexus.Yaml/BotNexus.Yaml.csproj" />
   </Folder>
   <Folder Name="/examples/">
     <Project Path="examples/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />
@@ -89,5 +90,6 @@
     <Project Path="tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Memory.Tests/BotNexus.Memory.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Webhooks.Tests/BotNexus.Gateway.Webhooks.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Yaml.Tests/BotNexus.Yaml.Tests.csproj" />
   </Folder>
 </Solution>
