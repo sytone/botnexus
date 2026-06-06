@@ -447,7 +447,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             ToolExecutionMode: ToolExecutionMode.Parallel,
             BeforeToolCall: beforeToolCall,
             AfterToolCall: afterToolCall,
-            GenerationSettings: new SimpleStreamOptions(),
+            GenerationSettings: new SimpleStreamOptions
+            {
+                // Parse per-agent cacheRetentionMode string ("none", "short", "long").
+                // Falls back to Short when absent or unrecognised.
+                CacheRetention = Enum.TryParse<BotNexus.Agent.Providers.Core.Models.CacheRetention>(
+                    descriptor.CacheRetentionMode, ignoreCase: true, out var parsedRetention)
+                    ? parsedRetention
+                    : BotNexus.Agent.Providers.Core.Models.CacheRetention.Short
+            },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId.Value,
