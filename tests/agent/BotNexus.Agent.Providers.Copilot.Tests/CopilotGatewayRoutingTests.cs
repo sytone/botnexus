@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Copilot.Messages;
+using BotNexus.Agent.Providers.Copilot.Responses;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -42,8 +44,8 @@ public class CopilotGatewayRoutingTests
     /// </summary>
     [Theory]
     [InlineData("claude-haiku-4.5", "github-copilot-messages", "/v1/messages")]
-    [InlineData("gpt-5.4", "openai-responses", "/responses")]
-    [InlineData("gpt-4.1", "openai-completions", "/chat/completions")]
+    [InlineData("gpt-5.4", "github-copilot-responses", "/responses")]
+    [InlineData("gpt-4.1", "github-copilot-completions", "/chat/completions")]
     public async Task LlmClient_RoutesCopilotModel_ToCopilotEndpoint(
         string modelId,
         string expectedApi,
@@ -117,6 +119,8 @@ public class CopilotGatewayRoutingTests
         apiProviders.Register(new CopilotMessagesProvider(httpClient));
         apiProviders.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
         apiProviders.Register(new OpenAICompletionsProvider(httpClient, NullLogger<OpenAICompletionsProvider>.Instance));
+        apiProviders.Register(new CopilotResponsesProvider(httpClient, NullLogger<CopilotResponsesProvider>.Instance));
+        apiProviders.Register(new CopilotCompletionsProvider(httpClient, NullLogger<CopilotCompletionsProvider>.Instance));
 
         var llmClient = new LlmClient(apiProviders, modelRegistry);
         return (llmClient, model!, handler);
