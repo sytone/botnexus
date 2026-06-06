@@ -1,4 +1,4 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -330,6 +330,12 @@
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Redirect the agent's response (Shift+Enter for newline)">
                         🔀 Steer
+                    </button>
+                    <button class="interrupt-steer-btn"
+                            @onclick="InterruptAndSteer"
+                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                            title="Abort current turn and redirect with input message">
+                        Interrupt + Redirect
                     </button>
                     <button class="abort-btn"
                             @onclick="AbortAgent"
@@ -816,6 +822,15 @@ private bool IsStreaming =>
     }
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
+    private async Task InterruptAndSteer()
+    {
+        var message = _inputText.Trim();
+        if (string.IsNullOrWhiteSpace(message)) return;
+        _inputText = "";
+        UpdateCommandPalette();
+        await Interaction.InterruptAndSteerAsync(AgentId, message);
+    }
+
 
     private async Task HandleAskUserSubmit(AskUserPromptSubmission submission)
     {
