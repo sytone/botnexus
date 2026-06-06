@@ -65,7 +65,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Applied);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-1", "u2"], ignoreOrder: false);
     }
@@ -93,7 +93,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Rebased);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-1", "u2", "raced-in"], ignoreOrder: false);
     }
@@ -117,7 +117,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Rebased);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-1", "u2", "r1", "r2", "r3"], ignoreOrder: false);
     }
@@ -143,7 +143,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Rebased);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-1", "u2", "batch-1", "batch-2"], ignoreOrder: false);
     }
@@ -189,7 +189,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Aborted);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "u2"], ignoreOrder: false);
         session.GetHistorySnapshot().ShouldNotContain(e => e.IsCrashSentinel);
@@ -216,7 +216,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Applied);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-1", "u2"], ignoreOrder: false);
     }
@@ -248,7 +248,7 @@ public sealed class LlmSessionCompactorRaceTests
         outcome.ShouldBe(HistoryReplaceOutcome.Aborted);
 
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["restored-1", "restored-2"], ignoreOrder: false);
     }
@@ -284,7 +284,7 @@ public sealed class LlmSessionCompactorRaceTests
 
         // First compaction wins; second is stale and discarded.
         session.GetHistorySnapshot()
-            .Select(e => e.Content)
+            .Select(e => e.IsCompactionSummary ? e.Content.Replace(LlmSessionCompactor.SummaryPrefix + "\n", "") : e.Content)
             .ToList()
             .ShouldBe(["u1", "a1", "summary-A", "u2"], ignoreOrder: false);
     }
