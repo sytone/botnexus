@@ -87,6 +87,14 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             throw new ArgumentException("url must be a valid HTTP or HTTPS URL.");
         }
 
+        // SSRF guard: block private/loopback/IMDS addresses and additional blocked hosts
+        if (!_config.AllowPrivateNetworks)
+            AssertNotPrivateOrImds(uri);
+
+        // Always check additional blocked hosts (even when AllowPrivateNetworks = true)
+        if (_config.AdditionalBlockedHosts.Count > 0)
+            AssertNotAdditionalBlocked(uri);
+
         var maxLength = ReadOptionalInt(arguments, "max_length") ?? 5000;
         if (maxLength < 1 || maxLength > _config.MaxLengthChars)
             throw new ArgumentOutOfRangeException(
@@ -107,6 +115,87 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         };
 
         return Task.FromResult(prepared);
+    }
+
+    /// <summary>
+    /// Throws <see cref="ArgumentException"/> when <paramref name="uri"/> resolves to a
+    /// private, loopback, link-local, IMDS, or otherwise reserved address.
+    /// </summary>
+    /// <remarks>
+    /// Checked ranges (IPv4):
+    /// <list type="bullet">
+    ///   <item>Loopback: 127.0.0.0/8</item>
+    ///   <item>Any: 0.0.0.0/8</item>
+    ///   <item>Link-local / IMDS: 169.254.0.0/16</item>
+    ///   <item>RFC-1918 class A: 10.0.0.0/8</item>
+    ///   <item>RFC-1918 class B: 172.16.0.0/12</item>
+    ///   <item>RFC-1918 class C: 192.168.0.0/16</item>
+    ///   <item>Carrier-grade NAT: 100.64.0.0/10</item>
+    /// </list>
+    /// IPv6 loopback (::1) and hostnames <c>localhost</c> /
+    /// <c>metadata.google.internal</c> are also blocked.
+    /// </remarks>
+    internal static void AssertNotPrivateOrImds(Uri uri)
+    {
+        var host = uri.Host;
+
+        // Blocked hostnames (exact, case-insensitive)
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"URL host '{host}' is blocked for security reasons (SSRF prevention).");
+        }
+
+        // Try to parse as an IP address (handles both bare IPv4 and [IPv6] bracket notation)
+        var hostToParse = host.StartsWith('[') && host.EndsWith(']')
+            ? host[1..^1]   // strip IPv6 brackets
+            : host;
+
+        if (!System.Net.IPAddress.TryParse(hostToParse, out var ip))
+            return; // hostname — DNS resolution not performed at prep time
+
+        // IPv6 loopback ::1
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (ip.Equals(System.Net.IPAddress.IPv6Loopback))
+                throw new ArgumentException(
+                    $"URL host '{host}' is blocked for security reasons (SSRF prevention).");
+            return; // other IPv6 addresses: allow (no private-range filtering for IPv6 beyond ::1)
+        }
+
+        // IPv4 range checks
+        var bytes = ip.GetAddressBytes(); // big-endian: bytes[0] is most-significant
+        var b0 = bytes[0];
+        var b1 = bytes[1];
+
+        bool isBlocked =
+            b0 == 127 ||                                    // 127.0.0.0/8   loopback
+            b0 == 0 ||                                      // 0.0.0.0/8     any
+            b0 == 10 ||                                     // 10.0.0.0/8    RFC-1918
+            (b0 == 169 && b1 == 254) ||                     // 169.254.0.0/16 link-local / IMDS
+            (b0 == 172 && b1 >= 16 && b1 <= 31) ||         // 172.16.0.0/12 RFC-1918
+            (b0 == 192 && b1 == 168) ||                     // 192.168.0.0/16 RFC-1918
+            (b0 == 100 && (b1 & 0xC0) == 64);              // 100.64.0.0/10 CGN
+
+        if (isBlocked)
+            throw new ArgumentException(
+                $"URL host '{host}' is blocked for security reasons (SSRF prevention).");
+    }
+
+    /// <summary>
+    /// Throws <see cref="ArgumentException"/> when the URI host exactly matches one of the
+    /// <see cref="WebFetchConfig.AdditionalBlockedHosts"/>.
+    /// </summary>
+    private void AssertNotAdditionalBlocked(Uri uri)
+    {
+        var host = uri.Host;
+        foreach (var blocked in _config.AdditionalBlockedHosts)
+        {
+            if (host.Equals(blocked, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"URL host '{host}' is blocked by configuration (SSRF prevention).");
+        }
     }
 
     /// <inheritdoc />

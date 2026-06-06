@@ -5,7 +5,9 @@ using BotNexus.Gateway;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Copilot.Messages;
+using BotNexus.Agent.Providers.Copilot.Responses;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.OpenAI;
@@ -243,6 +245,9 @@ public sealed class GatewayStartupAndConfigurationTests
         apiProviders.Register(new AnthropicProvider(httpClient));
         apiProviders.Register(new OpenAICompletionsProvider(httpClient, NullLogger<OpenAICompletionsProvider>.Instance));
         apiProviders.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
+        apiProviders.Register(new CopilotMessagesProvider(httpClient));
+        apiProviders.Register(new CopilotResponsesProvider(httpClient, NullLogger<CopilotResponsesProvider>.Instance));
+        apiProviders.Register(new CopilotCompletionsProvider(httpClient, NullLogger<CopilotCompletionsProvider>.Instance));
         apiProviders.Register(new OpenAICompatProvider(httpClient));
 
         new BuiltInModels().RegisterAll(models);
@@ -299,6 +304,70 @@ public sealed class GatewayStartupAndConfigurationTests
             model!.Api.ShouldBe("github-copilot-messages",
                 $"Phase 1b — github-copilot/{modelId} must route via the carved-out provider.");
         }
+    }
+
+    [Fact]
+    public void GatewayConfiguration_CopilotResponsesAndCompletionsProviders_AreRoutedFromBuiltInOpenAIModels()
+    {
+        // Phase 2b (#810): BuiltInModels now routes the Copilot gpt-5.x entries through the
+        // carved-out CopilotResponsesProvider (Api="github-copilot-responses") and the Copilot
+        // gemini/grok/gpt-4.x entries through CopilotCompletionsProvider
+        // (Api="github-copilot-completions"). The legacy openai-responses /
+        // openai-completions providers remain registered so direct-OpenAI users are unaffected;
+        // the user-visible wire contract for Copilot OpenAI-flavour requests is pinned by the
+        // Phase 2a parity tests, which both stayed green across this flip.
+        using var httpClient = new HttpClient();
+
+        var apiProviders = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+
+        apiProviders.Register(new AnthropicProvider(httpClient));
+        apiProviders.Register(new CopilotMessagesProvider(httpClient));
+        apiProviders.Register(new OpenAICompletionsProvider(httpClient, NullLogger<OpenAICompletionsProvider>.Instance));
+        apiProviders.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
+        apiProviders.Register(new CopilotResponsesProvider(httpClient, NullLogger<CopilotResponsesProvider>.Instance));
+        apiProviders.Register(new CopilotCompletionsProvider(httpClient, NullLogger<CopilotCompletionsProvider>.Instance));
+        apiProviders.Register(new OpenAICompatProvider(httpClient));
+
+        new BuiltInModels().RegisterAll(models);
+
+        var llmClient = new LlmClient(apiProviders, models);
+        var registeredApis = llmClient.ApiProviders.GetAll().Select(provider => provider.Api).ToArray();
+
+        registeredApis.ShouldContain("openai-responses",
+            "OpenAIResponsesProvider must remain registered — direct-OpenAI users depend on it.");
+        registeredApis.ShouldContain("openai-completions",
+            "OpenAICompletionsProvider must remain registered — direct-OpenAI users depend on it.");
+        registeredApis.ShouldContain("github-copilot-responses",
+            "CopilotResponsesProvider must remain registered so the Copilot gpt-5.x entries resolve.");
+        registeredApis.ShouldContain("github-copilot-completions",
+            "CopilotCompletionsProvider must remain registered so the Copilot gemini/grok/gpt-4.x entries resolve.");
+
+        // After the Phase 2b flip, every gpt-5.x entry under github-copilot routes via
+        // github-copilot-responses. Spot-check across the family.
+        foreach (var modelId in new[] { "gpt-5", "gpt-5.1-codex", "gpt-5.4" })
+        {
+            var model = llmClient.Models.GetModel("github-copilot", modelId);
+            model.ShouldNotBeNull($"BuiltInModels must register github-copilot/{modelId}");
+            model!.Api.ShouldBe("github-copilot-responses",
+                $"Phase 2b — github-copilot/{modelId} must route via the carved-out Responses provider.");
+        }
+
+        // And every gemini/grok/gpt-4.x entry under github-copilot routes via
+        // github-copilot-completions. Spot-check across the family.
+        foreach (var modelId in new[] { "gemini-2.5-pro", "gpt-4.1", "gpt-4o", "grok-code-fast-1" })
+        {
+            var model = llmClient.Models.GetModel("github-copilot", modelId);
+            model.ShouldNotBeNull($"BuiltInModels must register github-copilot/{modelId}");
+            model!.Api.ShouldBe("github-copilot-completions",
+                $"Phase 2b — github-copilot/{modelId} must route via the carved-out Completions provider.");
+        }
+
+        // Direct-OpenAI users must not be impacted by the Copilot routing flip.
+        var directOpenAi = llmClient.Models.GetModel("openai", "o3");
+        directOpenAi.ShouldNotBeNull();
+        directOpenAi!.Api.ShouldBe("openai-responses",
+            "Direct-OpenAI o3 must still route via openai-responses — Copilot carve-out is namespace-scoped.");
     }
 
     [Fact]

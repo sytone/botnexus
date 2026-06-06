@@ -50,4 +50,23 @@ public sealed class WebFetchConfig
     /// <summary>User-Agent header for HTTP requests.</summary>
     [JsonPropertyName("userAgent")]
     public string UserAgent { get; set; } = "BotNexus/1.0 (compatible; bot)";
+
+    /// <summary>
+    /// When <see langword="false" /> (the default), requests to private, loopback, link-local,
+    /// IMDS, and reserved IP ranges are rejected in <c>PrepareArgumentsAsync</c> to prevent
+    /// Server-Side Request Forgery (SSRF) attacks.
+    /// Set to <see langword="true" /> only for self-hosted deployments where agents need
+    /// to reach services on private networks.
+    /// </summary>
+    [JsonPropertyName("allowPrivateNetworks")]
+    public bool AllowPrivateNetworks { get; set; } = false;
+
+    /// <summary>
+    /// Additional hostnames (exact match, case-insensitive) that are always blocked,
+    /// even when <see cref="AllowPrivateNetworks" /> is <see langword="true" />.
+    /// Useful for blocking known-internal hostnames that resolve to public IPs.
+    /// Example: <c>["internal.corp.example", "secrets.internal"]</c>
+    /// </summary>
+    [JsonPropertyName("additionalBlockedHosts")]
+    public IReadOnlyList<string> AdditionalBlockedHosts { get; set; } = [];
 }
