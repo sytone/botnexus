@@ -5,7 +5,9 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -22,12 +24,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private readonly LlmClient _llmClient;
     private readonly ILogger<LlmSessionCompactor> _logger;
     private readonly ISecretRedactor? _redactor;
+    private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
 
-    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null)
+    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null)
     {
         _llmClient = llmClient;
         _logger = logger;
         _redactor = redactor;
+        _platformConfig = platformConfig;
     }
 
     public bool ShouldCompact(Session session, CompactionOptions options)
@@ -88,8 +92,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
-        var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars);
-        var summary = await CallLlmForSummaryAsync(summaryPrompt, options, cancellationToken).ConfigureAwait(false);
+        var priorSummary = ExtractPriorSummary(toSummarize);
+        var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars, priorSummary);
+        var effectiveOptions = ResolveEffectiveOptions(options);
+        var summary = await CallLlmForSummaryAsync(summaryPrompt, effectiveOptions, cancellationToken).ConfigureAwait(false);
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
         if (string.IsNullOrWhiteSpace(summary))
@@ -240,7 +246,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         "Reverse signals (stop, undo, roll back, never mind, new topic) must immediately end any in-flight work described in the summary.\n" +
         "IMPORTANT: Persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative.";
 
-    private static string BuildSummarizationPrompt(List<SessionEntry> entries, int maxChars)
+    private static string BuildSummarizationPrompt(List<SessionEntry> entries, int maxChars, string? priorSummary = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Summarize the following conversation history. Preserve critical information in a structured format.");
@@ -253,6 +259,17 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         builder.AppendLine("## Remaining Work -- planned but not started");
         builder.AppendLine();
         builder.AppendLine($"Keep the summary under {maxChars} characters.");
+
+        if (!string.IsNullOrWhiteSpace(priorSummary))
+        {
+            builder.AppendLine();
+            builder.AppendLine("The prior compaction summary is provided below for iterative context merge.");
+            builder.AppendLine("Merge the prior summary with the new turns into a single updated summary.");
+            builder.AppendLine();
+            builder.AppendLine("## Prior Summary");
+            builder.AppendLine(priorSummary);
+        }
+
         builder.AppendLine();
         builder.AppendLine("Conversation:");
 
@@ -392,5 +409,52 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             .Where(SessionContextProjector.IsVisibleInLiveContext)
             .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
+    }
+
+    /// <summary>
+    /// Extracts the raw LLM summary text from the most recent compaction summary entry in the
+    /// entries-to-summarise list. The guardrail prefix is stripped so it is not re-processed
+    /// as instructions in the next cycle's prompt.
+    /// Returns null when no prior summary exists (first compaction cycle).
+    /// </summary>
+    private static string? ExtractPriorSummary(IReadOnlyList<SessionEntry> entriesToSummarize)
+    {
+        var summaryEntry = entriesToSummarize
+            .LastOrDefault(e => e.IsCompactionSummary);
+        if (summaryEntry is null) return null;
+
+        var content = summaryEntry.Content ?? string.Empty;
+        // Strip the guardrail prefix that was prepended when the entry was stored.
+        if (content.StartsWith(SummaryPrefix, StringComparison.Ordinal))
+            content = content[SummaryPrefix.Length..].TrimStart('\n');
+        return string.IsNullOrWhiteSpace(content) ? null : content;
+    }
+
+    /// <summary>
+    /// Builds an effective <see cref="CompactionOptions"/> by substituting the
+    /// <c>auxiliary.compression</c> model when the caller did not specify an explicit
+    /// <see cref="CompactionOptions.SummarizationModel"/>.
+    /// If no aux model is configured the options are returned unchanged (the existing
+    /// default waterfall in <see cref="ResolveModel"/> continues to apply).
+    /// Emits a startup-visible warning when no aux model is configured and no explicit
+    /// model was requested so operators know the primary model will be used.
+    /// </summary>
+    private CompactionOptions ResolveEffectiveOptions(CompactionOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.SummarizationModel))
+            return options; // explicit override wins
+
+        var compressionModel = _platformConfig?.CurrentValue?.Gateway?.Auxiliary?.Compression;
+        if (!string.IsNullOrWhiteSpace(compressionModel))
+        {
+            _logger.LogDebug(
+                "Compaction: using auxiliary.compression model {CompressionModel} for summarisation.",
+                compressionModel);
+            return options with { SummarizationModel = compressionModel };
+        }
+
+        _logger.LogDebug(
+            "Compaction: no auxiliary.compression configured -- falling back to primary model waterfall.");
+        return options;
     }
 }

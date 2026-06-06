@@ -475,7 +475,6 @@ The Gateway watches `~/.botnexus/config.json` for changes and automatically relo
 
 The debounce prevents rapid-fire reloads when editors write files in multiple steps (e.g., write temp file → rename).
 
-> **Note:** Agent configuration files (`FileAgentConfigurationSource`) use a separate watcher with a 250ms debounce.
 
 ### What Reloads Automatically
 

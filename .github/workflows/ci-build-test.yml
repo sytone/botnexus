@@ -85,7 +85,11 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Test
-        run: dotnet test --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration."
+        # Excludes tests that require external infrastructure not present in CI:
+        # - BotNexus.Integration.*  : CLI pack/install integration tests (not unit tests)
+        # - BotNexus.Conversation.* : live-gateway SignalR tests (all SkippableFact; gateway not running)
+        # - BotNexus.E2E.*          : Playwright end-to-end tests (browsers not installed)
+        run: dotnet test --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.&FullyQualifiedName!~BotNexus.Conversation.Tests.&FullyQualifiedName!~BotNexus.E2E.Tests."
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

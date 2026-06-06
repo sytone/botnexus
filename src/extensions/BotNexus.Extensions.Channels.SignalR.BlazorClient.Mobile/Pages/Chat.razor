@@ -17,7 +17,7 @@
         }
         else
         {
-            <div class="portal-load-spinner">Connecting&#x2026;</div>
+            <div class="portal-load-spinner">Connecting…</div>
         }
     </div>
 }
@@ -38,7 +38,7 @@ else
             <div class="disconnected-bar" data-testid="disconnected-bar">
                 &#x26A0; Disconnected
                 <button class="reconnect-inline-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Reconnect">
-                    @(_isRefreshing ? "&#x21BB;" : "Reconnect")
+                    @(_isRefreshing ? "↻" : "Reconnect")
                 </button>
             </div>
         }
@@ -57,7 +57,7 @@ else
                 }
             </select>
             <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh" data-testid="refresh-btn" title="Refresh conversations">
-                @(_isRefreshing ? "&#x21BB;" : "&#x21BA;")
+                @(_isRefreshing ? "↻" : "↺")
             </button>
             <div class="overflow-menu-wrapper">
                 <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">&#x22EF;</button>
@@ -122,7 +122,7 @@ else
         <div class="bottom-bar">
             <textarea
                 class="input-textarea"
-                placeholder="Message&#x2026;"
+                placeholder="Message…"
                 rows="1"
                 @bind="_inputText"
                 @bind:event="oninput"
