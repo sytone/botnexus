@@ -244,4 +244,42 @@ public sealed class ChatMessageFlowTests
         // This verifies the toggle actually works at the DOM level
         Assert.NotEqual(initialClass, afterClass);
     }
+
+    [SkippableFact]
+    public async Task ToolCall_BubbleAndPostToolText_BothRender()
+    {
+        // Regression test for #605: TOOL_CALL_SEQUENCE previously used a 'noop' tool
+        // that was not registered, causing the orchestrator to stall or fail silently.
+        // Now uses get_datetime (always registered). This test verifies:
+        //   1. A tool-call bubble renders in the message list
+        //   2. The post-tool assistant text [TOOL_CALL_SEQUENCE_COMPLETE] renders
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+
+        await using var _ = browser!;
+        var (page, _, chat) = await PortalTestHelpers.NewChatPageAsync(
+            browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
+
+        await chat.StartFreshSessionAsync();
+        await chat.SendMessageAsync("TOOL_CALL_SEQUENCE");
+        await chat.WaitForStreamingCompleteAsync(TimeSpan.FromSeconds(60));
+
+        // Tool-call bubble must appear
+        var toolMessage = page.Locator(".message.tool").First;
+        await toolMessage.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Attached,
+            Timeout = 15_000,
+        });
+        Assert.True(await toolMessage.IsVisibleAsync(), "Tool-call bubble must be visible");
+
+        // Post-tool assistant text must appear
+        var allMessages = await page.Locator(".message-text").AllInnerTextsAsync();
+        Assert.True(
+            allMessages.Any(t => t.Contains("TOOL_CALL_SEQUENCE_COMPLETE", StringComparison.Ordinal)),
+            $"Post-tool text '[TOOL_CALL_SEQUENCE_COMPLETE]' must appear in messages. Got: {string.Join(" | ", allMessages)}");
+    }
 }
