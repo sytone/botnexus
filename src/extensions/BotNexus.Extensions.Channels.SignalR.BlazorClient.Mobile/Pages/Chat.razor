@@ -67,7 +67,7 @@ else
                         <div class="menu-session-id" title="Session ID">
                             <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "&#x2014;")</span>
                         </div>
-                        <button class="menu-action" @onclick="NewSession">New session</button>
+                        <button class="menu-action" data-testid="new-session-btn" @onclick="NewSession">New session</button>
                     </div>
                 }
             </div>
@@ -134,6 +134,19 @@ else
             </button>
         </div>
     </div>
+    <!-- NEW SESSION CONFIRM OVERLAY -->
+    @if (_showNewSessionConfirm)
+    {
+        <div class="reset-confirm-overlay" @onclick="CancelNewSession">
+            <div class="reset-confirm-box" @onclick:stopPropagation="true">
+                <p>Start a new session? Prior messages will remain visible but the agent will start with a fresh context.</p>
+                <div class="reset-confirm-actions">
+                    <button class="cancel-btn" @onclick="CancelNewSession">Cancel</button>
+                    <button class="confirm-btn" data-testid="new-session-confirm-btn" @onclick="DoNewSession">New session</button>
+                </div>
+            </div>
+        </div>
+    }
     <!-- TOOL CALL MODAL -->
     @if (_modalToolMessage is not null)
     {
@@ -176,6 +189,7 @@ else
     private bool _isSending;
     private bool _isRefreshing;
     private bool _menuOpen;
+    private bool _showNewSessionConfirm;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
     private ChatMessage? _modalToolMessage;
@@ -430,11 +444,25 @@ else
 
     private void ToggleMenu() => _menuOpen = !_menuOpen;
 
-    private async Task NewSession()
+    private void NewSession()
     {
+        _showNewSessionConfirm = true;
         _menuOpen = false;
+    }
+
+    private async Task DoNewSession()
+    {
+        _showNewSessionConfirm = false;
         if (Store.ActiveAgentId is not null)
+        {
             await Interaction.ResetSessionAsync(Store.ActiveAgentId);
+            await ForceScrollToBottomAsync();
+        }
+    }
+
+    private void CancelNewSession()
+    {
+        _showNewSessionConfirm = false;
     }
 
     private void OpenToolModal(ChatMessage msg)

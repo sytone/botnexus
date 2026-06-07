@@ -7,10 +7,10 @@
 
 @if (_showPanel)
 {
-    <div class="config-overlay" @onclick="Close">
-        <div class="config-dialog" @onclick:stopPropagation="true">
+    <div class="config-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+        <div class="config-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-config-title" @onclick:stopPropagation="true">
             <div class="config-header">
-                <h3>⚙ Agent Configuration</h3>
+                <h3 id="agent-config-title">⚙ Agent Configuration</h3>
                 <button class="config-close-btn" @onclick="Close">✕</button>
             </div>
 
@@ -273,6 +273,12 @@
     }
 
     private void Close() => _showPanel = false;
+
+    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            Close();
+    }
 
     private async Task SaveModel()
     {

@@ -79,4 +79,107 @@ public static class SessionContextProjector
         ArgumentNullException.ThrowIfNull(history);
         return history.Where(IsVisibleInLiveContext).ToList();
     }
+
+    /// <summary>
+    /// Detects whether the session history contains an abandoned turn — a sequence of
+    /// tool-start entries without matching tool-end entries that precedes the most recent
+    /// user message. This indicates a prior turn stalled mid-execution and the dangling
+    /// context should not be replayed to the agent.
+    /// </summary>
+    /// <remarks>
+    /// A ToolStart entry is identified by having <see cref="SessionEntry.ToolArgs"/> set
+    /// (populated from the <c>AgentStreamEventType.ToolStart</c> event). A matching ToolEnd
+    /// shares the same <see cref="SessionEntry.ToolCallId"/> but has no <c>ToolArgs</c>.
+    /// The detection scans backward from the most recent user message and checks all tool
+    /// entries in the preceding turn for unmatched starts.
+    /// </remarks>
+    public static AbandonedTurnResult DetectAbandonedTurn(IReadOnlyList<SessionEntry> history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+
+        if (history.Count < 2)
+            return AbandonedTurnResult.None;
+
+        // Find the index of the most recent user message (the new inbound message).
+        int lastUserIndex = -1;
+        for (int i = history.Count - 1; i >= 0; i--)
+        {
+            if (history[i].Role.Equals(MessageRole.User) && !history[i].IsHistory)
+            {
+                lastUserIndex = i;
+                break;
+            }
+        }
+
+        if (lastUserIndex <= 0)
+            return AbandonedTurnResult.None;
+
+        // Find the second-to-last user message (start of the previous turn).
+        int prevUserIndex = -1;
+        for (int i = lastUserIndex - 1; i >= 0; i--)
+        {
+            if (history[i].Role.Equals(MessageRole.User) && !history[i].IsHistory)
+            {
+                prevUserIndex = i;
+                break;
+            }
+        }
+
+        if (prevUserIndex < 0)
+            return AbandonedTurnResult.None;
+
+        // Scan the entries between prevUserIndex and lastUserIndex for dangling tool starts.
+        // A ToolStart has ToolArgs set; a ToolEnd for the same call has the same ToolCallId
+        // but no ToolArgs.
+        var toolStarts = new HashSet<string>(StringComparer.Ordinal);
+        var toolEnds = new HashSet<string>(StringComparer.Ordinal);
+        int abandonedCount = 0;
+
+        for (int i = prevUserIndex + 1; i < lastUserIndex; i++)
+        {
+            var entry = history[i];
+            if (entry.IsCrashSentinel || entry.IsHistory)
+                continue;
+
+            if (!entry.Role.Equals(MessageRole.Tool))
+                continue;
+
+            if (entry.ToolCallId is null)
+                continue;
+
+            if (entry.ToolArgs is not null)
+            {
+                // This is a ToolStart entry
+                toolStarts.Add(entry.ToolCallId);
+            }
+            else
+            {
+                // This is a ToolEnd entry
+                toolEnds.Add(entry.ToolCallId);
+            }
+        }
+
+        // Dangling starts = ToolStarts that have no matching ToolEnd
+        foreach (var startId in toolStarts)
+        {
+            if (!toolEnds.Contains(startId))
+                abandonedCount++;
+        }
+
+        if (abandonedCount == 0)
+            return AbandonedTurnResult.None;
+
+        return new AbandonedTurnResult(HasAbandonedTurn: true, AbandonedEntryCount: abandonedCount);
+    }
+}
+
+/// <summary>
+/// Result of abandoned turn detection.
+/// </summary>
+/// <param name="HasAbandonedTurn">True if dangling tool calls were found in the previous turn.</param>
+/// <param name="AbandonedEntryCount">Number of tool-start entries without matching completions.</param>
+public sealed record AbandonedTurnResult(bool HasAbandonedTurn, int AbandonedEntryCount)
+{
+    /// <summary>Singleton for the no-abandoned-turn case.</summary>
+    public static readonly AbandonedTurnResult None = new(HasAbandonedTurn: false, AbandonedEntryCount: 0);
 }
