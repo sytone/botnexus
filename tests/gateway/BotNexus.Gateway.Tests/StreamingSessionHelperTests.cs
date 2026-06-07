@@ -99,7 +99,8 @@ public sealed class StreamingSessionHelperTests
             session,
             store.Object);
 
-        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        result.HistoryEntries.Count.ShouldBe(2); // start + synthesized orphan result
+        var entry = result.HistoryEntries[0];
         entry.ToolArgs.ShouldNotBeNull();
         entry.ToolArgs.ShouldContain("query");
         entry.ToolArgs.ShouldContain("dotnet");
@@ -125,7 +126,8 @@ public sealed class StreamingSessionHelperTests
             session,
             store.Object);
 
-        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        result.HistoryEntries.Count.ShouldBe(2); // start + synthesized orphan result
+        var entry = result.HistoryEntries[0];
         entry.ToolArgs.ShouldBeNull();
     }
 
@@ -149,7 +151,8 @@ public sealed class StreamingSessionHelperTests
             session,
             store.Object);
 
-        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        result.HistoryEntries.Count.ShouldBe(2); // start + synthesized orphan result
+        var entry = result.HistoryEntries[0];
         entry.ToolArgs.ShouldBeNull();
     }
 
