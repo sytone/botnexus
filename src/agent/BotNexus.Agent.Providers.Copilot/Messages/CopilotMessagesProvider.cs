@@ -179,7 +179,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
 
         // Copilot transport always applies the dynamic vision/intent headers.
         var hasImages = CopilotHeaders.HasVisionInput(context.Messages);
-        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(context.Messages, hasImages))
+        var headerOptions = Headers.CopilotInteractionId.WithResolvedInteractionId(copilotOpts?.HeaderOptions);
+        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(context.Messages, hasImages, headerOptions))
             httpRequest.Headers.TryAddWithoutValidation(key, value);
 
         var setupTimeoutMs = options?.StreamSetupTimeoutMs ?? 0;
@@ -193,6 +194,10 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
 
         using var response = await _httpClient.SendAsync(
             httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveCt);
+
+        // Surface Copilot response correlation IDs + quota snapshots before the
+        // success check so error responses are still observable.
+        Headers.CopilotResponseHeaders.EmitToActivity(response, Activity.Current);
 
         if (!response.IsSuccessStatusCode)
         {
