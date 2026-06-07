@@ -85,12 +85,12 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Clicking_burger_twice_closes_sidebar()
+    public async Task Clicking_burger_twice_closes_sidebar()
     {
         var cut = RenderLayout();
 
-        cut.Find(".burger-btn").Click();
-        cut.Find(".burger-btn").Click();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-closed");
     }
