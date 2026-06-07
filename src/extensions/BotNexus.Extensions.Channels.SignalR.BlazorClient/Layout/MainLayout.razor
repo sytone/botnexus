@@ -18,7 +18,7 @@
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
-            <button class="burger-btn" @onclick="ToggleSidebar" aria-label="Toggle menu">
+            <button class="burger-btn" @onclick="ToggleSidebar" aria-label="Toggle menu" data-testid="sidebar-toggle-btn">
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
@@ -71,7 +71,7 @@
                 @if (!_isMobile && Store.Agents.Values.Any(a => !a.IsReadOnly))
                 {
                     <div class="agent-dropdown-container">
-                        <select class="agent-dropdown-select"
+                        <select class="agent-dropdown-select" data-testid="agent-select"
                                 value="@Store.ActiveAgentId"
                                 @onchange="OnAgentSelected">
                             <option value="">— select agent —</option>
@@ -95,7 +95,7 @@
                                 @if (!activeAgent.IsReadOnly)
                                 {
                                     <button class="conversation-new-btn"
-                                            data-testid="conversation-new"
+                                            data-testid="new-conversation-btn"
                                             data-agent-id="@activeAgent.AgentId"
                                             @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
                                             title="Start a new conversation">
@@ -153,7 +153,7 @@
                                             </a>
                                             @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
                                             {
-                                                <button class="conversation-archive-btn"
+                                                <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
                                                         title="@(conversation.IsVirtualSession ? "Close conversation — reopens on next trigger" : "Archive conversation")"
                                                         @onclick:stopPropagation="true"
                                                         @onclick="() => ArchiveConversationAsync(activeAgent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">

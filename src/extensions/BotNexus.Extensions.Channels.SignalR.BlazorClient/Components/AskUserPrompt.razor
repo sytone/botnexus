@@ -1,7 +1,7 @@
 @using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
 @implements IDisposable
 
-<div class="ask-user-prompt" role="group" aria-label="Agent question">
+<div class="ask-user-prompt" data-testid="ask-user-prompt" role="group" aria-label="Agent question">
     <div class="ask-user-header">
         <span class="ask-user-title">❓ Agent needs input</span>
         @if (_secondsRemaining is not null)
@@ -59,12 +59,14 @@
     <div class="ask-user-actions">
         <button type="button"
                 class="cancel-btn"
+                data-testid="ask-user-cancel"
                 disabled="@Prompt.IsSubmitting"
                 @onclick="CancelAsync">
             Cancel
         </button>
         <button type="button"
                 class="send-btn"
+                data-testid="ask-user-submit"
                 disabled="@(!CanSubmit || Prompt.IsSubmitting)"
                 @onclick="SubmitAsync">
             @(Prompt.IsSubmitting ? "Submitting…" : "Submit")

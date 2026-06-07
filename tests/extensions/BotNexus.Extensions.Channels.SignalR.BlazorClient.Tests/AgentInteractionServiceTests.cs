@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -561,5 +561,52 @@ public sealed class AgentInteractionServiceTests
         var conv = agent.Conversations["conv-new-streaming"];
         Assert.False(conv.StreamState.IsStreaming);
         Assert.Single(conv.Messages);
+    }
+
+
+    // ---- Stream/history reconciliation tests (issue #759) ----
+
+
+    [Fact]
+    public async Task LoadHistory_not_called_when_streaming_active()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.ActiveConversationId = "conv-active";
+        agent.Conversations["conv-active"] = new ConversationState
+        {
+            ConversationId = "conv-active",
+            Title = "Active",
+            HistoryLoaded = false,
+            ActiveSessionId = "sess-active"
+        };
+        var conv = agent.Conversations["conv-active"];
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "in progress";
+        conv.Messages.Add(new ChatMessage("Tool", "running tool", DateTimeOffset.UtcNow));
+
+        // Trigger SelectConversation which internally calls LoadConversationHistoryAsync
+        // But fix #789 resets IsStreaming first, so we need to test the direct path.
+        // Instead, use the internal mechanism: set HistoryLoaded=false then call Select.
+        // The SelectConversation fix (#789) resets streaming first, allowing reload.
+        // Our guard protects the non-SelectConversation path (DrainPending, RefreshConversations).
+        // To test our guard: manually trigger via the public RefreshConversationsAsync.
+
+        _restClient.GetConversationsAsync(Arg.Any<string>())
+            .Returns(new List<ConversationSummaryDto>
+            {
+                new("conv-active", "agent-1", "Active", false, "Active", "sess-active", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            });
+        _restClient.GetSessionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<SessionSummary>() as IReadOnlyList<SessionSummary>);
+
+        // This should NOT trigger a history load because conversation is streaming
+        await _service.RefreshConversationsAsync("agent-1");
+
+        // History endpoint should NOT have been called
+        await _restClient.DidNotReceive().GetHistoryAsync(Arg.Any<string>(), Arg.Any<int>());
+
+        // Messages should be preserved
+        Assert.Single(conv.Messages);
+        Assert.Equal("running tool", conv.Messages[0].Content);
     }
 }
