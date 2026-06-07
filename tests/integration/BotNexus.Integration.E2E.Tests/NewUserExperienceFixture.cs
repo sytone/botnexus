@@ -250,8 +250,17 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
 
     private static async Task<bool> WaitForGatewayReadyAsync(string baseUrl, TimeSpan timeout, ProcessRunner.BackgroundProcess process)
     {
+        // Phase 1: TCP-level probe — wait for Kestrel to bind the port before making HTTP calls.
+        // This prevents spurious connection-refused errors on slow CI runners.
+        var uri = new Uri(baseUrl);
+        var tcpReady = await TcpReadinessProbe.WaitForTcpReadyAsync(
+            uri.Host, uri.Port, timeout / 2);
+        if (!tcpReady || process.HasExited)
+            return false;
+
+        // Phase 2: HTTP health check — port is accepting TCP but app may still be initializing.
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = DateTime.UtcNow + (timeout / 2);
         while (DateTime.UtcNow < deadline)
         {
             if (process.HasExited)
