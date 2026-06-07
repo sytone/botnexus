@@ -43,18 +43,18 @@ reality. Think "Mostly harmless", with build warnings treated as errors.
                       |   Humans / Apps  |
                       +---------+--------+
                                 |
-                  +-------------v-------------+
+                  +-------------v--------------+
                   |         BotNexus           |
                   |  gateway + routing + logs  |
-                  +------+------+------+------+
-                         |      |      |
-                  +------v+ +---v---+ +v------+
-                  | Agent | |Agent | | Agent  |
-                  +---+---+ +---+--+ +---+---+
-                      |         |        |
-                  +---v---------v--------v---+
-                  | providers, tools, memory  |
-                  +--------------------------+
+                  +---+---------+---------+----+
+                      |         |         |
+                  +---v---+ +---v---+ +---v----+
+                  | Agent | | Agent | | Agent  |
+                  +---+---+ +---+---+ +---+----+
+                      |         |         |
+                  +---v---------v---------v----+
+                  | providers, tools, memory   |
+                  +----------------------------+
 ```
 
 BotNexus gives you a local playground for running and observing agents:
