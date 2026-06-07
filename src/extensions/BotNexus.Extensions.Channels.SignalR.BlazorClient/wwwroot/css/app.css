@@ -3652,6 +3652,32 @@ details[open] > .thinking-summary::before {
     white-space: nowrap;
 }
 
+/* ── Compaction Boundary Divider ─────────────────────────────────────────── */
+
+.compaction-boundary {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    margin: 0.75rem 0;
+}
+
+.compaction-boundary-line {
+    flex: 1;
+    height: 1px;
+    background: var(--accent);
+    opacity: 0.4;
+}
+
+.compaction-boundary-label {
+    padding: 0 0.75rem;
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+}
+
 /* Chat Header - Conversation Title Heading (was: Conversation Title Row) */
 
 .chat-title-heading-row {
