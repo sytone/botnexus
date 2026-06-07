@@ -23,5 +23,6 @@
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Wire\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Requests\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Discovery\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

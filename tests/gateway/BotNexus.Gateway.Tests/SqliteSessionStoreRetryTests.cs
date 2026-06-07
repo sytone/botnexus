@@ -86,6 +86,36 @@ public sealed class SqliteSessionStoreRetryTests
     // ── test 5: SessionsController returns 503 when store unavailable ────────
     //    (via Mock<ISessionStore>; no SqliteException needed)
     // This test lives in SessionsControllerTests.cs
+
+    // ── test 6: "cannot rollback" error is treated as transient ──────────────
+
+    [Fact]
+    public void IsTransientSqliteException_CannotRollback_ReturnsTrue()
+    {
+        var isTransient = SqliteSessionStoreTestHelper.CheckIsTransient(
+            errorCode: 1, message: "SQLite Error 1: cannot rollback - no transaction is active");
+        isTransient.ShouldBeTrue();
+    }
+
+    // ── test 7: unrelated error code 1 is NOT transient ──────────────────────
+
+    [Fact]
+    public void IsTransientSqliteException_OtherError1_ReturnsFalse()
+    {
+        var isTransient = SqliteSessionStoreTestHelper.CheckIsTransient(
+            errorCode: 1, message: "SQLite Error 1: no such table: sessions");
+        isTransient.ShouldBeFalse();
+    }
+
+    // ── test 8: BUSY (5) is transient ────────────────────────────────────────
+
+    [Fact]
+    public void IsTransientSqliteException_Busy_ReturnsTrue()
+    {
+        var isTransient = SqliteSessionStoreTestHelper.CheckIsTransient(
+            errorCode: 5, message: "SQLite Error 5: database is locked");
+        isTransient.ShouldBeTrue();
+    }
 }
 
 /// <summary>
@@ -136,5 +166,28 @@ internal static class SqliteSessionStoreTestHelper
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         fieldInfo.ShouldNotBeNull("TransientSqliteErrorCodes not found on SqliteSessionStore");
         return (int[])fieldInfo!.GetValue(null)!;
+    }
+
+    /// <summary>
+    /// Invokes IsTransientSqliteException via reflection with a fabricated SqliteException.
+    /// </summary>
+    public static bool CheckIsTransient(int errorCode, string message)
+    {
+        var method = typeof(SqliteSessionStore)
+            .GetMethod(
+                "IsTransientSqliteException",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.ShouldNotBeNull("IsTransientSqliteException not found on SqliteSessionStore");
+
+        // SqliteException can be instantiated via its (int errorCode, string message) ctor-like path.
+        // Fabricate via reflection since the constructor is internal.
+        var ex = CreateSqliteException(errorCode, message);
+        return (bool)method!.Invoke(null, [ex])!;
+    }
+
+    private static SqliteException CreateSqliteException(int errorCode, string message)
+    {
+        // Microsoft.Data.Sqlite.SqliteException has public ctors: (string, int) and (string, int, int)
+        return new SqliteException(message, errorCode);
     }
 }

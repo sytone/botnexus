@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Cli.Commands.Provider;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -63,6 +64,9 @@ internal sealed class ProviderCommand
         command.AddCommand(listCommand);
         command.AddCommand(BuildAddCommand(verboseOption));
         command.AddCommand(BuildRemoveCommand(verboseOption));
+        command.AddCommand(CopilotProviderSubcommand.Build(
+            verboseOption,
+            (configPath, home, verbose, ct) => ExecuteSetupAsync(configPath, home, verbose, "github-copilot", ct)));
 
         // Default to setup when no subcommand given
         var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.") { IsHidden = true };

@@ -772,4 +772,108 @@ public sealed class LlmSessionCompactorTests
         var llmClient = new LlmClient(providers, models);
         return new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
     }
+
+    // ── Circuit Breaker Tests ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CompactAsync_EmptySummary_IncrementsFailureCounter()
+    {
+        var session = CreateLargeSession(300);
+        var compactor = CreateCompactor(""); // empty summary → failure
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.01,
+            PreservedTurns = 2,
+            MaxSummaryChars = 5000
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeFalse();
+        // After 1 failure, should still compact next time (threshold is 3)
+        var result2 = await compactor.CompactAsync(session, options);
+        result2.Succeeded.ShouldBeFalse(); // still empty summary but still tries
+    }
+
+    [Fact]
+    public async Task CompactAsync_CircuitBreaker_SkipsAfterMaxFailures()
+    {
+        var session = CreateLargeSession(300);
+        var compactor = CreateCompactor(""); // empty summary → always fails
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.01,
+            PreservedTurns = 2,
+            MaxSummaryChars = 5000
+        };
+
+        // Exhaust the breaker
+        for (var i = 0; i < LlmSessionCompactor.MaxConsecutiveFailures; i++)
+        {
+            var r = await compactor.CompactAsync(session, options);
+            r.Succeeded.ShouldBeFalse();
+        }
+
+        // Next call should short-circuit without even attempting LLM call
+        var result = await compactor.CompactAsync(session, options);
+        result.Succeeded.ShouldBeFalse();
+        result.EntriesPreserved.ShouldBe(0); // circuit breaker returns zero (didn't snapshot)
+    }
+
+    [Fact]
+    public async Task CompactAsync_SuccessResetsCircuitBreaker()
+    {
+        var session = CreateLargeSession(300);
+        // Use a compactor that returns empty first, then succeeds
+        var callCount = 0;
+        var compactorWithSummary = CreateCompactorWithSequence(
+            () => ++callCount <= 2 ? "" : "Summary text");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.01,
+            PreservedTurns = 2,
+            MaxSummaryChars = 5000
+        };
+
+        // Fail twice
+        await compactorWithSummary.CompactAsync(session, options);
+        await compactorWithSummary.CompactAsync(session, options);
+
+        // Succeed on third call → counter resets
+        var result = await compactorWithSummary.CompactAsync(session, options);
+        result.Succeeded.ShouldBeTrue();
+    }
+
+    private static GatewaySession CreateLargeSession(int entryCount)
+    {
+        var entries = new List<(string role, string content)>();
+        for (var i = 0; i < entryCount; i++)
+        {
+            entries.Add((i % 2 == 0 ? "user" : "assistant", $"message {i} " + new string('x', 50)));
+        }
+        return CreateSession(entries.ToArray());
+    }
+
+    private static LlmSessionCompactor CreateCompactorWithSequence(Func<string> summaryFactory)
+    {
+        var providers = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+        models.Register(TestModel.Provider, TestModel);
+
+        var provider = new Mock<IApiProvider>();
+        provider.SetupGet(item => item.Api).Returns(TestModel.Api);
+        provider.Setup(item => item.StreamSimple(
+                It.IsAny<LlmModel>(),
+                It.IsAny<Context>(),
+                It.IsAny<SimpleStreamOptions?>()))
+            .Returns(() => CreateStream(summaryFactory()));
+
+        providers.Register(provider.Object);
+
+        var llmClient = new LlmClient(providers, models);
+        return new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
+    }
 }
