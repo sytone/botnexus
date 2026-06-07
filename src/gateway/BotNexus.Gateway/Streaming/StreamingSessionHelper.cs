@@ -34,6 +34,9 @@ public static class StreamingSessionHelper
         var streamedHistory = new List<SessionEntry>();
         var hadThinkingContent = false;
         var hadMessageEnd = false;
+        var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
+        var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
+        var toolStartEntries = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
 
         await foreach (var evt in stream.WithCancellation(cancellationToken))
         {
@@ -49,7 +52,7 @@ public static class StreamingSessionHelper
                     hadMessageEnd = true;
                     break;
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
-                    streamedHistory.Add(new SessionEntry
+                    var startEntry = new SessionEntry
                     {
                         Role = MessageRole.Tool,
                         Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
@@ -58,7 +61,13 @@ public static class StreamingSessionHelper
                         ToolArgs = evt.ToolArgs is { Count: > 0 }
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
                             : null
-                    });
+                    };
+                    streamedHistory.Add(startEntry);
+                    if (evt.ToolCallId is not null)
+                    {
+                        toolStartIds.Add(evt.ToolCallId);
+                        toolStartEntries[evt.ToolCallId] = startEntry;
+                    }
                     break;
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
                     streamedHistory.Add(new SessionEntry
@@ -69,6 +78,8 @@ public static class StreamingSessionHelper
                         ToolCallId = evt.ToolCallId,
                         ToolIsError = evt.ToolIsError == true
                     });
+                    if (evt.ToolCallId is not null)
+                        toolEndIds.Add(evt.ToolCallId);
                     break;
                 case AgentStreamEventType.Error when options.IncludeErrorsInHistory && !string.IsNullOrWhiteSpace(evt.ErrorMessage):
                     streamedHistory.Add(new SessionEntry
@@ -112,12 +123,32 @@ public static class StreamingSessionHelper
             }
         }
 
+        // Synthesize failed tool results for orphan tool calls (#1001).
+        // A ToolStart with no matching ToolEnd means the tool call did not complete —
+        // append a failed result entry so the transcript is consistent and downstream
+        // consumers (e.g. provider message builders) do not encounter an orphan call.
+        foreach (var orphanId in toolStartIds.Except(toolEndIds))
+        {
+            var toolName = toolStartEntries.TryGetValue(orphanId, out var entry)
+                ? entry.ToolName ?? "unknown"
+                : "unknown";
+            streamedHistory.Add(new SessionEntry
+            {
+                Role = MessageRole.Tool,
+                Content = $"Tool '{toolName}' did not complete — result synthesized for transcript consistency.",
+                ToolName = toolName,
+                ToolCallId = orphanId,
+                ToolIsError = true
+            });
+        }
+
         // Final write: append any remaining content not yet flushed by a TurnEnd
         // (single-turn runs, or the last partial turn before AgentEnd).
         session.AddEntries(streamedHistory);
-        if (streamedContent.Length > 0)
+        var finalContent = streamedContent.ToString();
+        if (!string.IsNullOrWhiteSpace(finalContent))
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent });
         }
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
         {
