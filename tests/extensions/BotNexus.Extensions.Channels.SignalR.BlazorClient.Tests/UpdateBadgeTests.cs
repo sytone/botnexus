@@ -131,10 +131,10 @@ public sealed class UpdateBadgeTests : IDisposable
         _updateSvc.StartUpdateAsync(Arg.Any<CancellationToken>()).Returns(202);
 
         var cut = RenderLayout();
-        cut.Find(".update-badge").Click();
+        await cut.InvokeAsync(() => cut.Find(".update-badge").Click());
 
         // Click the confirm button inside the dialog
-        cut.Find(".update-confirm-btn").Click();
+        await cut.InvokeAsync(() => cut.Find(".update-confirm-btn").Click());
 
         await _updateSvc.Received(1).StartUpdateAsync(Arg.Any<CancellationToken>());
     }
@@ -155,12 +155,12 @@ public sealed class UpdateBadgeTests : IDisposable
     }
 
     [Fact]
-    public void MainLayout_WhenUpdateInProgress_UpdateButtonDisabled()
+    public async Task MainLayout_WhenUpdateInProgress_UpdateButtonDisabled()
     {
         _updateSvc.Status.Returns(MakeStatus(isUpdateAvailable: true, isUpdateInProgress: true));
 
         var cut = RenderLayout();
-        cut.Find(".update-badge").Click();
+        await cut.InvokeAsync(() => cut.Find(".update-badge").Click());
 
         // Confirm button (or the badge itself) must be disabled
         var btn = cut.Find(".update-confirm-btn");
