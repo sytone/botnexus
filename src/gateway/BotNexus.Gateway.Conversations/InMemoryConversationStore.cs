@@ -117,6 +117,21 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
+    {
+        if (_conversations.TryGetValue(conversationId.Value, out var existing))
+        {
+            _conversations[conversationId.Value] = existing with
+            {
+                IsPinned = pin,
+                PinnedAt = pin ? DateTimeOffset.UtcNow : null,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public async Task AddParticipantsAsync(
         ConversationId conversationId,
         IEnumerable<SessionParticipant> participants,
@@ -185,7 +200,9 @@ public sealed class InMemoryConversationStore : IConversationStore
         // Archived conversations are excluded from the active list.
         IReadOnlyList<ConversationSummary> summaries = [.. _conversations.Values
             .Where(c => c.Status != ConversationStatus.Archived)
-            .OrderByDescending(c => c.UpdatedAt)
+            .OrderByDescending(c => c.IsPinned)
+            .ThenByDescending(c => c.PinnedAt)
+            .ThenByDescending(c => c.UpdatedAt)
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
         return Task.FromResult(summaries);
@@ -225,6 +242,8 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.CreatedAt,
             c.UpdatedAt,
             c.Purpose,
-            c.Kind.ToString());
+            c.Kind.ToString(),
+            c.IsPinned,
+            c.PinnedAt);
 }
 

@@ -1,3 +1,5 @@
+using BotNexus.Agent.Providers.Core.Utilities;
+
 namespace BotNexus.Agent.Providers.Copilot.Messages;
 
 /// <summary>
@@ -26,4 +28,13 @@ public record class CopilotMessagesOptions : Core.StreamOptions
     /// or an Anthropic-shaped tool_choice object.
     /// </summary>
     public object? ToolChoice { get; set; }
+
+    /// <summary>
+    /// Optional Copilot-CLI-fidelity request headers
+    /// (Copilot-Integration-Id, X-GitHub-Api-Version, Editor-Version,
+    /// X-Interaction-Id, intent override). When null, only the default
+    /// dynamic header set (X-Initiator, Openai-Intent, Copilot-Vision-Request)
+    /// is emitted — preserving wire parity with previous releases.
+    /// </summary>
+    public CopilotHeaderOptions? HeaderOptions { get; set; }
 }

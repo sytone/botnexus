@@ -29,4 +29,6 @@ public sealed record ConversationSummary(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     string? Purpose = null,
-    string Kind = "HumanAgent");
+    string Kind = "HumanAgent",
+    bool IsPinned = false,
+    DateTimeOffset? PinnedAt = null);

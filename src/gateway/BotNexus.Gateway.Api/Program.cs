@@ -333,6 +333,10 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
     }
 }
 
+// Log diagnostics: capture Warning+ entries into an in-memory ring buffer for the log-patterns API.
+builder.Services.AddSingleton<BotNexus.Gateway.Diagnostics.LogDiagnosticsRingBuffer>();
+builder.Services.AddSingleton<ILoggerProvider, BotNexus.Gateway.Diagnostics.LogDiagnosticsProvider>();
+
 var app = builder.Build();
 
 var platformConfig = app.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;

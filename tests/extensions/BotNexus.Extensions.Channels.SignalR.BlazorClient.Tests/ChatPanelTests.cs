@@ -662,4 +662,45 @@ public sealed class ChatPanelTests : IDisposable
         Assert.Contains(_store.GetMessages("conv-1"), message => message.Content.Contains("You answered:", StringComparison.Ordinal));
     }
 
+
+    [Fact]
+    public void InterruptSteerButton_HasCorrectCssClass_WhenStreaming()
+    {
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetStreaming("conv-1", true);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var btn = cut.Find(".interrupt-steer-btn");
+        Assert.NotNull(btn);
+    }
+
+    [Fact]
+    public void InterruptSteerButton_HasAbbreviatedLabel_WhenStreaming()
+    {
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetStreaming("conv-1", true);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var btn = cut.Find(".interrupt-steer-btn");
+        Assert.Contains("Redirect", btn.TextContent);
+        Assert.DoesNotContain("Interrupt + Redirect", btn.TextContent);
+    }
+
+    [Fact]
+    public void InterruptSteerButton_IsNotRendered_WhenNotStreaming()
+    {
+        CreateAndSeedAgent("agent-1", isStreaming: false);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll(".interrupt-steer-btn"));
+    }
 }

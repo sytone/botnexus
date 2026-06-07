@@ -48,17 +48,44 @@ public static class CopilotHeaders
     /// </summary>
     public static Dictionary<string, string> BuildDynamicHeaders(
         IReadOnlyList<Message> messages, bool hasImages)
+        => BuildDynamicHeaders(messages, hasImages, options: null);
+
+    /// <summary>
+    /// Build dynamic headers for Copilot requests, optionally including the
+    /// higher-fidelity Copilot CLI headers (Copilot-Integration-Id,
+    /// X-GitHub-Api-Version, X-Interaction-Id, Editor-Version) when
+    /// <paramref name="options"/> populates them. Passing <c>null</c>
+    /// preserves the original three-header behaviour byte-for-byte.
+    /// </summary>
+    public static Dictionary<string, string> BuildDynamicHeaders(
+        IReadOnlyList<Message> messages,
+        bool hasImages,
+        CopilotHeaderOptions? options)
     {
-        var headers = new Dictionary<string, string>
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["X-Initiator"] = InferInitiator(messages),
-            ["Openai-Intent"] = "conversation-edits"
+            ["Openai-Intent"] = !string.IsNullOrEmpty(options?.IntentOverride)
+                ? options!.IntentOverride!
+                : "conversation-edits"
         };
 
         if (hasImages)
         {
             headers["Copilot-Vision-Request"] = "true";
         }
+
+        if (options is null)
+            return headers;
+
+        if (!string.IsNullOrEmpty(options.IntegrationId))
+            headers["Copilot-Integration-Id"] = options.IntegrationId!;
+        if (!string.IsNullOrEmpty(options.ApiVersion))
+            headers["X-GitHub-Api-Version"] = options.ApiVersion!;
+        if (!string.IsNullOrEmpty(options.EditorVersion))
+            headers["Editor-Version"] = options.EditorVersion!;
+        if (!string.IsNullOrEmpty(options.InteractionId))
+            headers["X-Interaction-Id"] = options.InteractionId!;
 
         return headers;
     }
