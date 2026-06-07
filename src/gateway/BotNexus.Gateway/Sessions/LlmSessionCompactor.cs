@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
@@ -39,6 +39,19 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// </summary>
     internal const int MaxConsecutiveFailures = 3;
 
+    /// <summary>
+    /// Maximum characters per entry content in the summarization prompt.
+    /// Tool results and long assistant messages are truncated to this length
+    /// to prevent the prompt from exceeding model context limits.
+    /// </summary>
+    internal const int MaxEntryContentCharsInPrompt = 500;
+
+    /// <summary>
+    /// Maximum total characters for the summarization prompt.
+    /// If the prompt exceeds this after truncation, older entries are dropped.
+    /// Based on ~80% of a 128K token model's input capacity (chars/4 ≈ tokens).
+    /// </summary>
+    internal const int MaxSummarizationPromptChars = 400_000;
     public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null)
     {
         _llmClient = llmClient;
@@ -51,7 +64,19 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var estimatedTokens = EstimateVisibleTokenCount(session);
         var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
-        return estimatedTokens > threshold;
+        var shouldCompact = estimatedTokens > threshold;
+
+        _logger.LogDebug(
+            "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens, " +
+            "threshold {Threshold} (window {Window} * ratio {Ratio}), result: {ShouldCompact}",
+            session.SessionId,
+            estimatedTokens,
+            threshold,
+            options.ContextWindowTokens,
+            options.TokenThresholdRatio,
+            shouldCompact);
+
+        return shouldCompact;
     }
 
     public async Task<CompactionResult> CompactAsync(
@@ -317,10 +342,74 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         foreach (var entry in entries)
         {
-            builder.AppendLine($"[{entry.Role}]: {entry.Content}");
+            var content = TruncateForSummarization(entry);
+            builder.AppendLine($"[{entry.Role}]: {content}");
         }
 
-        return builder.ToString();
+        // Guard: if total prompt exceeds max chars, drop oldest entries until it fits.
+        var result = builder.ToString();
+        if (result.Length > MaxSummarizationPromptChars)
+        {
+            builder.Clear();
+            builder.AppendLine("Summarize the following conversation history. Preserve critical information in a structured format.");
+            builder.AppendLine();
+            builder.AppendLine("Required sections:");
+            builder.AppendLine("## Resolved -- completed tasks, decisions made");
+            builder.AppendLine("## Active Task -- what was being worked on at compaction time");
+            builder.AppendLine("## In Progress -- tool calls / sub-tasks mid-flight");
+            builder.AppendLine("## Pending User Asks -- questions waiting for user response");
+            builder.AppendLine("## Remaining Work -- planned but not started");
+            builder.AppendLine();
+            builder.AppendLine($"Keep the summary under {maxChars} characters.");
+            builder.AppendLine();
+            builder.AppendLine("NOTE: This history was truncated to fit the model context window. Focus on the most recent activity.");
+            builder.AppendLine();
+            builder.AppendLine("Conversation:");
+
+            // Re-build with progressively fewer entries (drop oldest first)
+            var remaining = entries;
+            while (remaining.Count > 0)
+            {
+                var candidateBuilder = new StringBuilder(builder.ToString());
+                foreach (var entry in remaining)
+                {
+                    candidateBuilder.AppendLine($"[{entry.Role}]: {TruncateForSummarization(entry)}");
+                }
+
+                if (candidateBuilder.Length <= MaxSummarizationPromptChars)
+                {
+                    return candidateBuilder.ToString();
+                }
+
+                // Drop the oldest quarter of entries
+                var dropCount = Math.Max(1, remaining.Count / 4);
+                remaining = remaining.Skip(dropCount).ToList();
+            }
+
+            // Absolute fallback: just the prompt header
+            return builder.ToString();
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Truncates a session entry's content for inclusion in the summarization prompt.
+    /// Tool entries are aggressively truncated since their full output is rarely
+    /// needed for a high-level summary.
+    /// </summary>
+    internal static string TruncateForSummarization(SessionEntry entry)
+    {
+        var content = entry.Content ?? string.Empty;
+        if (content.Length <= MaxEntryContentCharsInPrompt)
+            return content;
+
+        // For tool entries, keep even less — just first 200 chars
+        var limit = entry.Role.Equals(MessageRole.Tool)
+            ? Math.Min(200, MaxEntryContentCharsInPrompt)
+            : MaxEntryContentCharsInPrompt;
+
+        return content[..limit] + $"... [truncated, {content.Length} chars total]";
     }
 
     private async Task<string> CallLlmForSummaryAsync(
