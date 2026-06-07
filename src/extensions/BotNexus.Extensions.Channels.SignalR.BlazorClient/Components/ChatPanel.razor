@@ -45,24 +45,24 @@
 
             @if (IsStreaming)
             {
-                <span class="streaming-badge">Streaming…</span>
+                <span class="streaming-badge" data-testid="streaming-badge">Streaming…</span>
             }
         </div>
         <div class="chat-header-actions">
-            <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")"
+            <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")" data-testid="chat-thinking-toggle"
                     @onclick="ToggleThinking" title="Toggle thinking visibility">
                 💭
             </button>
-            <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")"
+            <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")" data-testid="chat-tools-toggle"
                     @onclick="ToggleTools" title="Toggle tool visibility">
                 🔧
             </button>
-            <button class="config-btn" @onclick="OpenConfig" title="Agent configuration">
+            <button class="config-btn" data-testid="chat-config-btn" @onclick="OpenConfig" title="Agent configuration">
                 ⚙
             </button>
             @if (!IsReadOnly)
             {
-                <button class="new-chat-btn" @onclick="ConfirmNewSession" title="Start a new session in this conversation"
+                <button class="new-chat-btn" data-testid="chat-new-session-btn" @onclick="ConfirmNewSession" title="Start a new session in this conversation"
                         disabled="@IsStreaming">
                     ↺ New session
                 </button>
@@ -307,7 +307,7 @@
 
     @if (_showCommandPalette)
     {
-        <div class="command-palette">
+        <div class="command-palette" data-testid="command-palette">
             @foreach (var cmd in _filteredCommands)
             {
                 <button class="command-item @(cmd.Name == _selectedCommand ? "selected" : "")"
@@ -345,7 +345,7 @@
 
                 @if (IsStreaming)
                 {
-                    <button class="steer-btn"
+                    <button class="steer-btn" data-testid="chat-steer-btn"
                             @onclick="SteerAgent"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Redirect the agent's response (Shift+Enter for newline)">
@@ -357,7 +357,7 @@
                             title="Abort current turn and redirect with input message">
                         Redirect
                     </button>
-                    <button class="abort-btn"
+                    <button class="abort-btn" data-testid="chat-abort-btn"
                             @onclick="AbortAgent"
                             title="Stop the agent (Escape)">
                         ⏹ Stop
