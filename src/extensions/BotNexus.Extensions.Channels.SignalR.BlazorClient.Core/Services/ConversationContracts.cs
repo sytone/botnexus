@@ -14,7 +14,9 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("bindingCount")] int BindingCount,
     [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
-    [property: JsonPropertyName("kind")] string Kind = "HumanAgent");
+    [property: JsonPropertyName("kind")] string Kind = "HumanAgent",
+    [property: JsonPropertyName("isPinned")] bool IsPinned = false,
+    [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null);
 
 public sealed record CreateConversationRequestDto(
     [property: JsonPropertyName("agentId")] string AgentId,

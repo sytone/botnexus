@@ -211,6 +211,9 @@ public sealed class ConversationState
     /// <summary>Whether this is the agent's default conversation.</summary>
     public bool IsDefault { get; set; }
 
+    /// <summary>Whether this conversation is pinned to the top.</summary>
+    public bool IsPinned { get; set; }
+
     /// <summary>Conversation status (Active, Archived, etc.).</summary>
     public string Status { get; set; } = "Active";
 
