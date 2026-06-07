@@ -1,9 +1,12 @@
+using System.Text.Json.Serialization;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
 /// Declares the interaction shape an agent expects when pausing for user input.
 /// Channels use this to choose the correct UI (text box, buttons, or hybrid).
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AskUserInputType
 {
     /// <summary>Collect a free-form text response.</summary>
