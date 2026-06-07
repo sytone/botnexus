@@ -22,6 +22,12 @@ public sealed class OpenAIStreamProcessor
     /// <param name="extractProviderErrorMessage">The extract provider error message.</param>
     /// <param name="emitError">The emit error.</param>
     /// <param name="onMalformedChunk">The on malformed chunk.</param>
+    /// <param name="inspectChunk">
+    /// Optional per-chunk callback receiving the root JSON element of every
+    /// SSE <c>data:</c> payload. Used by provider-specific transports to
+    /// surface fields beyond the OpenAI shape (e.g. Copilot's
+    /// <c>copilot_usage</c>) without coupling Core to those providers.
+    /// </param>
     /// <returns>The parse open ai completions async result.</returns>
     public async Task ParseOpenAiCompletionsAsync(
         LlmStream stream,
@@ -33,7 +39,8 @@ public sealed class OpenAIStreamProcessor
         Func<string, LlmModel, string> extractProviderErrorMessage,
         Action<LlmStream, LlmModel, string, List<ContentBlock>?> emitError,
         Action? onMalformedChunk,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<JsonElement>? inspectChunk = null)
     {
         var contentBlocks = new List<ContentBlock>();
         var usage = Usage.Empty();
@@ -87,6 +94,8 @@ public sealed class OpenAIStreamProcessor
             using (doc)
             {
                 var root = doc.RootElement;
+
+                inspectChunk?.Invoke(root);
 
                 if (root.TryGetProperty("error", out _))
                 {
