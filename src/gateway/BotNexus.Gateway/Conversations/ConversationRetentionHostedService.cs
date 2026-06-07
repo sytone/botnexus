@@ -17,7 +17,7 @@ namespace BotNexus.Gateway.Conversations;
 /// must be <c>true</c> before any archiving occurs. Per-agent overrides can extend or
 /// reduce the window, or disable auto-archive entirely for a specific agent.
 /// </para>
-/// <para>Pinned conversations (once #780 is implemented) are always excluded.</para>
+/// <para>Pinned conversations are always excluded from auto-archive.</para>
 /// </summary>
 public sealed class ConversationRetentionHostedService(
     IConversationStore conversationStore,
@@ -143,12 +143,10 @@ public sealed class ConversationRetentionHostedService(
     }
 
     /// <summary>
-    /// Forward-compatible pin check. Always returns <c>false</c> until issue #780
-    /// (pin conversations) adds an <c>IsPinned</c> field to <see cref="Conversation"/>.
+    /// Returns <c>true</c> when the conversation is pinned and should be excluded from retention.
     /// </summary>
     private static bool IsConversationPinned(Conversation conversation) =>
-        // TODO(#780): return conversation.IsPinned once the field is added.
-        false;
+        conversation.IsPinned;
 
     private async Task NotifyBestEffortAsync(Conversation conv, CancellationToken cancellationToken)
     {
