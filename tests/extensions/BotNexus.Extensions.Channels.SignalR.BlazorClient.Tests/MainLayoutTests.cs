@@ -213,7 +213,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Virtual_cron_conversation_shows_badge_and_close_button()
+    public async Task Virtual_cron_conversation_shows_badge_and_close_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -227,7 +227,7 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
 
         // Cron conversations are now in a collapsed Scheduled group; expand it first
-        cut.Find("[data-testid='cron-group-toggle']").Click();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='cron-group-toggle']").Click());
 
         Assert.Contains("Cron", cut.Markup);
         var archiveBtn = cut.Find(".conversation-archive-btn");
