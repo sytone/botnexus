@@ -406,6 +406,53 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.pin", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        activity?.SetTag("botnexus.conversation.pin", pin);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = GetConversationLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var pinnedAt = pin ? now : (DateTimeOffset?)null;
+
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE conversations
+                SET is_pinned = $pin,
+                    pinned_at = $pinnedAt,
+                    updated_at = $now
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$pin", pin ? 1 : 0);
+            command.Parameters.AddWithValue("$pinnedAt", pinnedAt.HasValue ? (object)pinnedAt.Value.ToString("O") : DBNull.Value);
+            command.Parameters.AddWithValue("$now", now.ToString("O"));
+            command.Parameters.AddWithValue("$id", conversationId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            {
+                var updated = CloneConversation(cached);
+                updated.IsPinned = pin;
+                updated.PinnedAt = pinnedAt;
+                updated.UpdatedAt = now;
+                _cache[conversationId.Value] = updated;
+            }
+        }
+        finally
+        {
+            conversationLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
@@ -469,12 +516,14 @@ public sealed class SqliteConversationStore : IConversationStore
                 c.updated_at,
                 COUNT(b.binding_id),
                 c.instructions,
-                c.kind
+                c.kind,
+                c.is_pinned,
+                c.pinned_at
             FROM conversations c
             LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
             WHERE c.status = 'Active'
-            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
-            ORDER BY c.updated_at DESC
+            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.is_pinned, c.pinned_at
+            ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC
             """;
 
         var summaries = new List<ConversationSummary>();
@@ -494,7 +543,9 @@ public sealed class SqliteConversationStore : IConversationStore
                 reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.FieldCount > 11 && !reader.IsDBNull(11)
                     ? reader.GetString(11)
-                    : ConversationKind.HumanAgent.ToString()));
+                    : ConversationKind.HumanAgent.ToString(),
+                reader.FieldCount > 12 && !reader.IsDBNull(12) && reader.GetInt64(12) != 0,
+                reader.FieldCount > 13 && !reader.IsDBNull(13) ? ParseTimestamp(reader.GetString(13)) : null));
         }
 
         return summaries;
@@ -570,6 +621,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsurePinColumnsAsync(connection, ct).ConfigureAwait(false);
             await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
@@ -784,6 +836,40 @@ public sealed class SqliteConversationStore : IConversationStore
         }
     }
 
+    private static async Task EnsurePinColumnsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasIsPinned = false;
+        var hasPinnedAt = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var name = reader.GetString(1);
+                if (string.Equals(name, "is_pinned", StringComparison.OrdinalIgnoreCase))
+                    hasIsPinned = true;
+                else if (string.Equals(name, "pinned_at", StringComparison.OrdinalIgnoreCase))
+                    hasPinnedAt = true;
+            }
+        }
+
+        if (!hasIsPinned)
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0";
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        if (!hasPinnedAt)
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN pinned_at TEXT";
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+    }
+
     // Migrates legacy conversation_bindings rows with a thread_id column into the composite
     // channel_address scheme adopted in PR #512 (refactor: drop ThreadId from core contracts).
     // Idempotent: if the thread_id column has already been dropped, the method is a no-op.
@@ -914,7 +1000,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at
             FROM conversations
             WHERE id = $id
             """;
@@ -939,7 +1025,9 @@ public sealed class SqliteConversationStore : IConversationStore
             CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
             Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null,
             Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent,
-            WorldId = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : string.Empty
+            WorldId = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : string.Empty,
+            IsPinned = reader.FieldCount > 15 && !reader.IsDBNull(15) && reader.GetInt64(15) != 0,
+            PinnedAt = reader.FieldCount > 16 && !reader.IsDBNull(16) ? ParseTimestamp(reader.GetString(16)) : null
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -1038,8 +1126,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1054,11 +1142,13 @@ public sealed class SqliteConversationStore : IConversationStore
                     canvas_html = excluded.canvas_html,
                     initiator = excluded.initiator,
                     kind = excluded.kind,
-                    world_id = excluded.world_id
+                    world_id = excluded.world_id,
+                    is_pinned = excluded.is_pinned,
+                    pinned_at = excluded.pinned_at
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1075,6 +1165,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
         conversationCommand.Parameters.AddWithValue("$kind", conversation.Kind.ToString());
         conversationCommand.Parameters.AddWithValue("$worldId", conversation.WorldId ?? string.Empty);
+        conversationCommand.Parameters.AddWithValue("$isPinned", conversation.IsPinned ? 1 : 0);
+        conversationCommand.Parameters.AddWithValue("$pinnedAt", conversation.PinnedAt.HasValue ? (object)conversation.PinnedAt.Value.ToString("O") : DBNull.Value);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -1154,6 +1246,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Initiator = conversation.Initiator,
             Kind = conversation.Kind,
             WorldId = conversation.WorldId,
+            IsPinned = conversation.IsPinned,
+            PinnedAt = conversation.PinnedAt,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,

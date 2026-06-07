@@ -301,6 +301,9 @@ public sealed class ConversationsControllerHistoryTests
         public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
             => Task.CompletedTask;
 
+        public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
+            => Task.CompletedTask;
+
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => throw new NotSupportedException();
 
