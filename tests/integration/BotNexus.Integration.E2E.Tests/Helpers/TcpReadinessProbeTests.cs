@@ -74,7 +74,7 @@ public sealed class TcpReadinessProbeTests
         var port = GetUnusedPort();
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             TcpReadinessProbe.WaitForTcpReadyAsync(
                 "127.0.0.1", port, TimeSpan.FromSeconds(30),
                 initialDelayMs: 20, cancellationToken: cts.Token));
