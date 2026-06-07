@@ -226,6 +226,9 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
+        // Cron conversations are now in a collapsed Scheduled group; expand it first
+        cut.Find("[data-testid='cron-group-toggle']").Click();
+
         Assert.Contains("Cron", cut.Markup);
         var archiveBtn = cut.Find(".conversation-archive-btn");
         Assert.Contains("✕", archiveBtn.TextContent);

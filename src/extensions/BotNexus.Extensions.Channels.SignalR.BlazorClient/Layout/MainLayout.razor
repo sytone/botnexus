@@ -23,7 +23,7 @@
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
             </button>
-            <span class="banner-logo">🤖</span>
+            <span class="banner-logo">&#x1F916;</span>
             <span class="banner-title">BotNexus</span>
             <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;&#xFE0F;</button>
             @if (Prefs.Current.DebugModeEnabled)
@@ -41,7 +41,7 @@
             {
                 <div class="announcement-item @ann.Type">
                     <span class="announcement-content">@ann.Text</span>
-                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)">✕</button>
+                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)">&#x2715;</button>
                 </div>
             }
         </div>
@@ -63,7 +63,7 @@
 
             @* Nav links *@
             <nav class="sidebar-nav">
-                <a href="chat" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">💬 Chat</a>
+                <a href="chat" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
 
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
@@ -79,7 +79,7 @@
                             {
                                 <option value="@agentId">
                                     @FormatAgentName(agent)
-                                    @if (agent.IsStreaming) { <text> ●</text> }
+                                    @if (agent.IsStreaming) { <text> &#x25CF;</text> }
                                     @if (agent.UnreadCount > 0) { <text> (@agent.UnreadCount)</text> }
                                 </option>
                             }
@@ -108,7 +108,7 @@
                             <div class="conversation-list-scroll">
                                 @if (activeAgent.IsLoadingConversations)
                                 {
-                                    <div class="conversation-list-loading">Loading conversations…</div>
+                                    <div class="conversation-list-loading">Loading conversations&#x2026;</div>
                                 }
                                 else if (activeAgent.Conversations.Count == 0)
                                 {
@@ -116,49 +116,52 @@
                                 }
                                 else
                                 {
-                                    @foreach (var conversation in activeAgent.Conversations.Values
+                                    var allUserConversations = activeAgent.Conversations.Values
                                         .Where(IsUserFacingConversation)
                                         .OrderByDescending(c => c.IsDefault)
-                                        .ThenByDescending(c => c.UpdatedAt))
+                                        .ThenByDescending(c => c.UpdatedAt)
+                                        .ToList();
+                                    var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
+                                    var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
+                                    var normalConversations = allUserConversations.Where(c => !IsPinnedConversation(c) && !IsCronConversation(c)).ToList();
+
+                                    @if (pinnedConversations.Count > 0)
                                     {
-                                        <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
-                                            <a class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
-                                               href="chat/@Uri.EscapeDataString(activeAgent.AgentId)/@Uri.EscapeDataString(conversation.ConversationId)"
-                                               @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)"
-                                               @onclick:preventDefault="true">
-                                                <span class="conversation-list-item-main">
-                                                    <span class="conversation-list-item-title">@conversation.Title</span>
-
-                                                    @if (conversation.IsDefault)
-                                                    {
-                                                        <span class="conversation-default-badge">Default</span>
-                                                    }
-                                                    @if (GetVirtualConversationBadge(conversation) is { } badge)
-                                                    {
-                                                        <span class="conversation-default-badge">@badge</span>
-                                                    }
-                                                </span>
-
-                                                <span class="conversation-list-item-meta">
-                                                    @if (conversation.UnreadCount > 0)
-                                                    {
-                                                        <span class="conversation-unread-dot"
-                                                              aria-label="Unread messages"></span>
-                                                    }
-
-                                                    <span class="conversation-updated-at">
-                                                        @FormatConversationTimestamp(conversation.UpdatedAt)
-                                                    </span>
-                                                </span>
-                                            </a>
-                                            @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
+                                        <div class="conversation-group conversation-group-pinned" data-testid="conversation-group-pinned">
+                                            <div class="conversation-group-header">
+                                                <span class="conversation-group-label">&#x1F4CC; Pinned</span>
+                                            </div>
+                                            @foreach (var conversation in pinnedConversations)
                                             {
-                                                <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
-                                                        title="@(conversation.IsVirtualSession ? "Close conversation — reopens on next trigger" : "Archive conversation")"
-                                                        @onclick:stopPropagation="true"
-                                                        @onclick="() => ArchiveConversationAsync(activeAgent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
-                                                    @(conversation.IsVirtualSession ? "✕" : "🗑️")
-                                                </button>
+                                                @RenderConversationItem(activeAgent, conversation)
+                                            }
+                                        </div>
+                                    }
+
+                                    <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
+                                        <div class="conversation-group-header">
+                                            <span class="conversation-group-label">Conversations</span>
+                                        </div>
+                                        @foreach (var conversation in normalConversations)
+                                        {
+                                            @RenderConversationItem(activeAgent, conversation)
+                                        }
+                                    </div>
+
+                                    @if (cronConversations.Count > 0)
+                                    {
+                                        <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
+                                            <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
+                                                <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                                <span class="conversation-group-label">&#x23F0; Scheduled</span>
+                                                <span class="conversation-group-count">@cronConversations.Count</span>
+                                            </button>
+                                            @if (!_cronGroupCollapsed)
+                                            {
+                                                @foreach (var conversation in cronConversations)
+                                                {
+                                                    @RenderConversationItem(activeAgent, conversation)
+                                                }
                                             }
                                         </div>
                                     }
@@ -188,37 +191,37 @@
 
                 </div>@* end sidebar-scroll-region *@
 
-                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">⚙️ Configuration</a>
+                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
 
                 @* Config section sub-nav — only shown when on the configuration page *@
                 @if (IsOnPage("configuration"))
                 {
                     <div class="sidebar-subnav">
-                        <a href="configuration/gateway"   class="sidebar-subnav-item" @onclick="CloseSidebar">🌐 Gateway</a>
-                        <a href="configuration/providers" class="sidebar-subnav-item" @onclick="CloseSidebar">🔌 Providers</a>
-                        <a href="configuration/channels"  class="sidebar-subnav-item" @onclick="CloseSidebar">📡 Channels</a>
-                        <a href="configuration/locations" class="sidebar-subnav-item" @onclick="CloseSidebar">📍 Locations</a>
-                        <a href="configuration/world"     class="sidebar-subnav-item" @onclick="CloseSidebar">🌍 World Settings</a>
-                        <a href="configuration/cron"      class="sidebar-subnav-item" @onclick="CloseSidebar">⏰ Cron</a>
-                        <a href="configuration/apikey"    class="sidebar-subnav-item" @onclick="CloseSidebar">🔑 Global API Key</a>
-                        <a href="configuration/extensions" class="sidebar-subnav-item" @onclick="CloseSidebar">🔌 Extensions</a>
+                        <a href="configuration/gateway"   class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F310; Gateway</a>
+                        <a href="configuration/providers" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F50C; Providers</a>
+                        <a href="configuration/channels"  class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F4E1; Channels</a>
+                        <a href="configuration/locations" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F4CD; Locations</a>
+                        <a href="configuration/world"     class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F30D; World Settings</a>
+                        <a href="configuration/cron"      class="sidebar-subnav-item" @onclick="CloseSidebar">&#x23F0; Cron</a>
+                        <a href="configuration/apikey"    class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F511; Global API Key</a>
+                        <a href="configuration/extensions" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F50C; Extensions</a>
                     </div>
                 }
 
                 @if (ExtensionFeatures.SkillsEnabled)
                 {
-                    <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">🧠 Skills</a>
+                    <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">&#x1F9E0; Skills</a>
 
                     @* Skills sub-nav -- shown when on the skills page *@
                     @if (IsOnPage("skills"))
                     {
                         <div class="sidebar-subnav">
-                            <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">🗂️ Explorer</a>
+                            <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F5C2;&#xFE0F; Explorer</a>
                         </div>
                     }
                 }
 
-                <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">🤖 Agents</a>
+                <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">&#x1F916; Agents</a>
 
                 @* Agents sub-nav -- only shown when on the agents page *@
                 @if (IsOnPage("agents"))
@@ -240,7 +243,7 @@
                 {
                     <div class="gateway-info">
                         <span class="gateway-started" title="@GatewayInfo.Info.StartedAt.ToString("o")">
-                            ↺ @FormatStarted(GatewayInfo.Info.StartedAt)
+                            &#x21BA; @FormatStarted(GatewayInfo.Info.StartedAt)
                         </span>
                         <a class="gateway-commit"
                            href="https://github.com/sytone/botnexus/commit/@GatewayInfo.Info.CommitSha"
@@ -258,11 +261,11 @@
                          title="Update to @UpdateStatus.Status.LatestCommitShort">
                         @if (UpdateStatus.Status.IsUpdateInProgress)
                         {
-                            <span>⏳ Updating…</span>
+                            <span>&#x231B; Updating&#x2026;</span>
                         }
                         else
                         {
-                            <span>↑ @UpdateStatus.Status.LatestCommitShort available</span>
+                            <span>&#x2191; @UpdateStatus.Status.LatestCommitShort available</span>
                         }
                     </div>
                 }
@@ -297,6 +300,9 @@
 </div>
 
 @code {
+    private bool _cronGroupCollapsed = true;
+    private const string CronCollapsedKey = "botnexus-cron-collapsed";
+
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
     private List<Announcement> _announcements = [];
@@ -323,6 +329,8 @@
         {
             var stored = await JS.InvokeAsync<string?>("localStorage.getItem", SidebarKey);
             _sidebarOpen = stored == "true";
+            var cronStored = await JS.InvokeAsync<string?>("localStorage.getItem", CronCollapsedKey);
+            _cronGroupCollapsed = cronStored != "false";
             _isMobile = await JS.InvokeAsync<bool>("chatScroll.isMobileView");
             await Prefs.LoadAsync();
             // Re-render immediately after mobile detection so layout responds without waiting for gateway load.
@@ -464,9 +472,9 @@
 
     private static string SubAgentIcon(string status) => status switch
     {
-        "Running"   => "🔄",
-        "Completed" => "✅",
-        _           => "🤖"
+        "Running"   => "\uD83D\uDD04",
+        "Completed" => "\u2705",
+        _           => "\uD83E\uDD16"
     };
 
     private static bool IsUserFacingConversation(ConversationState conversation)
@@ -486,6 +494,62 @@
 
         return true;
     }
+
+    private static bool IsCronConversation(ConversationState c) =>
+        c.ConversationId.StartsWith("cronconv:", StringComparison.OrdinalIgnoreCase) ||
+        (c.IsVirtualSession && string.Equals(c.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsPinnedConversation(ConversationState c) => c.IsPinned;
+
+    private async Task ToggleCronGroup()
+    {
+        _cronGroupCollapsed = !_cronGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", CronCollapsedKey, _cronGroupCollapsed ? "true" : "false");
+    }
+
+    private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>
+    {
+        <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
+            <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
+               href="chat/@Uri.EscapeDataString(agent.AgentId)/@Uri.EscapeDataString(conversation.ConversationId)"
+               @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
+               @onclick:preventDefault="true">
+                <span class="conversation-list-item-main">
+                    <span class="conversation-list-item-title">@conversation.Title</span>
+
+                    @if (conversation.IsDefault)
+                    {
+                        <span class="conversation-default-badge">Default</span>
+                    }
+                    @if (GetVirtualConversationBadge(conversation) is { } badge)
+                    {
+                        <span class="conversation-default-badge">@badge</span>
+                    }
+                </span>
+
+                <span class="conversation-list-item-meta">
+                    @if (conversation.UnreadCount > 0)
+                    {
+                        <span class="conversation-unread-dot"
+                              aria-label="Unread messages"></span>
+                    }
+
+                    <span class="conversation-updated-at">
+                        @FormatConversationTimestamp(conversation.UpdatedAt)
+                    </span>
+                </span>
+            </a>
+            @if (!conversation.IsDefault && !agent.IsReadOnly)
+            {
+                <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
+                        title="@(conversation.IsVirtualSession ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
+                        @onclick:stopPropagation="true"
+                        @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
+                    @(conversation.IsVirtualSession ? "\u2715" : "\uD83D\uDDD1\uFE0F")
+                </button>
+            }
+        </div>
+    };
 
     private static string FormatAgentName(AgentState agent) =>
         string.IsNullOrWhiteSpace(agent.Emoji)
