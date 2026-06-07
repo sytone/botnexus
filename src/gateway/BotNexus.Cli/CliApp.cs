@@ -13,7 +13,6 @@ internal static class CliApp
 {
     internal static async Task<int> RunAsync(string[] args, TextWriter bannerWriter)
     {
-        ConfigureOutputEncoding();
         CliBanner.WriteTo(bannerWriter);
 
         using var serviceProvider = BuildServiceProvider();
@@ -43,11 +42,35 @@ internal static class CliApp
         return isOutputRedirected ? TextWriter.Null : consoleError;
     }
 
-    private static void ConfigureOutputEncoding()
+    /// <summary>
+    /// Switches the console standard output and error streams to UTF-8 so the
+    /// Unicode box-drawing and shaded-block characters in the startup banner
+    /// render correctly on consoles whose default code page cannot represent them
+    /// (notably Windows, where the legacy OEM code page produces replacement glyphs).
+    /// <para>
+    /// Must be called <b>before</b> <see cref="Console.Out"/> or <see cref="Console.Error"/>
+    /// are captured for later use: assigning <see cref="Console.OutputEncoding"/> recreates
+    /// both writers, so any reference captured beforehand keeps the old encoding.
+    /// </para>
+    /// </summary>
+    internal static void ConfigureOutputEncoding()
+        => ApplyOutputEncoding(static encoding => Console.OutputEncoding = encoding);
+
+    /// <summary>
+    /// Applies the banner-safe UTF-8 encoding via the supplied setter, swallowing the
+    /// failures that legitimately occur on locked-down or redirected hosts. The setter
+    /// is injected so the resilience contract can be verified without mutating the
+    /// process-global <see cref="Console.OutputEncoding"/>, which would recreate
+    /// <see cref="Console.Out"/>/<see cref="Console.Error"/> and break console-writing
+    /// tests running in parallel.
+    /// </summary>
+    /// <param name="applyEncoding">Receives the encoding the CLI wants the console to use.</param>
+    internal static void ApplyOutputEncoding(Action<Encoding> applyEncoding)
     {
+        ArgumentNullException.ThrowIfNull(applyEncoding);
         try
         {
-            Console.OutputEncoding = Encoding.UTF8;
+            applyEncoding(Encoding.UTF8);
         }
         catch (IOException)
         {
