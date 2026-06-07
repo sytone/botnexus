@@ -215,7 +215,8 @@ public sealed class CopilotCompletionsProvider(
             ExtractProviderErrorMessage,
             EmitError,
             () => logger.LogDebug("Skipping malformed SSE chunk"),
-            ct);
+            ct,
+            inspectChunk: root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current));
     }
 
     #region Payload Building

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -436,6 +436,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (conv is null || conv.IsLoadingHistory) return;
         if (conv.HistoryLoaded)
             return; // Already loaded from server — don't reload
+
+        // Guard: never load history while the conversation is mid-stream.
+        // Messages.Clear() would wipe tool-call messages and the partially-built
+        // assistant buffer that HandleContentDelta is accumulating. The deferred
+        // refresh mechanism (DrainPendingConversationRefreshes) handles post-stream
+        // updates; attempting a load here would lose visible streamed text (#759).
+        if (conv.StreamState.IsStreaming)
+            return;
 
         conv.IsLoadingHistory = true;
         _store.NotifyChanged();

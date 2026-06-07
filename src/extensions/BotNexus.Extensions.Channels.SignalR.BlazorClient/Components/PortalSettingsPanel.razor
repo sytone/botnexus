@@ -5,10 +5,10 @@
 @if (_show)
 {
     <div class="portal-settings-overlay" @onclick="Close">
-        <div class="portal-settings-panel" @onclick:stopPropagation="true">
+        <div class="portal-settings-panel" data-testid="portal-settings-panel" @onclick:stopPropagation="true">
             <div class="portal-settings-header">
                 <h3>Portal Settings</h3>
-                <button class="portal-settings-close" @onclick="Close" title="Close" data-testid="settings-close-btn">&#x2715;</button>
+                <button class="portal-settings-close" @onclick="Close" title="Close" data-testid="portal-settings-close">&#x2715;</button>
             </div>
             <div class="portal-settings-body">
                 <div class="portal-settings-row">

@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Copilot.Telemetry;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
@@ -66,6 +68,10 @@ internal static class CopilotMessagesStreamParser
 
             using (doc)
             {
+                // Surface copilot_usage tagged on whichever SSE event Copilot
+                // attaches it to (captures show it on message_delta).
+                CopilotUsageActivity.TryParseAndEmit(doc.RootElement, Activity.Current);
+
                 ProcessSseEvent(
                     currentEvent,
                     doc.RootElement,

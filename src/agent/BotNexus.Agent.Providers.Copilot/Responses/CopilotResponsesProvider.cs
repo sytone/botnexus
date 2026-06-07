@@ -493,6 +493,8 @@ public sealed class CopilotResponsesProvider(
             {
                 var root = doc.RootElement;
 
+                Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current);
+
                 if (evt.Event is "response.created")
                 {
                     if (root.TryGetProperty("response", out var responseEl))

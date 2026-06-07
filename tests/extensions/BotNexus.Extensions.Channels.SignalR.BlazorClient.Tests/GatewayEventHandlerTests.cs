@@ -835,4 +835,72 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal(msgCountBefore, conv.Messages.Count);
     }
 
+
+    // ---- Stream/history reconciliation tests (issue #759) ----
+
+    [Fact]
+    public async Task HandleReconnectedAsync_marks_HistoryLoaded_false_for_streaming_conversations()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        conv.HistoryLoaded = true;
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "partial response";
+
+        // Simulate disconnect while streaming
+        _handler.HandleReconnecting();
+
+        // Now reconnect
+        await _handler.HandleReconnectedAsync();
+
+        // History should be marked for reload so the UI fetches server state
+        Assert.False(conv.HistoryLoaded);
+        // Stream state should be cleared
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Equal(string.Empty, conv.StreamState.Buffer);
+    }
+
+    [Fact]
+    public async Task HandleReconnectedAsync_does_not_mark_HistoryLoaded_false_for_non_streaming_agents()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        conv.HistoryLoaded = true;
+        agent.IsStreaming = false;
+
+        // Simulate disconnect while NOT streaming
+        _handler.HandleReconnecting();
+
+        // Reconnect
+        await _handler.HandleReconnectedAsync();
+
+        // History should remain loaded (no stream was lost)
+        Assert.True(conv.HistoryLoaded);
+    }
+
+    [Fact]
+    public void HandleConversationChanged_defers_refresh_when_streaming_then_drains_on_MessageEnd()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        // Start streaming
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+
+        // Simulate a conversation change event mid-stream
+        var refreshCalled = false;
+        _handler.ConversationRefreshDelegate = _ => { refreshCalled = true; return Task.CompletedTask; };
+        _handler.HandleConversationChanged(new ConversationChangedPayload("update", "agent-1", "conv-1"));
+        Assert.False(refreshCalled, "refresh must be deferred while streaming");
+
+        // End the stream
+        conv.StreamState.Buffer = "response text";
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        // Now the deferred refresh should have fired
+        Assert.True(refreshCalled, "deferred refresh must fire after MessageEnd");
+        // And the message should still be in the list (not lost)
+        Assert.Contains(conv.Messages, m => m.Content == "response text");
+    }
 }
