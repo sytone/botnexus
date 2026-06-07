@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -596,31 +596,35 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             var result = await _hub.SubscribeAllAsync();
             foreach (var session in result.Sessions)
                 _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType);
-
-            foreach (var agentId in _streamingWhenDisconnected)
-            {
-                if (_store.GetAgent(agentId) is { } agent)
-                {
-                    agent.IsStreaming = false;
-                    agent.ProcessingStage = null;
-
-                    if (agent.ActiveConversationId is not null &&
-                        agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
-                    {
-                        conv.StreamState.Buffer = "";
-                        conv.StreamState.ThinkingBuffer = "";
-                        conv.StreamState.IsStreaming = false;
-                    }
-                }
-            }
-
-            _streamingWhenDisconnected.Clear();
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"GatewayEventHandler: reconnect recovery failed: {ex.Message}");
         }
 
+        // Clear stale streaming state unconditionally (even if SubscribeAllAsync failed).
+        // The portal must never get stuck in a perpetual streaming indicator (#759).
+        foreach (var agentId in _streamingWhenDisconnected)
+        {
+            if (_store.GetAgent(agentId) is { } agent)
+            {
+                agent.IsStreaming = false;
+                agent.ProcessingStage = null;
+
+                if (agent.ActiveConversationId is not null &&
+                    agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
+                {
+                    conv.StreamState.Buffer = "";
+                    conv.StreamState.ThinkingBuffer = "";
+                    conv.StreamState.IsStreaming = false;
+                    // Force history reload so the UI fetches server-persisted state.
+                    // HandleMessageEnd never committed the buffer to Messages (#759).
+                    conv.HistoryLoaded = false;
+                }
+            }
+        }
+
+        _streamingWhenDisconnected.Clear();
         _store.NotifyChanged();
     }
 

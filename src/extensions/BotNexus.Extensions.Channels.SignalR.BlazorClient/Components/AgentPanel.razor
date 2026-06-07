@@ -16,6 +16,7 @@
         @foreach (var tab in VisibleTabs)
         {
             <button class="agent-tab agent-panel-tab @(IsActiveTab(tab.Key) ? "active" : "")"
+                    data-testid="agent-tab-@tab.Key.ToString().ToLowerInvariant()"
                     data-tab="@tab.Key.ToString().ToLowerInvariant()"
                     role="tab"
                     aria-selected="@IsActiveTab(tab.Key)"
