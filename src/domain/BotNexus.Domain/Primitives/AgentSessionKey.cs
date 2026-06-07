@@ -33,7 +33,7 @@ public readonly record struct AgentSessionKey(AgentId AgentId, SessionId Session
 
         return new AgentSessionKey(
             AgentId.From(parts[0]),
-            SessionId.From(string.Join("::", parts.Skip(1)).Trim()));
+            SessionId.From(string.Join("::", parts.Skip(1))));
     }
 
     /// <summary>
