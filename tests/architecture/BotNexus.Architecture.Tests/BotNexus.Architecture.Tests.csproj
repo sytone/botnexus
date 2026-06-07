@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Harness\BotNexus.Scenarios.Harness.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>

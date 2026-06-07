@@ -93,7 +93,9 @@ public sealed class ConversationsController : ControllerBase
 
         var summaries = relevant
             .Where(c => c.Status == ConversationStatus.Active)
-            .OrderByDescending(c => c.UpdatedAt)
+            .OrderByDescending(c => c.IsPinned)
+            .ThenByDescending(c => c.PinnedAt)
+            .ThenByDescending(c => c.UpdatedAt)
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)
             .ToList();
@@ -113,7 +115,9 @@ public sealed class ConversationsController : ControllerBase
             c.CreatedAt,
             c.UpdatedAt,
             c.Purpose,
-            c.Kind.ToString());
+            c.Kind.ToString(),
+            c.IsPinned,
+            c.PinnedAt);
 
     /// <summary>
     /// Gets a specific conversation by ID, including all channel bindings.
@@ -611,6 +615,32 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
         conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
         await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return NoContent();
+    }
+
+    /// <summary>Pins a conversation to the top of the list.</summary>
+    [HttpPost("{conversationId}/pin")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> Pin(string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null) return NotFound();
+        await _conversations.PinAsync(ConversationId.From(conversationId), true, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>Unpins a conversation from the top of the list.</summary>
+    [HttpDelete("{conversationId}/pin")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> Unpin(string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null) return NotFound();
+        await _conversations.PinAsync(ConversationId.From(conversationId), false, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
         return NoContent();
     }
 

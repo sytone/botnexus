@@ -174,6 +174,23 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return;
+            conversation.IsPinned = pin;
+            conversation.PinnedAt = pin ? DateTimeOffset.UtcNow : null;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
     public async Task AddParticipantsAsync(
         ConversationId conversationId,
         IEnumerable<SessionParticipant> participants,
@@ -246,7 +263,9 @@ public sealed class FileConversationStore : IConversationStore
         var all = await ListAsync(null, ct).ConfigureAwait(false);
         return [.. all
             .Where(c => c.Status != ConversationStatus.Archived)
-            .OrderByDescending(c => c.UpdatedAt)
+            .OrderByDescending(c => c.IsPinned)
+            .ThenByDescending(c => c.PinnedAt)
+            .ThenByDescending(c => c.UpdatedAt)
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
     }
@@ -377,5 +396,7 @@ public sealed class FileConversationStore : IConversationStore
             c.CreatedAt,
             c.UpdatedAt,
             c.Purpose,
-            c.Kind.ToString());
+            c.Kind.ToString(),
+            c.IsPinned,
+            c.PinnedAt);
 }
