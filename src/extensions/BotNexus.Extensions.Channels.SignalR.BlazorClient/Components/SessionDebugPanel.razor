@@ -30,6 +30,9 @@
                 <button class="session-debug-tab @(_activeTab == "system-prompt" ? "active" : "")"
                         data-testid="session-debug-tab-system-prompt"
                         @onclick='() => _activeTab = "system-prompt"'>System Prompt</button>
+                <button class="session-debug-tab @(_activeTab == "history" ? "active" : "")"
+                        data-testid="session-debug-tab-history"
+                        @onclick='() => SelectHistoryTabAsync()'>History</button>
                 <button class="session-debug-tab @(_activeTab == "sub-agents" ? "active" : "")"
                         data-testid="session-debug-tab-sub-agents"
                         @onclick='() => SelectSubAgentsTabAsync()'>Sub-Agents</button>
@@ -96,6 +99,76 @@
                     <pre class="session-debug-system-prompt" data-testid="session-debug-system-prompt-content">@_snapshot.SystemPrompt</pre>
                 }
             }
+            else if (_activeTab == "history")
+            {
+                @if (_isLoadingHistory)
+                {
+                    <div class="session-debug-loading" data-testid="session-debug-history-loading">Loading history…</div>
+                }
+                else if (_history is null || _history.Entries is null || _history.Entries.Count == 0)
+                {
+                    <div class="session-debug-empty" data-testid="session-debug-history-empty">No history entries.</div>
+                }
+                else
+                {
+                    <div class="session-debug-history-controls" data-testid="session-debug-history-controls">
+                        <span data-testid="session-debug-history-count">
+                            @(_history.Offset + 1)–@(Math.Min(_history.Offset + _history.Entries.Count, _history.TotalCount))
+                            of @_history.TotalCount
+                        </span>
+                        <select class="session-debug-page-size"
+                                data-testid="session-debug-history-page-size"
+                                @onchange="OnPageSizeChangedAsync">
+                            <option value="25" selected="@(_historyPageSize == 25)">25</option>
+                            <option value="50" selected="@(_historyPageSize == 50)">50</option>
+                            <option value="100" selected="@(_historyPageSize == 100)">100</option>
+                        </select>
+                        <button class="session-debug-pager-btn"
+                                data-testid="session-debug-history-prev"
+                                disabled="@(_history.Offset == 0)"
+                                @onclick="GoToPrevPageAsync">&#x276E; Prev</button>
+                        <button class="session-debug-pager-btn"
+                                data-testid="session-debug-history-next"
+                                disabled="@(_history.Offset + _history.Entries.Count >= _history.TotalCount)"
+                                @onclick="GoToNextPageAsync">Next &#x276F;</button>
+                    </div>
+                    <div class="session-debug-history-entries" data-testid="session-debug-history-entries">
+                        @foreach (var entry in _history.Entries)
+                        {
+                            var isBoundary = entry.IsCompactionSummary;
+                            var isSentinel = entry.IsCrashSentinel;
+                            var isHistorical = entry.IsHistory;
+                            var roleLabel = RoleBadge(entry.Role, entry.ToolName);
+                            var rowClass = isBoundary ? "session-debug-entry compaction-boundary"
+                                         : isSentinel ? "session-debug-entry crash-sentinel"
+                                         : isHistorical ? "session-debug-entry historical"
+                                         : "session-debug-entry";
+                            <div class="@rowClass" data-testid="session-debug-entry">
+                                <div class="entry-header">
+                                    <span class="entry-role-badge" data-testid="entry-role">@roleLabel</span>
+                                    <span class="entry-timestamp" data-testid="entry-timestamp">
+                                        @entry.Timestamp.ToLocalTime().ToString("HH:mm:ss")
+                                    </span>
+                                    @if (isBoundary)
+                                    {
+                                        <span class="entry-flag" data-testid="entry-compaction-flag">compacted</span>
+                                    }
+                                    @if (isSentinel)
+                                    {
+                                        <span class="entry-flag entry-flag-sentinel" data-testid="entry-sentinel-flag">sentinel</span>
+                                    }
+                                </div>
+                                <details class="entry-content-details">
+                                    <summary class="entry-content-preview" data-testid="entry-content-preview">
+                                        @TruncateContent(entry.Content, 120)
+                                    </summary>
+                                    <pre class="entry-content-full" data-testid="entry-content-full">@entry.Content</pre>
+                                </details>
+                            </div>
+                        }
+                    </div>
+                }
+            }
             else if (_activeTab == "sub-agents")
             {
                 @if (_isLoadingSubAgents)
@@ -138,6 +211,14 @@
     private bool _isLoading;
     private string? _loadError;
     private string _activeTab = "overview";
+
+    // History tab state
+    private SessionDebugHistoryDto? _history;
+    private bool _isLoadingHistory;
+    private int _historyPageSize = 25;
+    private int _historyOffset;
+
+    // Sub-agents tab state
     private IReadOnlyList<SubAgentInfo>? _subAgents;
     private bool _isLoadingSubAgents;
 
@@ -152,6 +233,9 @@
         _activeTab = "overview";
         _subAgents = null;
         _isLoadingSubAgents = false;
+        _history = null;
+        _isLoadingHistory = false;
+        _historyOffset = 0;
         StateHasChanged();
 
         try
@@ -171,6 +255,56 @@
     }
 
     public void Dispose() { }
+
+    private async Task SelectHistoryTabAsync()
+    {
+        _activeTab = "history";
+        if (_history is not null)
+            return;
+        await LoadHistoryPageAsync();
+    }
+
+    private async Task LoadHistoryPageAsync()
+    {
+        _isLoadingHistory = true;
+        StateHasChanged();
+        try
+        {
+            var snap = await GatewayRestClient.GetSessionDebugAsync(SessionId!, _historyOffset, _historyPageSize);
+            _history = snap?.History;
+        }
+        catch
+        {
+            _history = null;
+        }
+        finally
+        {
+            _isLoadingHistory = false;
+        }
+    }
+
+    private async Task GoToPrevPageAsync()
+    {
+        _historyOffset = Math.Max(0, _historyOffset - _historyPageSize);
+        _history = null;
+        await LoadHistoryPageAsync();
+    }
+
+    private async Task GoToNextPageAsync()
+    {
+        _historyOffset += _historyPageSize;
+        _history = null;
+        await LoadHistoryPageAsync();
+    }
+
+    private async Task OnPageSizeChangedAsync(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var size) && size > 0)
+            _historyPageSize = size;
+        _historyOffset = 0;
+        _history = null;
+        await LoadHistoryPageAsync();
+    }
 
     private async Task SelectSubAgentsTabAsync()
     {
@@ -199,5 +333,22 @@
         if (_snapshot?.SystemPrompt is null) return;
         try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", _snapshot.SystemPrompt); }
         catch { /* clipboard may be unavailable in some environments */ }
+    }
+
+    private static string RoleBadge(string? role, string? toolName) =>
+        role?.ToLowerInvariant() switch
+        {
+            "user"      => "\U0001F464 user",
+            "assistant" => "\U0001F916 assistant",
+            "system"    => "\u2699\uFE0F system",
+            "tool"      => $"\U0001F527 {toolName ?? "tool"}",
+            _           => role ?? "?"
+        };
+
+    private static string TruncateContent(string? content, int max)
+    {
+        if (string.IsNullOrEmpty(content)) return "(empty)";
+        if (content.Length <= max) return content;
+        return string.Concat(content.AsSpan(0, max), "…");
     }
 }

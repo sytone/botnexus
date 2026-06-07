@@ -145,10 +145,13 @@ public sealed class SqliteSessionStore : SessionStoreBase
         try
         {
             _cache[session.SessionId] = session;
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-            await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+            await RetryOnTransientAsync(async () =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         finally { sessionLock.Release(); }
     }
@@ -199,10 +202,13 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 session.Status = SessionStatus.Sealed;
                 session.UpdatedAt = DateTimeOffset.UtcNow;
                 _cache[sessionId] = session;
-                await using var connection = CreateConnection();
-                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                await RetryOnTransientAsync(async () =>
+                {
+                    await using var connection = CreateConnection();
+                    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                    await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                    await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                }, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
         finally { sessionLock.Release(); }
@@ -1033,8 +1039,17 @@ public sealed class SqliteSessionStore : SessionStoreBase
     private static readonly int[] TransientSqliteErrorCodes = [5 /* BUSY */, 10 /* IOERR */];
 
     /// <summary>
+    /// Returns true if the exception represents a transient SQLite condition safe to retry.
+    /// Covers BUSY (5), IOERR (10), and the "cannot rollback" phantom transaction error.
+    /// </summary>
+    private static bool IsTransientSqliteException(SqliteException ex)
+        => TransientSqliteErrorCodes.Contains(ex.SqliteErrorCode)
+           || (ex.SqliteErrorCode == 1 && ex.Message.Contains("cannot rollback", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Executes <paramref name="operation"/> with up to <paramref name="maxAttempts"/> retries
-    /// on transient SQLite errors (BUSY=5, IOERR=10). Waits ~50ms × 2^attempt between retries.
+    /// on transient SQLite errors (BUSY=5, IOERR=10, and phantom rollback errors).
+    /// Waits ~50ms × 2^attempt between retries.
     /// After all retries are exhausted, wraps the last exception in
     /// <see cref="SessionStoreUnavailableException"/>.
     /// </summary>
@@ -1050,7 +1065,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             {
                 return await operation().ConfigureAwait(false);
             }
-            catch (SqliteException ex) when (TransientSqliteErrorCodes.Contains(ex.SqliteErrorCode))
+            catch (SqliteException ex) when (IsTransientSqliteException(ex))
             {
                 lastEx = ex;
                 var delayMs = 50 * (1 << attempt); // 50ms, 100ms, 200ms
