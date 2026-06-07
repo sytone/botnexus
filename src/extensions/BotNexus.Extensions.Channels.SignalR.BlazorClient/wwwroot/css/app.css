@@ -1706,6 +1706,28 @@ html, body, #app {
     cursor: not-allowed;
 }
 
+.interrupt-steer-btn {
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--warning, #e67e22);
+    border-radius: var(--radius);
+    background: rgba(230, 126, 34, 0.12);
+    color: var(--warning, #e67e22);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    align-self: flex-end;
+    white-space: nowrap;
+}
+
+.interrupt-steer-btn:hover:not(:disabled) {
+    background: rgba(230, 126, 34, 0.25);
+}
+
+.interrupt-steer-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 .abort-btn {
     padding: 0.6rem 0.85rem;
     border: 1px solid var(--error);

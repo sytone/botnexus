@@ -876,4 +876,79 @@ public sealed class LlmSessionCompactorTests
         var llmClient = new LlmClient(providers, models);
         return new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
     }
+
+    // ── Truncation Tests (Issue #965) ─────────────────────────────────────────
+
+    [Fact]
+    public void TruncateForSummarization_ShortContent_ReturnsUnchanged()
+    {
+        var entry = new SessionEntry { Role = "user", Content = "hello" };
+        var result = LlmSessionCompactor.TruncateForSummarization(entry);
+        result.ShouldBe("hello");
+    }
+
+    [Fact]
+    public void TruncateForSummarization_LongUserContent_TruncatesAt500()
+    {
+        var longContent = new string('x', 1000);
+        var entry = new SessionEntry { Role = "user", Content = longContent };
+        var result = LlmSessionCompactor.TruncateForSummarization(entry);
+        result.ShouldContain("... [truncated, 1000 chars total]");
+        result.Length.ShouldBeLessThan(600);
+    }
+
+    [Fact]
+    public void TruncateForSummarization_LongToolContent_TruncatesAt200()
+    {
+        var longContent = new string('y', 5000);
+        var entry = new SessionEntry { Role = "tool", Content = longContent };
+        var result = LlmSessionCompactor.TruncateForSummarization(entry);
+        result.ShouldContain("... [truncated, 5000 chars total]");
+        // Tool entries are capped at 200 chars + suffix
+        result.Length.ShouldBeLessThan(260);
+    }
+
+    [Fact]
+    public void TruncateForSummarization_EmptyContent_ReturnsEmpty()
+    {
+        var entry = new SessionEntry { Role = "assistant", Content = "" };
+        var result = LlmSessionCompactor.TruncateForSummarization(entry);
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task CompactAsync_MassiveToolHistory_DoesNotExceedMaxPromptSize()
+    {
+        // Simulate #965: 500+ tool entries with large content
+        var entries = new List<(string role, string content)>();
+        for (int i = 0; i < 600; i++)
+        {
+            entries.Add(("user", $"Step {i}"));
+            entries.Add(("tool", new string('z', 2000))); // 2000 chars each = 1.2M total raw
+        }
+        entries.Add(("user", "final question"));
+        entries.Add(("assistant", "final answer"));
+
+        var session = CreateSession(entries.ToArray());
+
+        string? capturedPrompt = null;
+        var compactor = CreateCompactorCapturingPrompt(
+            "Summary of large session",
+            prompt => capturedPrompt = prompt);
+
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 128_000,
+            TokenThresholdRatio = 0.01,
+            PreservedTurns = 1,
+            MaxSummaryChars = 5000
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        capturedPrompt.ShouldNotBeNull();
+        // The prompt must stay under the max chars threshold
+        capturedPrompt!.Length.ShouldBeLessThanOrEqualTo(LlmSessionCompactor.MaxSummarizationPromptChars);
+    }
 }

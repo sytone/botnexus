@@ -1,3 +1,5 @@
+using BotNexus.Agent.Providers.Core.Utilities;
+
 namespace BotNexus.Agent.Providers.Copilot.Responses;
 
 /// <summary>
@@ -13,4 +15,12 @@ public record class CopilotResponsesOptions : BotNexus.Agent.Providers.Core.Stre
     public string? ReasoningSummary { get; set; }
     public string? PreviousResponseId { get; set; }
     public string? ServiceTier { get; set; }
+
+    /// <summary>
+    /// Optional Copilot-CLI-fidelity request headers
+    /// (Copilot-Integration-Id, X-GitHub-Api-Version, Editor-Version,
+    /// X-Interaction-Id, intent override). When null, only the default
+    /// dynamic header set is emitted — preserving wire parity with previous releases.
+    /// </summary>
+    public CopilotHeaderOptions? HeaderOptions { get; set; }
 }

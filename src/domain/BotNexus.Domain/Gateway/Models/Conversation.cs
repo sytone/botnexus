@@ -99,6 +99,12 @@ public sealed record Conversation
     /// </remarks>
     public ConversationKind Kind { get; set; } = ConversationKind.HumanAgent;
 
+    /// <summary>Gets or sets whether this conversation is pinned to the top of the list.</summary>
+    public bool IsPinned { get; set; }
+
+    /// <summary>Gets or sets when this conversation was pinned. Null if not pinned. Used for ordering among pinned conversations (most recently pinned first).</summary>
+    public DateTimeOffset? PinnedAt { get; set; }
+
     /// <summary>
     /// Gets or sets the citizens currently participating in this conversation. Populated as
     /// a side effect of inbound message routing and the agent-exchange handshake — see

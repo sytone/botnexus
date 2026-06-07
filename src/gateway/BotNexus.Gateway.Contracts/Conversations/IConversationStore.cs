@@ -138,6 +138,13 @@ public interface IConversationStore
     Task TouchAsync(ConversationId conversationId, CancellationToken ct = default);
 
     /// <summary>
+    /// Pins or unpins a conversation. When pinning, stamps PinnedAt to UtcNow.
+    /// When unpinning, clears IsPinned and PinnedAt.
+    /// Silently no-ops when the conversation does not exist.
+    /// </summary>
+    Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default);
+
+    /// <summary>
     /// Returns lightweight summaries for all <em>active</em> conversations across the world,
     /// ordered most-recently-updated first.
     /// </summary>

@@ -579,6 +579,8 @@ public sealed class AgentExchangeArchiveTests
             => _inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
         public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default)
             => _inner.TouchAsync(conversationId, ct);
+        public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
+            => _inner.PinAsync(conversationId, pin, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => _inner.GetSummariesAsync(ct);
     }

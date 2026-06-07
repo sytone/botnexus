@@ -122,7 +122,9 @@ public sealed class CopilotResponsesProvider(
         // this provider only handles Copilot-routed models, so the runtime check
         // present in the OpenAI parent is unnecessary.
         var copilotHasImages = CopilotHeaders.HasVisionInput(context.Messages);
-        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(context.Messages, copilotHasImages))
+        var copilotHeaderOptions = Headers.CopilotInteractionId.WithResolvedInteractionId(
+            (options as CopilotResponsesOptions)?.HeaderOptions);
+        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(context.Messages, copilotHasImages, copilotHeaderOptions))
             request.Headers.TryAddWithoutValidation(key, value);
 
         if (options?.Headers is not null)
@@ -132,6 +134,7 @@ public sealed class CopilotResponsesProvider(
         }
 
         using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        Headers.CopilotResponseHeaders.EmitToActivity(response, Activity.Current);
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(ct);

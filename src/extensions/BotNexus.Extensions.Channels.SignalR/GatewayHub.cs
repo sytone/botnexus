@@ -148,7 +148,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId)
             ? null
-            : conversationId.Trim();
+            : conversationId;
 
         // Resolve the (sessionId, conversationId) the inbound message will land on so the
         // caller is in the conversation group before the orchestrator's worker emits stream
@@ -194,7 +194,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (string.IsNullOrWhiteSpace(requestId))
             throw new HubException("Request ID is required.");
 
-        var normalizedConversationId = ConversationId.From(conversationId.Trim());
+        var normalizedConversationId = ConversationId.From(conversationId);
         var conversation = await _conversationStore.GetAsync(normalizedConversationId, Context.ConnectionAborted);
         if (conversation is null)
             throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
@@ -366,7 +366,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await SubscribeInternalAsync(typedSessionId);
 
         var connectionId = Context.ConnectionId;
-        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId.Trim();
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId;
 
         _ = SafeDispatchAsync(
             () => _orchestrator.AcceptAsync(

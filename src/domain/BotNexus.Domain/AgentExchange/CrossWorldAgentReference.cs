@@ -33,7 +33,7 @@ public sealed record CrossWorldAgentReference
         }
 
         var worldId = value[..separatorIndex].Trim();
-        var agentId = value[(separatorIndex + 1)..].Trim();
+        var agentId = value[(separatorIndex + 1)..];
         if (string.IsNullOrWhiteSpace(worldId) || string.IsNullOrWhiteSpace(agentId))
         {
             reference = null;

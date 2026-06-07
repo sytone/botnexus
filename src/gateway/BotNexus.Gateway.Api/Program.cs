@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Api.Extensions;
+using BotNexus.Gateway.Api.Extensions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -329,6 +329,10 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
             .LogWarning("Some extensions failed to load during startup bootstrap: {FailedExtensions}", failed);
     }
 }
+
+// Log diagnostics: capture Warning+ entries into an in-memory ring buffer for the log-patterns API.
+builder.Services.AddSingleton<BotNexus.Gateway.Diagnostics.LogDiagnosticsRingBuffer>();
+builder.Services.AddSingleton<ILoggerProvider, BotNexus.Gateway.Diagnostics.LogDiagnosticsProvider>();
 
 var app = builder.Build();
 

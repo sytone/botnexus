@@ -185,12 +185,15 @@ public sealed class CopilotCompletionsProvider(
         // this provider only handles Copilot-routed models, so the runtime check
         // present in the OpenAI parent is unnecessary.
         var copilotHasImages = CopilotHeaders.HasVisionInput(messages);
-        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, copilotHasImages))
+        var copilotHeaderOptions = Headers.CopilotInteractionId.WithResolvedInteractionId(
+            (options as CopilotCompletionsOptions)?.HeaderOptions);
+        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, copilotHasImages, copilotHeaderOptions))
             request.Headers.TryAddWithoutValidation(key, value);
 
         logger.LogDebug("Streaming {Model} from {Url}", model.Id, url);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        Headers.CopilotResponseHeaders.EmitToActivity(response, Activity.Current);
 
         if (!response.IsSuccessStatusCode)
         {

@@ -1,3 +1,5 @@
+using BotNexus.Agent.Providers.Core.Utilities;
+
 namespace BotNexus.Agent.Providers.Copilot.Completions;
 
 /// <summary>
@@ -18,4 +20,12 @@ public record class CopilotCompletionsOptions : BotNexus.Agent.Providers.Core.St
     /// Reasoning effort for reasoning-capable models: "low", "medium", "high".
     /// </summary>
     public string? ReasoningEffort { get; set; }
+
+    /// <summary>
+    /// Optional Copilot-CLI-fidelity request headers
+    /// (Copilot-Integration-Id, X-GitHub-Api-Version, Editor-Version,
+    /// X-Interaction-Id, intent override). When null, only the default
+    /// dynamic header set is emitted — preserving wire parity with previous releases.
+    /// </summary>
+    public CopilotHeaderOptions? HeaderOptions { get; set; }
 }
