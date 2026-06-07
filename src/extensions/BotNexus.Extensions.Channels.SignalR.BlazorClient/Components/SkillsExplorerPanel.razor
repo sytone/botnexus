@@ -43,8 +43,9 @@
 
     @if (_deleteConfirmPath is not null)
     {
-        <div class="workspace-delete-confirm" role="dialog" aria-modal="true">
+        <div class="workspace-delete-confirm" role="dialog" aria-modal="true" aria-labelledby="skills-delete-title">
             <div class="workspace-delete-confirm-box">
+                <span id="skills-delete-title" class="sr-only">Confirm deletion</span>
                 @if (_deleteIsNonEmptyDir)
                 {
                     <p class="workspace-delete-warning">

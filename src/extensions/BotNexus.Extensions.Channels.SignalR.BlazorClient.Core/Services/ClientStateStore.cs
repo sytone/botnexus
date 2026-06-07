@@ -103,6 +103,7 @@ public sealed class ClientStateStore : IClientStateStore
                 // Preserve local-only state; update server-sourced fields
                 existing.Title = dto.Title;
                 existing.IsDefault = dto.IsDefault;
+                existing.IsPinned = dto.IsPinned;
                 existing.Status = dto.Status;
                 existing.ActiveSessionId = dto.ActiveSessionId;
                 existing.CreatedAt = dto.CreatedAt;
@@ -115,6 +116,7 @@ public sealed class ClientStateStore : IClientStateStore
                     ConversationId = dto.ConversationId,
                     Title = dto.Title,
                     IsDefault = dto.IsDefault,
+                    IsPinned = dto.IsPinned,
                     Status = dto.Status,
                     ActiveSessionId = dto.ActiveSessionId,
                     CreatedAt = dto.CreatedAt,

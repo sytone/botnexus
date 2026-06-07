@@ -3564,6 +3564,69 @@ details[open] > .thinking-summary::before {
     color: var(--error, #e55);
 }
 
+/* ── Conversation Group Headers ───────────────────────────────────────────────────────── */
+
+.conversation-group {
+    margin-bottom: 0.25rem;
+}
+
+.conversation-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+}
+
+.conversation-group-header-toggle {
+    cursor: pointer;
+}
+
+.conversation-group-header-toggle:hover {
+    color: var(--text, #ccc);
+}
+
+.group-chevron {
+    display: inline-block;
+    font-size: 0.55rem;
+    transition: transform 0.2s ease;
+}
+
+.group-chevron.expanded {
+    transform: rotate(90deg);
+}
+
+.conversation-group-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.3rem;
+    border-radius: 0.55rem;
+    background: var(--surface-hover, #333);
+    color: var(--text-muted, #888);
+    font-size: 0.6rem;
+    font-weight: 600;
+}
+
+.conversation-group-scheduled .conversation-list-item-btn {
+    opacity: 0.75;
+    font-size: 0.85em;
+}
+
+.conversation-group-scheduled .conversation-list-item-btn:hover {
+    opacity: 1;
+}
+
 /* ── Session Boundary Divider ─────────────────────────────────────────────── */
 
 .session-boundary {

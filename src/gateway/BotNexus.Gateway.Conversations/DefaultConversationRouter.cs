@@ -84,7 +84,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     existingBinding.Mode = BindingMode.Interactive;
                     reactivated = true;
                 }
-                var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct, channelType);
                 var changed = directSessionChanged;
                 if (changed)
                 {
@@ -141,7 +141,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
 
         // 3. Resolve or create the active session
         var conversationChanged = addedBinding;
-        var (sessionId, isNewSession, sessionChanged) = await ResolveOrCreateSessionAsync(conversation, agentId, ct);
+        var (sessionId, isNewSession, sessionChanged) = await ResolveOrCreateSessionAsync(conversation, agentId, ct, channelType);
         conversationChanged |= sessionChanged;
 
         if (conversationChanged)
@@ -291,7 +291,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
     // Stamps session.ConversationId and conversation.ActiveSessionId when changed.
     // Returns the sessionId, whether it is new, and whether the conversation was mutated.
     private async Task<(SessionId sessionId, bool isNewSession, bool conversationChanged)> ResolveOrCreateSessionAsync(
-        Conversation conversation, AgentId agentId, CancellationToken ct)
+        Conversation conversation, AgentId agentId, CancellationToken ct, ChannelKey? inboundChannelType = null)
     {
         SessionId sessionId;
         var isNewSession = false;
@@ -300,10 +300,13 @@ public sealed class DefaultConversationRouter : IConversationRouter
         if (conversation.ActiveSessionId.HasValue)
         {
             var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
-            if (existingSession is { Status: not SessionStatus.Sealed })
+            if (existingSession is { Status: not SessionStatus.Sealed } &&
+                !IsCrossChannelConflict(existingSession, inboundChannelType))
             {
                 // Reuse Active AND Expired sessions -- GatewayHost reactivates Expired sessions.
                 // Only Sealed sessions (explicit reset/archive) should trigger a new session.
+                // Cross-channel conflicts (e.g. cron session reused by SignalR) also trigger
+                // a new session to prevent channel context bleeding (#731).
                 sessionId = conversation.ActiveSessionId.Value;
                 _logger.LogDebug("Reusing {Status} session {SessionId} for conversation {ConversationId}",
                     existingSession.Status, sessionId, conversation.ConversationId);
@@ -347,6 +350,29 @@ public sealed class DefaultConversationRouter : IConversationRouter
         }
 
         return (sessionId, isNewSession, conversationChanged);
+    }
+
+    /// <summary>
+    /// Returns true when the existing session was created by a different channel type
+    /// (e.g. cron) and the inbound channel is interactive (e.g. signalr). Reusing such
+    /// a session would leak the prior channel's context into the new channel (#731).
+    /// </summary>
+    private static bool IsCrossChannelConflict(GatewaySession existingSession, ChannelKey? inboundChannelType)
+    {
+        if (inboundChannelType is null)
+            return false;
+
+        if (existingSession.ChannelType is null)
+            return false;
+
+        // Same channel type — no conflict.
+        if (existingSession.ChannelType == inboundChannelType)
+            return false;
+
+        // A cron-owned session must not be reused by interactive channels.
+        // The session's metadata, SessionType, and ChannelType all reflect the cron context
+        // which would confuse diagnostics and potentially leak trigger metadata.
+        return string.Equals(existingSession.ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<Conversation?> TryReopenArchivedConversationAsync(

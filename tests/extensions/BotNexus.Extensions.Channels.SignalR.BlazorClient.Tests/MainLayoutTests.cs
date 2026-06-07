@@ -85,12 +85,12 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Clicking_burger_twice_closes_sidebar()
+    public async Task Clicking_burger_twice_closes_sidebar()
     {
         var cut = RenderLayout();
 
-        cut.Find(".burger-btn").Click();
-        cut.Find(".burger-btn").Click();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-closed");
     }
@@ -225,6 +225,9 @@ public sealed class MainLayoutTests : IDisposable
         conv.VirtualSessionKind = "cron";
 
         var cut = RenderLayout();
+
+        // Cron conversations are now in a collapsed Scheduled group; expand it first
+        cut.Find("[data-testid='cron-group-toggle']").Click();
 
         Assert.Contains("Cron", cut.Markup);
         var archiveBtn = cut.Find(".conversation-archive-btn");

@@ -169,7 +169,7 @@
                      style="@(!ShowTools ? "display:none" : "")">
                     <div class="tool-header" @onclick="() => ToggleToolDetails(msg.Id)">
                         <span class="tool-icon">@(msg.ToolResult is null ? "⏳" : (msg.ToolIsError == true ? "❌" : "✅"))</span>
-                        <span class="tool-name">@msg.ToolName</span>
+                        <span class="tool-name">@ToolDescriptionFormatter.FormatDescription(msg.ToolName ?? "tool", msg.ToolArgs)</span>
                         @if (msg.ToolDuration is not null)
                         {
                             <span class="tool-duration">@FormatDuration(msg.ToolDuration.Value)</span>

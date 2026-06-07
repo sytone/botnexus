@@ -72,6 +72,7 @@
   </Folder>
   <Folder Name="/tests/extensions/">
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.DataStore.Tests/BotNexus.Extensions.DataStore.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />

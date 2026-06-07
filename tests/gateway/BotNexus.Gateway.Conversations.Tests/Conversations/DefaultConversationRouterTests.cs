@@ -568,5 +568,156 @@ public sealed class DefaultConversationRouterTests
         result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
         result.Conversation.Initiator!.Value.ShouldBe(original);
     }
+
+    // ── Cross-channel conflict (#731) ─────────────────────────────────────────
+
+    [Fact]
+    public async Task ResolveInbound_CronSessionNotReusedBySignalR_CreatesNewSession()
+    {
+        // Arrange: a cron trigger created a session on a conversation
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = CreateRouter(conversationStore, sessionStore);
+        var agentId = Agent();
+        var signalrChannel = ChannelKey.From("signalr");
+        var cronChannel = ChannelKey.From("cron");
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:test-731"),
+            AgentId = agentId,
+            Title = "test",
+            IsDefault = false
+        };
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = cronChannel,
+            ChannelAddress = ChannelAddress.From(agentId.Value),
+            Mode = BindingMode.Interactive
+        });
+        await conversationStore.CreateAsync(conversation);
+
+        // Simulate cron trigger creating a session and stamping ActiveSessionId
+        var cronSessionId = SessionId.From("cron:test:202606071234:abc");
+        var cronSession = await sessionStore.GetOrCreateAsync(cronSessionId, agentId);
+        cronSession.ChannelType = cronChannel;
+        cronSession.ConversationId = conversation.ConversationId;
+        await sessionStore.SaveAsync(cronSession);
+
+        conversation.ActiveSessionId = cronSessionId;
+        await conversationStore.SaveAsync(conversation);
+
+        // Act: SignalR user sends a message targeting the same conversation
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            signalrChannel,
+            ChannelAddress.From(agentId.Value),
+            conversation.ConversationId.Value);
+
+        // Assert: a NEW session is created, not the cron one
+        result.SessionId.ShouldNotBe(cronSessionId);
+        result.IsNewSession.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ResolveInbound_SameChannelSessionReused_NoConflict()
+    {
+        // Arrange: a signalr session already exists
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = CreateRouter(conversationStore, sessionStore);
+        var agentId = Agent();
+        var signalrChannel = ChannelKey.From("signalr");
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:test-731b"),
+            AgentId = agentId,
+            Title = "test",
+            IsDefault = false
+        };
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = signalrChannel,
+            ChannelAddress = ChannelAddress.From(agentId.Value),
+            Mode = BindingMode.Interactive
+        });
+        await conversationStore.CreateAsync(conversation);
+
+        var existingSessionId = SessionId.From("session:signalr-existing");
+        var existingSession = await sessionStore.GetOrCreateAsync(existingSessionId, agentId);
+        existingSession.ChannelType = signalrChannel;
+        existingSession.ConversationId = conversation.ConversationId;
+        await sessionStore.SaveAsync(existingSession);
+
+        conversation.ActiveSessionId = existingSessionId;
+        await conversationStore.SaveAsync(conversation);
+
+        // Act: another signalr message arrives
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            signalrChannel,
+            ChannelAddress.From(agentId.Value),
+            conversation.ConversationId.Value);
+
+        // Assert: same session reused
+        result.SessionId.ShouldBe(existingSessionId);
+        result.IsNewSession.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ResolveInbound_CronSessionViaBindingLookup_CreatesNewSession()
+    {
+        // Arrange: no explicit conversationId — binding lookup path
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = CreateRouter(conversationStore, sessionStore);
+        var agentId = Agent();
+        var signalrChannel = ChannelKey.From("signalr");
+        var cronChannel = ChannelKey.From("cron");
+        var address = ChannelAddress.From(agentId.Value);
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:test-731c"),
+            AgentId = agentId,
+            Title = "test",
+            IsDefault = false
+        };
+        // Both channels have bindings to this conversation
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = cronChannel,
+            ChannelAddress = address,
+            Mode = BindingMode.Interactive
+        });
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = signalrChannel,
+            ChannelAddress = address,
+            Mode = BindingMode.Interactive
+        });
+        await conversationStore.CreateAsync(conversation);
+
+        // Cron session is active
+        var cronSessionId = SessionId.From("cron:job:202606071234:xyz");
+        var cronSession = await sessionStore.GetOrCreateAsync(cronSessionId, agentId);
+        cronSession.ChannelType = cronChannel;
+        cronSession.ConversationId = conversation.ConversationId;
+        await sessionStore.SaveAsync(cronSession);
+
+        conversation.ActiveSessionId = cronSessionId;
+        await conversationStore.SaveAsync(conversation);
+
+        // Act: SignalR resolves via binding (no explicit conversationId)
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            signalrChannel,
+            address);
+
+        // Assert: fresh session, not the cron one
+        result.SessionId.ShouldNotBe(cronSessionId);
+        result.IsNewSession.ShouldBeTrue();
+    }
 }
 
