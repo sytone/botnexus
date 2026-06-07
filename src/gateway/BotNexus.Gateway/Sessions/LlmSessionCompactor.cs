@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Collections.Concurrent;
+using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -26,6 +27,18 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private readonly ISecretRedactor? _redactor;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
 
+    /// <summary>
+    /// Tracks consecutive compaction failures per session for circuit breaker logic.
+    /// After <see cref="MaxConsecutiveFailures"/> consecutive failures, compaction is
+    /// skipped for that session until the gateway restarts.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new();
+
+    /// <summary>
+    /// Maximum consecutive compaction failures before the circuit breaker opens.
+    /// </summary>
+    internal const int MaxConsecutiveFailures = 3;
+
     public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null)
     {
         _llmClient = llmClient;
@@ -47,6 +60,28 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+
+        // Circuit breaker: skip compaction if this session has failed too many times.
+        var sessionKey = session.SessionId.Value;
+        var failures = _consecutiveFailures.GetValueOrDefault(sessionKey, 0);
+        if (failures >= MaxConsecutiveFailures)
+        {
+            _logger.LogWarning(
+                "Compaction circuit breaker OPEN for session {SessionId}: " +
+                "{Failures} consecutive failures. Skipping until gateway restart.",
+                sessionKey, failures);
+            return new CompactionResult
+            {
+                Summary = string.Empty,
+                Succeeded = false,
+                EntriesSummarized = 0,
+                EntriesPreserved = 0,
+                TokensBefore = 0,
+                TokensAfter = 0,
+                SnapshotDestructiveVersion = 0,
+                SnapshotHistoryCount = 0
+            };
+        }
 
         // Atomic snapshot: history copy + destructive-mutation version + count, all
         // captured under the runtime lock. The compactor operates only on this
@@ -100,11 +135,15 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
         if (string.IsNullOrWhiteSpace(summary))
         {
+            _consecutiveFailures.AddOrUpdate(sessionKey, 1, (_, count) => count + 1);
             _logger.LogWarning(
                 "Compaction aborted for session {SessionId}: LLM returned an empty summary. " +
-                "History is unchanged. Summarized {Count} entries would have been marked as historical.",
+                "History is unchanged. Summarized {Count} entries would have been marked as historical. " +
+                "Consecutive failures: {Failures}/{Max}",
                 session.SessionId,
-                toSummarize.Count);
+                toSummarize.Count,
+                _consecutiveFailures.GetValueOrDefault(sessionKey, 1),
+                MaxConsecutiveFailures);
 
             return new CompactionResult
             {
@@ -180,6 +219,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             tokensBefore,
             tokensAfter,
             tokensBefore - tokensAfter);
+
+        // Reset circuit breaker on success.
+        _consecutiveFailures.TryRemove(sessionKey, out _);
 
         return new CompactionResult
         {
