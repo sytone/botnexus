@@ -113,6 +113,9 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Whether this entry is a session boundary divider.</summary>
     public bool IsBoundary => Kind == "boundary";
 
+    /// <summary>Whether this entry is a compaction boundary (context was summarised).</summary>
+    public bool IsCompaction => Kind == "compaction";
+
     /// <summary>CSS class derived from the message role.</summary>
     public string CssClass => Role.ToLowerInvariant();
 }

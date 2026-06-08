@@ -395,9 +395,28 @@ public sealed class ConversationsController : ControllerBase
             var snapshot = session.GetHistorySnapshot();
             foreach (var entry in snapshot)
             {
+                // Skip folded entries that have been superseded by compaction summaries.
+                if (entry.IsHistory)
+                    continue;
+
                 if (entry.Role == MessageRole.Assistant &&
                     string.Equals(entry.Content?.Trim(), "NO_REPLY", StringComparison.Ordinal))
                     continue;
+
+                // Emit compaction summaries as distinct boundary markers so the portal
+                // can render them as separators rather than normal system messages.
+                if (entry.IsCompactionSummary)
+                {
+                    allEntries.Add(new ConversationHistoryEntry
+                    {
+                        Kind = "compaction",
+                        SessionId = session.SessionId.Value,
+                        Timestamp = entry.Timestamp,
+                        Reason = "compaction",
+                        Content = entry.Content
+                    });
+                    continue;
+                }
 
                 allEntries.Add(new ConversationHistoryEntry
                 {
