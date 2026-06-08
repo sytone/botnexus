@@ -7,6 +7,27 @@ using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
 
+/// <summary>
+/// Creates the default set of agent tools (file I/O, shell, grep, glob) for a given workspace.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This factory centralizes tool construction so that shell command resolution, path validation,
+/// and workspace scoping are consistent across all agent sessions.
+/// </para>
+/// <para>
+/// <strong>Shell command resolution chain:</strong>
+/// <list type="number">
+///   <item>Per-agent <c>shellCommand</c> (passed via <see cref="CreateTools"/> parameter) — highest priority.</item>
+///   <item>Gateway-level <c>shellCommand</c> (stored in <see cref="_shellCommand"/> field at construction).</item>
+///   <item>Gateway-level <c>shellPreference</c> (stored in <see cref="_shellPreference"/> field) — drives
+///         auto-detection of bash/pwsh when no explicit command is configured.</item>
+/// </list>
+/// The <c>effectiveShellCommand</c> local in <see cref="CreateTools"/> implements this by preferring the
+/// <paramref name="shellCommand"/> parameter (per-agent) over the <see cref="_shellCommand"/> field (gateway).
+/// When both are null, <see cref="ShellTool"/> falls back to preference-based detection.
+/// </para>
+/// </remarks>
 public sealed class DefaultAgentToolFactory : IAgentToolFactory
 {
     private readonly ShellPreference _shellPreference;
