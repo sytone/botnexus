@@ -6,6 +6,7 @@ using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
 
+[Collection("AnsiConsole")]
 public class UpdateCommandTests
 {
     /// <summary>
