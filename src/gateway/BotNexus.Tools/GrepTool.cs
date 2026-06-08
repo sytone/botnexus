@@ -20,6 +20,7 @@ public sealed class GrepTool : IAgentTool
     private const int MaxOutputBytes = 50 * 1024;
     private const int MaxLineLength = 500;
     private const int BinaryProbeBytes = 4096;
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(5);
     private readonly string _workingDirectory;
     private readonly IPathValidator? _validator;
     private readonly IFileSystem _fileSystem;
@@ -100,7 +101,7 @@ public sealed class GrepTool : IAgentTool
         var effectivePattern = literal ? Regex.Escape(pattern) : pattern;
         try
         {
-            _ = new Regex(effectivePattern, RegexOptions.Compiled);
+            _ = new Regex(effectivePattern, RegexOptions.Compiled, RegexTimeout);
         }
         catch (ArgumentException ex)
         {
@@ -185,7 +186,7 @@ public sealed class GrepTool : IAgentTool
         var literal = arguments.TryGetValue("literal", out var literalObj) && literalObj is bool parsedLiteral && parsedLiteral;
         var effectivePattern = literal ? Regex.Escape(pattern) : pattern;
         var ignoreCase = arguments.TryGetValue("ignore_case", out var ignoreCaseObj) && ignoreCaseObj is bool parsedIgnoreCase && parsedIgnoreCase;
-        var regex = new Regex(effectivePattern, ignoreCase ? RegexOptions.Compiled | RegexOptions.IgnoreCase : RegexOptions.Compiled);
+        var regex = new Regex(effectivePattern, ignoreCase ? RegexOptions.Compiled | RegexOptions.IgnoreCase : RegexOptions.Compiled, RegexTimeout);
         var contextLines = arguments.TryGetValue("context", out var contextObj) && contextObj is int parsedContext
             ? Math.Max(0, parsedContext)
             : 0;
@@ -214,6 +215,7 @@ public sealed class GrepTool : IAgentTool
 
         var matches = new List<string>(capacity: maxResults);
         var hadReadErrors = false;
+        var hadRegexTimeout = false;
         var matchCount = 0;
 
         var candidateFiles = EnumerateCandidateFiles(targetPath, include)
@@ -287,6 +289,11 @@ public sealed class GrepTool : IAgentTool
             {
                 hadReadErrors = true;
             }
+            catch (RegexMatchTimeoutException)
+            {
+                hadRegexTimeout = true;
+                break;
+            }
 
             if (matchCount >= maxResults)
             {
@@ -296,6 +303,12 @@ public sealed class GrepTool : IAgentTool
 
         if (matches.Count == 0)
         {
+            if (hadRegexTimeout)
+            {
+                return new AgentToolResult(
+                    [new AgentToolContent(AgentToolContentType.Text, "[warning] Pattern matching timed out -- the regex may have catastrophic backtracking. Simplify the pattern or use literal mode.")]);
+            }
+
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matches.")]);
         }
 
@@ -328,6 +341,11 @@ public sealed class GrepTool : IAgentTool
         if (hadReadErrors)
         {
             builder.AppendLine("[warning] Some files could not be read.");
+        }
+
+        if (hadRegexTimeout)
+        {
+            builder.AppendLine("[warning] Pattern matching timed out -- the regex may have catastrophic backtracking. Simplify the pattern or use literal mode.");
         }
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, builder.ToString().TrimEnd())]);
