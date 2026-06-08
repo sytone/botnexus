@@ -166,7 +166,7 @@ public sealed class SystemPromptCaptureTests
 
     private sealed class NoOpAgentToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => Array.Empty<IAgentTool>();
     }
 

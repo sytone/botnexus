@@ -23,9 +23,10 @@ public static class ToolServiceCollectionExtensions
         {
             var config = sp.GetService<IOptions<PlatformConfig>>()?.Value;
             var preference = ParseShellPreference(config?.Gateway?.ShellPreference);
+            var shellCommand = config?.Gateway?.ShellCommand;
             // Resolve the platform config path so file tools can deny direct writes to it (issue #633).
             var configPath = PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem());
-            return new DefaultAgentToolFactory(preference, configPath);
+            return new DefaultAgentToolFactory(preference, configPath, shellCommand);
         });
 
         // Tool registry collects extension IAgentTool registrations.
