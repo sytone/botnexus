@@ -106,7 +106,8 @@ public static class SystemPromptBuilder
                     runtimeCapabilities,
                     inlineButtonsEnabled,
                     stableContextFiles,
-                    dynamicContextFiles)
+                    dynamicContextFiles),
+                [ModelGuidanceSection.ModelIdExtensionKey] = @params.Runtime?.Model
             }
         };
 
@@ -114,7 +115,10 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(10, BuildToolingSection))
             .Add(new LambdaPromptSection(20, BuildToolCallStyleSection))
             .Add(new LambdaPromptSection(30, static context => buildOverridablePromptSection(null, buildExecutionBiasSection(GetGatewayData(context).IsMinimal))))
+            .Add(ToolEnforcementSection.Create())
+            .Add(ShellEfficiencySection.Create())
             .Add(new LambdaPromptSection(40, BuildSafetyAndCliSection))
+            .Add(SkillsGuidanceSection.Create())
             .Add(new LambdaPromptSection(60, static context => buildMemorySection(
                 GetGatewayData(context).IsMinimal,
                 GetGatewayData(context).Parameters.MemoryPromptInjection,
@@ -128,6 +132,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(125, BuildConversationContextSection, HasConversationContext))
             .Add(new LambdaPromptSection(127, BuildConversationInstructionsSection, HasConversationInstructions))
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
+            .Add(ModelGuidanceSection.Create())
             .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
             .Add(new LambdaPromptSection(160, static context => buildVoiceSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).Parameters.TtsHint)))
