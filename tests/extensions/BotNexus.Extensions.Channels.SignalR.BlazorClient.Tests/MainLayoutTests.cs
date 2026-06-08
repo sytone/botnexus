@@ -587,21 +587,21 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void AgentDropdown_NotRendered_WhenIsMobileIsTrue()
+    public void AgentDropdown_Rendered_EvenWhenIsMobileIsTrue()
     {
-        // Arrange: seed an agent so the dropdown would normally appear
+        // Desktop MainLayout always renders agent dropdown regardless of viewport width.
+        // Narrow viewport on desktop still uses MainLayout (not MobileLayout), so the
+        // agent list must remain visible.
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.NotifyChanged();
 
-        // Simulate JS isMobileView returning true (fires in OnAfterRenderAsync)
+        // Simulate narrow viewport: chatScroll.isMobileView returns true
         _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
 
-        // Act
         var cut = RenderLayout();
-        // Wait for after-render to fire (_isMobile to be set)
-        cut.WaitForAssertion(() =>
-            Assert.Empty(cut.FindAll(".agent-dropdown-select")),
-            TimeSpan.FromSeconds(3));
+
+        // Agent dropdown must still be present
+        Assert.NotEmpty(cut.FindAll("[data-testid='agent-select']"));
     }
 
     [Fact]
@@ -676,5 +676,25 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
 
         cut.Find(".sidebar-footer");
+    }
+
+    [Fact]
+    public void Agent_dropdown_visible_even_when_viewport_is_narrow()
+    {
+        // Simulate narrow viewport: chatScroll.isMobileView returns true
+        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
+
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // The agent dropdown must still be rendered in MainLayout even on narrow viewports
+        // because desktop users resize their browser but stay on MainLayout (not MobileLayout)
+        var select = cut.Find("[data-testid='agent-select']");
+        Assert.NotNull(select);
     }
 }

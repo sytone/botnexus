@@ -231,7 +231,6 @@ public sealed class CrossWorldFederationController(
                 // any further sender turn that tries to reuse this RemoteSessionId, so the
                 // sender cannot accidentally continue an exchange the target said was done.
                 session.Status = GatewaySessionStatus.Sealed;
-                session.Metadata["conversationStatus"] = "sealed";
             }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
@@ -255,7 +254,6 @@ public sealed class CrossWorldFederationController(
                     // finish_agent_exchange. Seal the session now so the receiver-side
                     // state machine matches: Archived conversation  +  Sealed session.
                     session.Status = GatewaySessionStatus.Sealed;
-                    session.Metadata["conversationStatus"] = "sealed";
                     await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
                 }
                 await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
