@@ -497,7 +497,7 @@ public sealed class InProcessIsolationStrategyTests
 
     private sealed class StaticAgentToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => [new ReadTool(workingDirectory)];
     }
 
