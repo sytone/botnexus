@@ -15,6 +15,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Telegram/BotNexus.Extensions.Channels.Telegram.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.ServiceBus/BotNexus.Extensions.Channels.ServiceBus.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Test/BotNexus.Extensions.Channels.Test.csproj" />
   </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/agent/">
@@ -79,6 +80,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.Test.Tests/BotNexus.Extensions.Channels.Test.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />
