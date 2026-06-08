@@ -318,7 +318,7 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal(initialCount + 1, conv.Messages.Count);
         var msg = conv.Messages.Last();
         Assert.Equal("System", msg.Role);
-        Assert.Contains("↳ Steering accepted mid-turn", msg.Content);
+        Assert.Contains("↳ Steering injected", msg.Content);
     }
 
     [Fact]
