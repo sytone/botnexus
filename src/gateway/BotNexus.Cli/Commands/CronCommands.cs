@@ -33,7 +33,7 @@ internal sealed class CronCommands
     //  Command tree
     // ──────────────────────────────────────────────────────────────────────
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("cron", "Manage cron jobs on a running BotNexus gateway.");
 

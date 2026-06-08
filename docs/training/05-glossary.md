@@ -334,7 +334,7 @@ Thread-safe queue for steering and follow-up messages injected into the agent lo
 
 An `IApiProvider` implementation that communicates with a specific LLM API (Anthropic, OpenAI, GitHub Copilot, etc.). Each provider translates between the BotNexus streaming protocol and the vendor's wire format.
 
-**Source:** `BotNexus.Providers.*`
+**Source:** `BotNexus.Agent.Providers.*`
 **Training:** [Provider System](01-providers.md)
 
 ---

@@ -7,16 +7,14 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class ValidateCommand
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var remoteOption = new Option<bool>("--remote", "Validate using the running gateway /api/config/validate endpoint.");
         var gatewayUrlOption = new Option<string?>("--gateway-url", "Gateway base URL override for remote validation.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var command = new Command("validate", "Validate BotNexus platform configuration.")
         {
             remoteOption,
-            gatewayUrlOption,
-            targetOption
+            gatewayUrlOption
         };
 
         command.SetHandler(async context =>

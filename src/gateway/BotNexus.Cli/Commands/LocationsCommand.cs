@@ -10,18 +10,16 @@ internal sealed class LocationsCommand
     private static readonly string[] ValidTypes = ["filesystem", "api", "mcp-server", "database", "remote-node"];
     private const string RedactedConnectionStringDisplay = "(redacted)";
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("locations", "Manage configured locations.");
         command.AddAlias("location");
 
         var listCommand = new Command("list", "List all registered locations.");
-        var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        listCommand.Add(listTargetOption);
         listCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(listTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteListAsync(configPath, verbose, CancellationToken.None);
@@ -40,7 +38,6 @@ internal sealed class LocationsCommand
         var connectionStringOption = new Option<string?>("--connection-string", "Connection string for database locations.");
         var descriptionOption = new Option<string?>("--description", "Location description.");
 
-        var addTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var addCommand = new Command("add", "Add a location to config.json.")
         {
             nameArgument,
@@ -48,8 +45,7 @@ internal sealed class LocationsCommand
             pathOption,
             endpointOption,
             connectionStringOption,
-            descriptionOption,
-            addTargetOption
+            descriptionOption
         };
         addCommand.SetHandler(async context =>
         {
@@ -60,7 +56,7 @@ internal sealed class LocationsCommand
             var connectionString = context.ParseResult.GetValueForOption(connectionStringOption);
             var description = context.ParseResult.GetValueForOption(descriptionOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(addTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteAddAsync(name, type, path, endpoint, connectionString, description, configPath, verbose, CancellationToken.None);
@@ -69,14 +65,12 @@ internal sealed class LocationsCommand
         var updatePathOption = new Option<string?>("--path", "Updated path.");
         var updateEndpointOption = new Option<string?>("--endpoint", "Updated endpoint.");
         var updateDescriptionOption = new Option<string?>("--description", "Updated description.");
-        var updateTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var updateCommand = new Command("update", "Update an existing location.")
         {
             nameArgument,
             updatePathOption,
             updateEndpointOption,
-            updateDescriptionOption,
-            updateTargetOption
+            updateDescriptionOption
         };
         updateCommand.SetHandler(async context =>
         {
@@ -85,24 +79,22 @@ internal sealed class LocationsCommand
             var endpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
             var description = context.ParseResult.GetValueForOption(updateDescriptionOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(updateTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteUpdateAsync(name, path, endpoint, description, configPath, verbose, CancellationToken.None);
         });
 
-        var deleteTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var deleteCommand = new Command("delete", "Delete a location from config.json.")
         {
-            nameArgument,
-            deleteTargetOption
+            nameArgument
         };
         deleteCommand.AddAlias("remove");
         deleteCommand.SetHandler(async context =>
         {
             var name = context.ParseResult.GetValueForArgument(nameArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(deleteTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteDeleteAsync(name, configPath, verbose, CancellationToken.None);

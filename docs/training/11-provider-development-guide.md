@@ -29,7 +29,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 
-namespace BotNexus.Providers.MyProvider;
+namespace BotNexus.Agent.Providers.MyProvider;
 
 public sealed class MyProvider(HttpClient httpClient) : IApiProvider
 {

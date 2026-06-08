@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BotNexus.Agent.Providers.Copilot.Discovery;
@@ -62,7 +63,7 @@ public sealed class CopilotModelCapabilities
     public CopilotModelSupports? Supports { get; set; }
 
     [JsonPropertyName("limits")]
-    public Dictionary<string, double>? Limits { get; set; }
+    public Dictionary<string, JsonElement>? Limits { get; set; }
 }
 
 public sealed class CopilotModelSupports

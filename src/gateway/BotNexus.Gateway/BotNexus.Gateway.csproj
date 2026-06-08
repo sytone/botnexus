@@ -31,6 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="NJsonSchema" />
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />

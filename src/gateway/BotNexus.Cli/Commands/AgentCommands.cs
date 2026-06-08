@@ -10,18 +10,16 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class AgentCommands
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("agent", "Manage configured agents.");
         command.AddAlias("agents");
 
         var listCommand = new Command("list", "List configured agents.");
-        var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        listCommand.Add(listTargetOption);
         listCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(listTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteListAsync(configPath, verbose, CancellationToken.None);
@@ -36,7 +34,6 @@ internal sealed class AgentCommands
         var emojiOption = new Option<string?>("--emoji", () => null, "Emoji shown alongside the agent name in clients (e.g. \"🤖\").");
         var disabledFlag = new Option<bool>("--disabled", () => false, "Disable the agent (sets Enabled = false). Takes precedence over --enabled.");
 
-        var addTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var addCommand = new Command("add", "Add an agent to config.json.")
         {
             idArgument,
@@ -46,8 +43,7 @@ internal sealed class AgentCommands
             displayNameOption,
             descriptionOption,
             emojiOption,
-            disabledFlag,
-            addTargetOption
+            disabledFlag
         };
         addCommand.SetHandler(async context =>
         {
@@ -60,7 +56,7 @@ internal sealed class AgentCommands
             var description = context.ParseResult.GetValueForOption(descriptionOption);
             var emoji = context.ParseResult.GetValueForOption(emojiOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(addTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             // --disabled flag takes precedence over --enabled
@@ -68,50 +64,42 @@ internal sealed class AgentCommands
             context.ExitCode = await ExecuteAddAsync(id, provider, model, enabled, displayName, description, emoji, configPath, verbose, CancellationToken.None);
         });
 
-        var removeTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var removeCommand = new Command("remove", "Remove an agent from config.json.")
         {
-            idArgument,
-            removeTargetOption
+            idArgument
         };
         removeCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(idArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(removeTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteRemoveAsync(id, configPath, verbose, CancellationToken.None);
         });
 
-        var wizardTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        var wizardCommand = new Command("wizard", "Interactively create a new agent using a step-by-step wizard.")
-        {
-            wizardTargetOption
-        };
+        var wizardCommand = new Command("wizard", "Interactively create a new agent using a step-by-step wizard.");
         wizardCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(wizardTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteWizardAsync(configPath, verbose, CancellationToken.None);
         });
 
         var showIdArgument = new Argument<string>("id", "Agent ID.");
-        var showTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var showJsonOption = new Option<bool>("--json", "Emit raw JSON instead of a formatted table.");
         var showCommand = new Command("show", "Show the resolved configuration for a single agent.")
         {
             showIdArgument,
-            showTargetOption,
             showJsonOption
         };
         showCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(showIdArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(showTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var asJson = context.ParseResult.GetValueForOption(showJsonOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");

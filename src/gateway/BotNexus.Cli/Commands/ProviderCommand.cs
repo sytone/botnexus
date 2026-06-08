@@ -28,20 +28,18 @@ internal sealed class ProviderCommand
         ["anthropic"] = "apikey"
     };
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("provider", "Configure and authenticate LLM providers.");
 
         var setupCommand = new Command("setup", "Interactively add and authenticate a new provider.");
-        var setupTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var setupProviderOption = new Option<string?>("--provider", () => null,
             $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt and runs the rest of the setup flow (API-key prompt or OAuth device-code flow). Useful for scripting and integration tests.");
-        setupCommand.Add(setupTargetOption);
         setupCommand.Add(setupProviderOption);
         setupCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(setupTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var preselected = context.ParseResult.GetValueForOption(setupProviderOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
@@ -49,12 +47,10 @@ internal sealed class ProviderCommand
         });
 
         var listCommand = new Command("list", "List configured providers.");
-        var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        listCommand.Add(listTargetOption);
         listCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(listTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteListAsync(configPath, verbose, CancellationToken.None);
@@ -62,22 +58,20 @@ internal sealed class ProviderCommand
 
         command.AddCommand(setupCommand);
         command.AddCommand(listCommand);
-        command.AddCommand(BuildAddCommand(verboseOption));
-        command.AddCommand(BuildRemoveCommand(verboseOption));
+        command.AddCommand(BuildAddCommand(verboseOption, targetOption));
+        command.AddCommand(BuildRemoveCommand(verboseOption, targetOption));
         command.AddCommand(CopilotProviderSubcommand.Build(
-            verboseOption,
+            verboseOption, targetOption,
             (configPath, home, verbose, ct) => ExecuteSetupAsync(configPath, home, verbose, "github-copilot", ct)));
 
         // Default to setup when no subcommand given
-        var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.") { IsHidden = true };
         var defaultProviderOption = new Option<string?>("--provider", () => null,
             $"Pre-select the provider to configure ({string.Join(" | ", KnownProviders)}). Skips the interactive provider-selection prompt.") { IsHidden = true };
-        command.Add(defaultTargetOption);
         command.Add(defaultProviderOption);
         command.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(defaultTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var preselected = context.ParseResult.GetValueForOption(defaultProviderOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
@@ -89,7 +83,7 @@ internal sealed class ProviderCommand
         return command;
     }
 
-    private static Command BuildAddCommand(Option<bool> verboseOption)
+    private static Command BuildAddCommand(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var cmd = new Command("add", "Add or update a provider non-interactively. Useful for scripts and CI.");
         var nameOpt = new Option<string>("--name", "Provider name (e.g. 'openai', 'integration-mock').") { IsRequired = true };
@@ -102,7 +96,6 @@ internal sealed class ProviderCommand
             AllowMultipleArgumentsPerToken = true
         };
         var disabledOpt = new Option<bool>("--disabled", () => false, "Mark the provider as disabled. Disabled providers are hidden from the API.");
-        var targetOpt = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
         cmd.AddOption(nameOpt);
         cmd.AddOption(apiOpt);
@@ -111,12 +104,11 @@ internal sealed class ProviderCommand
         cmd.AddOption(defaultModelOpt);
         cmd.AddOption(modelsOpt);
         cmd.AddOption(disabledOpt);
-        cmd.AddOption(targetOpt);
 
         cmd.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(targetOpt);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             var name = context.ParseResult.GetValueForOption(nameOpt)!;
@@ -134,19 +126,17 @@ internal sealed class ProviderCommand
         return cmd;
     }
 
-    private static Command BuildRemoveCommand(Option<bool> verboseOption)
+    private static Command BuildRemoveCommand(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var cmd = new Command("remove", "Remove a provider non-interactively.");
         var nameOpt = new Option<string>("--name", "Provider name to remove.") { IsRequired = true };
-        var targetOpt = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
         cmd.AddOption(nameOpt);
-        cmd.AddOption(targetOpt);
 
         cmd.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(targetOpt);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             var name = context.ParseResult.GetValueForOption(nameOpt)!;

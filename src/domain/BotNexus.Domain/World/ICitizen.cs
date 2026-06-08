@@ -17,7 +17,7 @@ namespace BotNexus.Domain.World;
 /// timestamp — are intentionally deferred. Agents do not yet carry a back-reference to
 /// their <see cref="WorldDescriptor"/> (world membership is denormalised through
 /// <see cref="WorldDescriptor.HostedAgents"/>); the interface stays minimal so adoption
-/// is mechanical and Phase 7 can lift <c>World</c> when worlds become first-class.
+/// is mechanical. Lifting <c>World</c> to the interface was deferred.
 /// </para>
 /// </remarks>
 public interface ICitizen
