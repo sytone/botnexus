@@ -443,7 +443,7 @@ file sealed class PassthroughContextBuilder : IContextBuilder
 
 file sealed class EmptyToolFactory : IAgentToolFactory
 {
-    public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null) => [];
+    public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null) => [];
 }
 
 file sealed class TestWorkspaceManager : IAgentWorkspaceManager

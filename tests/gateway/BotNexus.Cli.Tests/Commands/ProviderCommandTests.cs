@@ -4,6 +4,7 @@ using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
 
+[Collection("AnsiConsole")]
 public class ProviderCommandTests : IDisposable
 {
     private readonly IAnsiConsole _originalConsole;
