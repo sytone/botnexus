@@ -317,6 +317,59 @@ public sealed class ConversationsController : ControllerBase
     }
 
     /// <summary>
+    /// Moves a channel binding from one conversation to another.
+    /// </summary>
+    /// <param name="conversationId">The source conversation identifier.</param>
+    /// <param name="bindingId">The binding identifier to move.</param>
+    /// <param name="request">The move request containing the target conversation ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>200 with the moved binding, or 404 if source/target conversation or binding not found.</returns>
+    [HttpPost("{conversationId}/bindings/{bindingId}/move")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> MoveBinding(
+        string conversationId,
+        string bindingId,
+        [FromBody] MoveBindingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.TargetConversationId))
+            return BadRequest(new { error = "targetConversationId is required." });
+
+        if (string.Equals(conversationId, request.TargetConversationId, StringComparison.Ordinal))
+            return BadRequest(new { error = "targetConversationId must differ from the source conversation." });
+
+        var sourceConversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (sourceConversation is null)
+            return NotFound(new { error = "Source conversation not found." });
+
+        var binding = sourceConversation.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
+        if (binding is null)
+            return NotFound(new { error = "Binding not found on source conversation." });
+
+        var targetConversation = await _conversations.GetAsync(ConversationId.From(request.TargetConversationId), cancellationToken);
+        if (targetConversation is null)
+            return NotFound(new { error = "Target conversation not found." });
+
+        // Remove from source
+        sourceConversation.ChannelBindings.Remove(binding);
+        sourceConversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await _conversations.SaveAsync(sourceConversation, cancellationToken);
+
+        // Add to target
+        targetConversation.ChannelBindings.Add(binding);
+        targetConversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await _conversations.SaveAsync(targetConversation, cancellationToken);
+
+        await NotifyConversationChangedBestEffortAsync("updated", sourceConversation.AgentId.Value, sourceConversation.ConversationId.Value, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", targetConversation.AgentId.Value, targetConversation.ConversationId.Value, cancellationToken);
+
+        return Ok(ToBindingResponse(binding));
+    }
+
+    /// <summary>
     /// Returns assembled conversation history across all sessions linked to this conversation,
     /// ordered chronologically with session boundary markers between sessions.
     /// </summary>
