@@ -8,14 +8,10 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class DoctorCommand
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("doctor", "Run CLI diagnostics.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        var locationsCommand = new Command("locations", "Check location accessibility.")
-        {
-            targetOption
-        };
+        var locationsCommand = new Command("locations", "Check location accessibility.");
         locationsCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -26,7 +22,7 @@ internal sealed class DoctorCommand
         });
 
         command.AddCommand(locationsCommand);
-        command.AddCommand(new DoctorConfigCommand().Build(verboseOption));
+        command.AddCommand(new DoctorConfigCommand().Build(verboseOption, targetOption));
         return command;
     }
 

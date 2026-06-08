@@ -15,11 +15,10 @@ internal sealed class PromptCommands
 {
     private const string PromptSampleResourcePrefix = "PromptSamples/";
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var prompt = new Command("prompt", "Manage prompt templates.");
 
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var configOption = new Option<string?>("--config", () => null, "Explicit config.json path. Overrides --target.");
         var agentOption = new Option<string?>("--agent", () => null, "Agent ID. Defaults to gateway.defaultAgentId.");
         var parameterOption = new Option<string[]>("--param", "Template parameter as key=value. Repeat for multiple values.")
@@ -47,7 +46,6 @@ internal sealed class PromptCommands
         var renderCommand = new Command("render", "Render a prompt template.")
         {
             templateArgument,
-            targetOption,
             configOption,
             agentOption,
             parameterOption
@@ -75,7 +73,6 @@ internal sealed class PromptCommands
         var runCommand = new Command("run", "Render and run a prompt template.")
         {
             templateArgument,
-            targetOption,
             configOption,
             agentOption,
             parameterOption,

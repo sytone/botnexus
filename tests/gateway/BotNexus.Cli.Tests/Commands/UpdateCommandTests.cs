@@ -108,7 +108,7 @@ public class UpdateCommandTests
     public void Update_command_is_registered_on_root()
     {
         var verbose = new Option<bool>("--verbose");
-        var command = BuildCommand().Build(verbose);
+        var command = BuildCommand().Build(verbose, new Option<string?>("--target"));
 
         command.Name.ShouldBe("update");
     }
@@ -117,7 +117,7 @@ public class UpdateCommandTests
     public void Update_command_registers_check_subcommand()
     {
         var verbose = new Option<bool>("--verbose");
-        var command = BuildCommand().Build(verbose);
+        var command = BuildCommand().Build(verbose, new Option<string?>("--target"));
 
         command.Subcommands.Any(c => c.Name == "check").ShouldBeTrue();
     }
@@ -126,11 +126,10 @@ public class UpdateCommandTests
     public void Update_command_has_expected_options()
     {
         var verbose = new Option<bool>("--verbose");
-        var command = BuildCommand().Build(verbose);
+        var command = BuildCommand().Build(verbose, new Option<string?>("--target"));
 
         var names = command.Options.Select(o => o.Name).ToList();
         names.ShouldContain("source");
-        names.ShouldContain("target");
         names.ShouldContain("port");
     }
 
