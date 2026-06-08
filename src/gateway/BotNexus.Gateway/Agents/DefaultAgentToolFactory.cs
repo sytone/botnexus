@@ -11,16 +11,19 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
 {
     private readonly ShellPreference _shellPreference;
     private readonly string? _platformConfigPath;
+    private readonly string[]? _shellCommand;
 
     public DefaultAgentToolFactory(
         ShellPreference shellPreference = ShellPreference.Auto,
-        string? platformConfigPath = null)
+        string? platformConfigPath = null,
+        string[]? shellCommand = null)
     {
         _shellPreference = shellPreference;
         _platformConfigPath = platformConfigPath;
+        _shellCommand = shellCommand;
     }
 
-    public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+    public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
     {
         var resolved = Path.GetFullPath(workingDirectory);
         var fileSystem = new FileSystem();
@@ -48,12 +51,14 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
             effectivePathValidator = new DefaultPathValidator(policy: policy, workspacePath: resolved);
         }
 
+        var effectiveShellCommand = shellCommand ?? _shellCommand;
+
         return
         [
             new ReadTool(resolved, effectivePathValidator, fileSystem),
             new WriteTool(resolved, effectivePathValidator, fileSystem),
             new EditTool(resolved, effectivePathValidator, fileSystem),
-            new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference),
+            new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference, shellCommand: effectiveShellCommand),
             new ListDirectoryTool(resolved, effectivePathValidator, fileSystem),
             new GrepTool(resolved, effectivePathValidator, fileSystem),
             new GlobTool(resolved, effectivePathValidator, fileSystem)

@@ -180,7 +180,7 @@ public sealed class ToolHookWiringTests
 
     private sealed class StaticToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => [new ReadTool(workingDirectory)];
     }
 

@@ -132,6 +132,15 @@ public sealed class GatewaySettingsConfig
     /// </summary>
     public string? ShellPreference { get; set; }
 
+    /// <summary>
+    /// Custom shell command array for command execution.
+    /// Element [0] is the executable, remaining elements are base arguments.
+    /// The agent's command string is appended as the final argument.
+    /// Example: <c>["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]</c>.
+    /// When set, overrides <see cref="ShellPreference"/> entirely.
+    /// </summary>
+    public string[]? ShellCommand { get; set; }
+
     /// <summary>Auto-update settings for self-updating the gateway via the BotNexus CLI.</summary>
     public AutoUpdateConfig? AutoUpdate { get; set; }
 
@@ -480,6 +489,13 @@ public sealed class AgentDefinitionConfig
     public ConversationAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
+
+    /// <summary>
+    /// Custom shell command array for this agent. Overrides the gateway-level ShellCommand.
+    /// Element [0] is the executable, remaining elements are base arguments.
+    /// The agent's command string is appended as the final argument.
+    /// </summary>
+    public string[]? ShellCommand { get; set; }
 
     /// <summary>
     /// Extension-specific configuration keyed by extension ID.
