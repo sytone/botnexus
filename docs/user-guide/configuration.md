@@ -204,6 +204,49 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `fileAccess.allowedWritePaths` | array | `[]` | Paths the agent can write (exact or glob). Workspace always writable |
 | `fileAccess.deniedPaths` | array | `[]` | Paths explicitly denied even if otherwise allowed |
 
+### Shell Execution
+
+Per-agent shell execution settings allow overriding the gateway-level shell configuration for individual agents.
+
+```json
+{
+  "agents": {
+    "my-agent": {
+      "shellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
+    }
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `shellCommand` | string[] | `null` | Custom shell command array. Element 0 is the executable, elements 1..N are base arguments. The agent's command is appended as the final argument. |
+
+**Override behavior:**
+- Per-agent `shellCommand` takes priority over gateway-level `shellCommand` and `shellPreference`
+- If not set, the agent inherits the gateway-level shell configuration
+- The array must have at least 2 elements (executable + at least one arg) to be valid; otherwise it is ignored
+
+**Common configurations:**
+
+```json
+{
+  "agents": {
+    "ps-agent": {
+      "shellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
+    },
+    "bash-agent": {
+      "shellCommand": ["/bin/bash", "-l", "-c"]
+    },
+    "nu-agent": {
+      "shellCommand": ["nu", "-c"]
+    }
+  }
+}
+```
+
+See [Shell Execution](/features/shell-execution) for the full configuration hierarchy, ArgumentList execution model, and troubleshooting.
+
 ### File Access Policy
 
 Controls which file paths agents can access via file tools (`read`, `write`, `edit`, `grep`, `glob`, `ls`). Shell tools (`bash`, `exec`) are not restricted by this policy.

@@ -272,6 +272,30 @@ public sealed class ShellTool : IAgentTool
 
     private static ShellInvocation BuildShellInvocation(string command, ShellPreference preference, string[]? shellCommand)
     {
+        // === ArgumentList Approach ===
+        //
+        // All shell invocations use ProcessStartInfo.ArgumentList (not the Arguments string property).
+        // This is a deliberate architectural choice made in PR #1055 to eliminate the double-parse
+        // escaping problem that is fundamentally unsolvable with a single Arguments string.
+        //
+        // THE HISTORICAL PROBLEM:
+        // Previously, BuildPwshInvocation constructed a single Arguments string:
+        //   startInfo.Arguments = $"-NoLogo -NoProfile -NonInteractive -Command \"{escaped}\"";
+        // This broke because on Windows:
+        //   1. CreateProcess (OS level) parses the Arguments string into argv using C runtime rules
+        //   2. THEN PowerShell parses the -Command argument value using its own syntax
+        // Only quote escaping was handled (backtick-quote). Characters like $, @, {}, |, ; all
+        // broke unpredictably because you cannot construct ONE string that BOTH parsers handle
+        // correctly for all inputs. The two parsing grammars are incompatible.
+        //
+        // THE SOLUTION:
+        // When ArgumentList is populated, .NET handles all OS-level quoting internally using
+        // platform-correct rules. Each argument arrives at the target process as a discrete argv
+        // entry. The shell receives the command string unmolested - exactly as the agent wrote it.
+        // Only one parse layer remains: the shell's own parser interpreting the command.
+        //
+        // This applies to ALL paths below (custom shellCommand, pwsh, bash).
+
         // Custom shell command takes precedence over preference-based detection.
         // command[0] is the executable, command[1..n-1] are base args, agent command is appended last.
         if (shellCommand is { Length: >= 2 })
