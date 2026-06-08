@@ -159,6 +159,14 @@
                     <span class="session-boundary-line"></span>
                 </div>
             }
+            else if (msg.IsCompaction)
+            {
+                <div class="compaction-boundary" role="separator" aria-label="Context compacted" data-testid="compaction-boundary">
+                    <span class="compaction-boundary-line"></span>
+                    <span class="compaction-boundary-label">&#x1F4E6; @msg.BoundaryLabel</span>
+                    <span class="compaction-boundary-line"></span>
+                </div>
+            }
             else if (msg.Role == "System")
             {
                 <div class="system-message" data-testid="chat-system-message">@msg.Content</div>
