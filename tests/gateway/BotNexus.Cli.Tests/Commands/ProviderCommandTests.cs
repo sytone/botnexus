@@ -1,10 +1,31 @@
 using System.Text.Json;
 using BotNexus.Cli.Commands;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
 
-public class ProviderCommandTests
+public class ProviderCommandTests : IDisposable
 {
+    private readonly IAnsiConsole _originalConsole;
+
+    public ProviderCommandTests()
+    {
+        // Redirect the static AnsiConsole to a per-test StringWriter so that
+        // production code calling AnsiConsole.MarkupLine does not race with
+        // other test classes that may dispose the shared writer.
+        _originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(new StringWriter()),
+            Interactive = InteractionSupport.No
+        });
+    }
+
+    public void Dispose()
+    {
+        AnsiConsole.Console = _originalConsole;
+    }
+
     [Fact]
     public void AuthFileEntry_serializes_in_GatewayAuthManager_compatible_format()
     {
