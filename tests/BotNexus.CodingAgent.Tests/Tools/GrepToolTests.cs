@@ -149,6 +149,56 @@ public sealed class GrepToolTests : IDisposable
         result.Content[0].Value.ShouldContain("[warning] Results truncated at 100 matches.");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenEvilRegexPattern_TimesOutInsteadOfHanging()
+    {
+        // Classic ReDoS pattern: (a+)+b against a long string of 'a's with no trailing 'b'
+        var evilInput = new string('a', 30);
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "redos.txt"), evilInput);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "(a+)+b"
+        });
+
+        // Should return gracefully with timeout warning instead of hanging
+        result.Content.ShouldNotBeEmpty();
+        result.Content[0].Value.ShouldContain("timed out");
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenEvilRegexPattern_DoesNotHang()
+    {
+        // PrepareArguments also compiles the regex for validation — must not hang
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var args = new Dictionary<string, object?>
+        {
+            ["pattern"] = "(a+)+b"
+        };
+
+        // Should complete quickly (regex compilation with timeout doesn't hang)
+        var prepared = await _tool.PrepareArgumentsAsync(args, cts.Token);
+        prepared["pattern"].ShouldBe("(a+)+b");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenRegexTimesOut_ReturnsTimeoutWarning()
+    {
+        // Catastrophic backtracking pattern: nested quantifiers against non-matching input
+        var input = new string('a', 50) + "!";
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "backtrack.txt"), input);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "(a+)+$"
+        });
+
+        result.Content.ShouldNotBeEmpty();
+        // (a+)+$ against 'aaa...!' will timeout due to catastrophic backtracking
+        // The result should contain the timeout warning message
+        result.Content[0].Value.ShouldContain("timed out");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

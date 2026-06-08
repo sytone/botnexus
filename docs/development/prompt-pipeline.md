@@ -34,6 +34,10 @@ IPromptContributor[]
 public interface IPromptSection
 {
     int Order { get; }
+
+    /// Stable identifier for override resolution and diagnostics.
+    /// Null indicates an anonymous section that cannot be overridden.
+    string? SectionId => null;
     
     bool ShouldInclude(PromptContext context);
     
@@ -44,6 +48,7 @@ public interface IPromptSection
 **Responsibilities:**
 
 - Define relative ordering (lower = earlier in prompt)
+- Provide a stable `SectionId` for override resolution (optional, default interface member)
 - Conditional inclusion based on context
 - Generate prompt lines
 
@@ -441,6 +446,72 @@ const string SystemPromptCacheBoundary = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
 - Cache stable sections (identity, tools, guidelines)
 - Reduce latency for dynamic sections (context files, current task)
 - Lower costs (cached tokens are cheaper)
+
+## Prompt Section Overrides
+
+BotNexus supports overriding built-in prompt sections with custom content from the filesystem. This enables per-deployment customization without modifying source code.
+
+### IPromptOverrideResolver
+
+```csharp
+public interface IPromptOverrideResolver
+{
+    IReadOnlyList<string>? TryResolveOverride(string sectionId, string? modelFamily = null);
+}
+```
+
+The `FilePromptOverrideResolver` reads overrides from markdown files:
+
+```text
+~/.botnexus/prompts/
+  system/
+    {sectionId}.md              — section-level override (any model)
+    model/
+      {family}.md               — model-family-specific guidance
+```
+
+**Override resolution:**
+
+1. If `sectionId` is in the non-overridable list (`safety`, `runtime-data`, `runtime-info`, `identity`), return null
+2. For `model-guidance` with a known family, check `system/model/{family}.md` first
+3. Fall back to `system/{sectionId}.md`
+
+Files are read fresh on every call — hot-reload, no restart required.
+
+### Non-Overridable Sections
+
+The following section IDs cannot be overridden (safety-critical or runtime data):
+
+- `safety`
+- `runtime-data`
+- `runtime-info`
+- `identity`
+
+### Built-in Section IDs
+
+| Section ID | Order | Description |
+|-----------|-------|-------------|
+| `tool-enforcement` | 32 | Tool calling rules and constraints |
+| `shell-efficiency` | 35 | Shell scripting best practices |
+| `skills-guidance` | 55 | Skills loading and creation guidance (conditional: only when skills tools available) |
+| `model-guidance` | 135 | Per-model-family behavioral defaults (conditional: only for recognized families) |
+
+### LambdaPromptSection
+
+A convenience class for creating sections with a delegate, optional `SectionId`, and optional inclusion predicate:
+
+```csharp
+public static LambdaPromptSection Create() =>
+    new(SectionOrder, static _ => Lines, sectionId: Id, shouldIncludeFunc: HasSkillTools);
+```
+
+## Model Family Detection
+
+`ModelFamilyDetector.GetModelFamily(modelId)` identifies the model family from a model identifier string. Used by `ModelGuidanceSection` to select per-family prompt defaults.
+
+Recognized families: `claude`, `gpt`, `gemini`, `copilot`, `deepseek`, `qwen`, `llama`.
+
+Detection is case-insensitive and matches on common prefixes and substrings. Unrecognized models return `"unknown"` and receive no model-specific guidance.
 
 ## Extension Prompt Contributions
 

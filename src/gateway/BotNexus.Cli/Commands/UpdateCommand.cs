@@ -21,16 +21,14 @@ internal class UpdateCommand
         _processManager = processManager;
     }
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var sourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var portOption = new Option<int>("--port", () => 5005, "Gateway port.");
 
         var command = new Command("update", "Pull latest source, build, and restart the BotNexus gateway.")
         {
             sourceOption,
-            targetOption,
             portOption
         };
 
