@@ -170,3 +170,34 @@ public record AskUserChoiceState(string Value, string Label, string? Description
 /// <param name="SelectedValues">Optional set of selected choice values.</param>
 /// <param name="Cancelled">True when the user cancelled instead of submitting an answer.</param>
 public record AskUserPromptSubmission(string? FreeFormText, string[]? SelectedValues, bool Cancelled);
+
+// ── Steering queue models ────────────────────────────────────────────────
+
+/// <summary>Kind of steering entry.</summary>
+public enum SteeringEntryKind
+{
+    /// <summary>A mid-turn steer directive.</summary>
+    Steer,
+    /// <summary>A follow-up message queued for the next turn.</summary>
+    FollowUp
+}
+
+/// <summary>Lifecycle status of a steering entry.</summary>
+public enum SteeringEntryStatus
+{
+    /// <summary>Steering is pending — waiting to be injected or processed.</summary>
+    Pending,
+    /// <summary>Steering was injected into the agent turn.</summary>
+    Injected,
+    /// <summary>Steering was dropped (e.g., session reset, error).</summary>
+    Dropped
+}
+
+/// <summary>
+/// Represents a single steering or follow-up entry in the pending queue panel.
+/// </summary>
+/// <param name="Id">Unique client-generated entry identifier.</param>
+/// <param name="Text">The steering/follow-up text content.</param>
+/// <param name="Kind">Whether this is a Steer or FollowUp entry.</param>
+/// <param name="Status">Current lifecycle status.</param>
+public record SteeringEntry(string Id, string Text, SteeringEntryKind Kind, SteeringEntryStatus Status);
