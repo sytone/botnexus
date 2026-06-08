@@ -136,6 +136,7 @@ export default defineConfig({
         text: 'Features',
         items: [
           { text: 'Sub-Agent Spawning', link: '/features/sub-agent-spawning' },
+          { text: 'Shell Execution', link: '/features/shell-execution' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],
