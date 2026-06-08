@@ -495,6 +495,16 @@ public sealed class AgentInteractionService : IAgentInteractionService
                             BoundarySessionId = entry.SessionId
                         });
                     }
+                    else if (entry.Kind == "compaction")
+                    {
+                        var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
+                        conv.Messages.Add(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
+                        {
+                            Kind = "compaction",
+                            BoundaryLabel = label,
+                            BoundarySessionId = entry.SessionId
+                        });
+                    }
                     else
                     {
                         var isToolCall = entry.ToolName is not null;
