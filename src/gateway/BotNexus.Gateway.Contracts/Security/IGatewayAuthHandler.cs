@@ -16,7 +16,7 @@ namespace BotNexus.Gateway.Abstractions.Security;
 ///   <item><b>ApiKeyAuthHandler</b> — Static API key validation. Suitable for development
 ///   and simple single-tenant deployments.</item>
 ///   <item><b>JwtAuthHandler</b> — JWT bearer token validation. For production multi-tenant
-///   scenarios. Phase 2.</item>
+///   scenarios. Not yet implemented (see #567).</item>
 /// </list>
 /// </remarks>
 public interface IGatewayAuthHandler

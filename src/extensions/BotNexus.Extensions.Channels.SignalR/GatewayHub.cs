@@ -24,7 +24,7 @@ namespace BotNexus.Extensions.Channels.SignalR;
 #pragma warning disable CS1591 // Hub methods are self-documenting SignalR contracts
 
 /// <summary>
-/// SignalR hub for real-time agent communication. Replaces the raw WebSocket infrastructure.
+/// SignalR hub for real-time agent communication.
 /// Clients join session groups and receive streaming output for all active sessions simultaneously.
 /// </summary>
 public sealed class GatewayHub : Hub<IGatewayHubClient>
