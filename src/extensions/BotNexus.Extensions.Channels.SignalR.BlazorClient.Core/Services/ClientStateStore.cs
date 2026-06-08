@@ -332,6 +332,44 @@ public sealed class ClientStateStore : IClientStateStore
     public AskUserPromptState? GetPendingAskUser(string conversationId) =>
         _pendingAskUserByConversation.GetValueOrDefault(conversationId);
 
+    // ── Steering queue ─────────────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public void AddSteeringEntry(string conversationId, SteeringEntry entry)
+    {
+        var conv = GetConversation(conversationId);
+        if (conv is null) return;
+
+        conv.PendingSteeringQueue.Add(entry);
+        NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public void UpdateSteeringEntry(string conversationId, string entryId, SteeringEntryStatus newStatus)
+    {
+        var conv = GetConversation(conversationId);
+        if (conv is null) return;
+
+        var index = conv.PendingSteeringQueue.FindIndex(e => e.Id == entryId);
+        if (index < 0) return;
+
+        var existing = conv.PendingSteeringQueue[index];
+        conv.PendingSteeringQueue[index] = existing with { Status = newStatus };
+
+        // Remove non-pending entries after a short time to avoid clutter
+        if (newStatus != SteeringEntryStatus.Pending)
+            conv.PendingSteeringQueue.RemoveAt(index);
+
+        NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<SteeringEntry> GetSteeringQueue(string conversationId)
+    {
+        var conv = GetConversation(conversationId);
+        return conv?.PendingSteeringQueue ?? (IReadOnlyList<SteeringEntry>)[];
+    }
+
     // ── Session resolution ─────────────────────────────────────────────────────
 
     /// <inheritdoc />

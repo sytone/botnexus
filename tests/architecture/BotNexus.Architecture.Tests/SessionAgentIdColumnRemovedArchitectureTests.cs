@@ -186,6 +186,8 @@ public sealed class SessionAgentIdColumnRemovedArchitectureTests
         // DropLegacyAgentIdColumnAsync drops both legacy indexes then the column itself;
         // VerifyAgentIdColumnConsistencyAsync logs any pre-existing data corruption.
         "gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs",
+        // DebugTool queries conversations.agent_id (which still exists) for agent scope filtering.
+        "extensions/BotNexus.Extensions.DebugTool/DebugTool.cs",
     };
 
     private static IEnumerable<string> EnumerateProductionCsFiles(string srcRoot)

@@ -68,7 +68,7 @@
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
                 @* Agent dropdown + session list nested under Chat *@
-                @if (!_isMobile && Store.Agents.Values.Any(a => !a.IsReadOnly))
+                @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
                 {
                     <div class="agent-dropdown-container">
                         <select class="agent-dropdown-select" data-testid="agent-select"

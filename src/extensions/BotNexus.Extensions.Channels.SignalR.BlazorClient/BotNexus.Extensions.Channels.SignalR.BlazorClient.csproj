@@ -3,6 +3,7 @@
   <PropertyGroup>
     <RootNamespace>BotNexus.Extensions.Channels.SignalR.BlazorClient</RootNamespace>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <ServiceWorkerAssetsManifest>service-worker-assets.js</ServiceWorkerAssetsManifest>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,6 +13,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Extensions.Channels.SignalR.BlazorClient.Core\BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ServiceWorker Include="wwwroot\service-worker.js"
+                   PublishedContent="wwwroot\service-worker.published.js" />
   </ItemGroup>
 
 </Project>
