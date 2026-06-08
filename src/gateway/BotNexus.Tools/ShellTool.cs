@@ -52,8 +52,9 @@ public sealed class ShellTool : IAgentTool
     private readonly string? _workingDirectory;
     private readonly int? _defaultTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
+    private readonly string[]? _shellCommand;
 
-    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto)
+    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
@@ -66,6 +67,7 @@ public sealed class ShellTool : IAgentTool
 
         _defaultTimeoutSeconds = defaultTimeoutSeconds;
         _shellPreference = shellPreference;
+        _shellCommand = shellCommand is { Length: >= 2 } ? shellCommand : null;
     }
 
     /// <inheritdoc />
@@ -157,7 +159,7 @@ public sealed class ShellTool : IAgentTool
             timeoutSeconds = _defaultTimeoutSeconds;
         }
 
-        var invocation = BuildShellInvocation(command, _shellPreference);
+        var invocation = BuildShellInvocation(command, _shellPreference, _shellCommand);
         var startInfo = new ProcessStartInfo
         {
             FileName = invocation.FileName,
@@ -168,18 +170,14 @@ public sealed class ShellTool : IAgentTool
             WorkingDirectory = _workingDirectory ?? string.Empty
         };
 
-        // Handle different argument passing methods
-        if (!string.IsNullOrEmpty(invocation.Args))
+        // Use ArgumentList for all shells to avoid double-parse escaping issues.
+        // .NET handles OS-level quoting correctly when using ArgumentList.
+        foreach (var arg in invocation.BaseArgs)
         {
-            startInfo.Arguments = invocation.Args;
+            startInfo.ArgumentList.Add(arg);
         }
-        else if (!string.IsNullOrEmpty(invocation.Command))
-        {
-            // For Unix bash with commands, use ArgumentList to avoid escaping issues
-            startInfo.ArgumentList.Add("-l");
-            startInfo.ArgumentList.Add("-c");
-            startInfo.ArgumentList.Add(invocation.Command);
-        }
+
+        startInfo.ArgumentList.Add(invocation.Command);
 
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
@@ -272,8 +270,17 @@ public sealed class ShellTool : IAgentTool
             new ShellToolDetails(process.ExitCode, TimedOut: false, IsError: process.ExitCode != 0));
     }
 
-    private static ShellInvocation BuildShellInvocation(string command, ShellPreference preference)
+    private static ShellInvocation BuildShellInvocation(string command, ShellPreference preference, string[]? shellCommand)
     {
+        // Custom shell command takes precedence over preference-based detection.
+        // command[0] is the executable, command[1..n-1] are base args, agent command is appended last.
+        if (shellCommand is { Length: >= 2 })
+        {
+            var executable = shellCommand[0];
+            var baseArgs = shellCommand[1..];
+            return new ShellInvocation(executable, baseArgs, command, null);
+        }
+
         // Pwsh preference works on all platforms
         if (preference == ShellPreference.Pwsh)
         {
@@ -287,8 +294,7 @@ public sealed class ShellTool : IAgentTool
                 var bashPath = WindowsBashPath.Value;
                 if (!string.IsNullOrWhiteSpace(bashPath))
                 {
-                    var bashEscaped = command.Replace("'", "'\"'\"'", StringComparison.Ordinal);
-                    return new ShellInvocation(bashPath, $"-lc '{bashEscaped}'", null, null);
+                    return new ShellInvocation(bashPath, ["-l", "-c"], command, null);
                 }
 
                 // Bash explicitly requested but not found — fall back to pwsh with warning.
@@ -300,8 +306,7 @@ public sealed class ShellTool : IAgentTool
             var autoBashPath = WindowsBashPath.Value;
             if (!string.IsNullOrWhiteSpace(autoBashPath))
             {
-                var bashEscaped = command.Replace("'", "'\"'\"'", StringComparison.Ordinal);
-                return new ShellInvocation(autoBashPath, $"-lc '{bashEscaped}'", null, null);
+                return new ShellInvocation(autoBashPath, ["-l", "-c"], command, null);
             }
 
             return BuildPwshInvocation(command,
@@ -309,18 +314,20 @@ public sealed class ShellTool : IAgentTool
         }
 
         // Unix with Auto or Bash preference: use bash with ArgumentList
-        return new ShellInvocation("/bin/bash", null, command, null);
+        return new ShellInvocation("/bin/bash", ["-l", "-c"], command, null);
     }
 
     private static ShellInvocation BuildPwshInvocation(string command, string? warningPrefix)
     {
         // Prefer pwsh (PowerShell Core) over legacy powershell.exe when available.
+        // Use ArgumentList to pass the command — .NET handles OS-level quoting,
+        // and PowerShell receives the raw command string via -Command unmolested.
+        // This eliminates the unsolvable double-parse escaping problem on Windows.
         var pwshPath = FindPwshExecutable();
-        var escaped = command.Replace("\"", "`\"", StringComparison.Ordinal);
         return new ShellInvocation(
             pwshPath,
-            $"-NoLogo -NoProfile -NonInteractive -Command \"{escaped}\"",
-            null,
+            ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"],
+            command,
             warningPrefix);
     }
 
@@ -546,5 +553,5 @@ public sealed class ShellTool : IAgentTool
     /// </summary>
     public sealed record ShellToolDetails(int ExitCode, bool TimedOut, bool IsError);
 
-    private sealed record ShellInvocation(string FileName, string? Args, string? Command, string? WarningPrefix);
+    private sealed record ShellInvocation(string FileName, string[] BaseArgs, string Command, string? WarningPrefix);
 }

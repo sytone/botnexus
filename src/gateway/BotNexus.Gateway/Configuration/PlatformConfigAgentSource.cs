@@ -120,7 +120,8 @@ public sealed class PlatformConfigAgentSource(
                 ExtensionConfig = ExtensionConfigMerger.Merge(
                     platformConfig.Gateway?.Extensions?.Defaults,
                     effectiveConfig.Extensions),
-                Kind = effectiveConfig.Kind ?? AgentKind.Named
+                Kind = effectiveConfig.Kind ?? AgentKind.Named,
+                ShellCommand = effectiveConfig.ShellCommand
             };
 
             var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);

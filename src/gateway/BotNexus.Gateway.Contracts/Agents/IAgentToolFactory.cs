@@ -14,5 +14,5 @@ public interface IAgentToolFactory
     /// <param name="workingDirectory">Agent workspace root path.</param>
     /// <param name="pathValidator">Path validator used by file tools.</param>
     /// <returns>Built-in tools bound to the workspace.</returns>
-    IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null);
+    IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null);
 }

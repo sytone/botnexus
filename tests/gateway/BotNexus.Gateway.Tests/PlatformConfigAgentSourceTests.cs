@@ -717,7 +717,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
     private sealed class StaticAgentToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => [new ReadTool(workingDirectory)];
     }
 
@@ -725,7 +725,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     {
         public IPathValidator? CapturedPathValidator { get; private set; }
 
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null)
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
         {
             CapturedPathValidator = pathValidator;
             return [];
