@@ -8,7 +8,7 @@ internal sealed class InstallCommand
 {
     private const string DefaultRepo = "https://github.com/sytone/botnexus.git";
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var sourceOption = new Option<string?>(
             "--source",
