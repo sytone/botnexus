@@ -117,6 +117,17 @@ public interface IClientStateStore
     /// when no interactive prompt is waiting.
     /// </summary>
     AskUserPromptState? GetPendingAskUser(string conversationId);
+
+    // ── Steering queue ────────────────────────────────────────────────────────
+
+    /// <summary>Add a steering entry to the pending queue for the given conversation.</summary>
+    void AddSteeringEntry(string conversationId, SteeringEntry entry);
+
+    /// <summary>Update the status of a steering entry in the given conversation's queue.</summary>
+    void UpdateSteeringEntry(string conversationId, string entryId, SteeringEntryStatus newStatus);
+
+    /// <summary>Get the pending steering queue for a conversation.</summary>
+    IReadOnlyList<SteeringEntry> GetSteeringQueue(string conversationId);
 }
 
 /// <summary>Agent-level state for the portal sidebar and chat panel.</summary>
@@ -265,6 +276,9 @@ public sealed class ConversationState
 
     /// <summary>Streaming state for this conversation.</summary>
     public ConversationStreamState StreamState { get; } = new();
+
+    /// <summary>Pending steering entries for this conversation's queue panel.</summary>
+    public List<SteeringEntry> PendingSteeringQueue { get; } = new();
 }
 
 
