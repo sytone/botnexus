@@ -64,8 +64,10 @@ public sealed class MultiChannelFanOutTests
 
         harness.SignalR.Messages.Count.ShouldBe(1);
         harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1"));
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-100"));
+        // Telegram receives user echo + response fan-out (#320)
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Telegram.Messages.ShouldContain(m => m.Metadata.ContainsKey("isUserEcho"));
+        harness.Telegram.Messages.ShouldContain(m => m.Content == "fanout");
         harness.Tui.Messages.ShouldBeEmpty();
     }
 
@@ -78,8 +80,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1"));
+        // SignalR receives user echo + response fan-out (#320)
+        harness.SignalR.Messages.Count.ShouldBe(2);
+        harness.SignalR.Messages.ShouldContain(m => m.Metadata.ContainsKey("isUserEcho"));
+        harness.SignalR.Messages.ShouldContain(m => m.Content == "fanout");
         harness.Telegram.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-100"));
     }
@@ -93,8 +97,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
+        // Telegram is the originator — gets only 1 (direct response), no echo to self
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages.Count.ShouldBe(1);
+        // SignalR receives user echo + response fan-out (#320)
+        harness.SignalR.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -108,9 +114,10 @@ public sealed class MultiChannelFanOutTests
         await harness.Host.DispatchAsync(harness.CreateMessage("second", "signalr", "chat-1"));
 
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
+        // Telegram receives user echo + response fan-out (#320)
+        harness.Telegram.Messages.Count.ShouldBe(2);
         harness.SignalR.Messages[0].Content.ShouldBe("follow-up");
-        harness.Telegram.Messages[0].Content.ShouldBe("follow-up");
+        harness.Telegram.Messages.ShouldContain(m => m.Content == "follow-up");
     }
 
     [Fact]
@@ -123,8 +130,9 @@ public sealed class MultiChannelFanOutTests
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
 
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        // Other channels receive user echo + response fan-out (#320)
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Tui.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -136,9 +144,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
+        // Other channels receive user echo + response fan-out (#320)
+        harness.SignalR.Messages.Count.ShouldBe(2);
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        harness.Tui.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -183,8 +192,9 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100/topic:42"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1")); // signalr binding uses its own address
+        // SignalR receives user echo + response fan-out (#320)
+        harness.SignalR.Messages.Count.ShouldBe(2);
+        harness.SignalR.Messages.ShouldContain(m => m.ChannelAddress == ChannelAddress.From("chat-1")); // signalr binding uses its own address
         harness.Telegram.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("100/topic:42")); // composite address preserved end-to-end
     }
@@ -326,9 +336,11 @@ public sealed class MultiChannelFanOutTests
     {
         harness.ClearOutbound();
         await harness.Host.DispatchAsync(message);
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        // Originator gets 1 (direct response), others get 2 (user echo + response fan-out)
+        var origin = message.ChannelType.Value;
+        if (origin == "signalr") { harness.SignalR.Messages.Count.ShouldBe(1); harness.Telegram.Messages.Count.ShouldBe(2); harness.Tui.Messages.Count.ShouldBe(2); }
+        else if (origin == "telegram") { harness.SignalR.Messages.Count.ShouldBe(2); harness.Telegram.Messages.Count.ShouldBe(1); harness.Tui.Messages.Count.ShouldBe(2); }
+        else { harness.SignalR.Messages.Count.ShouldBe(2); harness.Telegram.Messages.Count.ShouldBe(2); harness.Tui.Messages.Count.ShouldBe(1); }
     }
 
     private static TestHarness CreateHarness(string responseContent = "agent-response")

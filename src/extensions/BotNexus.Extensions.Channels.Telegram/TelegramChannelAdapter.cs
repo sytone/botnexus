@@ -148,6 +148,7 @@ public sealed class TelegramChannelAdapter(
     /// <summary>
     /// Sends a complete outbound message through the Telegram adapter.
     /// Content is converted from Markdown to Telegram MarkdownV2 format.
+    /// User echo messages (from other channels) are formatted with a "User Said:" prefix.
     /// </summary>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
@@ -165,6 +166,20 @@ public sealed class TelegramChannelAdapter(
 
         var runtime = ResolveOutboundBot(message);
         EnsureChatAllowed(runtime.Config, chatId);
+
+        // User echo: messages from other channels forwarded so Telegram observers
+        // can follow the full conversation (#320).
+        if (IsUserEchoMessage(message))
+        {
+            if (!runtime.Config.EchoForeignUserMessages)
+                return;
+
+            var echoText = FormatUserEcho(message.Content);
+            foreach (var chunk in SplitMessage(echoText, Math.Max(1, runtime.Config.MaxMessageLength)))
+                await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
+            return;
+        }
+
         var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
@@ -593,6 +608,25 @@ public sealed class TelegramChannelAdapter(
     {
         if (builder.Length > 0)
             builder.AppendLine();
+    }
+
+    /// <summary>
+    /// Well-known metadata key used to identify user echo messages delivered from the
+    /// gateway's user-message fan-out path.
+    /// </summary>
+    internal const string UserEchoMetadataKey = "isUserEcho";
+
+    private static bool IsUserEchoMessage(OutboundMessage message)
+        => message.Metadata.TryGetValue(UserEchoMetadataKey, out var val) && val is true;
+
+    /// <summary>
+    /// Formats a user echo message with the "User Said:" prefix.
+    /// Output uses Telegram MarkdownV2 escaping.
+    /// </summary>
+    internal static string FormatUserEcho(string content)
+    {
+        var escaped = TelegramMarkdownFormatter.EscapeMarkdownV2(content);
+        return $"*User Said:*\n{escaped}";
     }
 
     private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient)

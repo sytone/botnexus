@@ -49,6 +49,7 @@
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
   </Folder>
+  <Folder Name="/tests/" />
   <Folder Name="/tests/agent/">
     <Project Path="tests/agent/BotNexus.Agent.Core.Tests/BotNexus.Agent.Core.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.Anthropic.Tests/BotNexus.Agent.Providers.Anthropic.Tests.csproj" />
@@ -71,6 +72,7 @@
   <Folder Name="/tests/extensions/">
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.Telegram.Tests/BotNexus.Extensions.Channels.Telegram.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.DataStore.Tests/BotNexus.Extensions.DataStore.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />

@@ -62,4 +62,12 @@ public sealed class TelegramBotConfig
     /// Prevents error spam to users during outages or repeated failures.
     /// </summary>
     public int ErrorCooldownMs { get; set; } = 60_000;
+
+    /// <summary>
+    /// Gets or sets whether user messages originating from other channels are echoed
+    /// into Telegram chats that share the same conversation. When true (default),
+    /// the adapter posts a formatted "User Said:" message so Telegram observers
+    /// can follow the full conversation even when the user types in another channel.
+    /// </summary>
+    public bool EchoForeignUserMessages { get; set; } = true;
 }
