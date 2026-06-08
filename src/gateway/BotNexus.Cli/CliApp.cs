@@ -110,24 +110,26 @@ internal static class CliApp
     private static RootCommand BuildRootCommand(IServiceProvider serviceProvider)
     {
         var verboseOption = new Option<bool>("--verbose", "Show additional command output.");
+        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus or BOTNEXUS_HOME.");
         var root = new RootCommand("BotNexus platform CLI");
 
         root.AddGlobalOption(verboseOption);
-        root.AddCommand(serviceProvider.GetRequiredService<ValidateCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<InitCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<AgentCommands>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<MemoryCommands>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<ConfigCommands>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<LocationsCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<DoctorCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<InstallCommand>().Build(verboseOption));
+        root.AddGlobalOption(targetOption);
+        root.AddCommand(serviceProvider.GetRequiredService<ValidateCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<InitCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<AgentCommands>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<MemoryCommands>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<ConfigCommands>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<LocationsCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<DoctorCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<InstallCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<BuildCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<ServeCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<GatewayCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<PromptCommands>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<UpdateCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<ProviderCommand>().Build(verboseOption));
-        root.AddCommand(serviceProvider.GetRequiredService<CronCommands>().Build(verboseOption));
+        root.AddCommand(serviceProvider.GetRequiredService<ServeCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<GatewayCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<PromptCommands>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<UpdateCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<ProviderCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<CronCommands>().Build(verboseOption, targetOption));
 
         return root;
     }

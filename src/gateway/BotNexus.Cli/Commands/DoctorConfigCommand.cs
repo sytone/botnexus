@@ -22,15 +22,13 @@ internal sealed class DoctorConfigCommand
         new MemoryAgentDefaultCheck(),
     ];
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
         var yesOption = new Option<bool>("--yes", "Apply all applicable fixes without prompting.");
         var dryRunOption = new Option<bool>("--dry-run", "Report what would change but do not write anything.");
 
         var command = new Command("config", "Guided config migration — detect and apply missing settings.")
         {
-            targetOption,
             yesOption,
             dryRunOption
         };

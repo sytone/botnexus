@@ -69,6 +69,8 @@ export default defineConfig({
             text: 'Channels',
             items: [
               { text: 'Telegram', link: '/user-guide/channels/telegram' },
+              { text: 'Azure Service Bus', link: '/user-guide/channels/service-bus' },
+              { text: 'Service Bus Envelope', link: '/user-guide/channels/service-bus-envelope' },
             ],
           },
           { text: 'Troubleshooting', link: '/user-guide/troubleshooting' },
@@ -84,10 +86,28 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Providers',
+        items: [
+          { text: 'Anthropic', link: '/providers/anthropic' },
+          { text: 'OpenAI', link: '/providers/openai' },
+          { text: 'OpenAI-Compatible', link: '/providers/openai-compatible' },
+          { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+        ],
+      },
+      {
+        text: 'Extensions',
+        items: [
+          { text: 'Extension Development', link: '/extension-development' },
+          { text: 'Media Handlers', link: '/extensions/media-handlers' },
+          { text: 'Debug Tool', link: '/extensions/debug-tool' },
+        ],
+      },
+      {
         text: 'Architecture',
         items: [
           { text: 'Overview', link: '/architecture/overview' },
           { text: 'Domain Model', link: '/architecture/domain-model' },
+          { text: 'Gateway Flow', link: '/architecture/gateway-flow' },
           { text: 'Channel Binding', link: '/architecture/channel-binding' },
           { text: 'Extension Guide', link: '/architecture/extension-guide' },
           { text: 'Principles', link: '/architecture/principles' },
@@ -105,36 +125,27 @@ export default defineConfig({
           { text: 'Session Stores', link: '/development/session-stores' },
           { text: 'Workspace and Memory', link: '/development/workspace-and-memory' },
           { text: 'DDD Patterns', link: '/development/ddd-patterns' },
+          { text: 'CLI Wizard Framework', link: '/development/cli-wizard' },
+          { text: 'Container Integration Testing', link: '/development/container-integration-testing' },
+          { text: 'E2E Tests', link: '/development/e2e-tests' },
           { text: 'Triggers and Federation', link: '/development/triggers-and-federation' },
           { text: 'WebUI Connection', link: '/development/webui-connection' },
-        ],
-      },
-      {
-        text: 'Guides',
-        items: [
-          { text: 'Audio Recording', link: '/guides/audio-recording' },
-          { text: 'Watchdog Setup', link: '/guides/watchdog-setup' },
         ],
       },
       {
         text: 'Features',
         items: [
           { text: 'Sub-Agent Spawning', link: '/features/sub-agent-spawning' },
-        ],
-      },
-      {
-        text: 'Extensions',
-        items: [
-          { text: 'Extension Development', link: '/extension-development' },
-          { text: 'Media Handlers', link: '/extensions/media-handlers' },
-        ],
-      },
-      {
-        text: 'More',
-        items: [
-          { text: 'Observability', link: '/observability' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
+        ],
+      },
+      {
+        text: 'Guides',
+        items: [
+          { text: 'Audio Recording', link: '/guides/audio-recording' },
+          { text: 'Observability', link: '/observability' },
+          { text: 'Watchdog Setup', link: '/guides/watchdog-setup' },
         ],
       },
       {

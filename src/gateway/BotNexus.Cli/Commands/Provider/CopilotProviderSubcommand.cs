@@ -33,11 +33,9 @@ internal static class CopilotProviderSubcommand
     /// authoritative in <see cref="ProviderCommand.ExecuteSetupAsync(string,string,bool,string?,CancellationToken)"/>
     /// — this subcommand contributes diagnostics, not new auth code paths.
     /// </summary>
-    public static Command Build(Option<bool> verboseOption, Func<string, string, bool, CancellationToken, Task<int>> setupAlias)
+    public static Command Build(Option<bool> verboseOption, Option<string?> targetOption, Func<string, string, bool, CancellationToken, Task<int>> setupAlias)
     {
         var copilot = new Command("copilot", "GitHub Copilot diagnostics and auth helpers.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
-        copilot.AddGlobalOption(targetOption);
 
         copilot.AddCommand(BuildLogin(verboseOption, targetOption, setupAlias));
         copilot.AddCommand(BuildWhoami(targetOption));

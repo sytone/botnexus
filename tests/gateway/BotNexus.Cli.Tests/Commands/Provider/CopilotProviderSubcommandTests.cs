@@ -17,7 +17,7 @@ public class CopilotProviderSubcommandTests
     public void Build_registers_copilot_command_under_provider()
     {
         var verbose = new Option<bool>("--verbose");
-        var providerCmd = new ProviderCommand().Build(verbose);
+        var providerCmd = new ProviderCommand().Build(verbose, new Option<string?>("--target"));
 
         var copilot = providerCmd.Subcommands.SingleOrDefault(c => c.Name == "copilot");
         copilot.ShouldNotBeNull();
@@ -33,7 +33,7 @@ public class CopilotProviderSubcommandTests
     public void Build_registers_subcommand(string name)
     {
         var verbose = new Option<bool>("--verbose");
-        var providerCmd = new ProviderCommand().Build(verbose);
+        var providerCmd = new ProviderCommand().Build(verbose, new Option<string?>("--target"));
         var copilot = providerCmd.Subcommands.Single(c => c.Name == "copilot");
 
         copilot.Subcommands.ShouldContain(c => c.Name == name);
@@ -43,7 +43,7 @@ public class CopilotProviderSubcommandTests
     public void Test_subcommand_exposes_model_and_prompt_options()
     {
         var verbose = new Option<bool>("--verbose");
-        var providerCmd = new ProviderCommand().Build(verbose);
+        var providerCmd = new ProviderCommand().Build(verbose, new Option<string?>("--target"));
         var copilot = providerCmd.Subcommands.Single(c => c.Name == "copilot");
         var test = copilot.Subcommands.Single(c => c.Name == "test");
 
@@ -55,12 +55,17 @@ public class CopilotProviderSubcommandTests
     public void Copilot_command_exposes_target_global_option()
     {
         var verbose = new Option<bool>("--verbose");
-        var providerCmd = new ProviderCommand().Build(verbose);
-        var copilot = providerCmd.Subcommands.Single(c => c.Name == "copilot");
+        var targetOption = new Option<string?>("--target");
+        var providerCmd = new ProviderCommand().Build(verbose, targetOption);
 
-        // --target is added as a global option on the copilot group so every
-        // subcommand inherits it (login/whoami/models/quota/test).
-        copilot.Options.ShouldContain(o => o.Name == "target");
+        // --target is now a root-level global option that all subcommands
+        // (including copilot/login/whoami/models/quota/test) inherit.
+        // Verify the provider command tree can parse --target without error.
+        var root = new RootCommand();
+        root.AddGlobalOption(targetOption);
+        root.AddCommand(providerCmd);
+        var result = root.Parse("provider copilot whoami --target /tmp/test");
+        result.Errors.ShouldBeEmpty();
     }
 
     [Fact]
@@ -74,7 +79,7 @@ public class CopilotProviderSubcommandTests
             return Task.FromResult(0);
         };
 
-        var copilot = CopilotProviderSubcommand.Build(verbose, alias);
+        var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
 
         // Build a root command so System.CommandLine can resolve handlers.
         var root = new RootCommand();
