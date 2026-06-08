@@ -676,6 +676,33 @@ WebSocket gateway server settings.
 | `RateLimit.RequestsPerMinute` | int | 60 | Maximum requests per client per window |
 | `RateLimit.WindowSeconds` | int | 60 | Window size in seconds for request counting |
 
+
+#### Shell Execution Settings
+
+Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ShellPreference` | string | `"auto"` | Shell selection mode: `"auto"` (prefer bash, fall back to pwsh), `"pwsh"` (always PowerShell Core), or `"bash"` (always bash). Ignored when `ShellCommand` is set. |
+| `ShellCommand` | string[] | `null` | Custom shell command array. Element 0 is the executable, elements 1..N are base arguments passed before the agent command. Overrides `ShellPreference` when set. Must have at least 2 elements to be valid. |
+
+**Configuration example:**
+
+```json
+{
+  "Gateway": {
+    "Host": "0.0.0.0",
+    "Port": 18790,
+    "ShellPreference": "pwsh",
+    "ShellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
+  }
+}
+```
+
+**Resolution order:** Per-agent `shellCommand` > Gateway `ShellCommand` > Gateway `ShellPreference` > Auto detection.
+
+See [Shell Execution Feature Guide](./features/shell-execution.md) for the full technical details including the ArgumentList execution model and troubleshooting.
+
 **API Key Authentication:**
 If `ApiKey` is set, clients must include it in WebSocket headers or REST requests:
 ```text
