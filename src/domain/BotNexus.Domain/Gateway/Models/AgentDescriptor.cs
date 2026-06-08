@@ -172,4 +172,11 @@ public sealed record AgentDescriptor : ICitizen
         new Dictionary<string, System.Text.Json.JsonElement>();
 /// <summary>Conversation retention policy override for this agent. Null means world default applies.</summary>
     public AgentConversationRetentionConfig? ConversationRetention { get; init; }
+
+    /// <summary>
+    /// Custom shell command array for this agent. Overrides the gateway-level ShellCommand.
+    /// Element [0] is the executable, remaining elements are base arguments.
+    /// The agent's command string is appended as the final argument.
+    /// </summary>
+    public string[]? ShellCommand { get; init; }
 }

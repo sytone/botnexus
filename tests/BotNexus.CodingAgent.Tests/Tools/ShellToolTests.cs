@@ -356,4 +356,127 @@ public sealed class ShellToolTests
         var tool = new ShellTool(shellPreference: ShellPreference.Bash);
         tool.Name.ShouldBe("bash");
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesDoubleQuotes()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "Write-Output \"quoted value\""
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("quoted value");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesDollarSigns()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "$x = 'dollar-test'; Write-Output $x"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("dollar-test");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesPipesAndParentheses()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "@('alpha','beta','gamma') | ForEach-Object { $_.ToUpper() }"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("ALPHA");
+        result.Content[0].Value.ShouldContain("GAMMA");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesSemicolonsAndCurlyBraces()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "$h = @{ key = 'braces-test' }; Write-Output $h['key']"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("braces-test");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesAtSignArrays()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "$arr = @(1,2,3); Write-Output \"count=$($arr.Count)\""
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("count=3");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesJsonArguments()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "$json = '{\"name\": \"test\"}' | ConvertFrom-Json; Write-Output $json.name"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("test");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCustomShellCommand_UsesSpecifiedExecutable()
+    {
+        // Custom shell command: use pwsh with explicit args
+        var tool = new ShellTool(shellCommand: new[] { "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command" });
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "Write-Output 'custom-shell-test'"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("custom-shell-test");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Constructor_ShellCommandTooShort_IgnoresIt()
+    {
+        // A shellCommand with only 1 element is invalid (needs exe + at least one arg)
+        var tool = new ShellTool(shellCommand: new[] { "pwsh" });
+        // Should fall through to normal preference-based behaviour
+        tool.Name.ShouldBe("bash"); // Auto preference default
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCustomShellCommand_HandlesDollarSigns()
+    {
+        var tool = new ShellTool(shellCommand: new[] { "pwsh", "-NoProfile", "-Command" });
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "$x = 'custom-dollar'; Write-Output $x"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("custom-dollar");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
 }
