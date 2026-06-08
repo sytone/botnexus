@@ -16,8 +16,8 @@ namespace BotNexus.Domain.World;
 /// </para>
 /// <para>
 /// <see cref="World"/> appears here even though <see cref="ICitizen"/> does not yet expose
-/// it (Phase 7 will lift <c>World</c> to the interface once worlds become first-class on
-/// the agent side too).
+/// it. Lifting <c>World</c> to the interface was deferred — currently only User
+/// carries it.
 /// </para>
 /// </remarks>
 public sealed record User : ICitizen

@@ -183,6 +183,16 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IIsolationStrategy, ContainerIsolationStrategy>();
         services.AddSingleton<IIsolationStrategy, RemoteIsolationStrategy>();
 
+        // Extension state store
+        services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var dbPath = Path.Combine(home.RootPath, "data", "extension-state.db");
+            var fs = serviceProvider.GetRequiredService<IFileSystem>();
+            var storeLogger = serviceProvider.GetRequiredService<ILogger<SqliteExtensionStateStore>>();
+            return new SqliteExtensionStateStore(dbPath, fs, storeLogger);
+        });
+
         // Built-in tools
         services.AddBotNexusTools();
 

@@ -77,6 +77,46 @@ public class CopilotDiscoveryClientTests
     }
 
     [Fact]
+    public void ModelsResponse_deserializes_mixed_type_limits()
+    {
+        var path = Path.Combine(FixturesDir, "models-mixed-limits.json");
+        var json = File.ReadAllText(path);
+
+        var resp = JsonSerializer.Deserialize<CopilotModelsResponse>(json, JsonOptions);
+
+        resp.ShouldNotBeNull();
+        resp!.Data.ShouldNotBeNull();
+        resp.Data!.Count.ShouldBe(1);
+
+        var model = resp.Data[0];
+        model.Id.ShouldBe("gpt-5-mini");
+        model.Capabilities.ShouldNotBeNull();
+        model.Capabilities!.Limits.ShouldNotBeNull();
+        model.Capabilities.Limits!.Count.ShouldBe(4);
+
+        // Numeric values accessible via JsonElement
+        model.Capabilities.Limits["max_context_window_tokens"].GetInt64().ShouldBe(264000);
+        model.Capabilities.Limits["max_output_tokens"].GetInt64().ShouldBe(64000);
+
+        // Non-numeric value (boolean) should not crash deserialization
+        model.Capabilities.Limits["vision"].ValueKind.ShouldBe(System.Text.Json.JsonValueKind.True);
+    }
+
+    [Fact]
+    public void ModelsResponse_numeric_limits_display_as_string()
+    {
+        var path = Path.Combine(FixturesDir, "models-mixed-limits.json");
+        var json = File.ReadAllText(path);
+
+        var resp = JsonSerializer.Deserialize<CopilotModelsResponse>(json, JsonOptions);
+        var limits = resp!.Data![0].Capabilities!.Limits!;
+
+        // ToString() on JsonElement works for display purposes regardless of value kind
+        limits["max_output_tokens"].ToString().ShouldBe("64000");
+        limits["vision"].ToString().ShouldBe("True");
+    }
+
+    [Fact]
     public async Task GetUserAsync_sends_bearer_auth_and_accepts_json()
     {
         var fixtureJson = await File.ReadAllTextAsync(Path.Combine(FixturesDir, "user-enterprise.json"));
