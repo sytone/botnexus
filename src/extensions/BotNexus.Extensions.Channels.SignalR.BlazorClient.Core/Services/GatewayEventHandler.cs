@@ -527,26 +527,52 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // ── Steering feedback ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Appends a subtle system message to the active conversation confirming that
-    /// a steering message was accepted or queued.
+    /// Handles steering feedback: on Injected, removes from pending queue and
+    /// appends a styled stream message; on Queued, keeps entry pending.
     /// </summary>
     public void HandleSteeringFeedback(SteeringFeedbackPayload payload)
     {
-        // Find agent owning this session
-        var agent = _store.Agents.Values.FirstOrDefault(a =>
-            a.ActiveConversationSessionId == payload.SessionId ||
-            a.SessionId == payload.SessionId);
+        // Resolve the conversation for this feedback
+        var convId = payload.ConversationId;
+        AgentState? agent = null;
+
+        if (!string.IsNullOrWhiteSpace(convId))
+        {
+            _store.TryResolveAgentByConversation(convId, out var agentIdFromConv);
+            agent = agentIdFromConv is not null ? _store.GetAgent(agentIdFromConv) : null;
+        }
+
+        if (agent is null)
+        {
+            // Fallback: find agent owning this session
+            agent = _store.Agents.Values.FirstOrDefault(a =>
+                a.ActiveConversationSessionId == payload.SessionId ||
+                a.SessionId == payload.SessionId);
+        }
 
         if (agent is null) return;
 
-        var convId = agent.ActiveConversationId;
+        convId ??= agent.ActiveConversationId;
         if (convId is null || !agent.Conversations.TryGetValue(convId, out var conv)) return;
 
-        var text = payload.Kind == SteeringFeedbackKind.Injected
-            ? "↳ Steering accepted mid-turn"
-            : "↳ Steering queued — will process next turn";
+        if (payload.Kind == SteeringFeedbackKind.Injected)
+        {
+            // Remove the oldest pending entry from the queue (FIFO)
+            var pendingEntry = conv.PendingSteeringQueue.FirstOrDefault(e => e.Status == SteeringEntryStatus.Pending);
+            if (pendingEntry is not null)
+            {
+                _store.UpdateSteeringEntry(convId, pendingEntry.Id, SteeringEntryStatus.Injected);
+            }
 
-        conv.Messages.Add(new ChatMessage("System", text, DateTimeOffset.UtcNow));
+            // Add styled stream message
+            conv.Messages.Add(new ChatMessage("System", "\u21b3 Steering injected", DateTimeOffset.UtcNow));
+        }
+        else
+        {
+            // Queued: keep as pending, add informational message
+            conv.Messages.Add(new ChatMessage("System", "\u21b3 Steering queued \u2014 will process next turn", DateTimeOffset.UtcNow));
+        }
+
         _store.NotifyChanged();
     }
 

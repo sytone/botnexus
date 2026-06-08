@@ -5,7 +5,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-    <title>BotNexus — Blazor Client</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BotNexus" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <title>BotNexus</title>
     <base href="/" />
     <link rel="preload" id="webassembly" />
     <link rel="stylesheet" href="css/app.css" />
@@ -16,14 +23,14 @@
     <div id="app">
         <div class="loading-screen">
             <div class="loading-spinner"></div>
-            <p>Loading BotNexus…</p>
+            <p>Loading BotNexus...</p>
         </div>
     </div>
 
     <div id="blazor-error-ui">
         An unhandled error has occurred.
         <a href="." class="reload">Reload</a>
-        <span class="dismiss">🗙</span>
+        <span class="dismiss">X</span>
     </div>
     <script src="js/marked.min.js"></script>
     <script src="js/purify.min.js"></script>

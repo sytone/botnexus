@@ -68,6 +68,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         AppendUserMessage(agentId, $"🔀 {content}");
 
+
+        // Add entry to steering queue panel
+        if (agent.ActiveConversationId is not null)
+        {
+            var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending);
+            _store.AddSteeringEntry(agent.ActiveConversationId, entry);
+        }
         try
         {
             var result = await _hub.SteerAsync(agentId, agent.ActiveConversationSessionId!, content, agent.ActiveConversationId);
@@ -86,6 +93,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (agent?.ActiveConversationSessionId is null) return;
 
         AppendUserMessage(agentId, content);
+
+        // Add entry to steering queue panel with FollowUp kind
+        if (agent.ActiveConversationId is not null)
+        {
+            var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
+            _store.AddSteeringEntry(agent.ActiveConversationId, entry);
+        }
 
         try
         {
