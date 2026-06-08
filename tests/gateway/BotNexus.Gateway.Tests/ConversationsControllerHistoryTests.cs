@@ -395,4 +395,55 @@ public sealed class ConversationsControllerHistoryTests
         response.Entries.ShouldContain(e => e.Content == "NO_REPLY" && e.Role == "user");
         response.Entries.ShouldContain(e => e.Content == "I understand you typed NO_REPLY");
     }
+
+    [Fact]
+    public async Task GetHistory_CompactionSummaryEntry_EmittedAsCompactionKind()
+    {
+        var conversationId = ConversationId.From("c_compaction_boundary");
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-compact-1"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Hello", Timestamp = DateTimeOffset.UtcNow.AddMinutes(1) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "Summary of prior context", IsCompactionSummary = true, Timestamp = DateTimeOffset.UtcNow.AddMinutes(2) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Follow-up", Timestamp = DateTimeOffset.UtcNow.AddMinutes(3) });
+
+        await sessions.SaveAsync(session);
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        var compactionEntry = response!.Entries.Single(e => e.Kind == "compaction");
+        compactionEntry.Reason.ShouldBe("compaction");
+        compactionEntry.Content.ShouldBe("Summary of prior context");
+    }
+
+    [Fact]
+    public async Task GetHistory_HistoricalEntries_AreExcluded()
+    {
+        var conversationId = ConversationId.From("c_history_excluded");
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-hist-1"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Old message", IsHistory = true, Timestamp = DateTimeOffset.UtcNow.AddMinutes(1) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "Compaction summary", IsCompactionSummary = true, Timestamp = DateTimeOffset.UtcNow.AddMinutes(2) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "New message", Timestamp = DateTimeOffset.UtcNow.AddMinutes(3) });
+
+        await sessions.SaveAsync(session);
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.GetHistory(conversationId.Value, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.TotalCount.ShouldBe(2); // historical entry excluded
+        response.Entries.ShouldNotContain(e => e.Content == "Old message");
+        response.Entries.ShouldContain(e => e.Kind == "compaction" && e.Content == "Compaction summary");
+        response.Entries.ShouldContain(e => e.Content == "New message");
+    }
 }
