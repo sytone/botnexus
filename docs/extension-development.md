@@ -326,7 +326,7 @@ The (legacy, non-functional) `LlmProviderBase` example below is preserved only t
 ```csharp
 using System.Runtime.CompilerServices;
 using BotNexus.Core.Models;
-using BotNexus.Providers.Base;
+using BotNexus.Agent.Providers.Core;
 using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Chat;
@@ -534,7 +534,7 @@ public sealed class OpenAiExtensionRegistrar : IExtensionRegistrar
 {
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
-        services.AddSingleton<ILlmProvider>(sp =>
+        services.AddSingleton<IApiProvider>(sp =>
         {
             var botConfig = sp.GetRequiredService<IOptions<BotNexusConfig>>().Value;
             var providerConfig = configuration.Get<OpenAiProviderConfig>() ?? new OpenAiProviderConfig();

@@ -73,7 +73,8 @@ public interface IConversationRouter
 
     /// <summary>
     /// Finds and mutes the binding associated with the given channel type and address.
-    /// Used by SignalR OnDisconnectedAsync to silence stale bindings by connection ID.
+    /// Typically called when a channel connection drops (e.g. SignalR disconnect,
+    /// Telegram webhook timeout) to silence stale bindings.
     /// </summary>
     /// <param name="agentId">The agent whose conversations should be searched, or <c>null</c> to search all agents.</param>
     /// <param name="channelType">The channel type (e.g. signalr).</param>

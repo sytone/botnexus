@@ -78,6 +78,26 @@ BotNexus gives you a local playground for running and observing agents:
 - **Extension system** - load providers, channels, and tools dynamically instead
   of welding every experiment into the gateway.
 
+## Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| **.NET SDK** | **10.0 or later** | Required. Earlier SDK versions (including .NET 9) are **not supported**. |
+| **GitHub account** | — | Required for the default `github-copilot` provider (active Copilot subscription). |
+
+Verify your SDK version:
+
+```bash
+dotnet --version
+# Must output 10.0.x or later
+```
+
+Download .NET 10 SDK: <https://dotnet.microsoft.com/download/dotnet/10.0>
+
+> **Troubleshooting:** If `dotnet tool install` fails with
+> `DotnetToolSettings.xml was not found`, your .NET SDK is too old. BotNexus
+> targets `net10.0` exclusively — install the .NET 10 SDK and try again.
+
 ## Quick Install
 
 BotNexus ships as a global .NET CLI tool. You need the .NET 10 SDK or Runtime
@@ -107,10 +127,6 @@ botnexus gateway start
 ```
 
 Open the WebUI at `http://localhost:5005`.
-
-> **Prerequisites:** [.NET 10 SDK](https://dotnet.microsoft.com/download) — verify
-> with `dotnet --version`. A GitHub account with an active Copilot subscription is
-> required for the default `github-copilot` provider.
 
 ## First Provider Setup
 

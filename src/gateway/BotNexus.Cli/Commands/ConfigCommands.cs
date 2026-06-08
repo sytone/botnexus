@@ -9,41 +9,37 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("config", "Read and update BotNexus configuration.");
 
         var keyArgument = new Argument<string>("key", "Dotted config key path (example: gateway.listenUrl).");
-        var getTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var getCommand = new Command("get", "Get a config value by dotted key.")
         {
-            keyArgument,
-            getTargetOption
+            keyArgument
         };
         getCommand.SetHandler(async context =>
         {
             var key = context.ParseResult.GetValueForArgument(keyArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(getTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteGetAsync(key, configPath, verbose, CancellationToken.None);
         });
 
         var valueArgument = new Argument<string>("value", "Value to set.");
-        var setTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var setCommand = new Command("set", "Set a config value by dotted key.")
         {
             keyArgument,
-            valueArgument,
-            setTargetOption
+            valueArgument
         };
         setCommand.SetHandler(async context =>
         {
             var key = context.ParseResult.GetValueForArgument(keyArgument);
             var value = context.ParseResult.GetValueForArgument(valueArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(setTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteSetAsync(key, value, configPath, verbose, CancellationToken.None);

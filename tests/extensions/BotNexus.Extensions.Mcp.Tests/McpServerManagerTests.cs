@@ -271,6 +271,7 @@ public class McpServerManagerTests
     public async Task McpServerWarmupHostedService_StartAsync_KicksOffConfiguredAgents()
     {
         await McpServerWarmupCache.DisposeAllAsync();
+        var countBefore = McpServerWarmupCache.Count;
         var descriptor = CreateDescriptor(new McpExtensionConfig
         {
             Servers = new Dictionary<string, McpServerConfig>
@@ -285,7 +286,10 @@ public class McpServerManagerTests
         {
             await service.StartAsync(CancellationToken.None);
 
-            McpServerWarmupCache.Count.ShouldBe(1);
+            // Assert that the service added exactly one entry to the cache.
+            // Use delta instead of absolute count to avoid flakes when other
+            // tests running in parallel also interact with the static cache.
+            (McpServerWarmupCache.Count - countBefore).ShouldBe(1);
         }
         finally
         {
