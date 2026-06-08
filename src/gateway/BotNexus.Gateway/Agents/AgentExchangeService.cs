@@ -203,7 +203,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
             session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
             session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["conversationStatus"] = "sealed";
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
@@ -219,7 +218,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
             _logger.LogWarning(ex, "Agent conversation failed for session '{SessionId}'.", sessionId);
             session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
             session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
@@ -392,7 +390,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
             }
 
             session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["conversationStatus"] = "sealed";
             session.Metadata["remoteSessionId"] = remoteSessionId;
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
@@ -407,7 +404,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
         {
             _logger.LogWarning(ex, "Cross-world conversation failed for session '{SessionId}'.", sessionId);
             session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
