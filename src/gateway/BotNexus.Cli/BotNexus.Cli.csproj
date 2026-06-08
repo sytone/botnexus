@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>BotNexus.Cli</RootNamespace>
-    <Description>BotNexus platform CLI — install and run the BotNexus AI agent platform.</Description>
+    <Description>BotNexus platform CLI — install and run the BotNexus AI agent platform. Requires .NET 10 SDK.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>botnexus</ToolCommandName>
     <PackageId>BotNexus.Cli</PackageId>
@@ -13,6 +13,7 @@
     <RepositoryUrl>https://github.com/sytone/botnexus</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ai;agent;botnexus;dotnet;cli</PackageTags>
+    <PackageReadmeFile>NUGET_README.md</PackageReadmeFile>
     <!-- When the CLI invokes 'dotnet build' on the solution, it passes SkipCli=true
          so the CLI project skips rebuilding itself (the DLL is already loaded and locked). -->
     <IsExcludedFromBuild Condition="'$(SkipCli)' == 'true'">true</IsExcludedFromBuild>
@@ -37,6 +38,10 @@
     <EmbeddedResource Include="Resources\Prompts\*.prompt.*">
       <LogicalName>PromptSamples/%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="NUGET_README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
