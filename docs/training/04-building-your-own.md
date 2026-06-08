@@ -771,8 +771,8 @@ This section is a full tutorial for implementing a provider from scratch. If you
 ### 10.1: Create the project
 
 ```bash
-dotnet new classlib -n BotNexus.Providers.MyLLM
-cd BotNexus.Providers.MyLLM
+dotnet new classlib -n BotNexus.Agent.Providers.MyLLM
+cd BotNexus.Agent.Providers.MyLLM
 dotnet add reference ../BotNexus.Agent.Providers.Core/BotNexus.Agent.Providers.Core.csproj
 ```
 
@@ -800,7 +800,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 
-namespace BotNexus.Providers.MyLLM;
+namespace BotNexus.Agent.Providers.MyLLM;
 
 public sealed class MyLlmProvider(HttpClient httpClient) : IApiProvider
 {
