@@ -193,6 +193,10 @@ public static class GatewayServiceCollectionExtensions
             return new SqliteExtensionStateStore(dbPath, fs, storeLogger);
         });
 
+        // Memory pressure diagnostics
+        services.AddSingleton<Diagnostics.MemoryPressureMonitor>();
+        services.AddHostedService<Diagnostics.MemoryPressureHostedService>();
+
         // Built-in tools
         services.AddBotNexusTools();
 
