@@ -4,9 +4,10 @@
 
 @if (!string.IsNullOrWhiteSpace(SessionId))
 {
-    <div class="session-debug-panel" data-testid="session-debug-panel">
+    <div class="session-debug-overlay" @onclick="OnClose" @onkeydown="HandleKeyDown" tabindex="-1">
+    <div class="session-debug-panel" role="dialog" aria-modal="true" aria-labelledby="session-debug-title" data-testid="session-debug-panel" @onclick:stopPropagation="true">
         <div class="session-debug-header">
-            <h3 class="session-debug-title">Session Debug</h3>
+            <h3 id="session-debug-title" class="session-debug-title">Session Debug</h3>
             <button class="session-debug-close" @onclick="OnClose" title="Close" data-testid="session-debug-close">&#x2715;</button>
         </div>
 
@@ -200,6 +201,7 @@
             }
         }
     </div>
+    </div>
 }
 
 @code {
@@ -255,6 +257,12 @@
     }
 
     public void Dispose() { }
+
+    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            OnClose.InvokeAsync();
+    }
 
     private async Task SelectHistoryTabAsync()
     {
