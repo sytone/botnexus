@@ -396,6 +396,36 @@ public sealed class EditTool : IAgentTool
 
             for (var i = lineStart; i < trimmedEnd; i++)
             {
+                // Surrogate pairs (emoji, supplementary plane chars) must be emitted together.
+                // Processing a lone high surrogate through .Normalize() throws ArgumentException.
+                if (char.IsHighSurrogate(text[i]))
+                {
+                    if (i + 1 < trimmedEnd && char.IsLowSurrogate(text[i + 1]))
+                    {
+                        normalized.Append(text[i]);
+                        indexMap.Add(i);
+                        normalized.Append(text[i + 1]);
+                        indexMap.Add(i + 1);
+                        i++;
+                    }
+                    else
+                    {
+                        // Lone surrogate — emit replacement character to avoid crash
+                        normalized.Append('\uFFFD');
+                        indexMap.Add(i);
+                    }
+
+                    continue;
+                }
+
+                // Lone low surrogate without preceding high — also replace
+                if (char.IsLowSurrogate(text[i]))
+                {
+                    normalized.Append('\uFFFD');
+                    indexMap.Add(i);
+                    continue;
+                }
+
                 var mapped = NormalizeFuzzyText(text[i]);
                 foreach (var mappedChar in mapped)
                 {
