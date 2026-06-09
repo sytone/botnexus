@@ -1,4 +1,4 @@
-﻿{
+{
   "openapi": "3.0.1",
   "info": {
     "title": "BotNexus Gateway",
@@ -270,7 +270,7 @@
         "tags": [
           "Chat"
         ],
-        "summary": "Sends a message to an agent and returns the complete response.\r\nFor streaming, connect via `ws://host/ws`.",
+        "summary": "Sends a message to an agent and returns the complete response.\r\nFor streaming, connect to the SignalR hub at `/hub/gateway`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1051,7 +1051,7 @@
     },
     {
       "name": "Chat",
-      "description": "REST endpoint for non-streaming chat. For real-time streaming, use the WebSocket endpoint."
+      "description": "REST endpoint for non-streaming chat. For real-time streaming, connect to the SignalR hub at `/hub/gateway`."
     },
     {
       "name": "Config",

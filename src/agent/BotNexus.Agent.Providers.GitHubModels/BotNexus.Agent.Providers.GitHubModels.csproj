@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="BotNexus.Agent.Providers.Anthropic.Tests" />
-  </ItemGroup>
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Agent.Providers.GitHubModels</RootNamespace>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />

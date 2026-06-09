@@ -21,7 +21,7 @@ internal static class AnthropicRequestBuilder
         Func<string, bool> isAdaptiveThinkingModel)
     {
         var messages = AnthropicMessageConverter.ConvertMessages(context.Messages, model, isOAuthToken);
-        AnthropicMessageConverter.ApplyLastUserMessageCacheControl(
+        AnthropicMessageConverter.ApplyMultiBreakpointCacheControl(
             messages,
             options?.CacheRetention ?? CacheRetention.Short,
             model.BaseUrl);

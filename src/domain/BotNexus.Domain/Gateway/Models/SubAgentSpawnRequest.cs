@@ -62,4 +62,17 @@ public sealed record SubAgentSpawnRequest
     /// Required: every spawn must pick a mode at construction time.
     /// </summary>
     public required SubAgentSpawnMode Mode { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, the sub-agent is granted read and write access to the
+    /// parent agent's workspace directory in addition to its own temporary workspace.
+    /// Default is <c>false</c> (fully isolated).
+    /// </summary>
+    public bool ShareWorkspace { get; init; }
+
+    /// <summary>
+    /// Optional list of absolute paths the sub-agent is granted read access to,
+    /// beyond its own workspace. Each entry is resolved and validated at spawn time.
+    /// </summary>
+    public IReadOnlyList<string>? GrantedPaths { get; init; }
 }

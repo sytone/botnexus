@@ -33,7 +33,8 @@ public sealed class StreamingSessionHelperTests
         session.History[1].Content.ShouldBe("12:00");
         session.History[2].Role.ShouldBe(MessageRole.Assistant);
         session.History[2].Content.ShouldBe("Hello world");
-        store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
+        // Write-ahead flush on ToolStart + final save = 2 calls.
+        store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -300,6 +301,146 @@ public sealed class StreamingSessionHelperTests
 
         // Assert: history is empty — no stall entry for incomplete streams.
         session.History.ShouldBeEmpty();
+    }
+
+    // ── Write-ahead persistence tests (#1052) ───────────────────────────────
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_ToolStart_PersistsImmediately_WriteAhead()
+    {
+        // Arrange: stream has ToolStart then stalls (no ToolEnd, no TurnEnd).
+        // The write-ahead should persist the ToolStart entry before waiting for more events.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wa-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var saveCallCount = 0;
+        var historyAtFirstSave = new List<SessionEntry>();
+        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+            {
+                saveCallCount++;
+                if (saveCallCount == 1)
+                    historyAtFirstSave.AddRange(s.History);
+            })
+            .Returns(Task.CompletedTask);
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolCallId = "tc1", ToolName = "read" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "read", ToolResult = "file content" }
+            ]),
+            session,
+            store.Object);
+
+        // First save should have the ToolStart entry persisted (write-ahead).
+        saveCallCount.ShouldBeGreaterThanOrEqualTo(2);
+        historyAtFirstSave.ShouldNotBeEmpty();
+        historyAtFirstSave[0].ToolName.ShouldBe("read");
+        historyAtFirstSave[0].Content.ShouldContain("started");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MultipleToolStarts_EachPersistsImmediately()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wa-2"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var saveCount = 0;
+        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((_, _) => saveCount++)
+            .Returns(Task.CompletedTask);
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolCallId = "tc1", ToolName = "read" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "read", ToolResult = "ok" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolCallId = "tc2", ToolName = "write" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc2", ToolName = "write", ToolResult = "ok" }
+            ]),
+            session,
+            store.Object);
+
+        // 2 write-ahead saves (one per ToolStart) + 1 final save = 3 total.
+        saveCount.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_WriteAheadFailure_DoesNotAbortStream()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wa-3"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var callCount = 0;
+        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((_, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("Simulated write-ahead failure");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Should NOT throw — write-ahead failure is best-effort.
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolCallId = "tc1", ToolName = "shell" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "shell", ToolResult = "output" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Done." }
+            ]),
+            session,
+            store.Object);
+
+        // Stream completed successfully despite write-ahead failure.
+        session.History.Count.ShouldBeGreaterThanOrEqualTo(2);
+        result.AssistantContent.ShouldBe("Done.");
+    }
+
+    // ── Stall watchdog integration tests (#1052) ─────────────────────────────
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_WithStallWatchdog_StreamCompletesNormally()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wd-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var watchdog = new ProviderStallWatchdog(TimeSpan.FromSeconds(5));
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Hello" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(StallWatchdog: watchdog));
+
+        result.AssistantContent.ShouldBe("Hello");
+        session.History.ShouldHaveSingleItem();
+        session.History[0].Content.ShouldBe("Hello");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_WithStallWatchdog_TimeoutSurfacesError()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wd-2"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var watchdog = new ProviderStallWatchdog(TimeSpan.FromMilliseconds(100));
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            StallAfterFirst(),
+            session,
+            store.Object,
+            new StreamingSessionOptions(IncludeErrorsInHistory: true, StallWatchdog: watchdog));
+
+        // The error event from the watchdog should be persisted in history.
+        session.History.Any(e => e.Role == MessageRole.System && e.Content!.Contains("Provider stall detected")).ShouldBeTrue();
+    }
+
+    private static async IAsyncEnumerable<AgentStreamEvent> StallAfterFirst()
+    {
+        yield return new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "partial" };
+        await Task.Delay(TimeSpan.FromSeconds(30)); // Will be cut short by watchdog
+        yield return new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd };
     }
 
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)

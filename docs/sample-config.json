@@ -77,10 +77,10 @@
   },
   "channels": {
     "web": {
-      "type": "websocket",
+      "type": "signalr",
       "enabled": true,
       "settings": {
-        "path": "/ws"
+        "hubPath": "/hub/gateway"
       }
     },
     "telegram": {
