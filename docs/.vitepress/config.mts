@@ -68,6 +68,7 @@ export default defineConfig({
           {
             text: 'Channels',
             items: [
+              { text: 'SignalR (Web Portal)', link: '/user-guide/channels/signalr' },
               { text: 'Telegram', link: '/user-guide/channels/telegram' },
               { text: 'Azure Service Bus', link: '/user-guide/channels/service-bus' },
               { text: 'Service Bus Envelope', link: '/user-guide/channels/service-bus-envelope' },
@@ -98,8 +99,14 @@ export default defineConfig({
         text: 'Extensions',
         items: [
           { text: 'Extension Development', link: '/extension-development' },
-          { text: 'Media Handlers', link: '/extensions/media-handlers' },
+          { text: 'Exec Tool', link: '/extensions/exec-tool' },
+          { text: 'Process Tool', link: '/extensions/process-tool' },
+          { text: 'Web Tools', link: '/extensions/web-tools' },
+          { text: 'Data Store', link: '/extensions/data-store' },
+          { text: 'MCP', link: '/extensions/mcp' },
+          { text: 'MCP Invoke', link: '/extensions/mcp-invoke' },
           { text: 'Debug Tool', link: '/extensions/debug-tool' },
+          { text: 'Media Handlers', link: '/extensions/media-handlers' },
         ],
       },
       {

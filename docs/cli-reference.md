@@ -79,6 +79,20 @@ You should see the root command help listing all available subcommands.
 
 All commands support these options:
 
+### `--target <DIR>`
+
+Override the BotNexus home directory (where config, workspaces, and extensions live). Defaults to `~/.botnexus` or the `BOTNEXUS_HOME` environment variable.
+
+This enables managing multiple BotNexus instances from a single CLI installation.
+
+```powershell
+# Use a custom home directory
+botnexus --target D:\my-botnexus agent list
+
+# Validate config for a different instance
+botnexus --target /opt/botnexus-prod validate
+```
+
 ### `--verbose` (or `-v`)
 
 Show additional command output, including file paths and full JSON responses.
