@@ -83,7 +83,7 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'CLI Reference', link: '/cli-reference' },
           { text: 'API Reference', link: '/api-reference' },
-          { text: 'WebSocket Protocol', link: '/websocket-protocol' },
+          { text: 'SignalR Hub Contract', link: '/signalr-hub-contract' },
         ],
       },
       {
