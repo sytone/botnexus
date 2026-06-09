@@ -10,6 +10,18 @@ namespace BotNexus.Agent.Providers.Anthropic;
 /// </summary>
 internal static class AnthropicMessageConverter
 {
+    /// <summary>
+    /// Known non-Anthropic thinking signature field names used by OpenAI/Copilot providers.
+    /// These are stored as ThinkingSignature when sessions originate on those providers.
+    /// They must NOT be sent to Anthropic as thinking block signatures.
+    /// </summary>
+    private static readonly HashSet<string> NonAnthropicSignatures = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "reasoning_content",
+        "reasoning",
+        "reasoning_text"
+    };
+
     private static readonly IReadOnlyDictionary<string, string> ClaudeCodeToolLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["Read"] = "Read",
@@ -198,6 +210,12 @@ internal static class AnthropicMessageConverter
                         if (string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
                             break;
 
+                        // Drop redacted thinking blocks with non-Anthropic signatures.
+                        // These originate from cross-provider session replay and would
+                        // cause Anthropic to reject the request.
+                        if (IsNonAnthropicSignature(thinking.ThinkingSignature))
+                            break;
+
                         blocks.Add(new Dictionary<string, object?>
                         {
                             ["type"] = "redacted_thinking",
@@ -209,7 +227,10 @@ internal static class AnthropicMessageConverter
                         if (string.IsNullOrWhiteSpace(thinking.Thinking))
                             break;
 
-                        if (string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
+                        // Non-Anthropic signatures (e.g. "reasoning_content") or missing
+                        // signatures cannot be sent as thinking blocks — convert to text.
+                        if (string.IsNullOrWhiteSpace(thinking.ThinkingSignature) ||
+                            IsNonAnthropicSignature(thinking.ThinkingSignature))
                         {
                             blocks.Add(new Dictionary<string, object?>
                             {
@@ -415,6 +436,14 @@ internal static class AnthropicMessageConverter
 
         return name;
     }
+
+    /// <summary>
+    /// Determines whether a thinking signature is from a non-Anthropic provider.
+    /// Non-Anthropic providers store the field name (e.g. "reasoning_content") as the signature,
+    /// whereas Anthropic uses long base64-encoded cryptographic signatures.
+    /// </summary>
+    internal static bool IsNonAnthropicSignature(string? signature) =>
+        signature is not null && NonAnthropicSignatures.Contains(signature);
 
     internal static string NormalizeToolCallId(string id, LlmModel sourceModel, string targetProviderId)
     {
