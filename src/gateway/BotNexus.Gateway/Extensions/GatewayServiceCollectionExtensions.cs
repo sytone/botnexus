@@ -20,6 +20,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Citizens;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Commands;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Hooks;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Media;
@@ -193,6 +194,10 @@ public static class GatewayServiceCollectionExtensions
             return new SqliteExtensionStateStore(dbPath, fs, storeLogger);
         });
 
+        // Memory pressure diagnostics
+        services.AddSingleton<Diagnostics.MemoryPressureMonitor>();
+        services.AddHostedService<Diagnostics.MemoryPressureHostedService>();
+
         // Built-in tools
         services.AddBotNexusTools();
 
@@ -215,6 +220,11 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService<SessionCleanupService>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();
+
+        // Liveness watchdog: monitors gateway activity and logs warnings on stalls
+        services.AddSingleton<IActivityTracker, ActivityTracker>();
+        services.Configure<LivenessWatchdogOptions>(_ => { });
+        services.AddHostedService<LivenessWatchdogService>();
 
         // Auto-update: register once as singleton, expose as interface and hosted service.
         services.AddSingleton<Updates.UpdateCheckService>();

@@ -54,7 +54,7 @@ Each ActivitySource produces spans tagged with semantic attributes (see [Span At
 
 ### Example Span Tree
 
-A message arriving via WebSocket produces:
+A message arriving via SignalR produces:
 
 ```text
 gateway.dispatch (GatewayDiagnostics)
@@ -73,8 +73,8 @@ Messages flow through the platform with tracing enabled at each layer:
 
 ```text
 ┌──────────────────────┐
-│  Channel Inbound     │  [botnexus.channel.type = websocket]
-│  WebSocket message   │
+│  Channel Inbound     │  [botnexus.channel.type = signalr]
+│  SignalR message   │
 └──────────────┬───────┘
                │
                ▼
@@ -104,7 +104,7 @@ Messages flow through the platform with tracing enabled at each layer:
                   ▼
         ┌────────────────────────┐
         │  Channel Outbound      │  [botnexus.session.id]
-        │  WebSocket response    │
+        │  SignalR response    │
         └────────────────────────┘
 ```
 
@@ -122,7 +122,7 @@ All spans in BotNexus use semantic attributes following the `botnexus.*` convent
 |-----------|------|-------------|-------|---------|
 | `botnexus.session.id` | string | Session identifier (UUID) | All spans | `550e8400-e29b-41d4-a716-446655440000` |
 | `botnexus.agent.id` | string | Agent identifier | Agent, Provider spans | `customer-support-agent` |
-| `botnexus.channel.type` | string | Channel type (websocket, telegram) | Channel, Router spans | `websocket` |
+| `botnexus.channel.type` | string | Channel type (signalr, telegram) | Channel, Router spans | `signalr` |
 | `botnexus.provider.name` | string | Provider name | Provider spans | `openai` |
 | `botnexus.model` | string | Model identifier | Provider spans | `gpt-4-turbo` |
 | `botnexus.correlation.id` | string | Correlation ID (maps to TraceId) | All spans | `550e8400-e29b-41d4-a716-446655440000` |
@@ -363,7 +363,7 @@ Examples:
 - `gateway.dispatch` — Dispatch to agent
 - `agent.stream` — Stream agent output
 - `provider.openai-completions.stream` — Stream from OpenAI
-- `channel.websocket.receive` — Receive WebSocket message
+- `channel.signalr.receive` — Receive SignalR message
 
 ### 4. Activity Kind
 

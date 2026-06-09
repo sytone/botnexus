@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
@@ -163,13 +164,47 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
+        // Build file access policy for workspace isolation.
+        // By default, sub-agents can only access their own temp workspace.
+        // ShareWorkspace grants read+write to the parent's workspace.
+        // GrantedPaths adds read-only access to specific directories.
+        FileAccessPolicy? childFileAccess = null;
+        if (request.ShareWorkspace || request.GrantedPaths is { Count: > 0 })
+        {
+            var allowedRead = new List<string>();
+            var allowedWrite = new List<string>();
+
+            if (request.ShareWorkspace && _workspaceManager is not null)
+            {
+                var parentWorkspace = _workspaceManager.GetWorkspacePath(request.ParentAgentId.Value);
+                allowedRead.Add(parentWorkspace);
+                allowedWrite.Add(parentWorkspace);
+            }
+
+            if (request.GrantedPaths is { Count: > 0 })
+            {
+                foreach (var grantedPath in request.GrantedPaths)
+                {
+                    if (!string.IsNullOrWhiteSpace(grantedPath))
+                        allowedRead.Add(Path.GetFullPath(grantedPath));
+                }
+            }
+
+            childFileAccess = new FileAccessPolicy
+            {
+                AllowedReadPaths = allowedRead,
+                AllowedWritePaths = allowedWrite
+            };
+        }
+
         if (!_registry.Contains(childAgentId))
         {
             _registry.Register(baseDescriptor with
             {
                 AgentId = childAgentId,
                 DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
-                Kind = AgentKind.SubAgent
+                Kind = AgentKind.SubAgent,
+                FileAccess = childFileAccess ?? baseDescriptor.FileAccess
             });
         }
 

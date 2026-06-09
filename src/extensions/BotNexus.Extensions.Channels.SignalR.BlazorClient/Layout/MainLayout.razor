@@ -15,6 +15,10 @@
 
 <div class="app-shell">
 <PortalSettingsPanel @ref="_settingsPanel" />
+    @if (_showDebugPanel)
+    {
+        <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
+    }
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
@@ -308,6 +312,7 @@
     private List<Announcement> _announcements = [];
     private List<SidebarAgentItem> _sidebarAgents = [];
     private PortalSettingsPanel? _settingsPanel;
+    private bool _showDebugPanel = false;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
     private const string SidebarKey = "botnexus-sidebar-open";
@@ -651,8 +656,19 @@
 
     private void OpenDebug()
     {
-        // TODO: open SessionDebugPanel for active session once #768 panel is wired (#772 AC)
-        // For now this is a no-op placeholder -- the button visibility is the primary deliverable
+        _showDebugPanel = !_showDebugPanel;
+    }
+
+    private void CloseDebug()
+    {
+        _showDebugPanel = false;
+    }
+
+    private string? GetActiveSessionId()
+    {
+        if (Store.ActiveAgentId is not { Length: > 0 } agentId)
+            return null;
+        return Store.GetAgent(agentId)?.ActiveConversationSessionId;
     }
 
     private void OpenSettings() => _settingsPanel?.Open();

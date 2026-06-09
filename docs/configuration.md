@@ -172,7 +172,7 @@ services.AddSingleton(botNexusConfig);
 | `Agents` | AgentDefaults | — | Agent defaults and named agent configurations |
 | `Providers` | ProvidersConfig | — | LLM provider registry (Copilot, OpenAI, Anthropic, Azure) |
 | `Channels` | ChannelsConfig | — | Social channel integrations (Telegram, Discord, Slack) |
-| `Gateway` | GatewayConfig | — | WebSocket gateway server settings |
+| `Gateway` | GatewayConfig | — | Gateway HTTP server settings |
 | `Tools` | ToolsConfig | — | Tool/extension tool settings (exec, web search, MCP) |
 | `Api` | ApiConfig | — | OpenAI-compatible REST API (optional) |
 | `Cron` | CronConfig | — | Scheduled job execution (agent prompts, system actions, maintenance) |
@@ -642,7 +642,7 @@ Social channel integrations. Keys in `Instances` dict are case-insensitive and m
 
 ### Gateway: GatewayConfig
 
-WebSocket gateway server settings.
+Gateway HTTP server settings.
 
 ```json
 {
@@ -650,8 +650,6 @@ WebSocket gateway server settings.
     "Host": "0.0.0.0",
     "Port": 18790,
     "ApiKey": "secret-gateway-key",
-    "WebSocketEnabled": true,
-    "WebSocketPath": "/ws",
     "DefaultAgent": "default",
     "BroadcastWhenAgentUnspecified": false,
     "Heartbeat": {
@@ -667,8 +665,6 @@ WebSocket gateway server settings.
 | `Host` | string | `0.0.0.0` | Bind address (0.0.0.0 = all interfaces, 127.0.0.1 = localhost) |
 | `Port` | int | 18790 | Listen port for gateway server |
 | `ApiKey` | string | null | Optional API key for authentication (recommended for production) |
-| `WebSocketEnabled` | bool | true | Enable WebSocket support |
-| `WebSocketPath` | string | `/ws` | WebSocket endpoint path |
 | `DefaultAgent` | string | null | Default agent name if message has no agent metadata |
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
 | `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
@@ -704,7 +700,7 @@ Gateway-level shell settings control the default shell behavior for all agents. 
 See [Shell Execution Feature Guide](./features/shell-execution.md) for the full technical details including the ArgumentList execution model and troubleshooting.
 
 **API Key Authentication:**
-If `ApiKey` is set, clients must include it in WebSocket headers or REST requests:
+If `ApiKey` is set, clients must include it in request headers:
 ```text
 Authorization: Bearer YOUR-GATEWAY-KEY
 ```
@@ -1000,7 +996,7 @@ When `MaxTokens` or `Temperature` are not specified (null), providers use their 
 
 ### Activity Stream Notification
 
-On reload, the Gateway publishes a `gateway.config.reloaded` activity event listing which subsystems were updated. WebUI and WebSocket clients receive this event in real time.
+On reload, the Gateway publishes a `gateway.config.reloaded` activity event listing which subsystems were updated. Portal and SignalR clients receive this event in real time.
 
 ### CLI Config Commands
 
@@ -1630,7 +1626,7 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
     "Gateway": {
       "Host": "127.0.0.1",
       "Port": 18790,
-      "WebSocketEnabled": true
+  
     }
   }
 }
@@ -1829,5 +1825,5 @@ export BotNexus__Gateway__ApiKey="$(openssl rand -hex 32)"
 - [BotNexus README](https://github.com/sytone/botnexus/blob/main/README.md) — Project overview
 - [Architecture Guide](./architecture/overview.md) — System design and component overview
 - [Cron and Scheduling Guide](./cron-and-scheduling.md) — Scheduled jobs and automation
-- [API Reference](./api-reference.md) — Gateway WebSocket and REST API docs
+- [API Reference](./api-reference.md) — Gateway REST API and SignalR hub docs
 - [Extension Development](./extension-development.md) — Building custom channels, providers, and tools

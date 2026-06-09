@@ -42,7 +42,13 @@ public sealed class SubAgentSpawnTool(
                   "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
                   "description": "Optional behavioral archetype for the sub-agent."
                 },
-                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." }
+                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." },
+                "shareWorkspace": { "type": "boolean", "description": "When true, grant the sub-agent read/write access to the parent agent's workspace. Default: false (isolated)." },
+                "grantedPaths": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Optional list of absolute paths the sub-agent is granted read access to beyond its own workspace."
+                }
               },
               "required": ["task"]
             }
@@ -76,6 +82,8 @@ public sealed class SubAgentSpawnTool(
         var systemPromptOverride = ReadString(arguments, "systemPrompt");
         var archetypeRaw = ReadString(arguments, "archetype");
         var targetAgentId = ReadString(arguments, "targetAgentId");
+        var shareWorkspace = ReadBool(arguments, "shareWorkspace");
+        var grantedPaths = ReadStringArray(arguments, "grantedPaths");
 
         // Phase 5 / F-6 step 3 (#562): Mode rejects mode-mixing.
         // When the caller asks to mirror an existing named agent, none of the
@@ -99,7 +107,9 @@ public sealed class SubAgentSpawnTool(
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             InheritedConversationId = conversationId,
-            Mode = mode
+            Mode = mode,
+            ShareWorkspace = shareWorkspace,
+            GrantedPaths = grantedPaths
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
@@ -231,6 +241,20 @@ public sealed class SubAgentSpawnTool(
         }
 
         return null;
+    }
+
+    private static bool ReadBool(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null)
+            return false;
+
+        return value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.True } => true,
+            JsonElement { ValueKind: JsonValueKind.False } => false,
+            bool b => b,
+            _ => false
+        };
     }
 
     private static AgentToolResult TextResult(string text)

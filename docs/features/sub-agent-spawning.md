@@ -371,7 +371,7 @@ Sub-agents are also accessible via the REST API:
 | `GET` | `/api/sessions/{sessionId}/subagents` | List active sub-agents for a session |
 | `DELETE` | `/api/sessions/{sessionId}/subagents/{subAgentId}` | Kill a specific sub-agent |
 
-### WebSocket Events
+### SignalR Events
 
 The following SignalR events are emitted on the parent session's group:
 
