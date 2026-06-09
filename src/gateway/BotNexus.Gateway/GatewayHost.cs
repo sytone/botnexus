@@ -12,6 +12,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
@@ -23,7 +24,6 @@ using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
-using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
@@ -63,6 +63,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly DefaultInboundMessageOrchestrator _orchestrator;
     private readonly IOptions<PlatformConfig>? _platformConfig;
     private readonly ConversationAutoTitleService? _autoTitleService;
+    private readonly IActivityTracker? _activityTracker;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -85,7 +86,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IConversationStore? conversationStore = null,
         IOptions<PlatformConfig>? platformConfig = null,
         LlmClient? llmClient = null,
-        IConversationChangeNotifier? conversationChangeNotifier = null)
+        IConversationChangeNotifier? conversationChangeNotifier = null,
+        IActivityTracker? activityTracker = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -104,6 +106,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _registry = registry;
         _conversationStore = conversationStore;
         _platformConfig = platformConfig;
+        _activityTracker = activityTracker;
         // Wire up the auto-title service when the required dependencies are present.
         if (llmClient is not null && conversationStore is not null)
         {
@@ -200,6 +203,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// </summary>
     public async Task<InboundProcessingOutcome> ProcessAsync(InboundMessage message, CancellationToken cancellationToken)
     {
+        _activityTracker?.RecordActivity();
         var dispatches = new List<DispatchResult>();
 
         // Sub-PR 6.2 (#582): lift the legacy string-typed routing overrides into Vogen-typed

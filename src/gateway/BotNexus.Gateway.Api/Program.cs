@@ -366,7 +366,24 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health", (IServiceProvider sp) =>
+{
+    var tracker = sp.GetService<BotNexus.Gateway.Diagnostics.IActivityTracker>();
+    var lastActivity = tracker?.LastActivityUtc;
+    var elapsed = tracker?.TimeSinceLastActivity;
+    var status = elapsed switch
+    {
+        { TotalMinutes: >= 10 } => "degraded",
+        { TotalMinutes: >= 5 } => "warning",
+        _ => "ok"
+    };
+    return Results.Ok(new
+    {
+        status,
+        lastActivity = lastActivity?.ToString("o"),
+        inactivitySeconds = elapsed?.TotalSeconds
+    });
+});
 app.MapGet("/api/version", () =>
 {
     var assembly = typeof(Program).Assembly;
