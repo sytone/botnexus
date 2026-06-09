@@ -297,13 +297,14 @@
         </main>
     </div>
 
-    @* Modal overlays — rendered at end of shell so they layer above all content *@
-    <PortalSettingsPanel @ref="_settingsPanel" />
-    @if (_showDebugPanel)
-    {
-        <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
-    }
 </div>
+
+@* Modal overlays — rendered outside app-shell to avoid flex/overflow containment *@
+<PortalSettingsPanel @ref="_settingsPanel" />
+@if (_showDebugPanel)
+{
+    <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
+}
 
 @code {
     private bool _cronGroupCollapsed = true;
