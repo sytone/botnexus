@@ -3987,28 +3987,44 @@ h3.conversation-title.editable:hover {
 }
 .banner-settings-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
 
-.portal-settings-overlay {
+/* ── Modal Panel Shared ────────────────────────────────────────── */
+.portal-settings-overlay,
+.session-debug-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.4);
+    background: rgba(0, 0, 0, 0.5);
     z-index: 2000;
     display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
 }
-.portal-settings-panel {
+.portal-settings-panel,
+.session-debug-panel {
     background: var(--panel-bg, #1e1e2e);
-    border-left: 1px solid var(--border, #333);
-    width: 320px;
-    height: 100%;
-    padding: 1.5rem;
-    overflow-y: auto;
+    border: 1px solid var(--border, #333);
+    border-radius: 12px;
+    width: 90vw;
+    max-width: 720px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+
+/* ── Portal Settings Modal ─────────────────────────────────────── */
+.portal-settings-panel {
+    max-width: 480px;
+    max-height: 60vh;
 }
 .portal-settings-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border, #333);
+    flex-shrink: 0;
 }
 .portal-settings-close {
     background: none;
@@ -4016,6 +4032,12 @@ h3.conversation-title.editable:hover {
     color: var(--text-muted, #999);
     font-size: 1.2rem;
     cursor: pointer;
+}
+.portal-settings-close:hover { color: var(--text, #eee); }
+.portal-settings-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
 }
 .portal-settings-row {
     display: flex;
@@ -4026,8 +4048,218 @@ h3.conversation-title.editable:hover {
 .portal-settings-hint {
     font-size: 0.8rem;
     color: var(--text-muted, #999);
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.75rem;
+}
 
+/* ── Session Debug Modal ───────────────────────────────────────── */
+.session-debug-panel {
+    max-width: 900px;
+    max-height: 85vh;
+}
+.session-debug-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border, #333);
+    flex-shrink: 0;
+}
+.session-debug-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.session-debug-close {
+    background: none;
+    border: none;
+    color: var(--text-muted, #999);
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+.session-debug-close:hover { color: var(--text, #eee); }
+.session-debug-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 1.5rem;
+    border-bottom: 1px solid var(--border, #333);
+    flex-shrink: 0;
+    overflow-x: auto;
+}
+.session-debug-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted, #999);
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+}
+.session-debug-tab:hover { color: var(--text, #eee); }
+.session-debug-tab.active {
+    color: var(--accent, #7c5cff);
+    border-bottom-color: var(--accent, #7c5cff);
+}
+.session-debug-loading,
+.session-debug-empty,
+.session-debug-error {
+    padding: 1.5rem;
+    color: var(--text-muted, #999);
+    text-align: center;
+}
+.session-debug-error { color: var(--danger, #f66); }
+.session-debug-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.session-debug-table th,
+.session-debug-table td {
+    padding: 0.4rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border, #333);
+}
+.session-debug-table th {
+    color: var(--text-muted, #999);
+    font-weight: 500;
+    white-space: nowrap;
+    width: 1%;
+}
+.session-debug-table td {
+    word-break: break-all;
+}
+.session-debug-meta {
+    padding: 0.5rem 1.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted, #999);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.session-debug-copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+.session-debug-copy-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
+.session-debug-system-prompt {
+    margin: 0;
+    padding: 1rem 1.5rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-y: auto;
+    flex: 1;
+    max-height: 50vh;
+}
+/* Tab content area — scrollable */
+.session-debug-panel > :nth-child(n+3) {
+    padding: 0 1.5rem 1rem;
+    overflow-y: auto;
+    flex: 1;
+}
+.session-debug-panel > .session-debug-tabs ~ table {
+    margin: 0;
+}
+/* History tab */
+.session-debug-history-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    font-size: 0.8rem;
+    color: var(--text-muted, #999);
+    flex-wrap: wrap;
+}
+.session-debug-page-size {
+    background: var(--input-bg, #2a2a3a);
+    border: 1px solid var(--border, #333);
+    color: var(--text, #eee);
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.8rem;
+}
+.session-debug-pager-btn {
+    background: none;
+    border: 1px solid var(--border, #333);
+    color: var(--text-muted, #999);
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+.session-debug-pager-btn:hover:not(:disabled) {
+    color: var(--text, #eee);
+    border-color: var(--text-muted, #999);
+}
+.session-debug-pager-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.session-debug-history-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.session-debug-entry {
+    border: 1px solid var(--border, #333);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+}
+.session-debug-entry.compaction-boundary {
+    border-color: var(--warning, #f5a623);
+    background: rgba(245, 166, 35, 0.05);
+}
+.session-debug-entry.crash-sentinel {
+    border-color: var(--danger, #f66);
+    background: rgba(255, 102, 102, 0.05);
+}
+.session-debug-entry.historical {
+    opacity: 0.7;
+}
+.entry-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.entry-role-badge {
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+.entry-timestamp {
+    color: var(--text-muted, #999);
+    font-size: 0.75rem;
+}
+.entry-flag {
+    font-size: 0.7rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--warning, #f5a623);
+    color: #000;
+}
+.entry-flag-sentinel {
+    background: var(--danger, #f66);
+    color: #fff;
+}
+.entry-content-details summary {
+    cursor: pointer;
+    color: var(--text-muted, #999);
+    font-size: 0.8rem;
+}
+.entry-content-full {
+    margin: 0.25rem 0 0;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
 }
 
 /* == Skills Explorer == */

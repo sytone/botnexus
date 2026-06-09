@@ -14,11 +14,6 @@
 @implements IAsyncDisposable
 
 <div class="app-shell">
-<PortalSettingsPanel @ref="_settingsPanel" />
-    @if (_showDebugPanel)
-    {
-        <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
-    }
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
@@ -301,6 +296,13 @@
             </GlobalErrorBoundary>
         </main>
     </div>
+
+    @* Modal overlays — rendered at end of shell so they layer above all content *@
+    <PortalSettingsPanel @ref="_settingsPanel" />
+    @if (_showDebugPanel)
+    {
+        <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
+    }
 </div>
 
 @code {
