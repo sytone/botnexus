@@ -70,6 +70,9 @@ public sealed class AgentConfigurationHostedServiceTests
             CreateDescriptor("agent-c")
         ]);
 
+        // Wait for debounce window to expire and apply to fire
+        await Task.Delay(AgentConfigurationHostedService.DebounceDelay + TimeSpan.FromMilliseconds(500));
+
         registry.Contains(AgentId.From("agent-a")).ShouldBeTrue();
         registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("Agent A v2");
         registry.Contains(AgentId.From("agent-b")).ShouldBeFalse();
@@ -100,6 +103,9 @@ public sealed class AgentConfigurationHostedServiceTests
         callback.ShouldNotBeNull();
 
         callback!([CreateDescriptor("agent-new")]);
+
+        // Wait for debounce window to expire and apply to fire
+        await Task.Delay(AgentConfigurationHostedService.DebounceDelay + TimeSpan.FromMilliseconds(500));
 
         registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
         registry.RegisterOperations.ShouldContain("agent-new");

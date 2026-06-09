@@ -11,6 +11,13 @@ internal sealed class AgentConfigurationHostedService(
     IAgentRegistry registry,
     ILogger<AgentConfigurationHostedService> logger) : IHostedService, IDisposable
 {
+    /// <summary>
+    /// Debounce window for config change notifications. Multiple rapid file system events
+    /// (e.g. workspace writes triggering config reload) are coalesced into a single apply
+    /// after this delay. Prevents reload storms from starving the threadpool.
+    /// </summary>
+    internal static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(5);
+
     private readonly IAgentConfigurationSource[] _sources = sources.ToArray();
     private readonly IAgentRegistry _registry = registry;
     private readonly ILogger<AgentConfigurationHostedService> _logger = logger;
@@ -19,6 +26,8 @@ internal sealed class AgentConfigurationHostedService(
     private readonly Dictionary<IAgentConfigurationSource, IReadOnlyList<AgentDescriptor>> _latestSourceDescriptors = [];
     private readonly Dictionary<string, AgentDescriptor> _appliedConfigDescriptors = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _codeBasedAgentIds = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _debounceCts;
+    private int _coalescedChangeCount;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -56,20 +65,64 @@ internal sealed class AgentConfigurationHostedService(
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = null;
         DisposeWatchers();
         return Task.CompletedTask;
     }
 
     public void Dispose()
-        => DisposeWatchers();
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = null;
+        DisposeWatchers();
+    }
 
     private void OnSourceChanged(IAgentConfigurationSource source, IReadOnlyList<AgentDescriptor> descriptors)
     {
         lock (_sync)
         {
             _latestSourceDescriptors[source] = descriptors;
-            ApplyMergedDescriptors();
+            Interlocked.Increment(ref _coalescedChangeCount);
+            ScheduleDebouncedApply();
         }
+    }
+
+    /// <summary>
+    /// Schedules a debounced apply. Each new change notification resets the timer so that
+    /// rapid-fire changes (workspace writes, editor saves) coalesce into a single apply.
+    /// </summary>
+    private void ScheduleDebouncedApply()
+    {
+        // Cancel any pending debounce timer
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(DebounceDelay, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // Another change arrived, timer reset
+            }
+
+            var coalesced = Interlocked.Exchange(ref _coalescedChangeCount, 0);
+            _logger.LogInformation(
+                "Agent configuration reload debounced: applying {CoalescedCount} coalesced change notification(s).",
+                coalesced);
+
+            lock (_sync)
+            {
+                ApplyMergedDescriptors();
+            }
+        });
     }
 
     private void ApplyMergedDescriptors()
