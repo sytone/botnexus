@@ -52,12 +52,7 @@ internal static class AnthropicRequestBuilder
 
             if (!string.IsNullOrWhiteSpace(context.SystemPrompt))
             {
-                systemBlocks.Add(new Dictionary<string, object?>
-                {
-                    ["type"] = "text",
-                    ["text"] = UnicodeSanitizer.SanitizeSurrogates(context.SystemPrompt),
-                    ["cache_control"] = cacheControl
-                });
+                AppendSystemPromptBlocks(systemBlocks, context.SystemPrompt, cacheControl);
             }
 
             body["system"] = ToNode(systemBlocks);
@@ -68,15 +63,9 @@ internal static class AnthropicRequestBuilder
                 options?.CacheRetention ?? CacheRetention.Short,
                 model.BaseUrl);
 
-            body["system"] = ToNode(new object[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["type"] = "text",
-                    ["text"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt),
-                    ["cache_control"] = cacheControl
-                }
-            });
+            var systemBlocks = new List<Dictionary<string, object?>>();
+            AppendSystemPromptBlocks(systemBlocks, systemPrompt, cacheControl);
+            body["system"] = ToNode(systemBlocks);
         }
 
         if (context.Tools is { Count: > 0 } tools)
@@ -139,6 +128,74 @@ internal static class AnthropicRequestBuilder
             body["temperature"] = options.Temperature.Value;
 
         return body;
+    }
+
+    private const string CacheBoundaryMarker = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
+
+    /// <summary>
+    /// Splits the system prompt at the BOTNEXUS_CACHE_BOUNDARY marker (if present) into
+    /// a stable prefix block (with cache_control) and a dynamic tail block (without).
+    /// When the marker is absent, the entire prompt is treated as stable.
+    /// Empty segments are omitted.
+    /// </summary>
+    private static void AppendSystemPromptBlocks(
+        List<Dictionary<string, object?>> blocks,
+        string systemPrompt,
+        Dictionary<string, object?>? cacheControl)
+    {
+        var sanitized = UnicodeSanitizer.SanitizeSurrogates(systemPrompt);
+        var markerIndex = sanitized.IndexOf(CacheBoundaryMarker, StringComparison.Ordinal);
+
+        if (markerIndex < 0)
+        {
+            // No boundary marker -- entire prompt is stable (gets cache_control)
+            var block = new Dictionary<string, object?>
+            {
+                ["type"] = "text",
+                ["text"] = sanitized
+            };
+            if (cacheControl is not null)
+                block["cache_control"] = cacheControl;
+            blocks.Add(block);
+            return;
+        }
+
+        var stableText = sanitized[..markerIndex].TrimEnd();
+        var dynamicText = sanitized[(markerIndex + CacheBoundaryMarker.Length)..].TrimStart();
+
+        if (!string.IsNullOrWhiteSpace(stableText))
+        {
+            var stableBlock = new Dictionary<string, object?>
+            {
+                ["type"] = "text",
+                ["text"] = stableText
+            };
+            if (cacheControl is not null)
+                stableBlock["cache_control"] = cacheControl;
+            blocks.Add(stableBlock);
+        }
+
+        if (!string.IsNullOrWhiteSpace(dynamicText))
+        {
+            // Dynamic tail intentionally has NO cache_control
+            blocks.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "text",
+                ["text"] = dynamicText
+            });
+        }
+
+        // If both segments are empty after trimming, fall back to single block
+        if (string.IsNullOrWhiteSpace(stableText) && string.IsNullOrWhiteSpace(dynamicText))
+        {
+            blocks.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "text",
+                ["text"] = sanitized
+            });
+            if (cacheControl is not null)
+                blocks[^1]["cache_control"] = cacheControl;
+        }
     }
 
     private static JsonNode? ToNode<T>(T value)
