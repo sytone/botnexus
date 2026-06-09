@@ -32,13 +32,19 @@ public static class StreamingSessionHelper
         options ??= new StreamingSessionOptions();
         var streamedContent = new StringBuilder();
         var streamedHistory = new List<SessionEntry>();
+        var allHistoryEntries = new List<SessionEntry>();
         var hadThinkingContent = false;
         var hadMessageEnd = false;
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
         var toolStartEntries = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
 
-        await foreach (var evt in stream.WithCancellation(cancellationToken))
+        // Apply stall watchdog if configured — wraps the stream with inactivity timeout.
+        var effectiveStream = options.StallWatchdog is not null
+            ? options.StallWatchdog.WrapAsync(stream, cancellationToken)
+            : stream;
+
+        await foreach (var evt in effectiveStream.WithCancellation(cancellationToken))
         {
             switch (evt.Type)
             {
@@ -63,10 +69,26 @@ public static class StreamingSessionHelper
                             : null
                     };
                     streamedHistory.Add(startEntry);
+                    allHistoryEntries.Add(startEntry);
                     if (evt.ToolCallId is not null)
                     {
                         toolStartIds.Add(evt.ToolCallId);
                         toolStartEntries[evt.ToolCallId] = startEntry;
+                    }
+
+                    // Write-ahead: persist tool start immediately so the entry
+                    // survives browser refresh or session stall (#1052).
+                    session.AddEntries(streamedHistory.ToList());
+                    streamedHistory.Clear();
+                    session.RemoveCrashSentinels();
+                    try
+                    {
+                        await sessionStore.SaveAsync(session, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Best-effort write-ahead — log but don't abort.
+                        _ = ex;
                     }
                     break;
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
@@ -78,6 +100,7 @@ public static class StreamingSessionHelper
                         ToolCallId = evt.ToolCallId,
                         ToolIsError = evt.ToolIsError == true
                     });
+                    allHistoryEntries.Add(streamedHistory[^1]);
                     if (evt.ToolCallId is not null)
                         toolEndIds.Add(evt.ToolCallId);
                     break;
@@ -87,6 +110,7 @@ public static class StreamingSessionHelper
                         Role = MessageRole.System,
                         Content = $"Agent stream error: {evt.ErrorMessage}"
                     });
+                    allHistoryEntries.Add(streamedHistory[^1]);
                     break;
                 case AgentStreamEventType.TurnEnd when streamedHistory.Count > 0 || streamedContent.Length > 0:
                     // Flush accumulated entries at each turn boundary so a second client
@@ -132,14 +156,16 @@ public static class StreamingSessionHelper
             var toolName = toolStartEntries.TryGetValue(orphanId, out var entry)
                 ? entry.ToolName ?? "unknown"
                 : "unknown";
-            streamedHistory.Add(new SessionEntry
+            var orphanEntry = new SessionEntry
             {
                 Role = MessageRole.Tool,
                 Content = $"Tool '{toolName}' did not complete — result synthesized for transcript consistency.",
                 ToolName = toolName,
                 ToolCallId = orphanId,
                 ToolIsError = true
-            });
+            };
+            streamedHistory.Add(orphanEntry);
+            allHistoryEntries.Add(orphanEntry);
         }
 
         // Final write: append any remaining content not yet flushed by a TurnEnd
@@ -178,7 +204,7 @@ public static class StreamingSessionHelper
                 cancellationToken);
         }
 
-        return new StreamingSessionResult(streamedContent.ToString(), streamedHistory);
+        return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries);
     }
 }
 
@@ -189,9 +215,15 @@ public static class StreamingSessionHelper
 /// Whether stream error events should be persisted to history as system entries.
 /// </param>
 /// <param name="OnEventAsync">Optional callback invoked for each stream event.</param>
+/// <param name="StallWatchdog">
+/// Optional provider stall watchdog. When set, the incoming stream is wrapped with
+/// inactivity timeout detection that synthesizes an error event if the provider
+/// stops responding.
+/// </param>
 public sealed record StreamingSessionOptions(
     bool IncludeErrorsInHistory = false,
-    Func<AgentStreamEvent, CancellationToken, ValueTask>? OnEventAsync = null);
+    Func<AgentStreamEvent, CancellationToken, ValueTask>? OnEventAsync = null,
+    ProviderStallWatchdog? StallWatchdog = null);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.
