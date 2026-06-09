@@ -28,10 +28,18 @@ public interface ISessionCompactionCoordinator
     /// notification — callers use <see cref="BuildNotificationText"/> and
     /// <see cref="TrySendChannelNotificationAsync"/> for that.
     /// </summary>
+    /// <param name="agentId">Target agent.</param>
+    /// <param name="session">The session to compact.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="force">When true, compaction proceeds unconditionally
+    /// regardless of token thresholds or preserved-turn limits. Used by
+    /// user-initiated /compact commands where the user's intent overrides
+    /// automatic heuristics.</param>
     Task<SessionCompactionOutcome> CompactAsync(
         AgentId agentId,
         GatewaySession session,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool force = false);
 
     /// <summary>
     /// Build the canonical user-facing notification text for an outcome.

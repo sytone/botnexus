@@ -40,10 +40,20 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
     public async Task<SessionCompactionOutcome> CompactAsync(
         AgentId agentId,
         GatewaySession session,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool force = false)
     {
         ArgumentNullException.ThrowIfNull(session);
         var options = _options.CurrentValue;
+
+        // When the user explicitly requests compaction, override PreservedTurns
+        // to 1 so the compactor always has entries to summarise. The user's
+        // intent ("compact now") supersedes the automatic heuristic that
+        // protects the last N turns from summarisation.
+        if (force && options.PreservedTurns > 1)
+        {
+            options = options with { PreservedTurns = 1 };
+        }
         var sessionId = session.SessionId;
 
         // 1. Optional pre-compaction memory flush. Best-effort: failures are logged

@@ -71,7 +71,7 @@ public sealed class CompactCommandTests
 
         var coordinator = new Mock<ISessionCompactionCoordinator>();
         coordinator
-            .Setup(c => c.CompactAsync(It.IsAny<AgentId>(), It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompactAsync(It.IsAny<AgentId>(), It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(outcome);
         coordinator
             .Setup(c => c.BuildNotificationText(outcome))
@@ -107,7 +107,7 @@ public sealed class CompactCommandTests
 
         var coordinator = new Mock<ISessionCompactionCoordinator>();
         coordinator
-            .Setup(c => c.CompactAsync(It.IsAny<AgentId>(), It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompactAsync(It.IsAny<AgentId>(), It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(outcome);
         coordinator
             .Setup(c => c.BuildNotificationText(outcome))
