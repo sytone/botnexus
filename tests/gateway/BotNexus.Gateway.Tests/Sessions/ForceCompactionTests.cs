@@ -50,8 +50,9 @@ public sealed class ForceCompactionTests
     }
 
     /// <summary>
-    /// Proves that force=true reduces PreservedTurns to 1, enabling compaction
+    /// Proves that force=true reduces PreservedTurns to 0, enabling compaction
     /// even when there are fewer user turns than the configured threshold.
+    /// PreservedTurns=0 causes SplitHistory to place ALL entries in toSummarize.
     /// </summary>
     [Fact]
     public async Task CompactAsync_ForceTrue_FewUserTurns_OverridesPreservedTurns()
@@ -60,14 +61,14 @@ public sealed class ForceCompactionTests
         var coordinator = CreateCoordinator(preservedTurns: 3, out var compactor);
 
         compactor
-            .Setup(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 1), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CompactionResult
             {
                 Summary = "Forced compaction summary",
                 Succeeded = true,
                 CompactedHistory = [new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }],
-                EntriesSummarized = 1,
-                EntriesPreserved = 1,
+                EntriesSummarized = 2,
+                EntriesPreserved = 0,
                 TokensBefore = 100,
                 TokensAfter = 50,
                 SnapshotDestructiveVersion = 0,
@@ -78,29 +79,29 @@ public sealed class ForceCompactionTests
 
         outcome.Succeeded.ShouldBeTrue();
         outcome.Applied.ShouldBeTrue();
-        // Verify the compactor was called with PreservedTurns=1 (force override)
-        compactor.Verify(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 1), It.IsAny<CancellationToken>()), Times.Once);
+        // Verify the compactor was called with PreservedTurns=0 (force override — summarize everything)
+        compactor.Verify(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 0), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// When PreservedTurns is already 1, force=true should not change anything
-    /// (no need to override an already-minimal value).
+    /// When PreservedTurns is already 1, force=true still overrides to 0
+    /// to guarantee compaction proceeds unconditionally.
     /// </summary>
     [Fact]
-    public async Task CompactAsync_ForceTrue_PreservedTurnsAlready1_NoChange()
+    public async Task CompactAsync_ForceTrue_PreservedTurnsAlready1_StillOverridesToZero()
     {
         var session = CreateSessionWithUserTurns(5);
         var coordinator = CreateCoordinator(preservedTurns: 1, out var compactor);
 
         compactor
-            .Setup(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 1), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CompactionResult
             {
                 Summary = "Summary",
                 Succeeded = true,
                 CompactedHistory = [new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }],
-                EntriesSummarized = 4,
-                EntriesPreserved = 1,
+                EntriesSummarized = 5,
+                EntriesPreserved = 0,
                 TokensBefore = 500,
                 TokensAfter = 100,
                 SnapshotDestructiveVersion = 0,
@@ -110,7 +111,7 @@ public sealed class ForceCompactionTests
         var outcome = await coordinator.CompactAsync(TestAgent, session, CancellationToken.None, force: true);
 
         outcome.Succeeded.ShouldBeTrue();
-        compactor.Verify(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 1), It.IsAny<CancellationToken>()), Times.Once);
+        compactor.Verify(c => c.CompactAsync(session, It.Is<CompactionOptions>(o => o.PreservedTurns == 0), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
