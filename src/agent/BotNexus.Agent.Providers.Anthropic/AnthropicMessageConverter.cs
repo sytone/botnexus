@@ -335,39 +335,68 @@ internal static class AnthropicMessageConverter
         return cacheControl;
     }
 
+    /// <summary>
+    /// Applies a cache-control breakpoint to the last non-system message only.
+    /// Retained for use by callers that want the legacy single-breakpoint behaviour.
+    /// New callers should prefer <see cref="ApplyMultiBreakpointCacheControl"/>.
+    /// </summary>
     internal static void ApplyLastUserMessageCacheControl(
         List<Dictionary<string, object?>> messages, CacheRetention retention, string baseUrl)
+    {
+        ApplyMultiBreakpointCacheControl(messages, retention, baseUrl, maxBreakpoints: 1);
+    }
+
+    /// <summary>
+    /// Applies cache-control breakpoints to the last <paramref name="maxBreakpoints"/> non-system
+    /// messages (system_and_3 strategy: Anthropic supports 4 breakpoints total; system prompt
+    /// already consumes one, so messages get up to 3).
+    /// </summary>
+    /// <param name="messages">The converted message list to annotate in-place.</param>
+    /// <param name="retention">Cache retention mode. <see cref="CacheRetention.None"/> is a no-op.</param>
+    /// <param name="baseUrl">Provider base URL, used for Long-TTL eligibility check.</param>
+    /// <param name="maxBreakpoints">Maximum number of breakpoints to place (default 3).</param>
+    internal static void ApplyMultiBreakpointCacheControl(
+        List<Dictionary<string, object?>> messages,
+        CacheRetention retention,
+        string baseUrl,
+        int maxBreakpoints = 3)
     {
         if (retention == CacheRetention.None) return;
 
         var cacheControl = BuildCacheControl(retention, baseUrl);
         if (cacheControl is null) return;
 
-        for (var i = messages.Count - 1; i >= 0; i--)
+        // Walk backwards and annotate up to maxBreakpoints messages (user or assistant).
+        // We skip any entry that already has a cache_control on its last block
+        // to avoid double-stamping on repeated calls.
+        var placed = 0;
+        for (var i = messages.Count - 1; i >= 0 && placed < maxBreakpoints; i--)
         {
-            if (messages[i].TryGetValue("role", out var role) && role?.ToString() == "user")
+            var msg = messages[i];
+            var content = msg["content"];
+
+            if (content is string textContent)
             {
-                var content = messages[i]["content"];
-
-                if (content is string textContent)
+                // Wrap plain string into a typed block so we can attach cache_control.
+                var block = new Dictionary<string, object?>
                 {
-                    messages[i]["content"] = new List<object>
+                    ["type"] = "text",
+                    ["text"] = textContent,
+                    ["cache_control"] = cacheControl
+                };
+                msg["content"] = new List<object> { block };
+                placed++;
+            }
+            else if (content is List<object> blocks && blocks.Count > 0)
+            {
+                if (blocks[^1] is Dictionary<string, object?> lastBlock)
+                {
+                    if (!lastBlock.ContainsKey("cache_control"))
                     {
-                        new Dictionary<string, object?>
-                        {
-                            ["type"] = "text",
-                            ["text"] = textContent,
-                            ["cache_control"] = cacheControl
-                        }
-                    };
-                }
-                else if (content is List<object> blocks && blocks.Count > 0)
-                {
-                    if (blocks[^1] is Dictionary<string, object?> lastBlock)
                         lastBlock["cache_control"] = cacheControl;
+                        placed++;
+                    }
                 }
-
-                break;
             }
         }
     }

@@ -25,6 +25,7 @@
     <Project Path="src/agent/BotNexus.Agent.Providers.Anthropic/BotNexus.Agent.Providers.Anthropic.csproj" />
     <Project Path="src/agent/BotNexus.Agent.Providers.OpenAI/BotNexus.Agent.Providers.OpenAI.csproj" />
     <Project Path="src/agent/BotNexus.Agent.Providers.OpenAICompat/BotNexus.Agent.Providers.OpenAICompat.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.GitHubModels/BotNexus.Agent.Providers.GitHubModels.csproj" />
     <Project Path="src/agent/BotNexus.Agent.Providers.Copilot/BotNexus.Agent.Providers.Copilot.csproj" />
     <Project Path="src/agent/BotNexus.Agent.Providers.IntegrationMock/BotNexus.Agent.Providers.IntegrationMock.csproj" />
   </Folder>
@@ -58,6 +59,7 @@
     <Project Path="tests/agent/BotNexus.Agent.Providers.Core.Tests/BotNexus.Agent.Providers.Core.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAI.Tests/BotNexus.Agent.Providers.OpenAI.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAICompat.Tests/BotNexus.Agent.Providers.OpenAICompat.Tests.csproj" />
+    <Project Path="tests/agent/BotNexus.Agent.Providers.GitHubModels.Tests/BotNexus.Agent.Providers.GitHubModels.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.IntegrationMock.Tests/BotNexus.Agent.Providers.IntegrationMock.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/architecture/">
