@@ -160,16 +160,12 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
 
-        // Hook dispatcher with built-in handler registration
-        services.TryAddSingleton<IHookDispatcher>(sp =>
-        {
-            var dispatcher = new HookDispatcher();
-            dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
-                sp.GetRequiredService<ToolPolicyHookHandler>());
-            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
-                sp.GetRequiredService<AgentsMdPromptHookHandler>());
-            return dispatcher;
-        });
+        // Hook dispatcher: register as a concrete singleton instance so that
+        // LoadConfiguredExtensionsAsync can locate it via ImplementationInstance
+        // and register extension-discovered hook handlers on the same instance.
+        // Built-in handlers are registered during startup via HookDispatcherInitializer.
+        services.TryAddSingleton<IHookDispatcher>(new HookDispatcher());
+        services.AddHostedService<HookDispatcherInitializer>();
 
         // Tool policy
         services.TryAddSingleton<DefaultToolPolicyProvider>();

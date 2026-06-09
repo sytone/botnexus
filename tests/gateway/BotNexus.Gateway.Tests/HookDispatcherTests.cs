@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Hooks;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -136,6 +137,80 @@ public sealed class HookDispatcherTests
         var denied = results.FirstOrDefault(r => r.Denied);
         denied.ShouldNotBeNull();
         denied!.DenyReason.ShouldBe("Extension policy blocks this tool.");
+    }
+
+    // ── Instance registration discoverability (regression test for #1088) ────
+
+    [Fact]
+    public void InstanceRegistration_IsDiscoverableViaServiceDescriptorImplementationInstance()
+    {
+        // The bug: factory-based TryAddSingleton<IHookDispatcher>(sp => ...) has
+        // ImplementationInstance == null, making it invisible to LoadConfiguredExtensionsAsync.
+        // The fix: register as an instance so extension loader finds the same dispatcher.
+        var services = new ServiceCollection();
+        var dispatcher = new HookDispatcher();
+        services.AddSingleton<IHookDispatcher>(dispatcher);
+
+        var found = services
+            .Where(d => d.ServiceType == typeof(IHookDispatcher))
+            .Select(d => d.ImplementationInstance as IHookDispatcher)
+            .FirstOrDefault();
+
+        found.ShouldNotBeNull();
+        found.ShouldBeSameAs(dispatcher);
+    }
+
+    [Fact]
+    public async Task HookDispatcherInitializer_RegistersBuiltInHandlers_OnSameInstance()
+    {
+        // Verify that HookDispatcherInitializer wires handlers onto the shared instance
+        var dispatcher = new HookDispatcher();
+
+        // Before initializer runs: no handlers
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var before = await dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
+        before.ShouldBeEmpty();
+
+        // Simulate what HookDispatcherInitializer.StartAsync does
+        dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+            new DelegateHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                priority: 200, _ => new BeforePromptBuildResult { AppendSystemContext = "AGENTS.md content" }));
+
+        var after = await dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
+        after.ShouldHaveSingleItem().AppendSystemContext.ShouldBe("AGENTS.md content");
+    }
+
+    [Fact]
+    public async Task ExtensionHooksAndBuiltInHooks_ShareSameDispatcher_WhenRegisteredAsInstance()
+    {
+        // End-to-end simulation: extension loader registers on instance found in services,
+        // then HookDispatcherInitializer registers built-in handlers later. Both fire.
+        var services = new ServiceCollection();
+        var dispatcher = new HookDispatcher();
+        services.AddSingleton<IHookDispatcher>(dispatcher);
+
+        // Simulate extension loader finding the instance and registering a handler
+        var foundFromServices = services
+            .Where(d => d.ServiceType == typeof(IHookDispatcher))
+            .Select(d => d.ImplementationInstance as IHookDispatcher)
+            .FirstOrDefault()!;
+
+        foundFromServices.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+            new DelegateHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                priority: 100, _ => new BeforePromptBuildResult { AppendSystemContext = "skills-list" }));
+
+        // Simulate HookDispatcherInitializer registering built-in handlers
+        dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+            new DelegateHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                priority: 200, _ => new BeforePromptBuildResult { AppendSystemContext = "AGENTS.md" }));
+
+        // Both should fire on the same dispatcher
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var results = await dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
+
+        results.Count.ShouldBe(2);
+        results[0].AppendSystemContext.ShouldBe("skills-list"); // Extension (priority 100)
+        results[1].AppendSystemContext.ShouldBe("AGENTS.md");   // Built-in (priority 200)
     }
 
     // ── Test helper ──────────────────────────────────────────────────
