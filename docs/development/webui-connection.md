@@ -88,7 +88,7 @@ connectionId = connection.connectionId;
 
 **Connection Lifecycle:**
 
-1. WebSocket handshake to `/gateway` endpoint
+1. SignalR negotiation to `/hub/gateway` endpoint
 2. SignalR negotiation (protocol selection)
 3. Connection established → `connectionId` assigned
 4. Automatic reconnect on disconnect
@@ -268,7 +268,7 @@ See [Home.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.Blazo
 
 **Performance Characteristics:**
 
-- Connection setup: ~100-200ms (WebSocket handshake + negotiation)
+- Connection setup: ~100-200ms (SignalR negotiation + transport upgrade)
 - SubscribeAll: ~50-100ms (depends on session count)
 - Session switch: <10ms (show/hide container, no network)
 - Message send: ~50-200ms (HTTP round-trip to hub)

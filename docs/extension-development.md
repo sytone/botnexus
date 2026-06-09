@@ -121,7 +121,7 @@ This means you never manually copy DLLs — they appear in the extension folder 
 
 ## Creating a Channel Extension
 
-**Channels** are messaging platforms where agents receive user messages and send responses. Examples: Discord, Slack, Telegram, WebSocket.
+**Channels** are messaging platforms where agents receive user messages and send responses. Examples: Discord, Slack, Telegram, SignalR.
 
 ### Step 1: Create a Class Inheriting BaseChannel
 
