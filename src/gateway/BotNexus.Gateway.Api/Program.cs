@@ -16,6 +16,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.GitHubModels;
 using BotNexus.Agent.Providers.IntegrationMock;
 using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
@@ -237,6 +238,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new CopilotMessagesProvider(httpClient));
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>()));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>()));
+
     apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>()));
     apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>()));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
@@ -244,6 +246,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
 
     serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
     new IntegrationMockModels().RegisterAll(models);
+    GitHubModelsProvider.RegisterModels(models);
 
     // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
     // or any provider with an explicit Api override (e.g. integration-mock).
