@@ -399,4 +399,87 @@ public sealed class FileConversationStore : IConversationStore
             c.Kind.ToString(),
             c.IsPinned,
             c.PinnedAt);
+
+    // ── Canvas State ───────────────────────────────────────────────────────
+    // The file store persists canvas state in the CanvasState property of the Conversation
+    // JSON file. This is simpler than a side-table approach since each conversation already
+    // has its own file.
+
+    /// <inheritdoc />
+    public async Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        var conversation = await GetAsync(conversationId, ct).ConfigureAwait(false);
+        if (conversation is null)
+            return null;
+
+        return conversation.CanvasState ?? new Dictionary<string, JsonElement>();
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await GetCoreAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return false;
+
+            conversation.CanvasState ??= new Dictionary<string, JsonElement>();
+            conversation.CanvasState[key] = value;
+            await SaveAsync(conversation, ct).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await GetCoreAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return;
+
+            if (conversation.CanvasState is not null)
+            {
+                conversation.CanvasState.Remove(key);
+                await SaveAsync(conversation, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await GetCoreAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return;
+
+            conversation.CanvasState = null;
+            await SaveAsync(conversation, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    private async Task<Conversation?> GetCoreAsync(ConversationId conversationId, CancellationToken ct)
+    {
+        // Internal get that bypasses the public lock
+        return await GetAsync(conversationId, ct).ConfigureAwait(false);
+    }
 }

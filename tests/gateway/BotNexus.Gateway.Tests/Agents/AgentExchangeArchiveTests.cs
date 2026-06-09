@@ -583,5 +583,13 @@ public sealed class AgentExchangeArchiveTests
             => _inner.PinAsync(conversationId, pin, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => _inner.GetSummariesAsync(ct);
+        public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => _inner.GetCanvasStateAsync(conversationId, ct);
+        public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, System.Text.Json.JsonElement value, CancellationToken ct = default)
+            => _inner.SetCanvasStateKeyAsync(conversationId, key, value, ct);
+        public Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+            => _inner.DeleteCanvasStateKeyAsync(conversationId, key, ct);
+        public Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => _inner.ClearCanvasStateAsync(conversationId, ct);
     }
 }

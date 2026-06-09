@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 
@@ -65,6 +66,13 @@ public sealed record Conversation
 
     /// <summary>Gets or sets the last canvas HTML rendered for this conversation, if any.</summary>
     public string? CanvasHtml { get; set; }
+
+    /// <summary>
+    /// Gets or sets the canvas key-value state for this conversation. Used by canvas tools
+    /// to store and retrieve structured state that persists across sessions and gateway restarts.
+    /// <c>null</c> means no state has been set; an empty dictionary means state was cleared.
+    /// </summary>
+    public Dictionary<string, JsonElement>? CanvasState { get; set; }
 
     /// <summary>Gets or sets conversation-scoped instructions injected into the system prompt on session start.</summary>
     public string? Instructions { get; set; }
