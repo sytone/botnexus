@@ -13,7 +13,7 @@ public sealed class CliBannerTests
         CliBanner.Text.ShouldContain("Mostly harmless");
         CliBanner.Text.ShouldContain("SHELL ACCESS");
         CliBanner.Text.ShouldContain("╭────────────╮");
-        CliBanner.Text.ShouldContain("▣    ▣");
+        CliBanner.Text.ShouldContain("■    ■");
         CliBanner.Text.ShouldContain("╰────╯");
         CliBanner.Text.ShouldContain("questionable choices enabled");
         CliBanner.Text.ShouldContain("lightly smoking");
