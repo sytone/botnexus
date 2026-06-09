@@ -4,7 +4,7 @@ The SignalR channel provides real-time bidirectional communication between agent
 
 ## Overview
 
-The SignalR channel is built into the gateway and does not require external service setup. It uses ASP.NET Core SignalR with WebSocket transport for low-latency streaming.
+The SignalR channel is built into the gateway and does not require external service setup. It uses ASP.NET Core SignalR (which negotiates WebSocket transport automatically) for low-latency streaming.
 
 ## Features
 
@@ -35,7 +35,7 @@ No additional channel-specific configuration is needed. The SignalR hub is expos
 
 ```text
 Browser (Blazor WASM)
-    ↕ WebSocket (SignalR)
+    ↕ SignalR (WebSocket transport)
 Gateway (/hub/gateway)
     ↕
 SignalRChannelAdapter → GatewayHost → Agent Session
@@ -69,7 +69,7 @@ The Blazor portal communicates exclusively via the SignalR channel:
 
 | Feature | SignalR | Telegram | Service Bus |
 |---------|--------|----------|-------------|
-| Transport | WebSocket | HTTPS polling | AMQP |
+| Transport | SignalR (WebSocket) | HTTPS polling | AMQP |
 | Latency | Very low | Medium | Low |
 | Streaming | Token-by-token | Message-level | Message-level |
 | Rich UI | Full (Blazor) | Limited (Telegram formatting) | None (headless) |
@@ -79,6 +79,6 @@ The Blazor portal communicates exclusively via the SignalR channel:
 ## Related
 
 - [WebUI Connection](/development/webui-connection) — Developer docs on the SignalR connection lifecycle
-- [WebSocket Protocol](/websocket-protocol) — Low-level protocol reference
+- [SignalR Hub Contract](/signalr-hub-contract) — Hub method and event reference
 - [Telegram Channel](/user-guide/channels/telegram) — Alternative channel
 - [Service Bus Channel](/user-guide/channels/service-bus) — Alternative channel
