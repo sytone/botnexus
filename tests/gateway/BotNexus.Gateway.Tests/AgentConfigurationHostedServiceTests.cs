@@ -177,8 +177,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         // Before debounce fires — nothing should be registered
         registry.RegisterOperations.ShouldBeEmpty();
 
-        // Wait for debounce to fire
-        await Task.Delay(400);
+        // Wait for debounce to fire (generous margin for slow CI runners)
+        await Task.Delay(1000);
 
         // Only the final state should be applied (agent-9 from the last call)
         registry.Contains(AgentId.From("agent-9")).ShouldBeTrue();
