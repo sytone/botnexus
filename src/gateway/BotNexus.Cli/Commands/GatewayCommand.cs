@@ -90,6 +90,33 @@ internal sealed class GatewayCommand
         command.AddCommand(statusCommand);
         command.AddCommand(restartCommand);
 
+        // Service install/uninstall commands
+        var installCommand = new Command("install", "Install the gateway as an OS service (systemd/Windows Service/launchd)")
+        {
+            portOption,
+            sourceOption
+        };
+        installCommand.SetHandler(async context =>
+        {
+            var port = context.ParseResult.GetValueForOption(portOption);
+            var source = context.ParseResult.GetValueForOption(sourceOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var repoRoot = CliPaths.ResolveSource(source);
+            var home = CliPaths.ResolveTarget(target);
+            context.ExitCode = await InstallServiceAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
+        });
+
+        var uninstallCommand = new Command("uninstall", "Stop and remove the gateway OS service");
+        uninstallCommand.SetHandler(async context =>
+        {
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            context.ExitCode = await UninstallServiceAsync(verbose, context.GetCancellationToken());
+        });
+
+        command.AddCommand(installCommand);
+        command.AddCommand(uninstallCommand);
+
         return command;
     }
 
@@ -454,5 +481,66 @@ internal sealed class GatewayCommand
         if (uptime.TotalMinutes >= 1)
             return $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
         return $"{uptime.Seconds}s";
+    }
+
+    private static async Task<int> InstallServiceAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
+    {
+        var manager = OsServiceManagerFactory.Create();
+        if (manager is null)
+        {
+            AnsiConsole.MarkupLine("[red]\u2717[/] OS service installation is not supported on this platform.");
+            return 1;
+        }
+
+        AnsiConsole.MarkupLine($"[blue][[gateway]][/] Installing as {manager.ServiceManagerName}...");
+
+        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        if (!File.Exists(gatewayDll))
+        {
+            AnsiConsole.MarkupLine($"[red]\u2717[/] Release build not found at: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine("[dim]Run 'dotnet build -c Release' first.[/]");
+            return 1;
+        }
+
+        var result = await manager.InstallAsync(gatewayDll, home, port, cancellationToken);
+
+        if (result.Success)
+        {
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            if (verbose)
+            {
+                AnsiConsole.MarkupLine($"  [dim]Manager:[/] {manager.ServiceManagerName}");
+                AnsiConsole.MarkupLine($"  [dim]Binary:[/]  {Markup.Escape(gatewayDll)}");
+                AnsiConsole.MarkupLine($"  [dim]Home:[/]    {Markup.Escape(home)}");
+                AnsiConsole.MarkupLine($"  [dim]Port:[/]    {port}");
+            }
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine($"[red]\u2717[/] {Markup.Escape(result.Message)}");
+        return 1;
+    }
+
+    private static async Task<int> UninstallServiceAsync(bool verbose, CancellationToken cancellationToken)
+    {
+        var manager = OsServiceManagerFactory.Create();
+        if (manager is null)
+        {
+            AnsiConsole.MarkupLine("[red]\u2717[/] OS service management is not supported on this platform.");
+            return 1;
+        }
+
+        AnsiConsole.MarkupLine($"[blue][[gateway]][/] Removing {manager.ServiceManagerName} service...");
+
+        var result = await manager.UninstallAsync(cancellationToken);
+
+        if (result.Success)
+        {
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine($"[red]\u2717[/] {Markup.Escape(result.Message)}");
+        return 1;
     }
 }

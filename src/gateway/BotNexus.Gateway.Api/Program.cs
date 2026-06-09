@@ -42,6 +42,10 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     Args = args
 });
 
+// Enable running as an OS service (no-op when running interactively)
+builder.Host.UseSystemd();
+builder.Host.UseWindowsService();
+
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
