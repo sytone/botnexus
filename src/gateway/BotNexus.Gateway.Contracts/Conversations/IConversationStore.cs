@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
@@ -164,4 +165,40 @@ public interface IConversationStore
     /// </remarks>
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default);
+
+    // ── Canvas State ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Gets the full canvas state dictionary for a conversation.
+    /// Returns an empty dictionary if the conversation exists but has no state,
+    /// or <c>null</c> if the conversation does not exist.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sets (upserts) a single key in the canvas state for a conversation.
+    /// Returns <c>true</c> if the operation succeeded, <c>false</c> if the conversation was not found.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="key">The state key.</param>
+    /// <param name="value">The JSON value to store.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default);
+
+    /// <summary>
+    /// Deletes a single key from the canvas state. No-op if the key or conversation does not exist.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="key">The state key to remove.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Clears all canvas state for a conversation. No-op if the conversation has no state.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default);
 }

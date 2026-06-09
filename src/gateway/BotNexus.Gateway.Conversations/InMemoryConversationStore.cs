@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Configuration;
@@ -16,6 +17,7 @@ public sealed class InMemoryConversationStore : IConversationStore
 {
     private readonly ConcurrentDictionary<string, Conversation> _conversations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _participantLocks = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, JsonElement>> _canvasState = new(StringComparer.Ordinal);
     private readonly IWorldContext? _worldContext;
 
     /// <summary>Initialises a new <see cref="InMemoryConversationStore"/> without world stamping.</summary>
@@ -245,5 +247,46 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.Kind.ToString(),
             c.IsPinned,
             c.PinnedAt);
+
+    // ── Canvas State ───────────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        if (!_conversations.ContainsKey(conversationId.Value))
+            return Task.FromResult<Dictionary<string, JsonElement>?>(null);
+
+        if (_canvasState.TryGetValue(conversationId.Value, out var state))
+            return Task.FromResult<Dictionary<string, JsonElement>?>(new Dictionary<string, JsonElement>(state));
+
+        return Task.FromResult<Dictionary<string, JsonElement>?>(new Dictionary<string, JsonElement>());
+    }
+
+    /// <inheritdoc />
+    public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)
+    {
+        if (!_conversations.ContainsKey(conversationId.Value))
+            return Task.FromResult(false);
+
+        var state = _canvasState.GetOrAdd(conversationId.Value, _ => new ConcurrentDictionary<string, JsonElement>(StringComparer.Ordinal));
+        state[key] = value;
+        return Task.FromResult(true);
+    }
+
+    /// <inheritdoc />
+    public Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+    {
+        if (_canvasState.TryGetValue(conversationId.Value, out var state))
+            state.TryRemove(key, out _);
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        _canvasState.TryRemove(conversationId.Value, out _);
+        return Task.CompletedTask;
+    }
 }
 

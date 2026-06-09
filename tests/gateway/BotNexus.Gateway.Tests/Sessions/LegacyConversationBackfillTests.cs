@@ -803,5 +803,13 @@ public sealed class LegacyConversationBackfillTests
         public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default) => Inner.PinAsync(conversationId, pin, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => Inner.GetSummariesAsync(ct);
+        public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => Inner.GetCanvasStateAsync(conversationId, ct);
+        public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, System.Text.Json.JsonElement value, CancellationToken ct = default)
+            => Inner.SetCanvasStateKeyAsync(conversationId, key, value, ct);
+        public Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+            => Inner.DeleteCanvasStateKeyAsync(conversationId, key, ct);
+        public Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => Inner.ClearCanvasStateAsync(conversationId, ct);
     }
 }

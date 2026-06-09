@@ -622,6 +622,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsurePinColumnsAsync(connection, ct).ConfigureAwait(false);
+            await EnsureCanvasStateTableAsync(connection, ct).ConfigureAwait(false);
             await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
@@ -1275,4 +1276,109 @@ public sealed class SqliteConversationStore : IConversationStore
                 .Select(p => new SessionParticipant { CitizenId = p.CitizenId, Role = p.Role })
                 .ToList()
         };
+
+    // ── Canvas State ───────────────────────────────────────────────────────
+
+    private static async Task EnsureCanvasStateTableAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS canvas_state (
+                conversation_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, key),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_canvas_state_conversation ON canvas_state(conversation_id);
+            """;
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+
+        // Verify conversation exists first
+        var conversation = await GetAsync(conversationId, ct).ConfigureAwait(false);
+        if (conversation is null)
+            return null;
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT key, value FROM canvas_state WHERE conversation_id = $id";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+
+        var state = new Dictionary<string, JsonElement>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var key = reader.GetString(0);
+            var valueJson = reader.GetString(1);
+            state[key] = JsonDocument.Parse(valueJson).RootElement.Clone();
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+
+        // Verify conversation exists
+        var conversation = await GetAsync(conversationId, ct).ConfigureAwait(false);
+        if (conversation is null)
+            return false;
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO canvas_state (conversation_id, key, value)
+            VALUES ($id, $key, $value)
+            ON CONFLICT (conversation_id, key) DO UPDATE SET value = excluded.value
+            """;
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$value", JsonSerializer.Serialize(value));
+
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM canvas_state WHERE conversation_id = $id AND key = $key";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        command.Parameters.AddWithValue("$key", key);
+
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM canvas_state WHERE conversation_id = $id";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
 }

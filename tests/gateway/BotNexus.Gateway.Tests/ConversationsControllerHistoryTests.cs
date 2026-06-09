@@ -307,6 +307,15 @@ public sealed class ConversationsControllerHistoryTests
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, System.Text.Json.JsonElement value, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task ClearCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(BotNexus.Domain.World.CitizenId citizen, CancellationToken ct = default)
             => throw new NotSupportedException();
     }
