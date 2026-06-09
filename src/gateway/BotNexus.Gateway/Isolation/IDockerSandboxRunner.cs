@@ -13,12 +13,13 @@ public interface IDockerSandboxRunner
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Creates a new Docker sandbox with the given name.
-    /// Equivalent to <c>docker sandbox create --name {name}</c>.
+    /// Creates a new Docker sandbox with the given name and resolved configuration.
+    /// Equivalent to <c>docker sandbox create --name {name} [--image ...] [--memory ...] [--network ...]</c>.
     /// </summary>
     /// <param name="name">The sandbox name (e.g., "agent-farnsworth").</param>
+    /// <param name="options">Resolved per-agent sandbox configuration (image, network, memory).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task CreateAsync(string name, CancellationToken cancellationToken = default);
+    Task CreateAsync(string name, ResolvedDockerSandboxOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops and removes a running Docker sandbox.
