@@ -537,7 +537,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var requestServices = Context.GetHttpContext()?.RequestServices;
         var coordinator = requestServices?.GetService<ISessionCompactionCoordinator>() ?? _compactionCoordinator;
 
-        var outcome = await coordinator.CompactAsync(typedAgentId, session, CancellationToken.None).ConfigureAwait(false);
+        var outcome = await coordinator.CompactAsync(typedAgentId, session, CancellationToken.None, force: true).ConfigureAwait(false);
 
         return new CompactSessionResult(
             outcome.EntriesSummarized,

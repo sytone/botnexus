@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
@@ -930,7 +930,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         string sessionId,
         CancellationToken cancellationToken)
     {
-        var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+        var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken, force: true).ConfigureAwait(false);
         // Always notify on this path — channel-driven /compact callers expect feedback
         // even on failure so the user knows the command landed. Use the canonical
         // text (including the FailureReason when applicable).

@@ -348,7 +348,7 @@ internal sealed class BuiltInCommandContributor(
         }
 
         var agentId = AgentId.From(context.AgentId);
-        var outcome = await compactionCoordinator.CompactAsync(agentId, session, cancellationToken).ConfigureAwait(false);
+        var outcome = await compactionCoordinator.CompactAsync(agentId, session, cancellationToken, force: true).ConfigureAwait(false);
         var notificationText = compactionCoordinator.BuildNotificationText(outcome);
 
         return new CommandResult
