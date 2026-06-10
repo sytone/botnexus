@@ -52,7 +52,8 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}")]
     public ActionResult<AgentDescriptor> Get(string agentId)
     {
-        var descriptor = _registry.Get(AgentId.From(agentId));
+        var typedAgentId = AgentId.From(agentId);
+        var descriptor = _registry.Get(typedAgentId);
         return descriptor is not null ? Ok(descriptor) : NotFound();
     }
 
@@ -110,9 +111,10 @@ public sealed class AgentsController : ControllerBase
             });
         }
 
+        var typedAgentId = AgentId.From(agentId);
         var updatedDescriptor = descriptor;
 
-        var wasUpdated = _registry.Update(AgentId.From(agentId), updatedDescriptor);
+        var wasUpdated = _registry.Update(typedAgentId, updatedDescriptor);
         if (!wasUpdated)
             return NotFound();
 
@@ -145,7 +147,9 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}/sessions/{sessionId}/status")]
     public ActionResult<AgentInstance> GetInstanceStatus(string agentId, string sessionId)
     {
-        var instance = _supervisor.GetInstance(AgentId.From(agentId), SessionId.From(sessionId));
+        var typedAgentId = AgentId.From(agentId);
+        var typedSessionId = SessionId.From(sessionId);
+        var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
         return instance is not null ? Ok(instance) : NotFound();
     }
 
@@ -157,7 +161,9 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}/health")]
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
-        if (_registry.Get(AgentId.From(agentId)) is null)
+        var typedAgentId = AgentId.From(agentId);
+
+        if (_registry.Get(typedAgentId) is null)
             return NotFound();
 
         var instances = (_supervisor.GetAllInstances() ?? [])
@@ -165,10 +171,10 @@ public sealed class AgentsController : ControllerBase
             .ToList();
 
         if (instances.Count == 0)
-            return Ok(new AgentHealthResponse("unknown", AgentId.From(agentId), 0));
+            return Ok(new AgentHealthResponse("unknown", typedAgentId, 0));
 
         if (_supervisor is not IAgentHandleInspector inspector)
-            return Ok(new AgentHealthResponse("unknown", AgentId.From(agentId), instances.Count));
+            return Ok(new AgentHealthResponse("unknown", typedAgentId, instances.Count));
 
         var evaluatedCount = 0;
         foreach (var instance in instances)
@@ -179,18 +185,20 @@ public sealed class AgentsController : ControllerBase
 
             evaluatedCount++;
             if (!await healthCheckable.PingAsync(cancellationToken))
-                return Ok(new AgentHealthResponse("unhealthy", AgentId.From(agentId), instances.Count));
+                return Ok(new AgentHealthResponse("unhealthy", typedAgentId, instances.Count));
         }
 
         var status = evaluatedCount > 0 ? "healthy" : "unknown";
-        return Ok(new AgentHealthResponse(status, AgentId.From(agentId), instances.Count));
+        return Ok(new AgentHealthResponse(status, typedAgentId, instances.Count));
     }
 
     /// <summary>Stops a specific agent instance.</summary>
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {
-        await _supervisor.StopAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+        var typedAgentId = AgentId.From(agentId);
+        var typedSessionId = SessionId.From(sessionId);
+        await _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
         return NoContent();
     }
 
@@ -277,8 +285,10 @@ public sealed class AgentsController : ControllerBase
 
     private IAgentHandle? GetAgentHandle(string agentId, string sessionId)
     {
+        var typedAgentId = AgentId.From(agentId);
+        var typedSessionId = SessionId.From(sessionId);
         var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
-        return supervisorImpl?.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
+        return supervisorImpl?.GetHandle(typedAgentId, typedSessionId);
     }
 
     private async Task NotifyAgentsChangedBestEffortAsync(string changeType, string? agentId, CancellationToken cancellationToken)
