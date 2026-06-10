@@ -105,6 +105,7 @@ internal static class CliApp
             .AddSingleton<ProviderCommand>()
             .AddSingleton<CronCommands>()
             .AddSingleton<SatelliteCommand>()
+            .AddSingleton<DebugCommand>()
             .BuildServiceProvider();
     }
 
@@ -132,6 +133,7 @@ internal static class CliApp
         root.AddCommand(serviceProvider.GetRequiredService<ProviderCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<CronCommands>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<SatelliteCommand>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<DebugCommand>().Build(verboseOption, targetOption));
 
         return root;
     }
