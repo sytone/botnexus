@@ -426,4 +426,13 @@ internal sealed class FakeDockerSandboxRunner : IDockerSandboxRunner
         CopiedFromSandbox.Add((name, sandboxPath, hostPath));
         return Task.CompletedTask;
     }
+
+    public Task<SandboxExecResult> ExecAsync(
+        string name,
+        string command,
+        string? workingDirectory = null,
+        Dictionary<string, string>? environmentVariables = null,
+        int? timeoutSeconds = null,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(new SandboxExecResult(0, "", ""));
 }

@@ -319,6 +319,7 @@ public static class GatewayServiceCollectionExtensions
             var writer = serviceProvider.GetRequiredService<PlatformConfigWriter>();
             return new PlatformConfigAgentWriter(writer, home);
         }));
+        services.AddHostedService<BuiltInAgentRegistrationService>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;

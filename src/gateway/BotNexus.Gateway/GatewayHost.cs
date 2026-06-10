@@ -239,6 +239,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
         foreach (var agentId in targetAgents)
         {
+            var typedAgentId = AgentId.From(agentId);
             var sessionId = requestedSessionIdValue ?? $"{message.ChannelType}:{message.ChannelAddress}:{agentId}";
             using var agentActivity = GatewayDiagnostics.Source.StartActivity("gateway.agent_process", ActivityKind.Internal);
             agentActivity?.SetTag("botnexus.agent.id", agentId);
@@ -288,7 +289,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             else if (_conversationDispatcher is not null)
             {
                 var dispatchResult = await _conversationDispatcher.DispatchAsync(
-                    InboundMessageContext.FromInboundMessage(AgentId.From(agentId), message),
+                    InboundMessageContext.FromInboundMessage(typedAgentId, message),
                     cancellationToken);
                 sessionId = dispatchResult.Resolution.SessionId.Value;
                 resolution = dispatchResult.Resolution;
@@ -303,7 +304,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             {
                 // Back-compat path while runtime callers migrate to dispatcher injection.
                 var routingResult = await _conversationRouter.ResolveInboundAsync(
-                    AgentId.From(agentId),
+                    typedAgentId,
                     message.ChannelType,
                     message.ChannelAddress,
                     conversationId: hints.RequestedConversationId?.Value,
@@ -332,14 +333,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 // Synthesise a DispatchResult for the back-compat router path so
                 // the orchestrator's InboundDispatchResult uniformly reflects
                 // EVERY routed agent regardless of which resolver branch ran.
-                var routerContext = InboundMessageContext.FromInboundMessage(AgentId.From(agentId), message);
+                var routerContext = InboundMessageContext.FromInboundMessage(typedAgentId, message);
                 dispatches.Add(new DispatchResult(routerContext, resolvedSource, resolution));
             }
 
-            var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+            var typedSessionId = SessionId.From(sessionId);
+
+            var existingSessionTask = _sessions.GetAsync(typedSessionId, cancellationToken);
             var existingSession = existingSessionTask is null ? null : await existingSessionTask;
             var createdSession = existingSession is null;
-            var session = existingSession ?? await _sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId), cancellationToken);
+            var session = existingSession ?? await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, cancellationToken);
             if (createdSession)
             {
                 GatewayTelemetry.ActiveSessions.Add(1,
@@ -362,7 +365,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             if (ShouldInitializeSystemPrompt(session))
             {
                 // Force fresh handle creation so isolation strategy rebuilds system prompt from workspace files.
-                var stopTask = _supervisor.StopAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+                var stopTask = _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
                 if (stopTask is not null)
                     await stopTask;
             }
@@ -375,7 +378,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             }
             else if (session.Status != SessionStatus.Active)
             {
-                await SendSessionStatusRejectedAsync(message, agentId, sessionId, session.Status, cancellationToken);
+                await SendSessionStatusRejectedAsync(message, typedAgentId, typedSessionId, session.Status, cancellationToken);
                 continue;
             }
 
@@ -383,7 +386,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             {
                 if (string.Equals(controlCommand, ControlSteer, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
+                    if (await HandleSteeringAsync(message, typedAgentId, typedSessionId, cancellationToken))
                         continue;
                     // Steering must not fall through to normal message processing.
                     // Steering is control-plane metadata; discard it rather than converting to a user prompt.
@@ -392,7 +395,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }
                 else if (string.Equals(controlCommand, ControlCompact, StringComparison.OrdinalIgnoreCase))
                 {
-                    await HandleCompactionAsync(message, session, sessionId, cancellationToken);
+                    await HandleCompactionAsync(message, session, typedSessionId, cancellationToken);
                     continue;
                 }
             }
@@ -474,7 +477,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                 // Kill the existing handle so the supervisor creates a fresh one with
                 // clean context from ProjectForResume (which drops tool entries).
-                var stopTask = _supervisor.StopAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+                var stopTask = _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
                 if (stopTask is not null)
                     await stopTask;
 
@@ -501,7 +504,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
             try
             {
-                var handle = await _supervisor.GetOrCreateAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+                var handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, cancellationToken);
 
                 await _activity.PublishAsync(new GatewayActivity
                 {
@@ -511,7 +514,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }, cancellationToken);
 
                 var sessionSaved = false;
-                var agentDescriptor = _registry?.Get(AgentId.From(agentId));
+                var agentDescriptor = _registry?.Get(typedAgentId);
                 var resolvedChannel = ResolveChannelAdapter(message.ChannelType);
                 _logger.LogInformation("Channel resolution: type='{ChannelType}' found={Found} streaming={Streaming} streamEvents={StreamEvents}",
                     message.ChannelType,
@@ -536,7 +539,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         try
                         {
                             var observerBindings = await _conversationRouter.GetOutboundBindingsAsync(
-                                Domain.Primitives.SessionId.From(sessionId),
+                                typedSessionId,
                                 message.BindingId,
                                 cancellationToken);
 
@@ -547,7 +550,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                     var adapter = ResolveChannelAdapter(b.ChannelType) as IStreamEventChannelAdapter;
                                     var observerTarget = new ChannelStreamTarget(
                                         session.ConversationId,
-                                        Domain.Primitives.SessionId.From(sessionId),
+                                        typedSessionId,
                                         b.ChannelAddress,
                                         b.BindingId);
                                     return (Adapter: adapter!, Target: observerTarget);
@@ -581,8 +584,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 // from session.ConversationId).
                                 var enriched = evt with
                                 {
-                                    AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
-                                    SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId),
+                                    AgentId = evt.AgentId ?? typedAgentId,
+                                    SessionId = evt.SessionId ?? typedSessionId,
                                     ConversationId = evt.ConversationId ?? session.ConversationId
                                 };
 
@@ -591,7 +594,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 // that matches its routing semantics — see ChannelStreamTarget.
                                 var streamTarget = new ChannelStreamTarget(
                                     session.ConversationId,
-                                    Domain.Primitives.SessionId.From(sessionId),
+                                    typedSessionId,
                                     message.ChannelAddress,
                                     message.BindingId);
 
@@ -599,7 +602,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 {
                                     await HandleUserInputRequiredAsync(
                                         message,
-                                        sessionId,
+                                        typedSessionId,
                                         session.ConversationId,
                                         streamingSource,
                                         enriched,
@@ -717,7 +720,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }
 
                 // Outbound fan-out: deliver response to other bindings in the conversation
-                await FanOutResponseAsync(message, sessionId, cancellationToken);
+                await FanOutResponseAsync(message, typedSessionId, cancellationToken);
 
                 // Bump UpdatedAt on the conversation so the portal list ordering and
                 // retention thresholds reflect the time of the last message, not the
@@ -727,7 +730,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                 // Auto-generate conversation title after the first user+assistant exchange
                 // if the title is still the default value (#739). Best-effort fire-and-forget.
-                TryTriggerAutoTitle(session, agentId);
+                TryTriggerAutoTitle(session, typedAgentId);
 
                 await _activity.PublishAsync(new GatewayActivity
                 {
@@ -819,8 +822,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
     private async Task SendSessionStatusRejectedAsync(
         InboundMessage message,
-        string agentId,
-        string sessionId,
+        AgentId typedAgentId,
+        SessionId typedSessionId,
         GatewaySessionStatus status,
         CancellationToken cancellationToken)
     {
@@ -835,33 +838,33 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 ChannelType = message.ChannelType,
                 ChannelAddress = message.ChannelAddress,
                 Content = statusMessage,
-                SessionId = sessionId
+                SessionId = typedSessionId.Value
             }, cancellationToken);
         }
 
         await _activity.PublishAsync(new GatewayActivity
         {
             Type = GatewayActivityType.Error,
-            AgentId = agentId,
-            SessionId = sessionId,
+            AgentId = typedAgentId.Value,
+            SessionId = typedSessionId.Value,
             Message = statusMessage
         }, cancellationToken);
     }
 
     private async Task<bool> HandleSteeringAsync(
         InboundMessage message,
-        string agentId,
-        string sessionId,
+        AgentId typedAgentId,
+        SessionId typedSessionId,
         CancellationToken cancellationToken)
     {
-        var instance = _supervisor.GetInstance(AgentId.From(agentId), SessionId.From(sessionId));
+        var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
         IAgentHandle? handle = null;
 
         if (instance is not null)
         {
             try
             {
-                handle = await _supervisor.GetOrCreateAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+                handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, cancellationToken);
             }
             catch { /* instance exists but handle creation failed */ }
         }
@@ -872,20 +875,20 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         {
             _logger.LogInformation(
                 "Steering received but no agent handle exists for session {SessionId}. Discarding.",
-                sessionId);
+                typedSessionId.Value);
 
             await _activity.PublishAsync(new GatewayActivity
             {
                 Type = GatewayActivityType.SteeringQueued,
-                AgentId = agentId,
-                SessionId = sessionId
+                AgentId = typedAgentId.Value,
+                SessionId = typedSessionId.Value
             }, cancellationToken);
 
             return false;
         }
 
         // Record steering message in session history
-        var session = await _sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId), cancellationToken);
+        var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, cancellationToken);
         IReadOnlyList<MessageContentPart>? originalParts = message.ContentParts;
         IReadOnlyList<MessageContentPart>? processedParts = null;
 
@@ -893,7 +896,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         {
             var mediaContext = new MediaProcessingContext
             {
-                SessionId = sessionId,
+                SessionId = typedSessionId.Value,
                 ChannelType = message.ChannelType,
                 CancellationToken = cancellationToken
             };
@@ -914,18 +917,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         await _activity.PublishAsync(new GatewayActivity
         {
             Type = GatewayActivityType.SteeringInjected,
-            AgentId = agentId,
-            SessionId = sessionId
+            AgentId = typedAgentId.Value,
+            SessionId = typedSessionId.Value
         }, cancellationToken);
 
-        _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", agentId, sessionId);
+        _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", typedAgentId.Value, typedSessionId.Value);
         return true;
     }
 
     private async Task HandleCompactionAsync(
         InboundMessage message,
         GatewaySession session,
-        string sessionId,
+        SessionId typedSessionId,
         CancellationToken cancellationToken)
     {
         var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken, force: true).ConfigureAwait(false);
@@ -936,7 +939,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             outcome,
             message.ChannelType,
             message.ChannelAddress,
-            sessionId,
+            typedSessionId.Value,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -976,7 +979,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
     private async Task HandleUserInputRequiredAsync(
         InboundMessage message,
-        string sessionId,
+        SessionId typedSessionId,
         ConversationId conversationId,
         ChannelSource source,
         AgentStreamEvent streamEvent,
@@ -985,13 +988,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         var request = streamEvent.UserInputRequest;
 
         if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
-            await SendAskUserToBindingAsync(sourceAdapter, source, sessionId, conversationId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(sourceAdapter, source, typedSessionId, conversationId, streamEvent, request, cancellationToken);
 
         if (_conversationRouter is null)
             return;
 
         var outboundBindings = await _conversationRouter.GetOutboundBindingsAsync(
-            SessionId.From(sessionId),
+            typedSessionId,
             source.BindingId,
             cancellationToken);
 
@@ -1007,14 +1010,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 message.SenderId,
                 binding.BindingId,
                 binding.DisplayPrefix);
-            await SendAskUserToBindingAsync(adapter, bindingSource, sessionId, conversationId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(adapter, bindingSource, typedSessionId, conversationId, streamEvent, request, cancellationToken);
         }
     }
 
     private static async Task SendAskUserToBindingAsync(
         IChannelAdapter adapter,
         ChannelSource source,
-        string sessionId,
+        SessionId typedSessionId,
         ConversationId conversationId,
         AgentStreamEvent streamEvent,
         AskUserRequest? request,
@@ -1024,7 +1027,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         {
             var target = new ChannelStreamTarget(
                 conversationId,
-                SessionId.From(sessionId),
+                typedSessionId,
                 source.ChannelAddress,
                 source.BindingId);
             await streamAdapter.SendStreamEventAsync(target, streamEvent, cancellationToken);
@@ -1039,7 +1042,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             ChannelType = source.ChannelType,
             ChannelAddress = source.ChannelAddress,
             Content = FormatAskUserFallbackPrompt(request),
-            SessionId = sessionId,
+            SessionId = typedSessionId.Value,
             BindingId = source.BindingId,
             DisplayPrefix = source.DisplayPrefix
         }, cancellationToken);
@@ -1128,7 +1131,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// and the conversation title is still at its default value. No-op when auto-title is not
     /// wired or the conversation is not initialised.
     /// </summary>
-    private void TryTriggerAutoTitle(GatewaySession session, string agentIdValue)
+    private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
     {
         if (_autoTitleService is null || !session.ConversationId.IsInitialized())
             return;
@@ -1141,7 +1144,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
         _autoTitleService.TriggerBestEffort(
             session.ConversationId,
-            Domain.Primitives.AgentId.From(agentIdValue),
+            typedAgentId,
             userText,
             assistantText,
             titlingModel);
@@ -1178,7 +1181,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// </summary>
     private async Task FanOutResponseAsync(
         InboundMessage message,
-        string sessionId,
+        SessionId typedSessionId,
         CancellationToken cancellationToken)
     {
         if (_conversationRouter is null)
@@ -1187,7 +1190,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         try
         {
             var otherBindings = await _conversationRouter.GetOutboundBindingsAsync(
-                SessionId.From(sessionId),
+                typedSessionId,
                 message.BindingId,
                 cancellationToken);
 
@@ -1195,7 +1198,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 return;
 
             // Get last assistant message from session history
-            var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+            var session = await _sessions.GetAsync(typedSessionId, cancellationToken);
             var lastAssistantEntry = session?.GetHistorySnapshot()
                 .LastOrDefault(e => e.Role == MessageRole.Assistant);
 
@@ -1221,7 +1224,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         ChannelType = binding.ChannelType,
                         ChannelAddress = binding.ChannelAddress,
                         Content = lastAssistantEntry.Content,
-                        SessionId = sessionId,
+                        SessionId = typedSessionId.Value,
                         // Binding-aware fields: let the adapter render prefix decoration when
                         // configured. Native sub-addresses (e.g. Telegram forum topics) are
                         // already encoded in ChannelAddress by the originating adapter.
@@ -1231,7 +1234,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                     _logger.LogDebug(
                         "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
-                        binding.ChannelType, binding.ChannelAddress, sessionId);
+                        binding.ChannelType, binding.ChannelAddress, typedSessionId.Value);
                 }
                 catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
                 {
@@ -1255,7 +1258,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", sessionId);
+            _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", typedSessionId.Value);
         }
     }
 
