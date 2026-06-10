@@ -505,7 +505,7 @@ public sealed class MultiChannelFanOutTests
     private static Task InvokeFanOutAsync(GatewayHost host, InboundMessage message, string sessionId)
     {
         var method = typeof(GatewayHost).GetMethod("FanOutResponseAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (Task)method.Invoke(host, [message, sessionId, CancellationToken.None])!;
+        return (Task)method.Invoke(host, [message, SessionId.From(sessionId), CancellationToken.None])!;
     }
 
     private sealed class RecordingActivityBroadcaster : IActivityBroadcaster
