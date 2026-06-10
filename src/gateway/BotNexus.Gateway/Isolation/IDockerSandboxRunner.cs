@@ -56,4 +56,23 @@ public interface IDockerSandboxRunner
     /// <param name="hostPath">Destination path on the host (directory).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task CopyFromSandboxAsync(string name, string sandboxPath, string hostPath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Executes a command inside a running Docker sandbox.
+    /// Equivalent to <c>docker sandbox exec {name} -- {command}</c>.
+    /// </summary>
+    /// <param name="name">The sandbox name to execute in.</param>
+    /// <param name="command">The command string to execute.</param>
+    /// <param name="workingDirectory">Optional working directory inside the sandbox.</param>
+    /// <param name="environmentVariables">Optional environment variables to set for the command.</param>
+    /// <param name="timeoutSeconds">Optional timeout in seconds. Null = no timeout.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The result including exit code, stdout, and stderr.</returns>
+    Task<SandboxExecResult> ExecAsync(
+        string name,
+        string command,
+        string? workingDirectory = null,
+        Dictionary<string, string>? environmentVariables = null,
+        int? timeoutSeconds = null,
+        CancellationToken cancellationToken = default);
 }
