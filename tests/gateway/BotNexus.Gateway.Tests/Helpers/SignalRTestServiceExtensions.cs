@@ -1,6 +1,7 @@
 using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Extensions;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Gateway.Tests.Helpers;
@@ -16,6 +17,8 @@ public static class SignalRTestServiceExtensions
         services.AddSingleton<SignalRChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<SignalRChannelAdapter>());
         services.AddSingleton<IEndpointContributor, SignalREndpointContributor>();
+        services.AddSingleton<IUserIdProvider, ClaimsUserIdProvider>();
+        services.AddSignalRAuthPolicy();
         return services;
     }
 }
