@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
@@ -20,6 +19,10 @@ namespace BotNexus.Gateway.Isolation;
 /// (warm reuse) and stops after a configurable idle period to conserve resources.
 /// </para>
 /// <para>
+/// Per-agent configuration is resolved by merging global <see cref="DockerSandboxOptions"/>
+/// with agent-level <see cref="AgentDescriptor.IsolationOptions"/> overrides.
+/// </para>
+/// <para>
 /// The lifecycle state machine transitions are:
 /// <list type="bullet">
 ///   <item><b>None → Creating</b> — First dispatch triggers sandbox creation.</item>
@@ -37,6 +40,7 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
     private readonly IOptions<DockerSandboxOptions> _options;
     private readonly ILogger<DockerSandboxIsolationStrategy> _logger;
     private readonly ConcurrentDictionary<AgentId, SandboxState> _sandboxes = new();
+    private readonly ConcurrentDictionary<AgentId, ResolvedDockerSandboxOptions> _resolvedOptions = new();
     private readonly SemaphoreSlim _createLock = new(1, 1);
 
     public DockerSandboxIsolationStrategy(
@@ -66,15 +70,16 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
                 $"Agent '{descriptor.AgentId}' cannot use the '{Name}' isolation strategy.");
         }
 
+        var resolved = ResolveOptions(descriptor);
         var sandboxName = GetSandboxName(descriptor.AgentId);
-        var state = await EnsureSandboxRunningAsync(descriptor.AgentId, sandboxName, cancellationToken)
+        var state = await EnsureSandboxRunningAsync(descriptor.AgentId, sandboxName, resolved, cancellationToken)
             .ConfigureAwait(false);
 
         state.RecordActivity();
 
         _logger.LogInformation(
-            "Dispatching to Docker sandbox '{SandboxName}' for agent '{AgentId}' session '{SessionId}'",
-            sandboxName, descriptor.AgentId, context.SessionId);
+            "Dispatching to Docker sandbox '{SandboxName}' for agent '{AgentId}' session '{SessionId}' (image: {Image}, network: {NetworkEnabled})",
+            sandboxName, descriptor.AgentId, context.SessionId, resolved.Image, resolved.NetworkEnabled);
 
         return new DockerSandboxAgentHandle(
             descriptor.AgentId,
@@ -94,18 +99,29 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
             : SandboxLifecycleStatus.None;
 
     /// <summary>
+    /// Gets the resolved options for a given agent, or null if no sandbox has been created.
+    /// Useful for diagnostics and tests.
+    /// </summary>
+    public ResolvedDockerSandboxOptions? GetResolvedOptions(AgentId agentId)
+        => _resolvedOptions.TryGetValue(agentId, out var options) ? options : null;
+
+    /// <summary>
     /// Checks all running sandboxes for idle timeout and stops any that have exceeded it.
+    /// Uses per-agent resolved idle timeout (not the global default).
     /// Called by the hosted service on a timer.
     /// </summary>
     public async Task CheckIdleTimeoutsAsync(CancellationToken cancellationToken = default)
     {
-        var timeout = _options.Value.IdleTimeout;
         var now = DateTimeOffset.UtcNow;
 
         foreach (var (agentId, state) in _sandboxes)
         {
             if (state.Status != SandboxLifecycleStatus.Running)
                 continue;
+
+            var timeout = _resolvedOptions.TryGetValue(agentId, out var opts)
+                ? opts.IdleTimeout
+                : _options.Value.IdleTimeout;
 
             if (now - state.LastActivity > timeout)
             {
@@ -118,9 +134,17 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
         }
     }
 
+    private ResolvedDockerSandboxOptions ResolveOptions(AgentDescriptor descriptor)
+    {
+        var resolved = DockerSandboxOptionsResolver.Resolve(_options.Value, descriptor);
+        _resolvedOptions[descriptor.AgentId] = resolved;
+        return resolved;
+    }
+
     private async Task<SandboxState> EnsureSandboxRunningAsync(
         AgentId agentId,
         string sandboxName,
+        ResolvedDockerSandboxOptions resolved,
         CancellationToken cancellationToken)
     {
         // Fast path: sandbox already running
@@ -152,10 +176,10 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
             _sandboxes[agentId] = state;
 
             _logger.LogInformation(
-                "Creating Docker sandbox '{SandboxName}' for agent '{AgentId}'",
-                sandboxName, agentId);
+                "Creating Docker sandbox '{SandboxName}' for agent '{AgentId}' with image '{Image}' (network: {NetworkEnabled}, memory: {MemoryLimit})",
+                sandboxName, agentId, resolved.Image, resolved.NetworkEnabled, resolved.MemoryLimit ?? "unlimited");
 
-            await _runner.CreateAsync(sandboxName, cancellationToken).ConfigureAwait(false);
+            await _runner.CreateAsync(sandboxName, resolved, cancellationToken).ConfigureAwait(false);
             state.TransitionTo(SandboxLifecycleStatus.Running);
 
             _logger.LogInformation(
@@ -223,6 +247,7 @@ public sealed class DockerSandboxIsolationStrategy : IIsolationStrategy, IAsyncD
         }
 
         _sandboxes.Clear();
+        _resolvedOptions.Clear();
         _createLock.Dispose();
     }
 }

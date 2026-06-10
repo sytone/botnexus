@@ -179,6 +179,8 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IIsolationStrategy, SandboxIsolationStrategy>();
         services.AddSingleton<IIsolationStrategy, ContainerIsolationStrategy>();
         services.AddSingleton<IIsolationStrategy, RemoteIsolationStrategy>();
+        services.AddSingleton<IIsolationStrategy, DockerSandboxIsolationStrategy>();
+        services.TryAddSingleton<IDockerSandboxRunner, NullDockerSandboxRunner>();
 
         // Extension state store
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>

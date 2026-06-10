@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Isolation;
@@ -20,13 +21,16 @@ public sealed class DockerSandboxIsolationStrategyTests
             NullLogger<DockerSandboxIsolationStrategy>.Instance);
     }
 
-    private static AgentDescriptor MakeDescriptor(string agentId = "test-agent") => new()
+    private static AgentDescriptor MakeDescriptor(
+        string agentId = "test-agent",
+        IReadOnlyDictionary<string, object?>? isolationOptions = null) => new()
     {
         AgentId = AgentId.From(agentId),
         DisplayName = "Test Agent",
         ModelId = "model",
         ApiProvider = "provider",
-        IsolationStrategy = "docker-sandbox"
+        IsolationStrategy = "docker-sandbox",
+        IsolationOptions = isolationOptions ?? new Dictionary<string, object?>()
     };
 
     private static AgentExecutionContext MakeContext(string sessionId = "session-1") => new()
@@ -229,6 +233,147 @@ public sealed class DockerSandboxIsolationStrategyTests
 
         await act.ShouldThrowAsync<NotSupportedException>();
     }
+
+    [Fact]
+    public async Task CreateAsync_WithPerAgentImage_PassesImageToRunner()
+    {
+        _runner.Available = true;
+
+        var options = new Dictionary<string, object?>
+        {
+            ["image"] = "custom-sandbox:v2"
+        };
+        var descriptor = MakeDescriptor(isolationOptions: options);
+        var context = MakeContext();
+
+        await _strategy.CreateAsync(descriptor, context);
+
+        _runner.LastOptions.ShouldNotBeNull();
+        _runner.LastOptions!.Image.ShouldBe("custom-sandbox:v2");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutPerAgentOptions_UsesGlobalDefaults()
+    {
+        _runner.Available = true;
+        _options.Image = "global-image:latest";
+        _options.NetworkEnabled = true;
+        _options.MemoryLimit = "2g";
+
+        var descriptor = MakeDescriptor();
+        var context = MakeContext();
+
+        await _strategy.CreateAsync(descriptor, context);
+
+        _runner.LastOptions.ShouldNotBeNull();
+        _runner.LastOptions!.Image.ShouldBe("global-image:latest");
+        _runner.LastOptions!.NetworkEnabled.ShouldBeTrue();
+        _runner.LastOptions!.MemoryLimit.ShouldBe("2g");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithPerAgentNetworkAndMemory_OverridesGlobals()
+    {
+        _runner.Available = true;
+        _options.NetworkEnabled = false;
+        _options.MemoryLimit = "512m";
+
+        var options = new Dictionary<string, object?>
+        {
+            ["networkEnabled"] = true,
+            ["memoryLimit"] = "1g"
+        };
+        var descriptor = MakeDescriptor(isolationOptions: options);
+        var context = MakeContext();
+
+        await _strategy.CreateAsync(descriptor, context);
+
+        _runner.LastOptions.ShouldNotBeNull();
+        _runner.LastOptions!.NetworkEnabled.ShouldBeTrue();
+        _runner.LastOptions!.MemoryLimit.ShouldBe("1g");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithJsonElementOptions_ParsesCorrectly()
+    {
+        _runner.Available = true;
+
+        // Simulate JSON deserialization: values come as JsonElement
+        var json = JsonSerializer.SerializeToElement(new
+        {
+            image = "json-image:3.0",
+            networkEnabled = true,
+            memoryLimit = "256m",
+            idleTimeout = "00:02:30"
+        });
+
+        var options = new Dictionary<string, object?>();
+        foreach (var prop in json.EnumerateObject())
+        {
+            options[prop.Name] = prop.Value;
+        }
+
+        var descriptor = MakeDescriptor(isolationOptions: options);
+        var context = MakeContext();
+
+        await _strategy.CreateAsync(descriptor, context);
+
+        _runner.LastOptions.ShouldNotBeNull();
+        _runner.LastOptions!.Image.ShouldBe("json-image:3.0");
+        _runner.LastOptions!.NetworkEnabled.ShouldBeTrue();
+        _runner.LastOptions!.MemoryLimit.ShouldBe("256m");
+        _runner.LastOptions!.IdleTimeout.ShouldBe(TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task CheckIdleTimeouts_UsesPerAgentTimeout()
+    {
+        _runner.Available = true;
+        _options.IdleTimeout = TimeSpan.FromMinutes(60); // Global: very long
+
+        // Agent with short per-agent timeout
+        var shortOptions = new Dictionary<string, object?>
+        {
+            ["idleTimeout"] = "00:00:00.050" // 50ms
+        };
+        var descriptor = MakeDescriptor("short-timeout-agent", shortOptions);
+
+        await _strategy.CreateAsync(descriptor, MakeContext());
+        await Task.Delay(100);
+
+        await _strategy.CheckIdleTimeoutsAsync();
+
+        _strategy.GetStatus(descriptor.AgentId).ShouldBe(SandboxLifecycleStatus.Stopped);
+    }
+
+    [Fact]
+    public async Task GetResolvedOptions_AfterCreate_ReturnsResolvedConfig()
+    {
+        _runner.Available = true;
+
+        var options = new Dictionary<string, object?>
+        {
+            ["image"] = "my-image:1.0",
+            ["networkEnabled"] = false,
+            ["memoryLimit"] = "768m"
+        };
+        var descriptor = MakeDescriptor(isolationOptions: options);
+
+        await _strategy.CreateAsync(descriptor, MakeContext());
+
+        var resolved = _strategy.GetResolvedOptions(descriptor.AgentId);
+        resolved.ShouldNotBeNull();
+        resolved!.Image.ShouldBe("my-image:1.0");
+        resolved.NetworkEnabled.ShouldBeFalse();
+        resolved.MemoryLimit.ShouldBe("768m");
+    }
+
+    [Fact]
+    public void GetResolvedOptions_BeforeCreate_ReturnsNull()
+    {
+        var agentId = AgentId.From("never-created");
+        _strategy.GetResolvedOptions(agentId).ShouldBeNull();
+    }
 }
 
 /// <summary>
@@ -241,17 +386,19 @@ internal sealed class FakeDockerSandboxRunner : IDockerSandboxRunner
     public List<string> CreatedSandboxes { get; } = [];
     public List<string> StoppedSandboxes { get; } = [];
     public HashSet<string> HealthySandboxes { get; } = [];
+    public ResolvedDockerSandboxOptions? LastOptions { get; private set; }
 
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(Available);
 
-    public Task CreateAsync(string name, CancellationToken cancellationToken = default)
+    public Task CreateAsync(string name, ResolvedDockerSandboxOptions options, CancellationToken cancellationToken = default)
     {
         if (ThrowOnCreate)
             throw new InvalidOperationException("Docker create failed");
 
         CreatedSandboxes.Add(name);
         HealthySandboxes.Add(name);
+        LastOptions = options;
         return Task.CompletedTask;
     }
 
