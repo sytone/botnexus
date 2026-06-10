@@ -123,7 +123,11 @@ public sealed class ConversationsController : ControllerBase
             c.Purpose,
             c.Kind.ToString(),
             c.IsPinned,
-            c.PinnedAt);
+            c.PinnedAt,
+            c.Participants.Select(p => new ParticipantSummary(
+                p.CitizenId.Kind.ToString(),
+                p.CitizenId.Value,
+                p.Role)).ToList());
 
     /// <summary>
     /// Gets a specific conversation by ID, including all channel bindings.
@@ -389,6 +393,7 @@ public sealed class ConversationsController : ControllerBase
                 {
                     Kind = "boundary",
                     SessionId = previousSession.SessionId.Value,
+                    AgentId = previousSession.AgentId.Value,
                     Timestamp = previousSession.UpdatedAt,
                     Reason = "session_end"
                 });
@@ -417,6 +422,7 @@ public sealed class ConversationsController : ControllerBase
                     {
                         Kind = "compaction",
                         SessionId = session.SessionId.Value,
+                        AgentId = session.AgentId.Value,
                         Timestamp = entry.Timestamp,
                         Reason = "compaction",
                         Content = entry.Content
@@ -428,6 +434,7 @@ public sealed class ConversationsController : ControllerBase
                 {
                     Kind = "message",
                     SessionId = session.SessionId.Value,
+                    AgentId = session.AgentId.Value,
                     Role = entry.Role.ToString().ToLowerInvariant(),
                     Content = entry.Content,
                     Timestamp = entry.Timestamp,
