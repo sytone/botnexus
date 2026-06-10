@@ -342,7 +342,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 canvasConversationId = await ResolveConversationIdAsync(canvasConvStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                     .ConfigureAwait(false);
             }
-            tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasNotifiers));
+            tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasConvStore, canvasNotifiers));
         }
 
         List<object> extensionResourcesToDispose = [];
