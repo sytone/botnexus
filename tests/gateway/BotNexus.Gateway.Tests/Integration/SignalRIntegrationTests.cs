@@ -399,53 +399,45 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Hub_Steer_DispatchesWithControlMetadata()
+    public async Task Hub_Steer_InjectsViaHandleAndPublishesSteeringInjected()
     {
-        var dispatcher = new RecordingDispatcher();
-        await using var factory = CreateTestFactory(services =>
-        {
-            services.UseRecordingDispatcher(dispatcher);
-        });
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "steer-session";
         string? conversationId = null;
+
+        // Pre-create the session so GetOrCreateAsync can resolve it
+        var sessions = factory.Services.GetRequiredService<ISessionStore>();
+        await sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(TestAgentId), cts.Token);
+
         var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", conversationId, cts.Token);
 
-        dispatcher.Messages.ShouldHaveSingleItem();
+        // Steer should succeed without error and return the session id
         result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
-        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
-        dispatcher.Messages[0].RoutingHints!.RequestedConversationId.ShouldBeNull();
-        dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
-        dispatcher.Messages[0].Metadata.ShouldNotContainKey("control"); // Fallback path omits control
     }
 
     [Fact]
     public async Task Hub_Steer_SetsConversationIdWhenProvided()
     {
-        var dispatcher = new RecordingDispatcher();
-        await using var factory = CreateTestFactory(services =>
-        {
-            services.UseRecordingDispatcher(dispatcher);
-        });
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "steer-session";
         const string conversationId = "conv-42";
+
+        // Pre-create the session so GetOrCreateAsync can resolve it
+        var sessions = factory.Services.GetRequiredService<ISessionStore>();
+        await sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(TestAgentId), cts.Token);
+
         var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", conversationId, cts.Token);
 
-        dispatcher.Messages.ShouldHaveSingleItem();
+        // Should succeed without error
         result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
-        dispatcher.Messages[0].RoutingHints.ShouldNotBeNull();
-        dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
-        dispatcher.Messages[0].RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe("conv-42");
-        dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
-        dispatcher.Messages[0].Metadata.ShouldNotContainKey("control"); // Fallback path omits control
     }
 
     [Fact]

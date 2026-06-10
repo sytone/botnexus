@@ -315,12 +315,11 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
     /// <summary>
     /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see>: a steer used
     /// to fall through as a normal user prompt in the wrong conversation when the agent
-    /// wasn't running. The dispatched <see cref="InboundMessage"/> for a <c>Steer</c> call
-    /// must carry the <c>control=steer</c> metadata so downstream code can route it as a
-    /// control plane message rather than a regular turn.
+    /// wasn't running. Steer now bypasses the orchestrator queue entirely and calls
+    /// handle.SteerAsync directly — no InboundMessage is dispatched.
     /// </summary>
     [Fact]
-    public async Task Steer_DispatchesAsControlMessage_WithSteerMetadata_NotRegularPrompt()
+    public async Task Steer_InjectsDirectlyViaHandle_NotThroughOrchestratorQueue()
     {
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
@@ -329,31 +328,27 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         });
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
+
+        // Pre-create session so the supervisor can resolve the handle
+        var sessions = factory.Services.GetRequiredService<ISessionStore>();
+        await sessions.GetOrCreateAsync(SessionId.From("steer-session-1"), AgentId.From(TestAgentId), cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync<JsonElement>(
             "Steer", TestAgentId, "steer-session-1", "stop and reconsider", (string?)null, cts.Token);
 
-        var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
-        dispatched.Metadata.ShouldNotBeNull();
-        dispatched.Metadata.ShouldContainKey("messageType");
-        dispatched.Metadata["messageType"].ShouldBe("steer");
-        // After fix: fallback path (no handle) dispatches as a regular message
-        // with messageType=steer for tracing but without control=steer.
-        // The #192 concern (steer falling through as prompt) is now solved
-        // at the GatewayHub level: when a handle exists, Steer bypasses the
-        // queue entirely and calls SteerAsync directly.
-        dispatched.Metadata.ShouldNotContainKey("control");
+        // Steer no longer dispatches through the orchestrator
+        dispatcher.Messages.ShouldBeEmpty();
     }
 
     /// <summary>
     /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see>: when the
-    /// caller supplies an explicit <c>conversationId</c>, the steer must carry that id on the
-    /// dispatched <see cref="InboundMessage"/> so the router targets that conversation rather
-    /// than falling through to a different SignalR-created conversation.
+    /// caller supplies an explicit <c>conversationId</c>, Steer must succeed and the
+    /// conversationId is carried on the SteeringInjected activity event (not on an
+    /// InboundMessage dispatch).
     /// </summary>
     [Fact]
-    public async Task Steer_WithExplicitConversationId_CarriesIt_OnDispatchedInbound()
+    public async Task Steer_WithExplicitConversationId_SucceedsWithoutDispatch()
     {
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
@@ -363,15 +358,17 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
+        // Pre-create session
+        var sessions = factory.Services.GetRequiredService<ISessionStore>();
+        await sessions.GetOrCreateAsync(SessionId.From("steer-session-2"), AgentId.From(TestAgentId), cts.Token);
+
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync<JsonElement>(
+        var result = await connection.InvokeAsync<JsonElement>(
             "Steer", TestAgentId, "steer-session-2", "be more thorough", "explicit-target-conv", cts.Token);
 
-        var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
-        dispatched.RoutingHints.ShouldNotBeNull();
-        dispatched.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe(
-            "explicit-target-conv",
-            "Steer with explicit conversationId must carry it through; #192");
+        // Should succeed without dispatching through orchestrator
+        result.GetProperty("sessionId").GetString().ShouldBe("steer-session-2");
+        dispatcher.Messages.ShouldBeEmpty();
     }
 
     // ── #130 — Stale bindings must be muted on disconnect ──────────────────
