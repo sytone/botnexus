@@ -16,8 +16,11 @@ using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.Copilot;
+using BotNexus.Agent.Providers.Copilot.Discovery;
 using BotNexus.Agent.Providers.GitHubModels;
 using BotNexus.Agent.Providers.IntegrationMock;
+using BotNexus.Gateway.Models;
 using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
 using BotNexus.Domain.World;
@@ -252,6 +255,26 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
+
+    // Dynamic model discovery: overlay live API models onto built-in registry.
+    // Discovery is best-effort — failures fall back to built-in models.
+    var authManager = serviceProvider.GetRequiredService<GatewayAuthManager>();
+    var discoveryClient = new CopilotDiscoveryClient(httpClient);
+    var copilotDiscovery = new CopilotModelDiscoveryProvider(
+        discoveryClient,
+        async ct =>
+        {
+            var apiKey = await authManager.GetApiKeyAsync("github-copilot", ct);
+            var endpoint = authManager.GetApiEndpoint("github-copilot");
+            return (apiKey, endpoint);
+        },
+        loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>());
+
+    var discoveryService = new ModelDiscoveryService(
+        models,
+        [copilotDiscovery],
+        loggerFactory.CreateLogger<ModelDiscoveryService>());
+    discoveryService.DiscoverAndRegisterAsync().GetAwaiter().GetResult();
 
     // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
     // or any provider with an explicit Api override (e.g. integration-mock).
