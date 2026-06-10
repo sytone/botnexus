@@ -4,6 +4,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Services;
@@ -174,6 +175,46 @@ public sealed class ConversationAutoTitleService
     public static bool IsDefaultTitle(string? title)
         => string.IsNullOrWhiteSpace(title) ||
            string.Equals(title, DefaultTitle, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Returns true when the entry is a live conversation entry that should be counted
+    /// for auto-title guard logic. Uses <see cref="SessionContextProjector.IsVisibleInLiveContext"/>
+    /// as the base filter (excludes historical, crash sentinels, notifications), then further
+    /// excludes tool results, compaction summaries, and system entries since only user and
+    /// assistant messages matter for first-exchange detection.
+    /// </summary>
+    public static bool IsLiveConversationEntry(SessionEntry entry)
+        => SessionContextProjector.IsVisibleInLiveContext(entry)
+           && !entry.IsCompactionSummary
+           && entry.Role != MessageRole.Tool
+           && entry.Role != MessageRole.System;
+
+    /// <summary>
+    /// Evaluates the session history to determine if this is the first user+assistant exchange.
+    /// Returns the user text and the last non-empty assistant text if the guard passes, or
+    /// (null, null) if auto-title should not fire.
+    /// </summary>
+    public static (string? UserText, string? AssistantText) ShouldTriggerAutoTitle(
+        IReadOnlyList<SessionEntry> history)
+    {
+        var liveEntries = history.Where(IsLiveConversationEntry).ToList();
+
+        var userEntries = liveEntries.Where(e => e.Role == MessageRole.User).ToList();
+        var assistantEntries = liveEntries.Where(e => e.Role == MessageRole.Assistant).ToList();
+
+        // Only fire on the first exchange: exactly 1 user entry + at least 1 assistant entry.
+        if (userEntries.Count != 1 || assistantEntries.Count < 1)
+            return (null, null);
+
+        var userText = userEntries[0].Content;
+        // Pick the last assistant entry with non-empty content (handles tool-call turns
+        // where intermediate assistant entries have empty content).
+        var assistantText = assistantEntries
+            .LastOrDefault(e => !string.IsNullOrWhiteSpace(e.Content))?.Content
+            ?? assistantEntries[^1].Content;
+
+        return (userText, assistantText);
+    }
 
     internal static string BuildPrompt(string userText, string assistantText)
         => $"In 5 words or fewer, give a descriptive title for this conversation based on the " +
