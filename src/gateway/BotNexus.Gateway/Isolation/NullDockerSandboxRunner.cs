@@ -21,4 +21,12 @@ internal sealed class NullDockerSandboxRunner : IDockerSandboxRunner
 
     public Task<bool> IsHealthyAsync(string name, CancellationToken cancellationToken = default)
         => Task.FromResult(false);
+
+    public Task CopyToSandboxAsync(string name, string hostPath, string sandboxPath, CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException(
+            "Docker sandbox is not available. Cannot copy files to sandbox.");
+
+    public Task CopyFromSandboxAsync(string name, string sandboxPath, string hostPath, CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException(
+            "Docker sandbox is not available. Cannot copy files from sandbox.");
 }
