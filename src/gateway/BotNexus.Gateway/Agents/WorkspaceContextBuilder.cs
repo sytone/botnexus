@@ -140,7 +140,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         // Dispatch BeforePromptBuild hooks (e.g. skills injection)
         if (_hookDispatcher is not null)
         {
-            var hookEvent = new BeforePromptBuildEvent(descriptor.AgentId, prompt, []);
+            var hookEvent = new BeforePromptBuildEvent(descriptor.AgentId, descriptor, prompt, []);
             var results = await _hookDispatcher
                 .DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(hookEvent, cancellationToken)
                 .ConfigureAwait(false);

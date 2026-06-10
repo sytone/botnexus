@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Hooks;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Hooks;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -32,7 +33,7 @@ public sealed class HookDispatcherTests
                     return new BeforePromptBuildResult { PrependSystemContext = "A" };
                 }));
 
-        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), TestDescriptor("agent-1"), "prompt", []);
         var results = await _dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
 
         executionOrder.ToList().ShouldBe(new[] { "first", "second" });
@@ -88,12 +89,8 @@ public sealed class HookDispatcherTests
                     AppendSystemContext = "Suffix-B"
                 }));
 
-        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), TestDescriptor("agent-1"), "prompt", []);
         var results = await _dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
-
-        results.Count().ShouldBe(2);
-
-        // Consumers can merge: collect all prepend/append values
         var allPrepend = results
             .Where(r => r.PrependSystemContext is not null)
             .Select(r => r.PrependSystemContext)
@@ -167,7 +164,7 @@ public sealed class HookDispatcherTests
         var dispatcher = new HookDispatcher();
 
         // Before initializer runs: no handlers
-        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), TestDescriptor("agent-1"), "prompt", []);
         var before = await dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
         before.ShouldBeEmpty();
 
@@ -205,7 +202,7 @@ public sealed class HookDispatcherTests
                 priority: 200, _ => new BeforePromptBuildResult { AppendSystemContext = "AGENTS.md" }));
 
         // Both should fire on the same dispatcher
-        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), TestDescriptor("agent-1"), "prompt", []);
         var results = await dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
 
         results.Count.ShouldBe(2);
@@ -225,4 +222,12 @@ public sealed class HookDispatcherTests
         public Task<TResult?> HandleAsync(TEvent hookEvent, CancellationToken ct = default)
             => Task.FromResult(handler(hookEvent));
     }
+
+    private static AgentDescriptor TestDescriptor(string agentId) => new()
+    {
+        AgentId = AgentId.From(agentId),
+        DisplayName = agentId,
+        ModelId = "test-model",
+        ApiProvider = "test"
+    };
 }

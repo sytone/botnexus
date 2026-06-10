@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Hooks;
 
@@ -9,10 +10,12 @@ namespace BotNexus.Gateway.Abstractions.Hooks;
 /// Gateway hook handlers receive this to inject context into the prompt.
 /// </summary>
 /// <param name="AgentId">The agent being invoked.</param>
+/// <param name="Descriptor">The agent descriptor for the invoked agent. Use this instead of resolving from IAgentRegistry — hook handlers may hold stale DI references.</param>
 /// <param name="CurrentPrompt">The current system prompt text before modifications.</param>
 /// <param name="Messages">The conversation history being sent to the LLM.</param>
 public sealed record BeforePromptBuildEvent(
     AgentId AgentId,
+    AgentDescriptor Descriptor,
     string CurrentPrompt,
     IReadOnlyList<object> Messages);
 

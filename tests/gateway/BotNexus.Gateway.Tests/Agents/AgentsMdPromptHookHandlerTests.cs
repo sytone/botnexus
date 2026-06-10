@@ -12,7 +12,13 @@ public sealed class AgentsMdPromptHookHandlerTests
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static BeforePromptBuildEvent MakeEvent(string agentId = "test-agent")
-        => new(AgentId.From(agentId), "system prompt", []);
+        => new(AgentId.From(agentId), new AgentDescriptor
+        {
+            AgentId = AgentId.From(agentId),
+            DisplayName = agentId,
+            ModelId = "test-model",
+            ApiProvider = "test"
+        }, "system prompt", []);
 
     private static StubWorkspaceManager MakeManager(string workspacePath)
         => new(workspacePath);

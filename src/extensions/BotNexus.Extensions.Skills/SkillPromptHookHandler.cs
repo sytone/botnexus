@@ -16,7 +16,6 @@ public sealed class SkillPromptHookHandler
     : IHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>
 {
     private readonly IAgentWorkspaceManager _workspaceManager;
-    private readonly IAgentRegistry _agentRegistry;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<SkillPromptHookHandler> _logger;
 
@@ -25,20 +24,32 @@ public sealed class SkillPromptHookHandler
 
     public SkillPromptHookHandler(
         IAgentWorkspaceManager workspaceManager,
-        IAgentRegistry agentRegistry,
         ILogger<SkillPromptHookHandler>? logger = null)
     {
         _workspaceManager = workspaceManager;
-        _agentRegistry = agentRegistry;
         _fileSystem = new FileSystem();
         _logger = logger ?? NullLogger<SkillPromptHookHandler>.Instance;
+    }
+
+    /// <summary>
+    /// Backward-compatible constructor for callers that still pass IAgentRegistry.
+    /// The registry parameter is accepted but unused — the descriptor is now
+    /// obtained directly from <see cref="BeforePromptBuildEvent.Descriptor"/>.
+    /// </summary>
+    [System.Obsolete("Use the constructor without IAgentRegistry. The descriptor is now provided via BeforePromptBuildEvent.Descriptor.")]
+    public SkillPromptHookHandler(
+        IAgentWorkspaceManager workspaceManager,
+        IAgentRegistry agentRegistry,
+        ILogger<SkillPromptHookHandler>? logger = null)
+        : this(workspaceManager, logger)
+    {
     }
 
     public Task<BeforePromptBuildResult?> HandleAsync(
         BeforePromptBuildEvent hookEvent,
         CancellationToken ct = default)
     {
-        var descriptor = _agentRegistry.Get(hookEvent.AgentId);
+        var descriptor = hookEvent.Descriptor;
         if (descriptor is null)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 
