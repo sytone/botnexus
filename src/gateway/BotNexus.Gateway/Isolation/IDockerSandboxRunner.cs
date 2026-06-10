@@ -36,4 +36,24 @@ public interface IDockerSandboxRunner
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if the sandbox is running and healthy.</returns>
     Task<bool> IsHealthyAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Copies files from the host filesystem into the sandbox.
+    /// Equivalent to <c>docker sandbox cp {hostPath}/. {name}:{sandboxPath}</c>.
+    /// </summary>
+    /// <param name="name">The sandbox name.</param>
+    /// <param name="hostPath">Source path on the host (directory).</param>
+    /// <param name="sandboxPath">Destination path inside the sandbox.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task CopyToSandboxAsync(string name, string hostPath, string sandboxPath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Copies files from the sandbox back to the host filesystem.
+    /// Equivalent to <c>docker sandbox cp {name}:{sandboxPath}/. {hostPath}</c>.
+    /// </summary>
+    /// <param name="name">The sandbox name.</param>
+    /// <param name="sandboxPath">Source path inside the sandbox.</param>
+    /// <param name="hostPath">Destination path on the host (directory).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task CopyFromSandboxAsync(string name, string sandboxPath, string hostPath, CancellationToken cancellationToken = default);
 }
