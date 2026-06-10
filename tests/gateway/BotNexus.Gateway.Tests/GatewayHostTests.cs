@@ -654,9 +654,9 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("nudge", sessionId: "session-1", metadata: new Dictionary<string, object?> { ["control"] = "steer" }));
 
-        // Steering was NOT called because agent is not running
-        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // Steering was discarded — PromptAsync should NOT be called
+        // Steering IS called even though agent is not running (fix: no IsRunning gate)
+        handle.Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
+        // Steering still does NOT fall through to PromptAsync
         handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Never);
     }
 

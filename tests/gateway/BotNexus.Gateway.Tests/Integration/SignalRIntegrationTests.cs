@@ -420,7 +420,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
         dispatcher.Messages[0].RoutingHints!.RequestedConversationId.ShouldBeNull();
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
-        dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
+        dispatcher.Messages[0].Metadata.ShouldNotContainKey("control"); // Fallback path omits control
     }
 
     [Fact]
@@ -445,7 +445,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         dispatcher.Messages[0].RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(sessionId);
         dispatcher.Messages[0].RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe("conv-42");
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
-        dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
+        dispatcher.Messages[0].Metadata.ShouldNotContainKey("control"); // Fallback path omits control
     }
 
     [Fact]

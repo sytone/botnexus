@@ -360,36 +360,85 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var typedChannelType = ChannelKey.From("signalr");
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
-        // Steering must target the caller-provided session so the control message
-        // reaches the active conversation the user is currently steering. Subscribe
-        // by conversation so post-compaction streams continue to arrive. #682
+        // Subscribe so post-compaction streams continue to arrive. #682
         await SubscribeInternalAsync(typedSessionId);
 
-        var connectionId = Context.ConnectionId;
-        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId;
+        // Steering bypasses the per-session orchestrator queue and calls the handle
+        // directly. The old design routed steer through AcceptAsync → FIFO queue,
+        // which serialized behind the running dispatch — by the time the steer was
+        // dequeued, the agent had already finished and the steer was discarded.
+        //
+        // New design: get the live handle, call SteerAsync regardless of IsRunning.
+        // The agent's PendingMessageQueue accepts steers at any time; they are
+        // drained at the next turn boundary (mid-run) or at the start of the next
+        // run (if agent is idle). This matches how InterruptAndSteer already works.
+        var handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
 
-        _ = SafeDispatchAsync(
-            () => _orchestrator.AcceptAsync(
-                new InboundMessage
-                {
-                    ChannelType = typedChannelType,
-                    SenderId = connectionId,
-                    Sender = CitizenId.Of(UserId.From(connectionId)),
-                    ChannelAddress = ChannelAddress.From(typedAgentId.Value),
-                    RoutingHints = new InboundMessageRoutingHints(
-                        RequestedAgentId: typedAgentId,
-                        RequestedSessionId: typedSessionId,
-                        RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
-                    Content = content,
-                    Metadata = new Dictionary<string, object?>
+        if (handle is not null)
+        {
+            // Record steering message in session history
+            var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, Context.ConnectionAborted);
+            session.AddEntry(new SessionEntry
+            {
+                Role = BotNexus.Domain.Primitives.MessageRole.User,
+                Content = content
+            });
+            await _sessions.SaveAsync(session, Context.ConnectionAborted);
+
+            // Inject into agent's steering queue (works whether running or idle)
+            await handle.SteerAsync(content, Context.ConnectionAborted);
+
+            await _activity.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.SteeringInjected,
+                AgentId = typedAgentId.Value,
+                SessionId = typedSessionId.Value,
+                ConversationId = conversationId
+            }, Context.ConnectionAborted);
+
+            _logger.LogInformation(
+                "Steering injected for agent {AgentId} session {SessionId} (running={IsRunning})",
+                typedAgentId.Value, typedSessionId.Value, handle.IsRunning);
+        }
+        else
+        {
+            // No handle exists — agent has never been started for this session,
+            // or was disposed. Queue the steer as a normal message so it triggers
+            // a new agent run (the orchestrator will create the handle on dispatch).
+            _logger.LogInformation(
+                "Steering queued as message for agent {AgentId} session {SessionId} (no active handle)",
+                typedAgentId.Value, typedSessionId.Value);
+
+            _ = SafeDispatchAsync(
+                () => _orchestrator.AcceptAsync(
+                    new InboundMessage
                     {
-                        ["messageType"] = "steer",
-                        ["control"] = "steer"
-                    }
-                },
-                CancellationToken.None),
-            typedAgentId,
-            typedSessionId);
+                        ChannelType = typedChannelType,
+                        SenderId = Context.ConnectionId,
+                        Sender = CitizenId.Of(UserId.From(Context.ConnectionId)),
+                        ChannelAddress = ChannelAddress.From(typedAgentId.Value),
+                        RoutingHints = new InboundMessageRoutingHints(
+                            RequestedAgentId: typedAgentId,
+                            RequestedSessionId: typedSessionId,
+                            RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
+                        Content = content,
+                        Metadata = new Dictionary<string, object?>
+                        {
+                            ["messageType"] = "steer"
+                        }
+                    },
+                    CancellationToken.None),
+                typedAgentId,
+                typedSessionId);
+
+            await _activity.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.SteeringQueued,
+                AgentId = typedAgentId.Value,
+                SessionId = typedSessionId.Value,
+                ConversationId = conversationId
+            }, Context.ConnectionAborted);
+        }
 
         return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
     }

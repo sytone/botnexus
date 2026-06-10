@@ -338,10 +338,12 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         dispatched.Metadata.ShouldNotBeNull();
         dispatched.Metadata.ShouldContainKey("messageType");
         dispatched.Metadata["messageType"].ShouldBe("steer");
-        dispatched.Metadata.ShouldContainKey("control");
-        dispatched.Metadata["control"].ShouldBe(
-            "steer",
-            "Steer hub method must dispatch with control=steer metadata so it cannot be re-routed as a regular prompt; #192");
+        // After fix: fallback path (no handle) dispatches as a regular message
+        // with messageType=steer for tracing but without control=steer.
+        // The #192 concern (steer falling through as prompt) is now solved
+        // at the GatewayHub level: when a handle exists, Steer bypasses the
+        // queue entirely and calls SteerAsync directly.
+        dispatched.Metadata.ShouldNotContainKey("control");
     }
 
     /// <summary>
