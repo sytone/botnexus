@@ -30,6 +30,7 @@ public static class CronServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, HeartbeatAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, WebhookAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, CommandCronAction>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, MemoryDreamingCronAction>());
         services.TryAddSingleton<IPromptTemplateResolver, CronOptionsPromptTemplateResolver>();
         return services;
     }
