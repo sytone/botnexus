@@ -1133,16 +1133,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         if (_autoTitleService is null || !session.ConversationId.IsInitialized())
             return;
 
-        // Only fire on the first exchange: exactly 1 user entry + at least 1 assistant entry.
-        var userEntries = session.History.Count(e => e.Role == MessageRole.User);
-        var assistantEntries = session.History.Count(e => e.Role == MessageRole.Assistant);
-        if (userEntries != 1 || assistantEntries < 1)
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History);
+        if (userText is null || assistantText is null)
             return;
-
-        var userText = session.History
-            .FirstOrDefault(e => e.Role == MessageRole.User)?.Content ?? string.Empty;
-        var assistantText = session.History
-            .LastOrDefault(e => e.Role == MessageRole.Assistant)?.Content ?? string.Empty;
 
         var titlingModel = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
 
