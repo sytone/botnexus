@@ -48,6 +48,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled += HandleSubAgentKilled;
         _hub.OnSteeringFeedback += HandleSteeringFeedback;
         _hub.OnCanvasUpdated += HandleCanvasUpdated;
+        _hub.OnCanvasStateChanged += HandleCanvasStateChanged;
         _hub.OnConversationChanged += HandleConversationChanged;
                 _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
@@ -598,6 +599,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    public void HandleCanvasStateChanged(string conversationId, string key, object? value)
+    {
+        // Notify store that canvas state changed — the CanvasPanel will re-read state.
+        // The actual state is fetched from the REST API by the iframe SDK; we just trigger
+        // the re-render so the portal can forward the notification to the iframe.
+        _store.NotifyChanged();
+    }
+
     // ── Connection lifecycle ──────────────────────────────────────────────
 
     public void HandleReconnecting()
@@ -943,6 +952,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled -= HandleSubAgentKilled;
         _hub.OnSteeringFeedback -= HandleSteeringFeedback;
         _hub.OnCanvasUpdated -= HandleCanvasUpdated;
+        _hub.OnCanvasStateChanged -= HandleCanvasStateChanged;
         _hub.OnConversationChanged -= HandleConversationChanged;
                 _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;
