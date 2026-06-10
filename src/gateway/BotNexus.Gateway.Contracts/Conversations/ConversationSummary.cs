@@ -18,6 +18,10 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// like the portal can hide internal agent-to-agent transcripts from the user-facing conversation
 /// list. Defaults to <c>HumanAgent</c> for back-compat with pre-Phase-4 stores.
 /// </param>
+/// <param name="Participants">
+/// Citizen participants in this conversation — enables the portal to render a participant
+/// roster (avatar chips) in the conversation header for multi-agent sessions.
+/// </param>
 public sealed record ConversationSummary(
     string ConversationId,
     string AgentId,
@@ -31,4 +35,13 @@ public sealed record ConversationSummary(
     string? Purpose = null,
     string Kind = "HumanAgent",
     bool IsPinned = false,
-    DateTimeOffset? PinnedAt = null);
+    DateTimeOffset? PinnedAt = null,
+    IReadOnlyList<ParticipantSummary>? Participants = null);
+
+/// <summary>
+/// Lightweight participant identity for conversation summary rendering.
+/// </summary>
+/// <param name="Kind">Citizen kind: "User" or "Agent".</param>
+/// <param name="Id">The citizen identifier (agent id or user id).</param>
+/// <param name="Role">Optional role label (e.g., "initiator", "peer").</param>
+public sealed record ParticipantSummary(string Kind, string Id, string? Role = null);

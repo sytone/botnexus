@@ -71,6 +71,9 @@ public sealed class ConversationHistoryEntry
     /// <summary>The session this entry belongs to.</summary>
     public required string SessionId { get; init; }
 
+    /// <summary>The agent that owns the session this entry belongs to.</summary>
+    public string? AgentId { get; init; }
+
     /// <summary>Entry timestamp.</summary>
     public required DateTimeOffset Timestamp { get; init; }
 
