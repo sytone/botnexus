@@ -411,4 +411,19 @@ internal sealed class FakeDockerSandboxRunner : IDockerSandboxRunner
 
     public Task<bool> IsHealthyAsync(string name, CancellationToken cancellationToken = default)
         => Task.FromResult(HealthySandboxes.Contains(name));
+
+    public List<(string Name, string HostPath, string SandboxPath)> CopiedToSandbox { get; } = [];
+    public List<(string Name, string SandboxPath, string HostPath)> CopiedFromSandbox { get; } = [];
+
+    public Task CopyToSandboxAsync(string name, string hostPath, string sandboxPath, CancellationToken cancellationToken = default)
+    {
+        CopiedToSandbox.Add((name, hostPath, sandboxPath));
+        return Task.CompletedTask;
+    }
+
+    public Task CopyFromSandboxAsync(string name, string sandboxPath, string hostPath, CancellationToken cancellationToken = default)
+    {
+        CopiedFromSandbox.Add((name, sandboxPath, hostPath));
+        return Task.CompletedTask;
+    }
 }

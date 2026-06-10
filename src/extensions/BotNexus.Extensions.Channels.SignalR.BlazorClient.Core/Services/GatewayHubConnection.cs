@@ -67,6 +67,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the current canvas HTML is updated for an agent.</summary>
     public event Action<string, string, string>? OnCanvasUpdated;
 
+    /// <summary>Raised when a canvas state key is changed or cleared.</summary>
+    public event Action<string, string, object?>? OnCanvasStateChanged;
+
     /// <summary>Raised when a conversation is created, updated, or archived on the server.</summary>
     public event Action<ConversationChangedPayload>? OnConversationChanged;
 
@@ -128,6 +131,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SubAgentEventPayload>("SubAgentKilled", p => OnSubAgentKilled?.Invoke(p));
         _connection.On<SteeringFeedbackPayload>("SteeringFeedback", p => OnSteeringFeedback?.Invoke(p));
         _connection.On<string, string, string>("CanvasUpdated", (agentId, conversationId, html) => OnCanvasUpdated?.Invoke(agentId, conversationId, html));
+        _connection.On<string, string, object?>("CanvasStateChanged", (conversationId, key, value) => OnCanvasStateChanged?.Invoke(conversationId, key, value));
         _connection.On<AgentsChangedPayload>("AgentsChanged", p => OnAgentsChanged?.Invoke(p));
                 _connection.On<ConversationChangedPayload>("ConversationChanged", p => OnConversationChanged?.Invoke(p));
 
