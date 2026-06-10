@@ -26,4 +26,11 @@ public interface ICronStore
     /// a cron job to its conversation under P9-D — this CAS guarantees only one stamp wins.
     /// </remarks>
     Task<ConversationId?> TrySetConversationIdAsync(JobId jobId, ConversationId conversationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Purges completed and failed run records older than <paramref name="cutoff"/>.
+    /// Never deletes runs with status "running" to avoid removing in-progress work.
+    /// Returns the number of rows deleted.
+    /// </summary>
+    Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default);
 }

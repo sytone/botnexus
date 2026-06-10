@@ -28,6 +28,8 @@
     <Compile Include="ActionStubs\WebhookActionStub.cs" />
     <Compile Include="Extensions\CronServiceCollectionExtensions.cs" />
     <Compile Include="Tools\CronTool.cs" />
+    <Compile Include="CronRunRetentionOptions.cs" />
+    <Compile Include="CronRunRetentionHostedService.cs" />
   </ItemGroup>
 
   <ItemGroup>
