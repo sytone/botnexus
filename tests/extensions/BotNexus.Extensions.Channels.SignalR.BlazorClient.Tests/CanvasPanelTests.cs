@@ -14,6 +14,11 @@ public sealed class CanvasPanelTests : IDisposable
     {
         _store.SeedAgents([new AgentSummary("agent-1", "Alpha")]);
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
+        _ctx.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri("http://localhost/") });
+
+        // Setup JS interop for the canvas bridge
+        _ctx.JSInterop.SetupVoid("canvasBridge.register", _ => true);
+        _ctx.JSInterop.SetupVoid("canvasBridge.unregister", _ => true);
     }
 
     public void Dispose() => _ctx.Dispose();
@@ -44,6 +49,68 @@ public sealed class CanvasPanelTests : IDisposable
         sandbox.ShouldNotContain("allow-same-origin");
         sandbox.ShouldNotContain("allow-top-navigation");
         srcdoc.ShouldContain("<h1>Canvas</h1>");
+    }
+
+    [Fact]
+    public void Renders_bridge_sdk_script_in_srcdoc()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<html><body><h1>Canvas</h1></body></html>";
+
+        var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var frame = cut.Find("iframe[data-testid='canvas-iframe']");
+        var srcdoc = frame.GetAttribute("srcdoc");
+
+        Assert.NotNull(srcdoc);
+        srcdoc.ShouldContain("window.canvasState");
+        srcdoc.ShouldContain("canvasStateReady");
+        srcdoc.ShouldContain("canvas-state-response");
+    }
+
+    [Fact]
+    public void Bridge_sdk_injected_before_closing_body_tag()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<html><body><p>Content</p></body></html>";
+
+        var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var frame = cut.Find("iframe[data-testid='canvas-iframe']");
+        var srcdoc = frame.GetAttribute("srcdoc")!;
+
+        // The bridge script should appear before </body>
+        var scriptIdx = srcdoc.IndexOf("window.canvasState", StringComparison.Ordinal);
+        var bodyCloseIdx = srcdoc.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+        scriptIdx.ShouldBeGreaterThan(0);
+        bodyCloseIdx.ShouldBeGreaterThan(scriptIdx);
+    }
+
+    [Fact]
+    public void Bridge_sdk_appended_when_no_body_tag()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<h1>No body tag</h1>";
+
+        var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var frame = cut.Find("iframe[data-testid='canvas-iframe']");
+        var srcdoc = frame.GetAttribute("srcdoc")!;
+
+        srcdoc.ShouldContain("<h1>No body tag</h1>");
+        srcdoc.ShouldContain("window.canvasState");
+    }
+
+    [Fact]
+    public void Registers_js_bridge_when_canvas_html_present()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<html><body>Bridge test</body></html>";
+
+        _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var invocation = _ctx.JSInterop.Invocations["canvasBridge.register"];
+        invocation.ShouldNotBeEmpty();
     }
 
     [Fact]
@@ -86,8 +153,8 @@ public sealed class CanvasPanelTests : IDisposable
                 throw new InvalidOperationException("Expected canvas iframe srcdoc to be present.");
 
             srcdoc.ShouldContain("final");
-            srcdoc.ShouldNotContain("first");
-            srcdoc.ShouldNotContain("second");
+            srcdoc.ShouldNotContain("<body>first</body>");
+            srcdoc.ShouldNotContain("<body>second</body>");
         });
     }
 

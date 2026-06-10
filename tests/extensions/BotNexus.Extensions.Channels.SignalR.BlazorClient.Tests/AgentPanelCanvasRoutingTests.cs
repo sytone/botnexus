@@ -34,6 +34,11 @@ public sealed class AgentPanelCanvasRoutingTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+        _ctx.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri("http://localhost/") });
+
+        // Setup JS interop for the canvas bridge
+        _ctx.JSInterop.SetupVoid("canvasBridge.register", _ => true);
+        _ctx.JSInterop.SetupVoid("canvasBridge.unregister", _ => true);
     }
 
     public void Dispose() => _ctx.Dispose();
