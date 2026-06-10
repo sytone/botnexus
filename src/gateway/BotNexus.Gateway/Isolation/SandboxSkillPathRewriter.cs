@@ -19,7 +19,7 @@ public static class SandboxSkillPathRewriter
     /// </summary>
     /// <param name="content">Skill content (markdown) that may contain host paths.</param>
     /// <param name="hostSkillsDir">
-    /// The host-absolute skills directory path (e.g., "C:\Users\jobullen\.botnexus\skills").
+    /// The host-absolute skills directory path (e.g., "%USERPROFILE%\.botnexus\skills").
     /// Both forward-slash and backslash variants are replaced.
     /// </param>
     /// <param name="sandboxSkillsPath">
