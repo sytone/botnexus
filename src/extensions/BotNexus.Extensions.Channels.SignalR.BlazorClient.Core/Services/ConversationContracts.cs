@@ -16,7 +16,13 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
     [property: JsonPropertyName("kind")] string Kind = "HumanAgent",
     [property: JsonPropertyName("isPinned")] bool IsPinned = false,
-    [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null);
+    [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null,
+    [property: JsonPropertyName("participants")] IReadOnlyList<ParticipantDto>? Participants = null);
+
+public sealed record ParticipantDto(
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("role")] string? Role = null);
 
 public sealed record CreateConversationRequestDto(
     [property: JsonPropertyName("agentId")] string AgentId,
@@ -59,6 +65,9 @@ public sealed class ConversationHistoryEntryDto
 
     [JsonPropertyName("sessionId")]
     public required string SessionId { get; init; }
+
+    [JsonPropertyName("agentId")]
+    public string? AgentId { get; init; }
 
     [JsonPropertyName("timestamp")]
     public required DateTimeOffset Timestamp { get; init; }
