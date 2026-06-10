@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
@@ -660,6 +661,76 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null) return NotFound();
         await _conversations.PinAsync(ConversationId.From(conversationId), false, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        return NoContent();
+    }
+
+    // -----------------------------------------------------------------------
+    // Canvas State CRUD (Issue #1066)
+    // -----------------------------------------------------------------------
+
+    /// <summary>Returns the full canvas state dictionary for a conversation (empty object if none).</summary>
+    [HttpGet("{conversationId}/canvas-state")]
+    [ProducesResponseType(typeof(Dictionary<string, JsonElement>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetCanvasState(string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        var state = await _conversations.GetCanvasStateAsync(ConversationId.From(conversationId), cancellationToken);
+        return Ok(state ?? new Dictionary<string, JsonElement>());
+    }
+
+    /// <summary>Returns a single canvas state key value, or 404 if not found.</summary>
+    [HttpGet("{conversationId}/canvas-state/{key}")]
+    [ProducesResponseType(typeof(JsonElement), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetCanvasStateKey(string conversationId, string key, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        var state = await _conversations.GetCanvasStateAsync(ConversationId.From(conversationId), cancellationToken);
+        if (state is null || !state.TryGetValue(key, out var value))
+            return NotFound();
+
+        return Ok(value);
+    }
+
+    /// <summary>Upserts a canvas state key. Body is the raw JSON value.</summary>
+    [HttpPost("{conversationId}/canvas-state/{key}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> SetCanvasStateKey(
+        string conversationId,
+        string key,
+        [FromBody] JsonElement value,
+        CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        await _conversations.SetCanvasStateKeyAsync(ConversationId.From(conversationId), key, value, cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>Removes a canvas state key. Idempotent — returns 204 even if key didn't exist.</summary>
+    [HttpDelete("{conversationId}/canvas-state/{key}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> DeleteCanvasStateKey(
+        string conversationId,
+        string key,
+        CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        await _conversations.DeleteCanvasStateKeyAsync(ConversationId.From(conversationId), key, cancellationToken);
         return NoContent();
     }
 
