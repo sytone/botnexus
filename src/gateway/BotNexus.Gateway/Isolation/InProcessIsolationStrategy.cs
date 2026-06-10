@@ -894,6 +894,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                                 CacheRead: assistant.Usage.CacheRead,
                                 CacheWrite: assistant.Usage.CacheWrite)
                         },
+                    ToolExecutionUpdateEvent { PartialResult.Details: AskUserRequest askUserRequest }
+                        => new AgentStreamEvent
+                        {
+                            Type = AgentStreamEventType.UserInputRequired,
+                            UserInputRequest = askUserRequest,
+                            MessageId = messageId
+                        },
                     TurnEndEvent
                         => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
                     _ => null
