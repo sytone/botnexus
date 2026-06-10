@@ -17,6 +17,8 @@
     <Compile Include="SqliteWebhookRegistrationStore.cs" />
     <Compile Include="SqliteWebhookRunStore.cs" />
     <Compile Include="WebhookServiceCollectionExtensions.cs" />
+    <Compile Include="WebhookRunRetentionOptions.cs" />
+    <Compile Include="WebhookRunRetentionHostedService.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,6 +28,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
