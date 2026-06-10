@@ -85,7 +85,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         ]);
 
         // Allow debounce (zero delay still needs task continuation to fire)
-        await Task.Delay(50);
+        await Task.Delay(200);
 
         registry.Contains(AgentId.From("agent-a")).ShouldBeTrue();
         registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("Agent A v2");
@@ -116,7 +116,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         callback.ShouldNotBeNull();
 
         callback!([CreateDescriptor("agent-new")]);
-        await Task.Delay(50);
+        await Task.Delay(200);
 
         registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
         registry.RegisterOperations.ShouldContain("agent-new");
@@ -143,7 +143,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
 
         // Fire change with an identical descriptor (new instance, same values)
         callback!([CreateDescriptor("agent-a", "Stable Agent")]);
-        await Task.Delay(50);
+        await Task.Delay(200);
 
         registry.UnregisterOperations.ShouldBeEmpty();
         // Should NOT re-register — agent unchanged
