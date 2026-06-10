@@ -90,6 +90,7 @@ builder.Services.AddOpenTelemetry()
     });
 
 builder.Services.AddBotNexusGateway(builder.Configuration);
+builder.Services.AddDiagnosticsHardening();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.Configure<CronOptions>(options =>
@@ -373,22 +374,43 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
-app.MapGet("/health", (IServiceProvider sp) =>
+app.MapGet("/health", async (IServiceProvider sp) =>
 {
-    var tracker = sp.GetService<BotNexus.Gateway.Diagnostics.IActivityTracker>();
-    var lastActivity = tracker?.LastActivityUtc;
-    var elapsed = tracker?.TimeSinceLastActivity;
-    var status = elapsed switch
+    // Health endpoint hardening: if the handler cannot execute within 5 seconds,
+    // it means the threadpool is exhausted or a deadlock is preventing work scheduling.
+    // Return 503 in that case rather than holding the connection open indefinitely.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var response = await BotNexus.Gateway.Diagnostics.HealthEndpointHelper.ExecuteWithTimeoutAsync(
+        () =>
+        {
+            var tracker = sp.GetService<BotNexus.Gateway.Diagnostics.IActivityTracker>();
+            var lastActivity = tracker?.LastActivityUtc;
+            var elapsed = tracker?.TimeSinceLastActivity;
+            var status = elapsed switch
+            {
+                { TotalMinutes: >= 10 } => "degraded",
+                { TotalMinutes: >= 5 } => "warning",
+                _ => "ok"
+            };
+            return Task.FromResult(new BotNexus.Gateway.Diagnostics.HealthResponse(
+                status,
+                lastActivity?.ToString("o"),
+                elapsed?.TotalSeconds));
+        },
+        cts.Token);
+
+    if (response.Status == "timeout")
     {
-        { TotalMinutes: >= 10 } => "degraded",
-        { TotalMinutes: >= 5 } => "warning",
-        _ => "ok"
-    };
+        return Results.Json(
+            new { status = "timeout", message = "Health check timed out — possible threadpool exhaustion or deadlock" },
+            statusCode: 503);
+    }
+
     return Results.Ok(new
     {
-        status,
-        lastActivity = lastActivity?.ToString("o"),
-        inactivitySeconds = elapsed?.TotalSeconds
+        status = response.Status,
+        lastActivity = response.LastActivity,
+        inactivitySeconds = response.InactivitySeconds
     });
 });
 app.MapGet("/api/version", () =>
