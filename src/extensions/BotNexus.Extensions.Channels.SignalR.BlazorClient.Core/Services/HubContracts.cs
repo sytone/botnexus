@@ -182,10 +182,12 @@ public sealed record SessionSummary(
 
 /// <summary>Result returned by <c>CompactSession</c>.</summary>
 public sealed record CompactSessionResult(
+    [property: JsonPropertyName("succeeded")] bool Succeeded,
     [property: JsonPropertyName("summarized")] int Summarized,
     [property: JsonPropertyName("preserved")] int Preserved,
     [property: JsonPropertyName("tokensBefore")] int TokensBefore,
-    [property: JsonPropertyName("tokensAfter")] int TokensAfter);
+    [property: JsonPropertyName("tokensAfter")] int TokensAfter,
+    [property: JsonPropertyName("failureReason")] string? FailureReason = null);
 
 // ── Client-side history DTOs (matches ChannelHistoryController response) ─────
 
