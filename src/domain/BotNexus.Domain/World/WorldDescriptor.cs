@@ -34,4 +34,10 @@ public sealed record WorldDescriptor
     /// Gets or sets the cross world permissions.
     /// </summary>
     public IReadOnlyList<CrossWorldPermission> CrossWorldPermissions { get; init; } = [];
+
+    /// <summary>
+    /// Satellite nodes registered in this world — remote persistent processes that connect back
+    /// to the gateway for notifications, canvas rendering, and remote command execution.
+    /// </summary>
+    public IReadOnlyList<Satellite> Satellites { get; init; } = [];
 }

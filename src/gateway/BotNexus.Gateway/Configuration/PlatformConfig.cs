@@ -170,6 +170,13 @@ public sealed class GatewaySettingsConfig
     /// Per-agent overrides take precedence over this world default.
     /// </summary>
     public DateTimeInjectionConfig? DateTimeInjection { get; set; }
+
+    /// <summary>
+    /// Registered satellite nodes keyed by satellite ID.
+    /// Satellites are remote persistent processes that connect to the gateway for
+    /// notifications, canvas rendering, and optionally remote command execution.
+    /// </summary>
+    public Dictionary<string, SatelliteConfig>? Satellites { get; set; }
 }
 
 /// <summary>
