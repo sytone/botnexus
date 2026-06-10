@@ -20,7 +20,7 @@ public sealed class CanvasToolTests
     public async Task ExecuteAsync_Render_PublishesHtmlWithConversationId()
     {
         var notifier = new Mock<IAgentCanvasNotifier>();
-        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), [notifier.Object]);
+        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), canvasNotifiers: [notifier.Object]);
         var result = await ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["action"] = "render",
@@ -39,7 +39,7 @@ public sealed class CanvasToolTests
     public async Task ExecuteAsync_Render_NullConversationId_PassesEmptyString()
     {
         var notifier = new Mock<IAgentCanvasNotifier>();
-        var tool = new CanvasTool(AgentId.From("agent-a"), null, [notifier.Object]);
+        var tool = new CanvasTool(AgentId.From("agent-a"), null, canvasNotifiers: [notifier.Object]);
         await ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["action"] = "render",
@@ -57,7 +57,7 @@ public sealed class CanvasToolTests
     public async Task ExecuteAsync_Clear_PublishesEmptyHtmlWithConversationId()
     {
         var notifier = new Mock<IAgentCanvasNotifier>();
-        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), [notifier.Object]);
+        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), canvasNotifiers: [notifier.Object]);
         var result = await ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["action"] = "clear"
