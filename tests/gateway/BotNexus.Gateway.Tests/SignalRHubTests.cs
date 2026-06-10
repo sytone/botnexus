@@ -377,33 +377,37 @@ public sealed class SignalRHubTests
     {
         const string requestedSessionId = "session-steer-target";
 
-        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var handle = Mock.Of<IAgentHandle>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle);
 
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1");
 
         var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From(requestedSessionId), "nudge", null);
 
         result.SessionId.ShouldBe(requestedSessionId);
-        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
-        dispatched.RoutingHints.ShouldNotBeNull();
-        dispatched.RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(requestedSessionId);
-        dispatched.RoutingHints.RequestedConversationId.ShouldBeNull();
-        dispatched.Metadata["messageType"].ShouldBe("steer");
-        dispatched.Metadata.ShouldNotContainKey("control"); // Fallback path doesn't mark as control
+        // Verify SteerAsync was called on the handle with the content
+        Mock.Get(handle).Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task GatewayHub_Steer_SetsConversationIdOnDispatchedMessage()
     {
-        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var handle = Mock.Of<IAgentHandle>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle);
+        var activity = new Mock<IActivityBroadcaster>();
 
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var hub = CreateHub(supervisor: supervisor.Object, activity: activity.Object, connectionId: "conn-1");
 
-        var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", "conv-42");
+        await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", "conv-42");
 
-        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
-        dispatched.RoutingHints.ShouldNotBeNull();
-        dispatched.RoutingHints!.RequestedConversationId!.Value.Value.ShouldBe("conv-42");
+        // Verify SteeringInjected activity was published with the conversation id
+        activity.Verify(a => a.PublishAsync(
+            It.Is<GatewayActivity>(ga => ga.Type == GatewayActivityType.SteeringInjected && ga.ConversationId == "conv-42"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
