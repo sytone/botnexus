@@ -158,6 +158,30 @@ public sealed class LlmSessionCompactorTests
     }
 
     [Fact]
+    public async Task CompactAsync_PreservedTurnsZero_SummarizesEverything()
+    {
+        // This is the force-compact scenario: even with only 1 user turn (the
+        // exact case that broke before), PreservedTurns=0 forces ALL visible
+        // entries into toSummarize.
+        var session = CreateSession(
+            ("user", "the only user message"),
+            ("assistant", "long response about the topic"),
+            ("tool", "tool result data"));
+        var compactor = CreateCompactor("forced summary of everything");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 0,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        result.EntriesSummarized.ShouldBe(3);
+        result.EntriesPreserved.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task CompactAsync_SetsIsCompactionSummaryFlag()
     {
         var session = CreateSession(
