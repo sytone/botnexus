@@ -23,7 +23,8 @@ public static class WorldDescriptorBuilder
             HostedAgents = hostedAgents,
             Locations = ResolveLocations(platformConfig, hostedAgents),
             AvailableStrategies = ResolveExecutionStrategies(platformConfig, agentRegistry, isolationStrategies),
-            CrossWorldPermissions = ResolveCrossWorldPermissions(platformConfig)
+            CrossWorldPermissions = ResolveCrossWorldPermissions(platformConfig),
+            Satellites = ResolveSatellites(platformConfig)
         };
     }
 
@@ -328,4 +329,51 @@ public static class WorldDescriptorBuilder
 
         return property.GetString();
     }
+
+    private static IReadOnlyList<Satellite> ResolveSatellites(PlatformConfig config)
+    {
+        var satellites = config.Gateway?.Satellites;
+        if (satellites is null || satellites.Count == 0)
+            return [];
+
+        return satellites
+            .Where(kvp => kvp.Value.Enabled && !string.IsNullOrWhiteSpace(kvp.Value.OwnerUserId))
+            .Select(kvp =>
+            {
+                var (id, satConfig) = kvp;
+                var platform = ParsePlatform(satConfig.Platform);
+                var capabilities = satConfig.Capabilities?
+                    .Select(ParseCapability)
+                    .Where(c => c.HasValue)
+                    .Select(c => c!.Value)
+                    .ToArray() ?? [];
+
+                return new Satellite
+                {
+                    Id = id.Trim(),
+                    DisplayName = satConfig.DisplayName ?? id,
+                    Platform = platform,
+                    OwnerUserId = satConfig.OwnerUserId!,
+                    Capabilities = capabilities
+                };
+            })
+            .OrderBy(s => s.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static SatellitePlatform ParsePlatform(string? value) => value?.ToLowerInvariant() switch
+    {
+        "windows" => SatellitePlatform.Windows,
+        "macos" => SatellitePlatform.MacOS,
+        "linux" => SatellitePlatform.Linux,
+        _ => SatellitePlatform.Windows
+    };
+
+    private static SatelliteCapability? ParseCapability(string value) => value.ToLowerInvariant() switch
+    {
+        "notify" => SatelliteCapability.Notify,
+        "canvas" => SatelliteCapability.Canvas,
+        "exec" => SatelliteCapability.Exec,
+        _ => null
+    };
 }
