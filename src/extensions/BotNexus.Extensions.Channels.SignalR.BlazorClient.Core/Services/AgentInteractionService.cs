@@ -181,9 +181,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var convId = agent.ActiveConversationId;
             if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
             {
-                conv.Messages.Add(new ChatMessage("System",
-                    $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_",
-                    DateTimeOffset.UtcNow));
+                var notificationText = result.Succeeded
+                    ? $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_"
+                    : $"_[Compaction failed: {result.FailureReason ?? "unknown error"}]_";
+                conv.Messages.Add(new ChatMessage("System", notificationText, DateTimeOffset.UtcNow));
                 _store.NotifyChanged();
             }
 

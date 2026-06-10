@@ -571,10 +571,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var outcome = await coordinator.CompactAsync(typedAgentId, session, CancellationToken.None, force: true).ConfigureAwait(false);
 
         return new CompactSessionResult(
+            outcome.Succeeded && outcome.Applied,
             outcome.EntriesSummarized,
             outcome.EntriesPreserved,
             outcome.TokensBefore,
-            outcome.TokensAfter);
+            outcome.TokensAfter,
+            outcome.FailureReason);
     }
 
     /// <summary>

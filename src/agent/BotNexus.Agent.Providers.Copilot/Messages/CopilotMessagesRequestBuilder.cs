@@ -105,7 +105,19 @@ internal static class CopilotMessagesRequestBuilder
         }
         else if (model.Reasoning && copilotOpts?.ThinkingEnabled == false)
         {
-            body["thinking"] = ToNode(new Dictionary<string, object?> { ["type"] = "disabled" });
+            // Adaptive thinking models (Opus 4.6, Sonnet 4.6) do not support
+            // thinking: {type: disabled} — the API returns an empty response.
+            // Instead, use adaptive mode with minimal effort so the model still
+            // produces output text without expensive reasoning.
+            if (isAdaptiveThinkingModel(model.Id))
+            {
+                body["thinking"] = ToNode(new Dictionary<string, object?> { ["type"] = "adaptive" });
+                body["output_config"] = ToNode(new Dictionary<string, object?> { ["effort"] = "low" });
+            }
+            else
+            {
+                body["thinking"] = ToNode(new Dictionary<string, object?> { ["type"] = "disabled" });
+            }
         }
 
         if (options?.Temperature.HasValue == true && copilotOpts?.ThinkingEnabled != true)
