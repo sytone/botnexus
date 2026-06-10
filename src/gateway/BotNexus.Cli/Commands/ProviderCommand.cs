@@ -12,20 +12,22 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class ProviderCommand
 {
-    private static readonly string[] KnownProviders = ["github-copilot", "openai", "anthropic"];
+    private static readonly string[] KnownProviders = ["github-copilot", "openai", "anthropic", "ollama"];
 
     private static readonly Dictionary<string, string> ProviderDisplayNames = new(StringComparer.OrdinalIgnoreCase)
     {
         ["github-copilot"] = "GitHub Copilot (OAuth — free with GitHub account)",
         ["openai"] = "OpenAI (API key required)",
-        ["anthropic"] = "Anthropic (API key required)"
+        ["anthropic"] = "Anthropic (API key required)",
+        ["ollama"] = "Ollama (local — no API key required)"
     };
 
     private static readonly Dictionary<string, string> ProviderAuthModes = new(StringComparer.OrdinalIgnoreCase)
     {
         ["github-copilot"] = "oauth",
         ["openai"] = "apikey",
-        ["anthropic"] = "apikey"
+        ["anthropic"] = "apikey",
+        ["ollama"] = "none"
     };
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
@@ -63,6 +65,7 @@ internal sealed class ProviderCommand
         command.AddCommand(CopilotProviderSubcommand.Build(
             verboseOption, targetOption,
             (configPath, home, verbose, ct) => ExecuteSetupAsync(configPath, home, verbose, "github-copilot", ct)));
+        command.AddCommand(OllamaProviderSubcommand.Build(targetOption));
 
         // Default to setup when no subcommand given
         var defaultProviderOption = new Option<string?>("--provider", () => null,
@@ -330,9 +333,12 @@ internal sealed class ProviderCommand
             .Check("route-auth", (c, _) =>
             {
                 var mode = c.Get<string>("authMode");
-                return Task.FromResult(mode == "oauth"
-                    ? StepResult.GoTo("oauth-flow")
-                    : StepResult.GoTo("ask-apikey"));
+                return Task.FromResult(mode switch
+                {
+                    "oauth" => StepResult.GoTo("oauth-flow"),
+                    "none" => StepResult.GoTo("ollama-setup"),
+                    _ => StepResult.GoTo("ask-apikey")
+                });
             })
             .AskText("ask-apikey", "Enter your API key:", "apiKey", secret: true,
                 validator: key => string.IsNullOrWhiteSpace(key)
@@ -340,6 +346,23 @@ internal sealed class ProviderCommand
                     : ValidationResult.Success())
             .Check("skip-oauth", (_, _) => Task.FromResult(StepResult.GoTo("pick-model")))
             .Step(new OAuthFlowStep())
+            .Action("ollama-setup", (c, _) =>
+            {
+                var baseUrl = AnsiConsole.Prompt(
+                    new TextPrompt<string>("Ollama server URL:")
+                        .DefaultValue(OllamaProviderSubcommand.DefaultBaseUrl)
+                        .Validate(url => Uri.IsWellFormedUriString(url, UriKind.Absolute)
+                            ? ValidationResult.Success()
+                            : ValidationResult.Error("Must be a valid URL.")));
+
+                c.Set("ollamaBaseUrl", baseUrl);
+                c.Set("apiKey", "ollama");
+                c.Set("baseUrl", baseUrl.TrimEnd('/') + "/v1");
+                c.Set("api", "openai-completions");
+                AnsiConsole.MarkupLine($"[dim]Base URL: {Markup.Escape(baseUrl)}, API: openai-completions[/]\n");
+                return Task.CompletedTask;
+            })
+            .Step(new OllamaProviderSubcommand.OllamaPickModelStep())
             .Step(new PickModelStep())
             .Action("save", async (c, ct) =>
             {
@@ -347,15 +370,20 @@ internal sealed class ProviderCommand
                 var providerName = c.Get<string>("provider");
                 var authMode = c.Get<string>("authMode");
 
-                var apiKeyValue = authMode == "oauth"
-                    ? $"auth:{providerName}"
-                    : c.Get<string>("apiKey");
+                var apiKeyValue = authMode switch
+                {
+                    "oauth" => $"auth:{providerName}",
+                    "none" => "ollama",
+                    _ => c.Get<string>("apiKey")
+                };
 
                 cfg.Providers ??= new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase);
                 cfg.Providers[providerName] = new ProviderConfig
                 {
                     Enabled = true,
                     ApiKey = apiKeyValue,
+                    BaseUrl = c.TryGet<string>("baseUrl", out var baseUrl) ? baseUrl : null,
+                    Api = c.TryGet<string>("api", out var api) ? api : null,
                     DefaultModel = c.TryGet<string>("defaultModel", out var model) ? model : null
                 };
 

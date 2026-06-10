@@ -266,4 +266,42 @@ public class ProviderCommandTests : IDisposable
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
         }
     }
+
+    [Fact]
+    public async Task ExecuteAddAsync_ollama_provider_with_baseUrl_and_api()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var cmd = new ProviderCommand();
+
+            var exit = await cmd.ExecuteAddAsync(
+                configPath,
+                name: "ollama",
+                api: "openai-completions",
+                apiKey: "ollama",
+                baseUrl: "http://localhost:11434/v1",
+                defaultModel: "llama3.2",
+                models: Array.Empty<string>(),
+                enabled: true,
+                verbose: false,
+                CancellationToken.None);
+
+            exit.ShouldBe(0);
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            var prov = doc.RootElement.GetProperty("providers").GetProperty("ollama");
+            prov.GetProperty("enabled").GetBoolean().ShouldBeTrue();
+            prov.GetProperty("apiKey").GetString().ShouldBe("ollama");
+            prov.GetProperty("baseUrl").GetString().ShouldBe("http://localhost:11434/v1");
+            prov.GetProperty("api").GetString().ShouldBe("openai-completions");
+            prov.GetProperty("defaultModel").GetString().ShouldBe("llama3.2");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }
