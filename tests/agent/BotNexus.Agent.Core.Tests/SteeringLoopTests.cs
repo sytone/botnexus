@@ -24,8 +24,8 @@ public sealed class SteeringLoopTests
     [Fact]
     public async Task Steer_BeforeRun_IsDrainedAtFirstTurnBoundary()
     {
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("done"));
-        var agent = CreateAgent();
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("done"));
+        var agent = CreateAgent(provider.Api);
 
         agent.Steer(new UserMessage("steering-before-run"));
         var result = await agent.PromptAsync("hello");
@@ -43,7 +43,7 @@ public sealed class SteeringLoopTests
         var firstStreamStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstStreamCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -72,7 +72,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("final");
         });
 
-        var agent = CreateAgent(tools: [new CalculateTool()]);
+        var agent = CreateAgent(provider.Api, tools: [new CalculateTool()]);
 
         var runTask = agent.PromptAsync("compute");
         await firstStreamStarted.Task;
@@ -91,7 +91,7 @@ public sealed class SteeringLoopTests
         var steerVisibleInSecondCall = false;
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -114,7 +114,7 @@ public sealed class SteeringLoopTests
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "result")]);
         });
 
-        var agent = CreateAgent(tools: [slowTool]);
+        var agent = CreateAgent(provider.Api, tools: [slowTool]);
 
         var runTask = agent.PromptAsync("go");
         await toolExecutionStarted.Task;
@@ -130,8 +130,8 @@ public sealed class SteeringLoopTests
     [Fact]
     public async Task Steer_WhenNoToolCalls_IsConsumedByInitialDrainOnNextRun()
     {
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("text only"));
-        var agent = CreateAgent();
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("text only"));
+        var agent = CreateAgent(provider.Api);
 
         agent.Steer(new UserMessage("pre-queued"));
         var result = await agent.PromptAsync("prompt");
@@ -146,7 +146,7 @@ public sealed class SteeringLoopTests
     public async Task Steer_MultipleMessages_AllDrainedInQueueModeAll()
     {
         var injectedUserMessages = new List<string>();
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             foreach (var m in ctx.Messages)
             {
@@ -160,7 +160,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("ok");
         });
 
-        var agent = CreateAgent(steeringMode: QueueMode.All);
+        var agent = CreateAgent(provider.Api, steeringMode: QueueMode.All);
         agent.Steer(new UserMessage("steer-1"));
         agent.Steer(new UserMessage("steer-2"));
         agent.Steer(new UserMessage("steer-3"));
@@ -180,7 +180,7 @@ public sealed class SteeringLoopTests
         var firstCallUserMessages = new List<string>();
         var secondCallUserMessages = new List<string>();
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             var userMsgs = ctx.Messages
@@ -199,7 +199,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var agent = CreateAgent(steeringMode: QueueMode.OneAtATime, tools: [new CalculateTool()]);
+        var agent = CreateAgent(provider.Api, steeringMode: QueueMode.OneAtATime, tools: [new CalculateTool()]);
         agent.Steer(new UserMessage("steer-A"));
         agent.Steer(new UserMessage("steer-B"));
 
@@ -220,7 +220,7 @@ public sealed class SteeringLoopTests
         var delegateCallCount = 0;
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call <= 2)
@@ -232,7 +232,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("final");
         });
 
-        var options = CreateOptions(tools: [new CalculateTool()]) with
+        var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
             GetSteeringMessages = _ =>
             {
@@ -254,7 +254,7 @@ public sealed class SteeringLoopTests
         var steerVisibleInSecondCall = false;
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -270,7 +270,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var options = CreateOptions(tools: [new CalculateTool()]) with
+        var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
             GetSteeringMessages = _ =>
             {
@@ -296,7 +296,7 @@ public sealed class SteeringLoopTests
         var injectedUserMessages = new List<string>();
         var delegateCalled = false;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             foreach (var m in ctx.Messages)
             {
@@ -310,7 +310,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("ok");
         });
 
-        var options = CreateOptions() with
+        var options = CreateOptions(provider.Api) with
         {
             GetSteeringMessages = _ =>
             {
@@ -339,8 +339,8 @@ public sealed class SteeringLoopTests
     [Fact]
     public async Task ContinueAsync_WhenLastIsAssistant_DrainsSteeringQueueAndPrompts()
     {
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("continued"));
-        var agent = CreateAgent();
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("continued"));
+        var agent = CreateAgent(provider.Api);
         await agent.PromptAsync("seed");
 
         agent.Steer(new UserMessage("continue-steer"));
@@ -355,9 +355,9 @@ public sealed class SteeringLoopTests
     {
         var delegatePollCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
 
-        var options = CreateOptions() with
+        var options = CreateOptions(provider.Api) with
         {
             GetSteeringMessages = _ =>
             {
@@ -381,8 +381,8 @@ public sealed class SteeringLoopTests
     [Fact]
     public async Task ContinueAsync_WhenLastIsNotAssistant_DoesNotDrainQueueFirst()
     {
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
-        var agent = CreateAgent();
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
+        var agent = CreateAgent(provider.Api);
         await agent.PromptAsync("seed");
 
         agent.State.Messages = [new UserMessage("manual")];
@@ -397,8 +397,8 @@ public sealed class SteeringLoopTests
     [Fact]
     public async Task ContinueAsync_WhenNoQueuedMessages_ThrowsIfLastIsAssistant()
     {
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
-        var agent = CreateAgent();
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
+        var agent = CreateAgent(provider.Api);
         await agent.PromptAsync("seed");
 
         await Should.ThrowAsync<InvalidOperationException>(() => agent.ContinueAsync());
@@ -414,7 +414,7 @@ public sealed class SteeringLoopTests
         var llmCallCount = 0;
         var followUpSeen = false;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 2)
@@ -429,7 +429,7 @@ public sealed class SteeringLoopTests
         });
 
         var followUpReturned = false;
-        var options = CreateOptions() with
+        var options = CreateOptions(provider.Api) with
         {
             GetFollowUpMessages = _ =>
             {
@@ -458,7 +458,7 @@ public sealed class SteeringLoopTests
         var firstStreamStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstStreamCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -487,7 +487,7 @@ public sealed class SteeringLoopTests
         });
 
         var followUpReturned = false;
-        var options = CreateOptions() with
+        var options = CreateOptions(provider.Api) with
         {
             GetFollowUpMessages = _ =>
             {
@@ -519,7 +519,7 @@ public sealed class SteeringLoopTests
     public async Task Steer_AfterAbort_RemainsInQueueForNextRun()
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var stream = new LlmStream();
             _ = Task.Run(async () =>
@@ -536,7 +536,7 @@ public sealed class SteeringLoopTests
             return stream;
         });
 
-        var agent = CreateAgent();
+        var agent = CreateAgent(provider.Api);
         var runTask = agent.PromptAsync("run");
         SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(5));
 
@@ -555,7 +555,7 @@ public sealed class SteeringLoopTests
         var toolCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -580,7 +580,7 @@ public sealed class SteeringLoopTests
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
         });
 
-        var agent = CreateAgent(tools: [slowTool]);
+        var agent = CreateAgent(provider.Api, tools: [slowTool]);
         var runTask = agent.PromptAsync("go");
         await toolStarted.Task;
 
@@ -600,7 +600,7 @@ public sealed class SteeringLoopTests
     public async Task Steer_ConcurrentWithRun_IsThreadSafe()
     {
         var llmCallCount = 0;
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call <= 5)
@@ -612,7 +612,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var agent = CreateAgent(tools: [new CalculateTool()]);
+        var agent = CreateAgent(provider.Api, tools: [new CalculateTool()]);
 
         var runTask = agent.PromptAsync("go");
 
@@ -629,7 +629,7 @@ public sealed class SteeringLoopTests
     public async Task Steer_WhileAgentIdle_IsConsumedOnNextPrompt()
     {
         var contextMessages = new List<string>();
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             foreach (var m in ctx.Messages)
             {
@@ -643,7 +643,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("ok");
         });
 
-        var agent = CreateAgent();
+        var agent = CreateAgent(provider.Api);
         agent.Status.ShouldBe(AgentStatus.Idle);
 
         agent.Steer(new UserMessage("idle-steer-1"));
@@ -668,7 +668,7 @@ public sealed class SteeringLoopTests
         var firstStreamStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstStreamCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
 
@@ -709,7 +709,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("chain-done");
         });
 
-        var agent = CreateAgent(tools: [new CalculateTool()]);
+        var agent = CreateAgent(provider.Api, tools: [new CalculateTool()]);
 
         var runTask = agent.PromptAsync("start-chain");
         await firstStreamStarted.Task;
@@ -729,7 +729,7 @@ public sealed class SteeringLoopTests
         var firstStreamStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstStreamCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
 
@@ -770,7 +770,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var agent = CreateAgent(tools: [new CalculateTool()]);
+        var agent = CreateAgent(provider.Api, tools: [new CalculateTool()]);
 
         agent.Steer(new UserMessage("steer-A"));
         var runTask = agent.PromptAsync("go");
@@ -793,9 +793,9 @@ public sealed class SteeringLoopTests
     {
         var delegatePollCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
+        using var provider = RegisterIsolatedProvider((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
 
-        var options = CreateOptions() with
+        var options = CreateOptions(provider.Api) with
         {
             GetSteeringMessages = _ =>
             {
@@ -820,7 +820,7 @@ public sealed class SteeringLoopTests
         var delegatePollCount = 0;
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -832,7 +832,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var options = CreateOptions(tools: [new CalculateTool()]) with
+        var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
             GetSteeringMessages = _ =>
             {
@@ -863,7 +863,7 @@ public sealed class SteeringLoopTests
         var llmCallCount = 0;
         var steerVisibleOnSuccess = false;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -885,7 +885,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("done");
         });
 
-        var options = CreateOptions(tools: [new CalculateTool()]) with
+        var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
             MaxRetryDelayMs = 10
         };
@@ -904,7 +904,7 @@ public sealed class SteeringLoopTests
     {
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, _, _) =>
+        using var provider = RegisterIsolatedProvider((_, _, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -915,7 +915,7 @@ public sealed class SteeringLoopTests
             return TestStreamFactory.CreateTextResponse("recovered");
         });
 
-        var agent = CreateAgent();
+        var agent = CreateAgent(provider.Api);
 
         agent.Steer(new UserMessage("survive-error"));
         var firstResult = await agent.PromptAsync("fail");
@@ -960,7 +960,7 @@ public sealed class SteeringLoopTests
         var steerVisibleInSecondCall = false;
         var llmCallCount = 0;
 
-        using var provider = RegisterProvider((_, ctx, _) =>
+        using var provider = RegisterIsolatedProvider((_, ctx, _) =>
         {
             var call = Interlocked.Increment(ref llmCallCount);
             if (call == 1)
@@ -983,7 +983,7 @@ public sealed class SteeringLoopTests
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]);
         });
 
-        var agent = CreateAgent(tools: [slowTool]);
+        var agent = CreateAgent(provider.Api, tools: [slowTool]);
         var runTask = agent.PromptAsync("go");
         await toolStarted.Task;
 
@@ -1001,14 +1001,16 @@ public sealed class SteeringLoopTests
     // ═══════════════════════════════════════════════════════════════════
 
     private static BotNexus.Agent.Core.Agent CreateAgent(
+        string api = "test-api",
         QueueMode steeringMode = QueueMode.All,
         QueueMode followUpMode = QueueMode.All,
         IAgentTool[]? tools = null)
     {
-        return new BotNexus.Agent.Core.Agent(CreateOptions(steeringMode, followUpMode, tools));
+        return new BotNexus.Agent.Core.Agent(CreateOptions(api, steeringMode, followUpMode, tools));
     }
 
     private static AgentOptions CreateOptions(
+        string api = "test-api",
         QueueMode steeringMode = QueueMode.All,
         QueueMode followUpMode = QueueMode.All,
         IAgentTool[]? tools = null)
@@ -1019,15 +1021,23 @@ public sealed class SteeringLoopTests
 
         return TestHelpers.CreateTestOptions(
             initialState: state,
-            model: TestHelpers.CreateTestModel("test-api"),
+            model: TestHelpers.CreateTestModel(api),
             steeringMode: steeringMode,
             followUpMode: followUpMode);
     }
 
-    private static IDisposable RegisterProvider(
+    private static ProviderRegistration RegisterIsolatedProvider(
         Func<LlmModel, Context, SimpleStreamOptions?, LlmStream> factory)
     {
-        return TestHelpers.RegisterProvider(new TestApiProvider("test-api", simpleStreamFactory: factory));
+        var api = $"test-api-{Guid.NewGuid():N}";
+        var scope = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: factory));
+        return new ProviderRegistration(scope, api);
+    }
+
+    private sealed class ProviderRegistration(IDisposable scope, string api) : IDisposable
+    {
+        public string Api { get; } = api;
+        public void Dispose() => scope.Dispose();
     }
 
     /// <summary>
