@@ -65,6 +65,9 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Stable identity for markdown caching and tool-call linking.</summary>
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
 
+    /// <summary>Agent that produced this message (for multi-agent conversations).</summary>
+    public string? AgentId { get; init; }
+
     /// <summary>Tool name if this is a tool-related message.</summary>
     public string? ToolName { get; init; }
 
