@@ -14,6 +14,7 @@ using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -26,7 +27,11 @@ namespace BotNexus.Extensions.Channels.SignalR;
 /// <summary>
 /// SignalR hub for real-time agent communication.
 /// Clients join session groups and receive streaming output for all active sessions simultaneously.
+/// When JWT Bearer authentication is configured, unauthenticated connections are rejected.
+/// When no authentication scheme is registered, the hub permits anonymous access
+/// for backward compatibility during the Phase 1 transition.
 /// </summary>
+[Authorize(Policy = SignalRAuthPolicy.PolicyName)]
 public sealed class GatewayHub : Hub<IGatewayHubClient>
 {
     private readonly IAgentSupervisor _supervisor;
@@ -255,7 +260,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    Sender = CitizenId.Of(UserId.From(connectionId)),
+                    Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
                     ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
                     RoutingHints = new InboundMessageRoutingHints(
                         RequestedAgentId: typedAgentId,
@@ -282,7 +287,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
-                Sender = CitizenId.Of(UserId.From(senderId)),
+                Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
                 ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
                 RoutingHints = new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
@@ -667,6 +672,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     // the try/catch below until they migrate to Vogen.
     private static AgentId NormalizeAgentId(AgentId agentId) => agentId;
 
+    /// <summary>
+    /// Resolves the authenticated user identifier from claims. The <see cref="ClaimsUserIdProvider"/>
+    /// populates <see cref="HubCallerContext.UserIdentifier"/> from the <c>oid</c> or <c>sub</c>
+    /// claim. When no authenticated identity is available (should not happen with [Authorize]),
+    /// falls back to <see cref="HubCallerContext.ConnectionId"/> for backward compatibility
+    /// during the transition period where auth may be configured but not enforced.
+    /// </summary>
+    private string GetAuthenticatedUserId()
+        => Context.UserIdentifier ?? Context.ConnectionId;
+
     private static SessionId NormalizeSessionId(SessionId sessionId)
     {
         try
@@ -763,7 +778,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 ChannelType = channelType,
                 ChannelAddress = channelAddress,
                 SenderId = Context.ConnectionId,
-                Sender = CitizenId.Of(UserId.From(Context.ConnectionId)),
+                Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
                 Content = string.Empty,
                 // RoutingHints intentionally omitted — the outer InboundMessageContext below
                 // carries the typed RequestedAgentId + RequestedConversationId explicitly.
