@@ -14,6 +14,7 @@ using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Satellites;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Activity;
 using BotNexus.Gateway.Agents;
@@ -223,6 +224,10 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IActivityTracker, ActivityTracker>();
         services.Configure<LivenessWatchdogOptions>(_ => { });
         services.AddHostedService<LivenessWatchdogService>();
+
+        // Satellite registry and stale detection
+        services.AddSingleton<ISatelliteRegistry, Satellites.InMemorySatelliteRegistry>();
+        services.AddHostedService<Satellites.SatelliteStaleDetectionService>();
 
         // Auto-update: register once as singleton, expose as interface and hosted service.
         services.AddSingleton<Updates.UpdateCheckService>();

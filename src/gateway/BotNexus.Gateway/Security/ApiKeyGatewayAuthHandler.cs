@@ -59,7 +59,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = null;
-        _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys);
+        _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
     /// <summary>
@@ -115,7 +115,8 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
     private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(
         string? legacyApiKey,
-        Dictionary<string, ApiKeyConfig>? apiKeys)
+        Dictionary<string, ApiKeyConfig>? apiKeys,
+        Dictionary<string, SatelliteConfig>? satellites = null)
     {
         var map = new Dictionary<string, GatewayCallerIdentity>(StringComparer.Ordinal);
 
@@ -131,30 +132,49 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             };
         }
 
-        if (apiKeys is null)
-            return map;
-
-        foreach (var (keyId, keyConfig) in apiKeys)
+        if (apiKeys is not null)
         {
-            if (string.IsNullOrWhiteSpace(keyConfig.ApiKey))
-                continue;
-
-            var callerId = !string.IsNullOrWhiteSpace(keyConfig.CallerId)
-                ? keyConfig.CallerId
-                : $"gateway-key:{keyId}";
-            var tenantId = !string.IsNullOrWhiteSpace(keyConfig.TenantId)
-                ? keyConfig.TenantId
-                : "default";
-
-            map[keyConfig.ApiKey] = new GatewayCallerIdentity
+            foreach (var (keyId, keyConfig) in apiKeys)
             {
-                CallerId = callerId,
-                DisplayName = keyConfig.DisplayName,
-                TenantId = tenantId,
-                AllowedAgents = keyConfig.AllowedAgents ?? [],
-                Permissions = keyConfig.Permissions ?? [],
-                IsAdmin = keyConfig.IsAdmin
-            };
+                if (string.IsNullOrWhiteSpace(keyConfig.ApiKey))
+                    continue;
+
+                var callerId = !string.IsNullOrWhiteSpace(keyConfig.CallerId)
+                    ? keyConfig.CallerId
+                    : $"gateway-key:{keyId}";
+                var tenantId = !string.IsNullOrWhiteSpace(keyConfig.TenantId)
+                    ? keyConfig.TenantId
+                    : "default";
+
+                map[keyConfig.ApiKey] = new GatewayCallerIdentity
+                {
+                    CallerId = callerId,
+                    DisplayName = keyConfig.DisplayName,
+                    TenantId = tenantId,
+                    AllowedAgents = keyConfig.AllowedAgents ?? [],
+                    Permissions = keyConfig.Permissions ?? [],
+                    IsAdmin = keyConfig.IsAdmin
+                };
+            }
+        }
+
+        if (satellites is not null)
+        {
+            foreach (var (satId, satConfig) in satellites)
+            {
+                if (!satConfig.Enabled || string.IsNullOrWhiteSpace(satConfig.ApiKey))
+                    continue;
+
+                map[satConfig.ApiKey] = new GatewayCallerIdentity
+                {
+                    CallerId = $"satellite:{satId}",
+                    DisplayName = satConfig.DisplayName ?? $"Satellite {satId}",
+                    TenantId = "default",
+                    AllowedAgents = [],
+                    Permissions = ["satellite:connect", "satellite:heartbeat"],
+                    IsAdmin = false
+                };
+            }
         }
 
         return map;
@@ -166,7 +186,10 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             return _identitiesByApiKey;
 
         var currentConfig = _platformConfig.CurrentValue;
-        var rebuilt = BuildIdentityMap(currentConfig.ApiKey, currentConfig.Gateway?.ApiKeys);
+        var rebuilt = BuildIdentityMap(
+            currentConfig.ApiKey,
+            currentConfig.Gateway?.ApiKeys,
+            currentConfig.Gateway?.Satellites);
 
         lock (_sync)
         {
