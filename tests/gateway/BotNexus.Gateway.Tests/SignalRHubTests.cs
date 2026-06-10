@@ -600,7 +600,8 @@ public sealed class SignalRHubTests
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
-        string connectionId = "conn-test")
+        string connectionId = "conn-test",
+        string? userIdentifier = "user")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
         var convStore = conversationStore ?? new InMemoryConversationStore();
@@ -640,18 +641,18 @@ public sealed class SignalRHubTests
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
-            Context = new TestHubCallerContext(connectionId)
+            Context = new TestHubCallerContext(connectionId, userIdentifier)
         };
 
         return hub;
     }
 
-    private sealed class TestHubCallerContext(string connectionId) : HubCallerContext
+    private sealed class TestHubCallerContext(string connectionId, string? userIdentifier = "user") : HubCallerContext
     {
         private readonly Dictionary<object, object?> _items = [];
 
         public override string ConnectionId { get; } = connectionId;
-        public override string? UserIdentifier => "user";
+        public override string? UserIdentifier { get; } = userIdentifier;
         public override ClaimsPrincipal? User { get; } = new();
         public override IDictionary<object, object?> Items => _items;
         public override IFeatureCollection Features { get; } = new FeatureCollection();
@@ -705,5 +706,51 @@ public sealed class SignalRHubTests
             System.Net.WebSockets.WebSocketError.InvalidMessageType,
             "Unexpected message type");
         GatewayHub.IsBenignConnectionException(ex).ShouldBeFalse();
+    }
+
+    // Authentication-related tests (#567)
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_UsesAuthenticatedUserIdAsSender()
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", userIdentifier: "user-oid-abc123");
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        // Sender should be the claims-derived user ID, not the connection ID
+        dispatched.Sender.Value.ShouldBe("user-oid-abc123");
+        dispatched.Sender.Kind.ShouldBe(BotNexus.Domain.World.CitizenKind.User);
+        // SenderId should still be the connection ID (for wire-level fan-out exclusion)
+        dispatched.SenderId.ShouldBe("conn-1");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_NullUserIdentifier_FallsBackToConnectionId()
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        // Simulate edge case where UserIdentifier is null (transition period)
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-fallback", userIdentifier: null);
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        // Falls back to connectionId when no UserIdentifier is available
+        dispatched.Sender.Value.ShouldBe("conn-fallback");
+        dispatched.SenderId.ShouldBe("conn-fallback");
+    }
+
+    [Fact]
+    public void GatewayHub_HasAuthorizeAttribute()
+    {
+        var attributes = typeof(GatewayHub)
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), false)
+            .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+            .ToArray();
+        attributes.ShouldNotBeEmpty("GatewayHub must have [Authorize] to enforce authentication when configured");
+        attributes.Single().Policy.ShouldBe(SignalRAuthPolicy.PolicyName);
     }
 }
