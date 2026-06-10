@@ -246,7 +246,11 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.Purpose,
             c.Kind.ToString(),
             c.IsPinned,
-            c.PinnedAt);
+            c.PinnedAt,
+            c.Participants.Select(p => new ParticipantSummary(
+                p.CitizenId.Kind.ToString(),
+                p.CitizenId.Value,
+                p.Role)).ToList());
 
     // ── Canvas State ───────────────────────────────────────────────────────
 
