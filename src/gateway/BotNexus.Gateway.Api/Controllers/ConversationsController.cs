@@ -3,6 +3,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
@@ -29,6 +30,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly ILogger<ConversationsController> _logger;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IConversationResetService? _resetService;
+    private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -42,13 +44,15 @@ public sealed class ConversationsController : ControllerBase
     /// and Reset endpoints delegate the active-session seal + memory flush + ask-user cancel to it. When omitted,
     /// the controller falls back to a best-effort in-place seal — used only by tests that construct the controller
     /// directly without DI.</param>
+    /// <param name="canvasNotifiers">Optional notifiers that broadcast canvas state changes to connected clients.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
         IEnumerable<IConversationChangeNotifier>? conversationChangeNotifiers = null,
         ILogger<ConversationsController>? logger = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
-        IConversationResetService? resetService = null)
+        IConversationResetService? resetService = null,
+        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -56,6 +60,7 @@ public sealed class ConversationsController : ControllerBase
         _logger = logger ?? NullLogger<ConversationsController>.Instance;
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
+        _canvasNotifiers = canvasNotifiers?.ToArray() ?? [];
     }
 
     /// <summary>
@@ -714,6 +719,10 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         await _conversations.SetCanvasStateKeyAsync(ConversationId.From(conversationId), key, value, cancellationToken);
+
+        foreach (var notifier in _canvasNotifiers)
+            await notifier.NotifyCanvasStateChangedAsync(conversationId, key, value, cancellationToken);
+
         return Ok();
     }
 
@@ -731,6 +740,10 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         await _conversations.DeleteCanvasStateKeyAsync(ConversationId.From(conversationId), key, cancellationToken);
+
+        foreach (var notifier in _canvasNotifiers)
+            await notifier.NotifyCanvasStateChangedAsync(conversationId, key, null, cancellationToken);
+
         return NoContent();
     }
 

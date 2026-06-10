@@ -27,6 +27,8 @@ public interface IGatewayHubClient
 
     Task SteeringFeedback(SteeringFeedbackPayload payload);
     Task CanvasUpdated(string agentId, string conversationId, string html);
+    /// <summary>Server notifies the client that a canvas state key was changed or cleared.</summary>
+    Task CanvasStateChanged(string conversationId, string key, object? value);
 
     /// <summary>Server notifies the client that a gateway restart interrupted its active agent turn.</summary>
     Task TurnInterrupted(AgentStreamEvent evt);
@@ -34,3 +36,4 @@ public interface IGatewayHubClient
     /// <summary>Server signals that the agent turn has fully completed (all tool calls done, no more events).</summary>
     Task TurnEnd(AgentStreamEvent evt);
 }
+

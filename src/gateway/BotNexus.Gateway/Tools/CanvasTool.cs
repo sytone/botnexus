@@ -152,6 +152,15 @@ public sealed class CanvasTool(
         var success = await _conversationStore.SetCanvasStateKeyAsync(_conversationId.Value, key, value, cancellationToken)
             .ConfigureAwait(false);
 
+        if (success)
+        {
+            foreach (var notifier in _canvasNotifiers)
+            {
+                await notifier.NotifyCanvasStateChangedAsync(_conversationId.Value.Value, key, value, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
         var message = success
             ? $"State key '{key}' set successfully."
             : $"Failed to set state key '{key}': conversation not found.";
@@ -219,6 +228,12 @@ public sealed class CanvasTool(
         }
 
         await _conversationStore.ClearCanvasStateAsync(_conversationId.Value, cancellationToken).ConfigureAwait(false);
+
+        foreach (var notifier in _canvasNotifiers)
+        {
+            await notifier.NotifyCanvasStateChangedAsync(_conversationId.Value.Value, "*", null, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text,
             "All canvas state cleared for this conversation.")]);

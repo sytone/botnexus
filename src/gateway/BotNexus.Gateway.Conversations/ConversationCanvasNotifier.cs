@@ -18,4 +18,11 @@ public sealed class ConversationCanvasNotifier(IConversationStore store) : IAgen
         conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
         await _store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
     }
+
+    public Task NotifyCanvasStateChangedAsync(string conversationId, string key, object? value, CancellationToken cancellationToken = default)
+    {
+        // State persistence is handled directly by IConversationStore canvas state methods.
+        // This notifier only persists HTML updates; state change signaling is via SignalRCanvasNotifier.
+        return Task.CompletedTask;
+    }
 }
