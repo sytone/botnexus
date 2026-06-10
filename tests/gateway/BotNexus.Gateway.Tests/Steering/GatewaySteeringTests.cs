@@ -109,9 +109,10 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Steer_WhenAgentNotRunning_DiscardsAndPublishesSteeringQueued()
+    public async Task Steer_WhenAgentNotRunning_StillInjectsViaHandle()
     {
-        // Agent has an instance but is NOT running
+        // After fix: handle exists but not running — SteerAsync is still called.
+        // The agent's PendingMessageQueue accepts steers at any time.
         var handle = CreateHandle(isRunning: false);
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
         var session = CreateSession();
@@ -119,17 +120,17 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         var activity = new RecordingActivityBroadcaster();
         await using var host = CreateHost(supervisor.Object, sessions.Object, activity);
 
-        await host.ProcessAsync(CreateSteerMessage("too late"), CancellationToken.None);
+        await host.ProcessAsync(CreateSteerMessage("late steer"), CancellationToken.None);
 
-        // Steering is discarded
-        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // SteeringQueued published (portal shows "🕒")
-        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringQueued);
-        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringInjected);
+        // Steering IS injected even though agent is idle
+        handle.Verify(h => h.SteerAsync("late steer", It.IsAny<CancellationToken>()), Times.Once);
+        // SteeringInjected published (portal clears pending entry)
+        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringInjected);
+        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringQueued);
     }
 
     [Fact]
-    public async Task Steer_WhenAgentNotRunning_DoesNotRecordInHistory()
+    public async Task Steer_WhenAgentNotRunning_RecordsInHistory()
     {
         var handle = CreateHandle(isRunning: false);
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
@@ -137,9 +138,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         var sessions = CreateSessionStore(session);
         await using var host = CreateHost(supervisor.Object, sessions.Object, new RecordingActivityBroadcaster());
 
-        await host.ProcessAsync(CreateSteerMessage("discarded"), CancellationToken.None);
+        await host.ProcessAsync(CreateSteerMessage("recorded"), CancellationToken.None);
 
-        session.History.ShouldNotContain(e => e.Content == "discarded");
+        session.History.ShouldContain(e => e.Role == MessageRole.User && e.Content == "recorded");
     }
 
     [Fact]
@@ -160,9 +161,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Steer_WhenAgentNotRunning_DoesNotFallThroughToNormalProcessing()
+    public async Task Steer_WhenHandleExists_DoesNotFallThroughToNormalProcessing()
     {
-        // Critical: discarded steer must NOT become a normal user prompt
+        // Critical: an injected steer must NOT also trigger a normal user prompt
         var handle = CreateHandle(isRunning: false);
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
         var session = CreateSession();
@@ -171,6 +172,8 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         await host.ProcessAsync(CreateSteerMessage("should not prompt"), CancellationToken.None);
 
+        // SteerAsync called (steer injected) but no prompt/stream issued
+        handle.Verify(h => h.SteerAsync("should not prompt", It.IsAny<CancellationToken>()), Times.Once);
         handle.Verify(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         handle.Verify(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -180,27 +183,24 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
     // TIER 2: Orchestrator integration — queue serialization (THE BUG)
     // ─────────────────────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "BUG: Steer sent while agent is running is ALWAYS discarded due to queue serialization")]
-    public async Task Steer_WhileAgentRunning_IsBlockedByQueueAndDiscarded()
+    [Fact(DisplayName = "FIX: Steer queued behind running dispatch is now injected when dequeued")]
+    public async Task Steer_WhileAgentRunning_IsQueuedThenInjectedOnDequeue()
     {
-        // This test PROVES the design flaw:
-        // 1. A normal message enters the queue → agent starts running
-        // 2. While agent is running, a steer message enters the SAME queue
-        // 3. The queue is SingleReader — steer waits behind the running dispatch
-        // 4. When the normal message finishes, agent stops running (IsRunning=false)
-        // 5. Steer is dequeued → HandleSteeringAsync → IsRunning=false → DISCARDED
+        // After the fix: the steer still waits in the queue (queue serialization
+        // is correct for ordering), but when dequeued, HandleSteeringAsync no
+        // longer checks IsRunning — it calls SteerAsync regardless.
         //
-        // Expected: steer should be injected mid-turn
-        // Actual: steer is always too late
+        // For SignalR portal, GatewayHub.Steer bypasses the queue entirely.
+        // This test validates the fallback path for other channels.
 
         var agentRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var agentCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var isRunning = true;
 
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentA);
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
-        handle.Setup(h => h.IsRunning).Returns(() => isRunning);
+        handle.Setup(h => h.IsRunning).Returns(false); // Not running when steer is dequeued
+        handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
@@ -210,53 +210,39 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         var activity = new RecordingActivityBroadcaster();
         var host = CreateHost(supervisor.Object, sessions.Object, activity);
 
-        // Wire up the orchestrator — messages go through the per-session queue
         await using var orchestrator = new DefaultInboundMessageOrchestrator(
             host, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
 
-        // Step 1: Normal message enters queue — agent starts running
+        // Step 1: Normal message enters queue → agent starts running
         var normalTask = orchestrator.AcceptAsync(CreateMessage("do work"));
         await agentRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Step 2: While agent IS running, send a steer message on the same queue
+        // Step 2: Steer enters the same queue (blocked behind running dispatch)
         var steerTask = orchestrator.AcceptAsync(CreateSteerMessage("change direction"));
 
-        // Step 3: The steer is stuck in the queue. Verify it hasn't been processed yet.
-        await Task.Delay(200);
-        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "Steer should still be in queue while agent is running");
-
-        // Step 4: Agent finishes — IsRunning transitions to false
-        isRunning = false;
+        // Step 3: Agent finishes
         agentCanFinish.TrySetResult();
         await normalTask.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Step 5: NOW the steer is dequeued, but agent is no longer running
+        // Step 4: Steer dequeued — NOW it’s processed
         await steerTask.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // ASSERT THE BUG: SteerAsync was NEVER called
-        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "BUG PROVEN: Steer was discarded because queue serialization guarantees IsRunning=false by dequeue time");
-
-        // SteeringQueued was published (UI shows 🕒 forever)
-        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringQueued,
-            "Portal stuck showing '🕒 Steer queued' with no resolution");
-        // SteeringInjected was NEVER published (UI never clears)
-        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringInjected,
-            "No SteeringInjected means portal UI never resolves");
+        // FIXED: SteerAsync IS called even though agent finished
+        handle.Verify(h => h.SteerAsync("change direction", It.IsAny<CancellationToken>()), Times.Once);
+        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringInjected);
     }
 
-    [Fact(DisplayName = "BUG: Multiple steers while agent running are ALL discarded")]
-    public async Task MultipleSteer_WhileAgentRunning_AllDiscarded()
+    [Fact(DisplayName = "FIX: Multiple steers queued behind running dispatch are all injected")]
+    public async Task MultipleSteer_WhileAgentRunning_AllInjectedOnDequeue()
     {
         var agentRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var agentCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var isRunning = true;
 
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentA);
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
-        handle.Setup(h => h.IsRunning).Returns(() => isRunning);
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
@@ -278,14 +264,13 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         var steer3 = orchestrator.AcceptAsync(CreateSteerMessage("steer-3"));
 
         // Agent finishes
-        isRunning = false;
         agentCanFinish.TrySetResult();
         await Task.WhenAll(normalTask, steer1, steer2, steer3).WaitAsync(TimeSpan.FromSeconds(10));
 
-        // ALL steers discarded
-        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        activity.Activities.Count(a => a.Type == GatewayActivityType.SteeringQueued).ShouldBe(3);
-        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringInjected);
+        // ALL steers injected
+        handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        activity.Activities.Count(a => a.Type == GatewayActivityType.SteeringInjected).ShouldBe(3);
+        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringQueued);
     }
 
     [Fact]
@@ -390,8 +375,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
     [Fact]
     public async Task SteeringQueued_IncludesAgentIdAndSessionId()
     {
-        var handle = CreateHandle(isRunning: false);
-        var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
+        // SteeringQueued only fires when NO handle exists at all
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance(AgentA, SessionA)).Returns((AgentInstance?)null);
         var session = CreateSession();
         var sessions = CreateSessionStore(session);
         var activity = new RecordingActivityBroadcaster();
@@ -404,20 +390,19 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         queued.SessionId.ShouldBe("session-1");
     }
 
-    [Fact(DisplayName = "BUG: No SteeringInjected event ever fires when steer is queued behind running dispatch")]
-    public async Task QueuedSteer_NeverEmitsSteeringInjected_LeavingUIStuck()
+    [Fact(DisplayName = "FIX: SteeringInjected event fires even when steer is processed after dispatch completes")]
+    public async Task QueuedSteer_EmitsSteeringInjected_UIResolvesCorrectly()
     {
-        // This test proves the portal UI bug: 🕒 Steer stuck forever
-        // The portal adds to PendingSteeringQueue on SteeringQueued event,
-        // but never receives SteeringInjected to clear it.
+        // After the fix: even though the steer waits in the queue, when processed
+        // it emits SteeringInjected so the portal clears the pending entry.
         var agentRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var agentCanFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var isRunning = true;
 
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentA);
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
-        handle.Setup(h => h.IsRunning).Returns(() => isRunning);
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
@@ -437,16 +422,13 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         var steerTask = orchestrator.AcceptAsync(CreateSteerMessage("redirect"));
 
         // Agent finishes
-        isRunning = false;
         agentCanFinish.TrySetResult();
         await Task.WhenAll(normalTask, steerTask).WaitAsync(TimeSpan.FromSeconds(10));
 
-        // PROVE THE UI BUG:
-        // SteeringQueued was published (portal adds to pending queue, shows 🕒)
-        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringQueued);
-        // SteeringInjected was NEVER published (portal never clears the pending entry)
-        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringInjected);
-        // This means the "🕒 Steer redirect..." stays in the UI PERMANENTLY
+        // FIXED: SteeringInjected IS published (portal resolves 🕒 to ✅)
+        activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringInjected);
+        // No SteeringQueued (handle exists, injection succeeded)
+        activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.SteeringQueued);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

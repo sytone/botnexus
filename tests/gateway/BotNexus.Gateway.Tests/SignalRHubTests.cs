@@ -389,7 +389,7 @@ public sealed class SignalRHubTests
         dispatched.RoutingHints!.RequestedSessionId!.Value.Value.ShouldBe(requestedSessionId);
         dispatched.RoutingHints.RequestedConversationId.ShouldBeNull();
         dispatched.Metadata["messageType"].ShouldBe("steer");
-        dispatched.Metadata["control"].ShouldBe("steer");
+        dispatched.Metadata.ShouldNotContainKey("control"); // Fallback path doesn't mark as control
     }
 
     [Fact]

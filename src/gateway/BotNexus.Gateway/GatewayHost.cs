@@ -866,15 +866,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             catch { /* instance exists but handle creation failed */ }
         }
 
-        // If no handle or agent is not actively running, steering can't be
-        // injected mid-turn. Return false so the caller falls through to
-        // normal message processing (avoiding a recursive DispatchAsync
-        // deadlock on the single-reader session queue).
-        if (handle is null || !handle.IsRunning)
+        // If no handle exists at all, we can't inject. Return false so the
+        // caller discards the control message (it can't be delivered).
+        if (handle is null)
         {
             _logger.LogInformation(
-                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Steering will be discarded for session {SessionId}.",
-                instance is not null, handle?.IsRunning ?? false, sessionId);
+                "Steering received but no agent handle exists for session {SessionId}. Discarding.",
+                sessionId);
 
             await _activity.PublishAsync(new GatewayActivity
             {
