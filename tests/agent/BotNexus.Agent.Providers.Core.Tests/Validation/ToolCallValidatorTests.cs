@@ -134,4 +134,91 @@ public class ToolCallValidatorTests
         result.IsValid.ShouldBeTrue();
         result.Errors.ShouldBeEmpty();
     }
+
+    [Fact]
+    public void Validate_WhenAdditionalPropertiesFalse_RejectsUnknownProperties()
+    {
+        var arguments = JsonDocument.Parse("""{ "query": "hello", "verbose": true }""").RootElement.Clone();
+        var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" }
+              },
+              "required": ["query"],
+              "additionalProperties": false
+            }
+            """).RootElement.Clone();
+
+        var result = ToolCallValidator.Validate(arguments, schema);
+
+        result.IsValid.ShouldBeFalse();
+        var error = result.Errors.ShouldHaveSingleItem();
+        error.ShouldContain("verbose");
+        error.ShouldContain("not defined");
+    }
+
+    [Fact]
+    public void Validate_WhenAdditionalPropertiesFalse_AllowsDefinedProperties()
+    {
+        var arguments = JsonDocument.Parse("""{ "query": "hello", "limit": 10 }""").RootElement.Clone();
+        var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" },
+                "limit": { "type": "integer" }
+              },
+              "required": ["query"],
+              "additionalProperties": false
+            }
+            """).RootElement.Clone();
+
+        var result = ToolCallValidator.Validate(arguments, schema);
+
+        result.IsValid.ShouldBeTrue();
+        result.Errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WhenAdditionalPropertiesTrue_AllowsUnknownProperties()
+    {
+        var arguments = JsonDocument.Parse("""{ "query": "hello", "extra": "stuff" }""").RootElement.Clone();
+        var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+            """).RootElement.Clone();
+
+        var result = ToolCallValidator.Validate(arguments, schema);
+
+        result.IsValid.ShouldBeTrue();
+        result.Errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WhenAdditionalPropertiesFalse_ReportsMultipleUnknownProperties()
+    {
+        var arguments = JsonDocument.Parse("""{ "query": "hello", "timeout": 30, "format": "json" }""").RootElement.Clone();
+        var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+            """).RootElement.Clone();
+
+        var result = ToolCallValidator.Validate(arguments, schema);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.Length.ShouldBe(2);
+        result.Errors.ShouldContain(e => e.Contains("timeout"));
+        result.Errors.ShouldContain(e => e.Contains("format"));
+    }
 }

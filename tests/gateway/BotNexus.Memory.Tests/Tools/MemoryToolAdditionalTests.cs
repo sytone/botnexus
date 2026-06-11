@@ -1,9 +1,10 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Agents;
-using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory.Tests.TestInfrastructure;
 using BotNexus.Memory.Tools;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory.Tests.Tools;
 
@@ -12,7 +13,7 @@ public sealed class MemoryToolAdditionalTests
     [Fact]
     public async Task MemorySaveTool_PrepareArguments_MissingContent_Throws()
     {
-        var tool = new MemorySaveTool(new SpyWorkspaceManager(), "agent-a");
+        var tool = new MemorySaveTool(new SpyAgentMemory(), "agent-a");
 
         var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>());
 
@@ -22,35 +23,35 @@ public sealed class MemoryToolAdditionalTests
     [Fact]
     public async Task MemorySaveTool_StoresSpecialCharacters()
     {
-        var workspaceManager = new SpyWorkspaceManager();
-        var tool = new MemorySaveTool(workspaceManager, "agent-a");
-        var payload = "special chars ; | ` \" ' and emoji 😀";
+        var memory = new SpyAgentMemory();
+        var tool = new MemorySaveTool(memory, "agent-a");
+        var payload = "special chars ; | ` \" ' and emoji \U0001f600";
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["content"] = payload });
 
-        workspaceManager.SaveCalls.Count.ShouldBe(1);
-        workspaceManager.SaveCalls.Single().Content.ShouldBe(payload);
+        memory.SaveCalls.Count.ShouldBe(1);
+        memory.SaveCalls.Single().Content.ShouldBe(payload);
     }
 
     [Fact]
     public async Task MemorySaveTool_DuplicateContent_CreatesDistinctAppends()
     {
-        var workspaceManager = new SpyWorkspaceManager();
-        var tool = new MemorySaveTool(workspaceManager, "agent-a");
+        var memory = new SpyAgentMemory();
+        var tool = new MemorySaveTool(memory, "agent-a");
         var args = new Dictionary<string, object?> { ["content"] = "duplicate payload" };
 
         await tool.ExecuteAsync("call-1", args);
         await tool.ExecuteAsync("call-2", args);
 
-        workspaceManager.SaveCalls.Count.ShouldBe(2);
-        workspaceManager.SaveCalls[0].Content.ShouldBe("duplicate payload");
-        workspaceManager.SaveCalls[1].Content.ShouldBe("duplicate payload");
+        memory.SaveCalls.Count.ShouldBe(2);
+        memory.SaveCalls[0].Content.ShouldBe("duplicate payload");
+        memory.SaveCalls[1].Content.ShouldBe("duplicate payload");
     }
 
     [Fact]
     public async Task MemorySaveTool_PrepareArguments_IgnoresLegacyStoreArguments()
     {
-        var tool = new MemorySaveTool(new SpyWorkspaceManager(), "agent-a");
+        var tool = new MemorySaveTool(new SpyAgentMemory(), "agent-a");
         var prepared = await tool.PrepareArgumentsAsync(
             new Dictionary<string, object?> { ["content"] = "x", ["expiresInDays"] = "not-a-number", ["tags"] = new[] { "legacy" } });
 
@@ -62,7 +63,8 @@ public sealed class MemoryToolAdditionalTests
     public async Task MemorySearchTool_PrepareArguments_EmptyQuery_Throws()
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["query"] = "   " });
 
@@ -75,7 +77,8 @@ public sealed class MemoryToolAdditionalTests
         await using var context = await MemoryStoreTestContext.CreateAsync();
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("keep", "agent-a", "tool-filter-token", sourceType: "manual", sessionId: "s1", metadataJson: """{"tags":["release"]}"""));
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("drop", "agent-a", "tool-filter-token", sourceType: "conversation", sessionId: "s2", metadataJson: """{"tags":["ops"]}"""));
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var filter = JsonSerializer.Serialize(new
         {
@@ -99,7 +102,8 @@ public sealed class MemoryToolAdditionalTests
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", "agent-a", "hello world"));
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["query"] = "" });
 
@@ -151,48 +155,48 @@ public sealed class MemoryToolAdditionalTests
         await using var context = await MemoryStoreTestContext.CreateAsync();
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", "agent-a", "alpha secure token"));
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-2", "agent-a", "beta secure token"));
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["query"] = "' OR 1=1 --" });
 
         GetText(result).ShouldBe("No matching memories found.");
     }
 
+    private static MarkdownAgentMemory CreateAgentMemory(MemoryStoreTestContext context)
+        => new("agent-a", new StubWorkspaceManager(), context.Store, new FileSystem());
+
     private static string GetText(AgentToolResult result)
         => result.Content.Single(content => content.Type == AgentToolContentType.Text).Value;
 
-    private sealed class SpyWorkspaceManager : IAgentWorkspaceManager
+    private sealed class SpyAgentMemory : IAgentMemory
     {
-        public List<SaveMemoryCall> SaveCalls { get; } = [];
+        public List<AgentMemorySaveRequest> SaveCalls { get; } = [];
 
-        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
-            => Task.FromResult(new AgentWorkspace(agentName, Soul: string.Empty, Identity: string.Empty, User: string.Empty, Memory: string.Empty));
-
-        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default)
+        public Task<AgentMemoryContext> GetPromptContextAsync(AgentMemoryPromptRequest request, CancellationToken ct = default)
+            => Task.FromResult(AgentMemoryContext.Empty);
+        public Task SaveAsync(AgentMemorySaveRequest request, CancellationToken ct = default)
         {
-            SaveCalls.Add(new SaveMemoryCall(agentName, null, content, null));
+            SaveCalls.Add(request);
             return Task.CompletedTask;
         }
-
-        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default)
-        {
-            SaveCalls.Add(new SaveMemoryCall(agentName, filePath, content, null));
-            return Task.CompletedTask;
-        }
-
-        public Task SaveMemoryAsync(
-            string agentName,
-            string? filePath,
-            string content,
-            string? memoryPathOverride,
-            CancellationToken ct = default)
-        {
-            SaveCalls.Add(new SaveMemoryCall(agentName, filePath, content, memoryPathOverride));
-            return Task.CompletedTask;
-        }
-
-        public string GetWorkspacePath(string agentName) => $@"C:\agents\{agentName}\workspace";
+        public Task<IReadOnlyList<AgentMemorySearchResult>> SearchAsync(AgentMemorySearchRequest request, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<AgentMemorySearchResult>>([]);
+        public Task<AgentMemorySearchResult?> GetAsync(string entryId, CancellationToken ct = default)
+            => Task.FromResult<AgentMemorySearchResult?>(null);
+        public Task OnSessionCompleteAsync(AgentMemorySessionEvent sessionEvent, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ConsolidateAsync(AgentMemoryConsolidateRequest request, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 
-    private sealed record SaveMemoryCall(string AgentName, string? FilePath, string Content, string? MemoryPathOverride);
+    private sealed class StubWorkspaceManager : IAgentWorkspaceManager
+    {
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
+            => Task.FromResult(new AgentWorkspace(agentName, Soul: "", Identity: "", User: "", Memory: ""));
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, string? memoryPathOverride, CancellationToken ct = default) => Task.CompletedTask;
+        public string GetWorkspacePath(string agentName) => $@"C:\agents\{agentName}\workspace";
+    }
 }

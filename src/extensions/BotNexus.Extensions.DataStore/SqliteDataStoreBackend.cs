@@ -252,6 +252,28 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
         catch (Exception ex) { return DataStoreResult.Fail($"Tables failed: {ex.Message}"); }
     }
 
+    public async Task<DataStoreResult> CountAsync(string table, string? where = null, CancellationToken ct = default)
+    {
+        try
+        {
+            await _lock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var conn = await GetConnectionAsync(ct).ConfigureAwait(false);
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = string.IsNullOrWhiteSpace(where)
+                    ? $"SELECT COUNT(*) FROM \"{table}\""
+                    : $"SELECT COUNT(*) FROM \"{table}\" WHERE {where}";
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+                var count = Convert.ToInt64(result);
+                var json = System.Text.Json.JsonSerializer.Serialize(new { table, count });
+                return DataStoreResult.Ok(json, (int)count);
+            }
+            finally { _lock.Release(); }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { return DataStoreResult.Fail($"Count failed: {ex.Message}"); }
+    }
     public async Task<DataStoreResult> DropAsync(string table, CancellationToken ct = default)
     {
         try

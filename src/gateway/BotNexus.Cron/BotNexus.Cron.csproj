@@ -30,6 +30,7 @@
     <Compile Include="Tools\CronTool.cs" />
     <Compile Include="CronRunRetentionOptions.cs" />
     <Compile Include="CronRunRetentionHostedService.cs" />
+    <Compile Include="MissedRunDetectionService.cs" />
   </ItemGroup>
 
   <ItemGroup>
