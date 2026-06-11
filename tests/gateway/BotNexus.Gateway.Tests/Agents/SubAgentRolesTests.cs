@@ -110,7 +110,8 @@ public sealed class SubAgentRolesTests
             new InMemorySessionStore(),
             new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
-            NullLogger<AgentExchangeService>.Instance);
+            NullLogger<AgentExchangeService>.Instance,
+            exchangeOptions: Options.Create(new AgentExchangeOptions { AccessPolicy = "whitelist" }));
 
         await Should.ThrowAsync<UnauthorizedAccessException>(() =>
             service.ConverseAsync(new AgentExchangeRequest
@@ -208,7 +209,8 @@ public sealed class SubAgentRolesTests
             new InMemorySessionStore(),
             new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
-            NullLogger<AgentExchangeService>.Instance);
+            NullLogger<AgentExchangeService>.Instance,
+            exchangeOptions: Options.Create(new AgentExchangeOptions { AccessPolicy = "whitelist" }));
 
         await Should.ThrowAsync<UnauthorizedAccessException>(() =>
             service.ConverseAsync(new AgentExchangeRequest
