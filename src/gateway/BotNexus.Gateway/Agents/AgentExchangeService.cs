@@ -28,6 +28,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly IOptions<Gateway.Configuration.GatewayOptions> _options;
     private readonly ILogger<AgentExchangeService> _logger;
     private readonly IOptions<PlatformConfig> _platformConfigOptions;
+    private readonly IOptions<AgentExchangeOptions> _exchangeOptions;
     private readonly CrossWorldChannelAdapter _crossWorldChannelAdapter;
     private readonly string _sourceWorldId;
 
@@ -39,7 +40,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
         IOptions<Gateway.Configuration.GatewayOptions> options,
         ILogger<AgentExchangeService> logger,
         IOptions<PlatformConfig>? platformConfigOptions = null,
-        CrossWorldChannelAdapter? crossWorldChannelAdapter = null)
+        CrossWorldChannelAdapter? crossWorldChannelAdapter = null,
+        IOptions<AgentExchangeOptions>? exchangeOptions = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -48,6 +50,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _options = options;
         _logger = logger;
         _platformConfigOptions = platformConfigOptions ?? Options.Create(new PlatformConfig());
+        _exchangeOptions = exchangeOptions ?? Options.Create(new AgentExchangeOptions());
         _crossWorldChannelAdapter = crossWorldChannelAdapter ?? new CrossWorldChannelAdapter(
             NullLogger<CrossWorldChannelAdapter>.Instance,
             new HttpClient());
@@ -71,10 +74,17 @@ public sealed class AgentExchangeService : IAgentExchangeService
             throw new KeyNotFoundException($"Target agent '{request.TargetId}' is not registered.");
         var targetDescriptor = isLocalTarget ? _registry.Get(request.TargetId) : null;
 
-        if (!initiatorDescriptor.SubAgentIds.Contains(request.TargetId.Value, StringComparer.OrdinalIgnoreCase)
-            && !IsRoleGranted(initiatorDescriptor, targetDescriptor))
-            throw new UnauthorizedAccessException(
-                $"Agent '{request.InitiatorId}' is not allowed to converse with '{request.TargetId}'.");
+        if (!_exchangeOptions.Value.IsOpen)
+        {
+            if (!initiatorDescriptor.SubAgentIds.Contains(request.TargetId.Value, StringComparer.OrdinalIgnoreCase)
+                && !IsRoleGranted(initiatorDescriptor, targetDescriptor))
+                throw new UnauthorizedAccessException(
+                    $"Agent '{request.InitiatorId}' is not allowed to converse with '{request.TargetId}'.");
+        }
+
+        _logger.LogInformation(
+            "Agent exchange initiated: {Initiator} -> {Target} (policy={Policy})",
+            request.InitiatorId.Value, request.TargetId.Value, _exchangeOptions.Value.AccessPolicy);
 
         var normalizedChain = NormalizeChain(request.CallChain, request.InitiatorId);
         EnsureCallChainAllowed(normalizedChain, request.TargetId);
