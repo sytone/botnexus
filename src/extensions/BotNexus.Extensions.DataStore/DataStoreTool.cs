@@ -18,7 +18,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
     // Actions the tool supports.
     internal static readonly HashSet<string> ValidActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "ingest", "query", "insert", "delete", "schema", "tables", "drop"
+        "ingest", "query", "insert", "update", "delete", "schema", "tables", "drop"
     };
 
     public string Name => "data_store";
@@ -26,23 +26,27 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
 
     public Tool Definition => new(
         Name,
-        "Manage a per-agent structured SQLite data store. Ingest JSON arrays, run SELECT queries, insert rows, delete rows, inspect schema, list tables, or drop tables.",
+        "Manage a per-agent structured SQLite data store. Ingest JSON arrays, run SELECT queries, insert rows, update rows, delete rows, inspect schema, list tables, or drop tables.",
         JsonDocument.Parse("""
             {
               "type": "object",
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["ingest", "query", "insert", "delete", "schema", "tables", "drop"],
-                  "description": "Action to perform: 'ingest' - bulk load a JSON array; 'query' - run a SELECT; 'insert' - add a single JSON object row; 'delete' - remove rows matching a WHERE clause; 'schema' - show column names and types; 'tables' - list all tables; 'drop' - drop a table."
+                  "enum": ["ingest", "query", "insert", "update", "delete", "schema", "tables", "drop"],
+                  "description": "Action to perform: 'ingest' - bulk load a JSON array; 'query' - run a SELECT; 'insert' - add a single JSON object row; 'update' - modify rows matching a WHERE clause; 'delete' - remove rows matching a WHERE clause; 'schema' - show column names and types; 'tables' - list all tables; 'drop' - drop a table."
                 },
                 "table": {
                   "type": "string",
-                  "description": "Table name (required for ingest, insert, delete, schema, drop). Lowercase alphanumeric + underscores only."
+                  "description": "Table name (required for ingest, insert, update, delete, schema, drop). Lowercase alphanumeric + underscores only."
                 },
                 "data": {
                   "type": "string",
                   "description": "JSON array of objects for 'ingest', or single JSON object for 'insert'."
+                },
+                "set": {
+                  "type": "string",
+                  "description": "JSON object of column=value pairs for 'update' action (e.g. {\"status\":\"done\",\"count\":5})."
                 },
                 "sql": {
                   "type": "string",
@@ -50,7 +54,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
                 },
                 "where": {
                   "type": "string",
-                  "description": "WHERE clause for 'delete' action (e.g. \"status = 'done'\"). Required for delete to prevent accidental full-table wipe."
+                  "description": "WHERE clause for 'update' and 'delete' actions (e.g. \"status = 'done'\"). Required to prevent accidental full-table operations."
                 }
               },
               "required": ["action"]
@@ -81,6 +85,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
             "ingest"  => await IngestAsync(arguments, cancellationToken),
             "query"   => await QueryAsync(arguments, cancellationToken),
             "insert"  => await InsertAsync(arguments, cancellationToken),
+            "update"  => await UpdateAsync(arguments, cancellationToken),
             "delete"  => await DeleteAsync(arguments, cancellationToken),
             "schema"  => await SchemaAsync(arguments, cancellationToken),
             "tables"  => await backend.TablesAsync(cancellationToken),
@@ -123,6 +128,18 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'. Use lowercase letters, digits, and underscores only.");
         if (string.IsNullOrWhiteSpace(data))  return DataStoreResult.Fail("'data' (JSON object) is required for insert.");
         return await backend.InsertAsync(table, data, ct);
+    }
+
+    private async Task<DataStoreResult> UpdateAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct)
+    {
+        var table = GetString(args, "table");
+        var set   = GetString(args, "set");
+        var where = GetString(args, "where");
+        if (string.IsNullOrWhiteSpace(table)) return DataStoreResult.Fail("'table' is required for update.");
+        if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'. Use lowercase letters, digits, and underscores only.");
+        if (string.IsNullOrWhiteSpace(set))   return DataStoreResult.Fail("'set' (JSON object of column=value pairs) is required for update.");
+        if (string.IsNullOrWhiteSpace(where)) return DataStoreResult.Fail("'where' clause is required for update to prevent accidental full-table updates.");
+        return await backend.UpdateAsync(table, set, where, ct);
     }
 
     private async Task<DataStoreResult> DeleteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct)

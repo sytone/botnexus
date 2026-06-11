@@ -15,9 +15,10 @@ namespace BotNexus.Domain.World;
 /// separate <c>UserProfile</c> aggregate that joins by <see cref="Id"/>.
 /// </para>
 /// <para>
-/// <see cref="World"/> appears here even though <see cref="ICitizen"/> does not yet expose
-/// it. Lifting <c>World</c> to the interface was deferred — currently only User
-/// carries it.
+/// <see cref="World"/> appears here even though <see cref="ICitizen"/> does not expose
+/// it. Lifting <c>World</c> to the interface was considered during Phase 7 but
+/// deliberately deferred — agents do not yet carry a back-reference to their world,
+/// so the interface stays minimal. Currently only User carries it.
 /// </para>
 /// </remarks>
 public sealed record User : ICitizen
@@ -30,8 +31,8 @@ public sealed record User : ICitizen
 
     /// <summary>
     /// The world this user is a citizen of. Mirrors the implicit world membership
-    /// agents have today via <see cref="WorldDescriptor.HostedAgents"/>; lifts to
-    /// <see cref="ICitizen"/> in Phase 7.
+    /// agents have today via <see cref="WorldDescriptor.HostedAgents"/>. Lifting to
+    /// <see cref="ICitizen"/> was considered in Phase 7 but deliberately deferred.
     /// </summary>
     public required WorldIdentity World { get; init; }
 
