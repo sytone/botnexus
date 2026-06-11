@@ -1213,4 +1213,29 @@ public sealed class SqliteSessionStore : SessionStoreBase
         }
         return results;
     }
+
+    /// <inheritdoc/>
+    public async Task<SessionStats?> GetStatsAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
+    {
+        var sessions = await ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+        var byStatus = sessions
+            .GroupBy(s => s.Status.ToString())
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var byAgent = sessions
+            .GroupBy(s => s.AgentId.Value)
+            .Select(g => new AgentSessionCount(g.Key, g.Count()))
+            .OrderByDescending(a => a.Count)
+            .ToList();
+
+        return new SessionStats
+        {
+            TotalSessions = sessions.Count,
+            ByStatus = byStatus,
+            ByAgent = byAgent,
+            Compaction = new CompactionStats(0, sessions.Count),
+            GeneratedAt = DateTimeOffset.UtcNow
+        };
+    }
 }
