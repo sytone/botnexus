@@ -227,6 +227,11 @@ public sealed class SkillManagerTool(
             return Error(reason);
 
         var targetPath = Path.Combine(skillDir, relPath);
+
+        // Validate symlink resolution stays within skill boundary
+        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var symlinkError))
+            return Error(symlinkError!);
+
         if (!_fs.File.Exists(targetPath))
             return Error($"File '{relPath}' not found in skill '{name}'.");
 
@@ -312,6 +317,10 @@ public sealed class SkillManagerTool(
 
         var targetPath = Path.Combine(skillDir, relPath);
 
+        // Validate symlink resolution stays within skill boundary
+        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var writeSymlinkError))
+            return Error(writeSymlinkError!);
+
         // Ensure the supporting sub-directory exists
         var targetDir = Path.GetDirectoryName(targetPath);
         if (!string.IsNullOrEmpty(targetDir))
@@ -355,6 +364,11 @@ public sealed class SkillManagerTool(
             return Error($"Skill '{name}' is a global skill. Files cannot be removed from it by the agent.");
 
         var targetPath = Path.Combine(skillDir, relPath);
+
+        // Validate symlink resolution stays within skill boundary
+        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var removeSymlinkError))
+            return Error(removeSymlinkError!);
+
         if (!_fs.File.Exists(targetPath))
             return Error($"File '{relPath}' not found in skill '{name}'.");
 
