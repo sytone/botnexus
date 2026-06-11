@@ -54,7 +54,7 @@ public sealed class CanvasTool(
 
     public Tool Definition => new(
         Name,
-        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state. Rendered HTML has access to a 'window.canvasState' JavaScript API (get/set/delete/getAll/clear) that persists state server-side; the iframe can read and write the same state keys the agent uses via set_state/get_state.",
+        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state. Rendered HTML has access to a 'window.canvasState' JavaScript API (get/set/delete/getAll/clear) that persists state server-side; the iframe can read and write the same state keys the agent uses via set_state/get_state. The canvasState bridge is injected synchronously before user scripts execute, so it is safe to use immediately without polling or ready-event checks.",
         ToolSchema);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
