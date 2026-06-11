@@ -18,6 +18,7 @@ using BotNexus.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Tests.TestInfrastructure;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -155,6 +156,7 @@ public sealed class ToolHookWiringTests
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             services.BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }

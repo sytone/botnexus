@@ -2,29 +2,25 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
-using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Contracts.Memory;
 
 namespace BotNexus.Memory.Tools;
 
 /// <summary>
-/// Appends markdown notes to an agent's memory workspace files.
+/// Appends markdown notes to an agent's memory via the <see cref="IAgentMemory"/> abstraction.
+/// Supports both the default daily note target and explicit file paths.
 /// </summary>
 public sealed class MemorySaveTool : IAgentTool
 {
-    private readonly IAgentWorkspaceManager _workspaceManager;
+    private readonly IAgentMemory _agentMemory;
     private readonly string _agentId;
-    private readonly string? _memoryPathOverride;
 
-    public MemorySaveTool(
-        IAgentWorkspaceManager workspaceManager,
-        string agentId,
-        string? memoryPathOverride = null)
+    public MemorySaveTool(IAgentMemory agentMemory, string agentId)
     {
-        _workspaceManager = workspaceManager;
+        _agentMemory = agentMemory ?? throw new ArgumentNullException(nameof(agentMemory));
         _agentId = string.IsNullOrWhiteSpace(agentId)
             ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
             : agentId;
-        _memoryPathOverride = memoryPathOverride;
     }
 
     public string Name => "memory_save";
@@ -83,7 +79,21 @@ public sealed class MemorySaveTool : IAgentTool
             ? ToStringValue(filePathValue)
             : null;
 
-        await _workspaceManager.SaveMemoryAsync(_agentId, filePath, content, _memoryPathOverride, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(filePath) && _agentMemory is MarkdownAgentMemory markdownMemory)
+        {
+            // File-path saves use the extended method on MarkdownAgentMemory
+            await markdownMemory.SaveToFileAsync(content, filePath, cancellationToken);
+        }
+        else
+        {
+            // Default save via the abstraction
+            var request = new AgentMemorySaveRequest(
+                AgentId: _agentId,
+                Content: content,
+                SourceType: "tool");
+            await _agentMemory.SaveAsync(request, cancellationToken);
+        }
+
         var targetDescription = string.IsNullOrWhiteSpace(filePath)
             ? "default memory target"
             : filePath;

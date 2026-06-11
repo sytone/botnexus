@@ -23,6 +23,7 @@ using System.IO.Abstractions;
 using System.Reflection;
 using System.Text.Json;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using BotNexus.Gateway.Tests.TestInfrastructure;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -53,6 +54,7 @@ public sealed class InProcessIsolationStrategyTests
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
@@ -442,6 +444,7 @@ public sealed class InProcessIsolationStrategyTests
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             contributors ?? Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }
