@@ -353,6 +353,12 @@ public sealed record SessionEntry
     /// turns; ignored by the LLM context builder.
     /// </summary>
     public string? TurnIdempotencyKey { get; init; }
+
+    /// <summary>
+    /// Accumulated thinking/reasoning content from the model response.
+    /// Null when the model did not produce reasoning blocks.
+    /// </summary>
+    public string? ThinkingContent { get; init; }
 }
 
 /// <summary>
