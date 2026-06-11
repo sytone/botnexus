@@ -68,6 +68,7 @@ else
                             <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "&#x2014;")</span>
                         </div>
                         <button class="menu-action" data-testid="new-session-btn" @onclick="NewSession">New session</button>
+                        <button class="menu-action" data-testid="new-conversation-btn" @onclick="NewConversation">New conversation</button>
                     </div>
                 }
             </div>
@@ -448,6 +449,18 @@ else
     {
         _showNewSessionConfirm = true;
         _menuOpen = false;
+    }
+
+    private async Task NewConversation()
+    {
+        _menuOpen = false;
+        if (Store.ActiveAgentId is null) return;
+        var convId = await Interaction.CreateConversationAsync(Store.ActiveAgentId);
+        if (convId is not null)
+        {
+            Nav.NavigateTo($"chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
+            await ForceScrollToBottomAsync();
+        }
     }
 
     private async Task DoNewSession()

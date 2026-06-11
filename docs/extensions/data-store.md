@@ -15,6 +15,7 @@ The Data Store extension provides agents with a per-agent structured SQLite data
 - Bulk ingest JSON arrays with automatic schema inference
 - Run SELECT queries against stored data
 - Insert individual rows
+- Update existing rows matching conditions
 - Delete rows matching conditions
 - Inspect table schemas
 - List all tables
@@ -24,11 +25,12 @@ The Data Store extension provides agents with a per-agent structured SQLite data
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | string | Yes | Action: `ingest`, `query`, `insert`, `delete`, `schema`, `tables`, or `drop`. |
+| `action` | string | Yes | Action: `ingest`, `query`, `insert`, `update`, `delete`, `schema`, `tables`, or `drop`. |
 | `table` | string | Conditional | Table name. Required for `ingest`, `insert`, `delete`, `schema`, `drop`. Lowercase alphanumeric + underscores only. |
 | `data` | string | Conditional | JSON array of objects for `ingest`, or single JSON object for `insert`. |
 | `sql` | string | Conditional | SELECT statement for `query` action. Only SELECT is permitted. |
-| `where` | string | Conditional | WHERE clause for `delete` action (required to prevent accidental full-table wipe). |
+| `set` | string | Conditional | JSON object of column=value pairs for `update` action (e.g. `{"status": "done"}`). |
+| `where` | string | Conditional | WHERE clause for `update` and `delete` actions (required to prevent accidental full-table wipe). |
 
 ## Configuration
 
@@ -86,6 +88,21 @@ Add a single row to a table.
   "data": "{\"name\": \"Charlie\", \"email\": \"charlie@example.com\"}"
 }
 ```
+
+### `update`
+
+Modify existing rows matching a WHERE clause. Both `set` and `where` are required.
+
+```json
+{
+  "action": "update",
+  "table": "contacts",
+  "set": "{\"email\": \"alice@newdomain.com\"}",
+  "where": "name = 'Alice'"
+}
+```
+
+The `set` parameter is a JSON object where keys are column names and values are the new values. The `where` clause prevents accidental full-table updates.
 
 ### `delete`
 

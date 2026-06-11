@@ -742,6 +742,23 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void ThinkingBlock_Details_Element_Has_Open_Attribute_By_Default()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Answer", DateTimeOffset.UtcNow)
+        {
+            ThinkingContent = "Some reasoning..."
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var details = cut.Find(".thinking-block details");
+        Assert.True(details.HasAttribute("open"), "Thinking <details> should have the 'open' attribute by default.");
+    }
+
+    [Fact]
     public void Normal_Assistant_Message_Without_Thinking_Renders_MessageBubble()
     {
         CreateAndSeedAgent("agent-1", isConnected: true);
