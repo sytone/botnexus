@@ -628,12 +628,11 @@ public sealed class WorkspacePortalConfig
 public sealed class AuxiliaryConfig
 {
     /// <summary>
-    /// Model ID to use for auto-generating conversation titles after the first user+assistant
-    /// exchange. Supports any registered provider model ID (e.g. "gpt-4o-mini",
-    /// "claude-haiku-3-5", "gemini-2.0-flash-lite").
-    /// When null or empty the primary session model is used as fallback.
+    /// Conversation title generation settings. Hydrated by
+    /// <c>AuxiliarySchemaContributor</c> as a nested object (<c>{ model, timeoutSeconds }</c>);
+    /// this property must remain an object so the bound config matches the on-disk shape.
     /// </summary>
-    public string? Titling { get; set; }
+    public TitlingConfig? Titling { get; set; }
 
     /// <summary>
     /// Model ID to use for session compaction summarisation (cheap/fast auxiliary model).
@@ -644,4 +643,24 @@ public sealed class AuxiliaryConfig
     /// threshold, a startup warning is emitted but the gateway continues to run.
     /// </summary>
     public string? Compression { get; set; }
+}
+
+/// <summary>
+/// Conversation auto-title generation settings under <c>gateway.auxiliary.titling</c>.
+/// </summary>
+public sealed class TitlingConfig
+{
+    /// <summary>
+    /// Model ID to use for auto-generating conversation titles after the first user+assistant
+    /// exchange. Supports any registered provider model ID (e.g. "gpt-4o-mini",
+    /// "claude-haiku-3-5", "gemini-2.0-flash-lite").
+    /// When null or empty the primary session model is used as fallback.
+    /// </summary>
+    public string? Model { get; set; }
+
+    /// <summary>
+    /// Maximum time in seconds allowed for the best-effort title generation call before it is
+    /// abandoned. Defaults to 30 seconds.
+    /// </summary>
+    public int TimeoutSeconds { get; set; } = 30;
 }
