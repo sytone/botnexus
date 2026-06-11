@@ -199,7 +199,7 @@ public sealed class CopilotCompletionsProvider(
         {
             var errorBody = await response.Content.ReadAsStringAsync(ct);
             var providerError = ExtractProviderErrorMessage(errorBody, model);
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {providerError}");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);

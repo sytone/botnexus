@@ -138,7 +138,7 @@ public sealed class CopilotResponsesProvider(
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {errorBody}");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
