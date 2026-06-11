@@ -93,6 +93,7 @@ export default defineConfig({
           { text: 'OpenAI', link: '/providers/openai' },
           { text: 'OpenAI-Compatible', link: '/providers/openai-compatible' },
           { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+          { text: 'Ollama', link: '/providers/ollama' },
         ],
       },
       {
@@ -103,6 +104,7 @@ export default defineConfig({
           { text: 'Process Tool', link: '/extensions/process-tool' },
           { text: 'Web Tools', link: '/extensions/web-tools' },
           { text: 'Data Store', link: '/extensions/data-store' },
+          { text: 'Skills', link: '/extensions/skills' },
           { text: 'MCP', link: '/extensions/mcp' },
           { text: 'MCP Invoke', link: '/extensions/mcp-invoke' },
           { text: 'Debug Tool', link: '/extensions/debug-tool' },
@@ -144,6 +146,7 @@ export default defineConfig({
         items: [
           { text: 'Sub-Agent Spawning', link: '/features/sub-agent-spawning' },
           { text: 'Shell Execution', link: '/features/shell-execution' },
+          { text: 'Canvas', link: '/features/canvas' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],

@@ -11,12 +11,15 @@ namespace BotNexus.Gateway.Abstractions.Security;
 /// <para>Built into the Gateway API middleware pipeline. Every request passes
 /// through authentication before reaching REST controllers or extension-hosted
 /// endpoints.</para>
-/// <para>Built-in implementations (planned):</para>
+/// <para>Built-in implementations:</para>
 /// <list type="bullet">
 ///   <item><b>ApiKeyAuthHandler</b> — Static API key validation. Suitable for development
 ///   and simple single-tenant deployments.</item>
-///   <item><b>JwtAuthHandler</b> — JWT bearer token validation. For production multi-tenant
-///   scenarios. Not yet implemented (see #567).</item>
+///   <item><b>SatelliteKeyAuthHandler</b> — Satellite node authentication using
+///   <c>sat_</c>-prefixed API keys.</item>
+///   <item><b>JWT (claims-based)</b> — Bearer token validation via ASP.NET JwtBearer
+///   middleware and <c>ClaimsUserIdProvider</c>. Resolves stable user identity from
+///   <c>oid</c>/<c>sub</c> claims (see #567, implemented in PR #1123).</item>
 /// </list>
 /// </remarks>
 public interface IGatewayAuthHandler

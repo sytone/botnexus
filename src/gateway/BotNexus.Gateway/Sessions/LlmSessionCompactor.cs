@@ -155,7 +155,36 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var priorSummary = ExtractPriorSummary(toSummarize);
         var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars, priorSummary);
         var effectiveOptions = ResolveEffectiveOptions(options);
-        var summary = await CallLlmForSummaryAsync(summaryPrompt, effectiveOptions, cancellationToken).ConfigureAwait(false);
+
+        string summary;
+        try
+        {
+            summary = await CallLlmForSummaryAsync(summaryPrompt, effectiveOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Timeout fired (not caller cancellation) — treat as a provider stall.
+            _consecutiveFailures.AddOrUpdate(sessionKey, 1, (_, count) => count + 1);
+            _logger.LogWarning(
+                "Compaction timed out for session {SessionId} after {Timeout}s. " +
+                "History is unchanged. Consecutive failures: {Failures}/{Max}",
+                session.SessionId,
+                effectiveOptions.TimeoutSeconds,
+                _consecutiveFailures.GetValueOrDefault(sessionKey, 1),
+                MaxConsecutiveFailures);
+
+            return new CompactionResult
+            {
+                Summary = string.Empty,
+                Succeeded = false,
+                EntriesSummarized = 0,
+                EntriesPreserved = history.Count,
+                TokensBefore = tokensBefore,
+                TokensAfter = tokensBefore,
+                SnapshotDestructiveVersion = snap.DestructiveVersion,
+                SnapshotHistoryCount = snap.Count
+            };
+        }
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
         if (string.IsNullOrWhiteSpace(summary))
@@ -432,9 +461,15 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 new UserMessage(new UserMessageContent(summaryPrompt), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             ]);
 
+        // Create a timeout-linked token so hung provider calls are cancelled after
+        // CompactionOptions.TimeoutSeconds. The linked token fires on whichever
+        // triggers first: the caller's cancellation or the configured timeout.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
+
         var completion = await _llmClient
             .CompleteSimpleAsync(model, context)
-            .WaitAsync(cancellationToken)
+            .WaitAsync(timeoutCts.Token)
             .ConfigureAwait(false);
 
         // Bug 3: log what actually came back before filtering.
