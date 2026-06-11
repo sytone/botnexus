@@ -34,6 +34,7 @@ public sealed class ClientStateStore : IClientStateStore
                     DisplayName = a.DisplayName,
                     Emoji = a.Emoji,
                     Description = a.Description,
+                    IsBuiltIn = a.IsBuiltIn,
                     IsConnected = true
                 };
             }
@@ -42,6 +43,7 @@ public sealed class ClientStateStore : IClientStateStore
                 existing.DisplayName = a.DisplayName;
                 existing.Emoji = a.Emoji;
                 existing.Description = a.Description;
+                existing.IsBuiltIn = a.IsBuiltIn;
             }
         }
 

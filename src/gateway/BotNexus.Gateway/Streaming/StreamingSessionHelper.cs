@@ -34,6 +34,7 @@ public static class StreamingSessionHelper
         var streamedHistory = new List<SessionEntry>();
         var allHistoryEntries = new List<SessionEntry>();
         var hadThinkingContent = false;
+        var thinkingBuffer = new StringBuilder();
         var hadMessageEnd = false;
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
@@ -53,6 +54,7 @@ public static class StreamingSessionHelper
                     break;
                 case AgentStreamEventType.ThinkingDelta when evt.ThinkingContent is not null:
                     hadThinkingContent = true;
+                    thinkingBuffer.Append(evt.ThinkingContent);
                     break;
                 case AgentStreamEventType.MessageEnd:
                     hadMessageEnd = true;
@@ -122,7 +124,8 @@ public static class StreamingSessionHelper
                     streamedHistory.Clear();
                     if (streamedContent.Length > 0)
                     {
-                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
+                        thinkingBuffer.Clear();
                         streamedContent.Clear();
                     }
                     session.AddEntries(turnSnapshot);
@@ -174,19 +177,18 @@ public static class StreamingSessionHelper
         var finalContent = streamedContent.ToString();
         if (!string.IsNullOrWhiteSpace(finalContent))
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
         }
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
         {
             // The model produced only reasoning/thinking blocks and no visible text or tool calls.
-            // Without this sentinel the session transcript ends with the user message and no
-            // assistant reply, so the next turn replays the abandoned user prompt, causing
-            // duplicate-message confusion and skipped tool calls (same pattern as #656).
-            // Surface a system entry so the conversation is in a known good state.
+            // Add an empty assistant entry so the transcript is in a valid state (prevents the
+            // duplicate-message replay bug from #656). Do NOT surface any user-visible message —
+            // thinking-only responses are a normal model behaviour, not an error (#1198).
             session.AddEntry(new SessionEntry
             {
-                Role = MessageRole.System,
-                Content = "Agent produced only reasoning content and could not generate a visible response. Please try again or rephrase your message."
+                Role = MessageRole.Assistant,
+                Content = string.Empty
             });
         }
 

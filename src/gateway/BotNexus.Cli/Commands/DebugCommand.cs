@@ -7,11 +7,13 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal sealed class DebugCommand
 {
+    private readonly DebugDbCommand _db = new();
     private readonly DebugLogsCommand _logs = new();
     private readonly DebugSessionsCommand _sessions = new();
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("debug", "Platform diagnostics - inspect sessions, logs, and databases offline.");
+        command.AddCommand(_db.Build(targetOption));
         command.AddCommand(_logs.Build(targetOption));
         command.AddCommand(_sessions.Build(targetOption));
         return command;

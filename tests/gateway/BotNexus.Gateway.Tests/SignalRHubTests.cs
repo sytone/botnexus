@@ -585,6 +585,16 @@ public sealed class SignalRHubTests
         await act.ShouldThrowAsync<ArgumentException>();
     }
 
+    /// <summary>
+    /// Exposed for cross-class test usage (e.g. auth verification tests).
+    /// </summary>
+    internal static GatewayHub CreateHubForTest(
+        IInboundMessageOrchestrator? orchestrator = null,
+        ISessionStore? sessions = null,
+        string connectionId = "conn-test",
+        string? userIdentifier = "user")
+        => CreateHub(orchestrator: orchestrator, sessions: sessions, connectionId: connectionId, userIdentifier: userIdentifier);
+
     private static GatewayHub CreateHub(
         IHubCallerClients<IGatewayHubClient>? clients = null,
         IGroupManager? groups = null,
