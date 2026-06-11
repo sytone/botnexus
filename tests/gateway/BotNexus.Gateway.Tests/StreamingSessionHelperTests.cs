@@ -38,7 +38,7 @@ public sealed class StreamingSessionHelperTests
     }
 
     [Fact]
-    public async Task ProcessAndSaveAsync_DoesNotPersistThinkingContent()
+    public async Task ProcessAndSaveAsync_PersistsThinkingContentOnAssistantEntry()
     {
         var callbackTypes = new List<AgentStreamEventType>();
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
@@ -61,7 +61,47 @@ public sealed class StreamingSessionHelperTests
         session.History.ShouldHaveSingleItem();
         session.History[0].Role.ShouldBe(MessageRole.Assistant);
         session.History[0].Content.ShouldBe("Final answer.");
+        session.History[0].ThinkingContent.ShouldBe("Let me think...");
         callbackTypes.ShouldContain(AgentStreamEventType.ThinkingDelta);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_NoThinking_ThinkingContentIsNull()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2b"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Hello" }
+            ]),
+            session,
+            store.Object);
+
+        session.History.ShouldHaveSingleItem();
+        session.History[0].ThinkingContent.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MultipleThinkingDeltas_Accumulated()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2c"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "First " },
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "second " },
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "third" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Answer" }
+            ]),
+            session,
+            store.Object);
+
+        session.History.ShouldHaveSingleItem();
+        session.History[0].ThinkingContent.ShouldBe("First second third");
     }
 
     [Fact]

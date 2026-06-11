@@ -92,6 +92,9 @@ public sealed class ConversationHistoryEntryDto
 
     [JsonPropertyName("reason")]
     public string? Reason { get; init; }
+
+    [JsonPropertyName("thinkingContent")]
+    public string? ThinkingContent { get; init; }
 }
 
 public sealed record SessionHistoryResponseDto(
@@ -122,4 +125,7 @@ public sealed class SessionHistoryEntryDto
 
     [JsonPropertyName("toolIsError")]
     public bool ToolIsError { get; init; }
+
+    [JsonPropertyName("thinkingContent")]
+    public string? ThinkingContent { get; init; }
 }

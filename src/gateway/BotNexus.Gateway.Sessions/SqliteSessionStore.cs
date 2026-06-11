@@ -559,7 +559,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      // P9-E (#645): trigger_type captures the proxy origin of a turn
                      // (Cron/Soul/Heartbeat/Memory). Idempotent ALTER guarantees existing
                      // pre-P9-E DBs gain the column on the first post-upgrade open.
-                     ("trigger_type", "TEXT")
+                     ("trigger_type", "TEXT"),
+                     // #1191: thinking content persistence for portal reload
+                     ("thinking_content", "TEXT")
                  })
         {
             try
@@ -900,7 +902,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -925,6 +927,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 IsHistory = historyReader.FieldCount > 9 && !historyReader.IsDBNull(9) && historyReader.GetInt64(9) != 0,
                 Trigger = historyReader.FieldCount > 10 && !historyReader.IsDBNull(10)
                     ? TriggerType.FromString(historyReader.GetString(10))
+                    : null,
+                ThinkingContent = historyReader.FieldCount > 11 && !historyReader.IsDBNull(11)
+                    ? historyReader.GetString(11)
                     : null
             });
         }
@@ -1012,8 +1017,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
             insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
@@ -1027,6 +1032,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             insertCommand.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$triggerType", (object?)entry.Trigger?.Value ?? DBNull.Value);
+            insertCommand.Parameters.AddWithValue("$thinkingContent", (object?)entry.ThinkingContent ?? DBNull.Value);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

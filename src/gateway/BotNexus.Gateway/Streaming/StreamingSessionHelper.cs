@@ -34,6 +34,7 @@ public static class StreamingSessionHelper
         var streamedHistory = new List<SessionEntry>();
         var allHistoryEntries = new List<SessionEntry>();
         var hadThinkingContent = false;
+        var thinkingBuffer = new StringBuilder();
         var hadMessageEnd = false;
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
@@ -53,6 +54,7 @@ public static class StreamingSessionHelper
                     break;
                 case AgentStreamEventType.ThinkingDelta when evt.ThinkingContent is not null:
                     hadThinkingContent = true;
+                    thinkingBuffer.Append(evt.ThinkingContent);
                     break;
                 case AgentStreamEventType.MessageEnd:
                     hadMessageEnd = true;
@@ -122,7 +124,8 @@ public static class StreamingSessionHelper
                     streamedHistory.Clear();
                     if (streamedContent.Length > 0)
                     {
-                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
+                        thinkingBuffer.Clear();
                         streamedContent.Clear();
                     }
                     session.AddEntries(turnSnapshot);
@@ -174,7 +177,7 @@ public static class StreamingSessionHelper
         var finalContent = streamedContent.ToString();
         if (!string.IsNullOrWhiteSpace(finalContent))
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
         }
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
         {
