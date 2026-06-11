@@ -1152,7 +1152,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         if (userText is null || assistantText is null)
             return;
 
-        var titlingModel = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
+        var titlingModel = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling?.Model;
 
         _autoTitleService.TriggerBestEffort(
             session.ConversationId,

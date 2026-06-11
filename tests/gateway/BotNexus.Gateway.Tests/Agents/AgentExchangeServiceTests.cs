@@ -87,7 +87,8 @@ public sealed class AgentExchangeServiceTests
             new InMemorySessionStore(),
             new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
-            NullLogger<AgentExchangeService>.Instance);
+            NullLogger<AgentExchangeService>.Instance,
+            exchangeOptions: Options.Create(new AgentExchangeOptions { AccessPolicy = "whitelist" }));
 
         Func<Task> action = () => service.ConverseAsync(new AgentExchangeRequest
         {
@@ -858,7 +859,8 @@ public sealed class AgentExchangeServiceTests
             new InMemorySessionStore(),
             new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
-            NullLogger<AgentExchangeService>.Instance);
+            NullLogger<AgentExchangeService>.Instance,
+            exchangeOptions: Options.Create(new AgentExchangeOptions { AccessPolicy = "whitelist" }));
 
         Func<Task> action = () => service.ConverseAsync(new AgentExchangeRequest
         {

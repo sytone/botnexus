@@ -10,20 +10,23 @@ namespace BotNexus.Memory.Tools;
 /// <summary>
 /// Searches the agent's persistent memory via the <see cref="IAgentMemory"/> abstraction.
 /// Results are ranked by relevance with optional temporal decay.
+/// Supports cross-store search via <see cref="ISharedMemoryStoreRegistry"/> when configured.
 /// </summary>
 public sealed class MemorySearchTool : IAgentTool
 {
     private readonly IAgentMemory _agentMemory;
     private readonly string _agentId;
     private readonly int _defaultTopK;
+    private readonly ISharedMemoryStoreRegistry? _sharedRegistry;
 
-    public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null)
+    public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null, ISharedMemoryStoreRegistry? sharedRegistry = null)
     {
         _agentMemory = agentMemory ?? throw new ArgumentNullException(nameof(agentMemory));
         _agentId = string.IsNullOrWhiteSpace(agentId)
             ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
             : agentId;
         _defaultTopK = Math.Max(1, config?.Search?.DefaultTopK ?? 10);
+        _sharedRegistry = sharedRegistry;
     }
 
     public string Name => "memory_search";
@@ -44,6 +47,15 @@ public sealed class MemorySearchTool : IAgentTool
                 "topK": {
                   "type": "integer",
                   "description": "Maximum number of results to return (default: 10)"
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "Search scope: 'own' (agent's private store only), 'shared' (shared stores only), or 'all' (both). Default: 'all'",
+                  "enum": ["own", "shared", "all"]
+                },
+                "store": {
+                  "type": "string",
+                  "description": "Specific shared store name to search. When set, only that store is searched regardless of scope."
                 },
                 "filter": {
                   "type": "object",
@@ -78,6 +90,12 @@ public sealed class MemorySearchTool : IAgentTool
         if (arguments.TryGetValue("topK", out var topK) && topK is not null)
             prepared["topK"] = ToIntValue(topK, "topK");
 
+        if (arguments.TryGetValue("scope", out var scope) && scope is not null)
+            prepared["scope"] = ToStringValue(scope);
+
+        if (arguments.TryGetValue("store", out var store) && store is not null)
+            prepared["store"] = ToStringValue(store);
+
         if (arguments.TryGetValue("filter", out var filter) && filter is not null)
             prepared["filter"] = filter;
 
@@ -103,18 +121,121 @@ public sealed class MemorySearchTool : IAgentTool
         var topK = arguments.TryGetValue("topK", out var topKValue) && topKValue is not null
             ? Math.Max(1, ToIntValue(topKValue, "topK"))
             : _defaultTopK;
+        var scope = arguments.TryGetValue("scope", out var scopeValue) && scopeValue is not null
+            ? ToStringValue(scopeValue) ?? "all"
+            : "all";
+        var storeName = arguments.TryGetValue("store", out var storeValue) && storeValue is not null
+            ? ToStringValue(storeValue)
+            : null;
         var filter = ParseFilter(arguments.TryGetValue("filter", out var filterValue) ? filterValue : null);
 
-        var request = new AgentMemorySearchRequest(
-            AgentId: _agentId,
-            Query: query,
-            TopK: topK,
-            Filter: filter);
+        // If a specific store is requested, validate access and search only that store
+        if (!string.IsNullOrWhiteSpace(storeName))
+        {
+            return await SearchSpecificStoreAsync(query, topK, storeName!, filter, cancellationToken).ConfigureAwait(false);
+        }
 
-        var entries = await _agentMemory.SearchAsync(request, cancellationToken).ConfigureAwait(false);
-        if (entries.Count == 0)
+        var allResults = new List<AgentMemorySearchResult>();
+
+        // Search own store
+        if (scope is "own" or "all")
+        {
+            var request = new AgentMemorySearchRequest(
+                AgentId: _agentId,
+                Query: query,
+                TopK: topK,
+                Filter: filter);
+
+            var ownResults = await _agentMemory.SearchAsync(request, cancellationToken).ConfigureAwait(false);
+            allResults.AddRange(ownResults);
+        }
+
+        // Search shared stores
+        if ((scope is "shared" or "all") && _sharedRegistry is not null)
+        {
+            var readableStores = _sharedRegistry.GetReadableStores(_agentId);
+            var memoryFilter = filter is not null
+                ? new MemorySearchFilter
+                {
+                    SourceType = filter.SourceType,
+                    SessionId = filter.SessionId,
+                    AfterDate = filter.AfterDate,
+                    BeforeDate = filter.BeforeDate,
+                    Tags = filter.Tags
+                }
+                : null;
+
+            foreach (var name in readableStores)
+            {
+                var store = _sharedRegistry.GetStore(name);
+                if (store is null) continue;
+
+                var sharedResults = await store.SearchAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
+                foreach (var entry in sharedResults)
+                {
+                    allResults.Add(new AgentMemorySearchResult(
+                        Id: entry.Id,
+                        Content: entry.Content,
+                        SourceType: $"shared:{name}",
+                        SessionId: entry.SessionId,
+                        CreatedAt: entry.CreatedAt));
+                }
+            }
+        }
+
+        // Sort by relevance (CreatedAt as proxy for temporal decay), take topK
+        var finalResults = allResults
+            .OrderByDescending(r => r.CreatedAt)
+            .Take(topK)
+            .ToList();
+
+        if (finalResults.Count == 0)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matching memories found.")]);
 
+        return FormatResults(finalResults);
+    }
+
+    private async Task<AgentToolResult> SearchSpecificStoreAsync(
+        string query, int topK, string storeName,
+        AgentMemorySearchFilter? filter, CancellationToken cancellationToken)
+    {
+        if (_sharedRegistry is null)
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Shared memory stores are not configured.")]);
+
+        if (!_sharedRegistry.CanRead(_agentId, storeName))
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Access denied: agent '{_agentId}' cannot read from store '{storeName}'.")]);
+
+        var store = _sharedRegistry.GetStore(storeName);
+        if (store is null)
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Store '{storeName}' not found.")]);
+
+        var memoryFilter = filter is not null
+            ? new MemorySearchFilter
+            {
+                SourceType = filter.SourceType,
+                SessionId = filter.SessionId,
+                AfterDate = filter.AfterDate,
+                BeforeDate = filter.BeforeDate,
+                Tags = filter.Tags
+            }
+            : null;
+
+        var entries = await store.SearchAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
+        var results = entries.Select(e => new AgentMemorySearchResult(
+            Id: e.Id,
+            Content: e.Content,
+            SourceType: $"shared:{storeName}",
+            SessionId: e.SessionId,
+            CreatedAt: e.CreatedAt)).ToList();
+
+        if (results.Count == 0)
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matching memories found.")]);
+
+        return FormatResults(results);
+    }
+
+    private static AgentToolResult FormatResults(IReadOnlyList<AgentMemorySearchResult> entries)
+    {
         var lines = new List<string>(entries.Count * 6)
         {
             $"Found {entries.Count} memory entr{(entries.Count == 1 ? "y" : "ies")}:",
