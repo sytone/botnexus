@@ -26,7 +26,7 @@ public sealed class CronTool(
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["list", "create", "update", "delete", "run"]
+                  "enum": ["list", "create", "update", "delete", "run", "history"]
                 },
                 "jobId": { "type": "string", "description": "Optional - for update/delete/run." },
                 "includeSystem": { "type": "boolean", "description": "When true, include system-provisioned jobs (e.g., heartbeat) in list output. Default: false." },
@@ -42,7 +42,8 @@ public sealed class CronTool(
                   "additionalProperties": { "type": "string" }
                 },
                 "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id." },
-                "enabled": { "type": "boolean", "description": "Whether the job is enabled." }
+                "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
+                "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." }
               },
               "required": ["action"]
             }
@@ -76,6 +77,9 @@ public sealed class CronTool(
         if (arguments.TryGetValue("enabled", out var enabled) && enabled is not null)
             prepared["enabled"] = ReadBool(enabled, "enabled");
 
+        if (arguments.TryGetValue("limit", out var limitVal) && limitVal is not null)
+            prepared["limit"] = limitVal;
+
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
@@ -93,6 +97,7 @@ public sealed class CronTool(
             "update" => await UpdateAsync(arguments, cancellationToken).ConfigureAwait(false),
             "delete" => await DeleteAsync(arguments, cancellationToken).ConfigureAwait(false),
             "run" => await RunAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "history" => await HistoryAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported cron action '{action}'.")
         };
     }
@@ -234,6 +239,22 @@ public sealed class CronTool(
         return TextResult(JsonSerializer.Serialize(run, JsonOptions));
     }
 
+    private async Task<AgentToolResult> HistoryAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
+    {
+        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
+        var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
+
+        EnsureCanManage(existing);
+
+        var limit = ReadInt(arguments, "limit", defaultValue: 20);
+        if (limit < 1) limit = 1;
+        if (limit > 100) limit = 100;
+
+        var runs = await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+    }
+
     private void EnsureCanManage(CronJob job)
     {
         if (allowCrossAgentCron)
@@ -268,7 +289,8 @@ public sealed class CronTool(
            || action.Equals("create", StringComparison.OrdinalIgnoreCase)
            || action.Equals("update", StringComparison.OrdinalIgnoreCase)
            || action.Equals("delete", StringComparison.OrdinalIgnoreCase)
-           || action.Equals("run", StringComparison.OrdinalIgnoreCase);
+           || action.Equals("run", StringComparison.OrdinalIgnoreCase)
+           || action.Equals("history", StringComparison.OrdinalIgnoreCase);
 
     private static void CopyString(IReadOnlyDictionary<string, object?> source, Dictionary<string, object?> destination, string key)
     {
@@ -357,6 +379,23 @@ public sealed class CronTool(
             string text when bool.TryParse(text, out var parsed) => parsed,
             _ => throw new ArgumentException($"Argument '{argumentName}' must be a boolean.")
         };
+
+    private static int ReadInt(IReadOnlyDictionary<string, object?> arguments, string key, int defaultValue)
+    {
+        if (!arguments.TryGetValue(key, out var value) || value is null)
+            return defaultValue;
+
+        return value switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            JsonElement { ValueKind: JsonValueKind.Number } element => element.GetInt32(),
+            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var parsed) => parsed,
+            string text when int.TryParse(text, out var parsed) => parsed,
+            _ => defaultValue
+        };
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
