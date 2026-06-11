@@ -68,6 +68,10 @@ else
                             <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "&#x2014;")</span>
                         </div>
                         <button class="menu-action" data-testid="new-session-btn" @onclick="NewSession">New session</button>
+                        @if (HasCanvasContent(activeAgent))
+                        {
+                            <button class="menu-action" data-testid="canvas-toggle-btn" @onclick="ToggleCanvas">Canvas</button>
+                        }
                     </div>
                 }
             </div>
@@ -147,6 +151,14 @@ else
             </div>
         </div>
     }
+    <!-- CANVAS PANEL -->
+    @if (Store.ActiveAgentId is not null)
+    {
+        <MobileCanvasPanel AgentId="@Store.ActiveAgentId"
+                           ConversationId="@activeConvId"
+                           Open="_canvasOpen"
+                           OnClose="CloseCanvas" />
+    }
     <!-- TOOL CALL MODAL -->
     @if (_modalToolMessage is not null)
     {
@@ -195,6 +207,7 @@ else
     private ChatMessage? _modalToolMessage;
     private DotNetObjectReference<Chat>? _dotNetRef;
     private bool _appResumeListenerRegistered;
+    private bool _canvasOpen;
 
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
@@ -463,6 +476,30 @@ else
     private void CancelNewSession()
     {
         _showNewSessionConfirm = false;
+    }
+
+    private void ToggleCanvas()
+    {
+        _canvasOpen = !_canvasOpen;
+        _menuOpen = false;
+    }
+
+    private void CloseCanvas()
+    {
+        _canvasOpen = false;
+    }
+
+    private static bool HasCanvasContent(AgentState? agent)
+    {
+        if (agent is null) return false;
+        if (!string.IsNullOrWhiteSpace(agent.CanvasHtml)) return true;
+        if (agent.ActiveConversationId is not null)
+        {
+            // Check if any conversation has canvas content
+            if (agent.Conversations.TryGetValue(agent.ActiveConversationId, out var conv))
+                return !string.IsNullOrWhiteSpace(conv.CanvasHtml);
+        }
+        return false;
     }
 
     private void OpenToolModal(ChatMessage msg)
