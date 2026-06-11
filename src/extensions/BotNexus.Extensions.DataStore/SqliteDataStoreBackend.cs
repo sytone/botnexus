@@ -162,6 +162,43 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
         catch (Exception ex) { return DataStoreResult.Fail($"Delete failed: {ex.Message}"); }
     }
 
+    public async Task<DataStoreResult> UpdateAsync(string table, string set, string where, CancellationToken ct = default)
+    {
+        try
+        {
+            await _lock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                using var doc = JsonDocument.Parse(set);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    return DataStoreResult.Fail("'set' must be a JSON object of column=value pairs.");
+
+                var properties = doc.RootElement.EnumerateObject().ToList();
+                if (properties.Count == 0)
+                    return DataStoreResult.Fail("'set' must contain at least one column=value pair.");
+
+                var conn = await GetConnectionAsync(ct).ConfigureAwait(false);
+
+                // Build parameterized SET clause
+                var setClauses = new List<string>();
+                using var cmd = conn.CreateCommand();
+                for (int i = 0; i < properties.Count; i++)
+                {
+                    setClauses.Add($"\"{properties[i].Name}\" = @s{i}");
+                    cmd.Parameters.AddWithValue($"@s{i}", JsonElementToSqlite(properties[i].Value));
+                }
+
+                cmd.CommandText = $"UPDATE \"{table}\" SET {string.Join(", ", setClauses)} WHERE {where}";
+                int affected = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                return DataStoreResult.Ok($"{affected} row{(affected == 1 ? "" : "s")} updated.", affected);
+            }
+            finally { _lock.Release(); }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (JsonException ex) { return DataStoreResult.Fail($"Update failed: invalid JSON in 'set' — {ex.Message}"); }
+        catch (Exception ex) { return DataStoreResult.Fail($"Update failed: {ex.Message}"); }
+    }
+
     public async Task<DataStoreResult> SchemaAsync(string table, CancellationToken ct = default)
     {
         try
