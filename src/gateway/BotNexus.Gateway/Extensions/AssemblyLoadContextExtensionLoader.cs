@@ -158,6 +158,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             var hookHandlerTypes = DiscoverHookHandlers(assembly);
             var registeredServiceNames = RegisterServices(discoveredImplementations);
             RegisterHookHandlers(hookHandlerTypes, registeredServiceNames);
+            InvokeServiceContributors(assembly, registeredServiceNames);
 
             var loadedExtension = new LoadedExtension
             {
@@ -475,6 +476,41 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             var closed = registerMethod.MakeGenericMethod(genericArgs);
             closed.Invoke(_hookDispatcher, [instance]);
             registeredServiceNames.Add($"IHookHandler<{genericArgs[0].Name},{genericArgs[1].Name}>->{implementation.FullName}");
+        }
+    }
+
+    /// <summary>
+    /// Discovers <see cref="IServiceContributor"/> implementations in the extension assembly and
+    /// invokes <see cref="IServiceContributor.ConfigureServices"/> against the host service
+    /// collection. This runs while <c>_services</c> is still mutable (before the host is built),
+    /// letting extensions register services that contract-based auto-discovery cannot express —
+    /// for example authorization policies or framework-default replacements.
+    /// </summary>
+    private void InvokeServiceContributors(Assembly assembly, List<string> registeredServiceNames)
+    {
+        var contributorContract = typeof(IServiceContributor);
+
+        foreach (var type in GetLoadableTypes(assembly))
+        {
+            if (!type.IsClass || type.IsAbstract || type.IsGenericTypeDefinition)
+                continue;
+
+            if (!contributorContract.IsAssignableFrom(type))
+                continue;
+
+            try
+            {
+                var contributor = (IServiceContributor)Activator.CreateInstance(type)!;
+                contributor.ConfigureServices(_services);
+                registeredServiceNames.Add($"{nameof(IServiceContributor)}->{type.FullName}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Service contributor '{ContributorType}' threw during ConfigureServices and was skipped.",
+                    type.FullName);
+            }
         }
     }
 
