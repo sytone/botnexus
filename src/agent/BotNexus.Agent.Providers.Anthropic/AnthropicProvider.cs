@@ -202,8 +202,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(effectiveCt);
-            throw new HttpRequestException(
-                $"Anthropic API returned {(int)response.StatusCode}: {errorBody}");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Anthropic");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);
