@@ -45,7 +45,7 @@ This provider works with any service implementing the OpenAI Chat Completions pr
 - **DeepSeek** — `https://api.deepseek.com/v1`
 - **Groq** — `https://api.groq.com/openai/v1`
 - **Together AI** — `https://api.together.xyz/v1`
-- **Ollama** — `http://localhost:11434/v1` (local)
+- **Ollama** — `http://localhost:11434/v1` (local) — see [dedicated Ollama page](ollama.md) for CLI diagnostics
 - **vLLM** — `http://localhost:8000/v1` (local)
 - **LM Studio** — `http://localhost:1234/v1` (local)
 - **OpenRouter** — `https://openrouter.ai/api/v1`

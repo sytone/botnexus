@@ -22,6 +22,9 @@ public interface IDataStoreBackend : IDisposable
     /// <summary>Delete rows matching a WHERE clause.</summary>
     Task<DataStoreResult> DeleteAsync(string table, string where, CancellationToken ct = default);
 
+    /// <summary>Update rows matching a WHERE clause with the provided column values.</summary>
+    Task<DataStoreResult> UpdateAsync(string table, string set, string where, CancellationToken ct = default);
+
     /// <summary>Return the schema (column names and types) for a table.</summary>
     Task<DataStoreResult> SchemaAsync(string table, CancellationToken ct = default);
 

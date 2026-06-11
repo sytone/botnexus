@@ -31,7 +31,7 @@ public sealed class DataStoreToolTests
     [Fact]
     public void ValidActions_ContainsAllExpectedActions()
     {
-        var expected = new[] { "ingest", "query", "insert", "delete", "schema", "tables", "drop" };
+        var expected = new[] { "ingest", "query", "insert", "update", "delete", "schema", "tables", "drop" };
         foreach (var a in expected)
             DataStoreTool.ValidActions.Contains(a).ShouldBeTrue($"'{a}' missing from ValidActions");
     }
@@ -39,8 +39,8 @@ public sealed class DataStoreToolTests
     // ── Unknown action ────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("update")]
     [InlineData("upsert")]
+    [InlineData("merge")]
     [InlineData("")]
     [InlineData(null)]
     public async Task ExecuteAsync_UnknownAction_ReturnsError(string? action)
@@ -181,6 +181,55 @@ public sealed class DataStoreToolTests
         var result  = await tool.ExecuteAsync("tc1", Args("delete", ("table", "events"), ("where", "id = 1")));
         IsError(result).ShouldBeFalse();
         backend.LastAction.ShouldBe("delete");
+    }
+
+    // ── update ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_Update_MissingTable_ReturnsError()
+    {
+        var tool   = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("update", ("set", "{\"x\":1}"), ("where", "id = 1")));
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("table");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_MissingSet_ReturnsError()
+    {
+        var tool   = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("update", ("table", "events"), ("where", "id = 1")));
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("set");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_MissingWhere_ReturnsError()
+    {
+        var tool   = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("update", ("table", "events"), ("set", "{\"x\":1}")));
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("where");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_InvalidTableName_ReturnsError()
+    {
+        var tool   = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("update", ("table", "Bad-Table"), ("set", "{\"x\":1}"), ("where", "id = 1")));
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("Invalid table name");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_HappyPath_DelegatesToBackend()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var result  = await tool.ExecuteAsync("tc1", Args("update", ("table", "events"), ("set", "{\"status\":\"done\"}"), ("where", "id = 1")));
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe("update");
+        backend.LastTable.ShouldBe("events");
     }
 
     // ── schema ────────────────────────────────────────────────────────────────
@@ -335,6 +384,9 @@ internal sealed class FakeDataStoreBackend : IDataStoreBackend
 
     public Task<DataStoreResult> DeleteAsync(string table, string where, CancellationToken ct = default)
     { LastAction = "delete"; LastTable = table; return Task.FromResult(DataStoreResult.Ok("1 deleted", 1)); }
+
+    public Task<DataStoreResult> UpdateAsync(string table, string set, string where, CancellationToken ct = default)
+    { LastAction = "update"; LastTable = table; return Task.FromResult(DataStoreResult.Ok("1 row updated.", 1)); }
 
     public Task<DataStoreResult> SchemaAsync(string table, CancellationToken ct = default)
     { LastAction = "schema"; LastTable = table; return Task.FromResult(DataStoreResult.Ok("id INTEGER", 0)); }

@@ -62,16 +62,19 @@ You should see the root command help listing all available subcommands.
 10. [config get](#config-get) — Read a config value
 11. [config set](#config-set) — Set a config value
 12. [config schema](#config-schema) — Generate JSON schema
-13. [provider](#provider) — Show or set up providers
-14. [provider setup](#provider-setup) — Interactive provider setup wizard
-15. [provider list](#provider-list) — List configured providers
-16. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-17. [provider remove](#provider-remove) — Remove a provider non-interactively
-16. [prompt](#prompt) — Manage prompt templates
-17. [prompt list](#prompt-list) — List available prompt templates
-18. [prompt render](#prompt-render) — Render a prompt template
-19. [prompt run](#prompt-run) — Render and execute a prompt template
-20. [Examples](#examples)
+13. [gateway](#gateway) — Manage the gateway lifecycle
+14. [provider](#provider) — Show or set up providers
+15. [provider setup](#provider-setup) — Interactive provider setup wizard
+16. [provider list](#provider-list) — List configured providers
+17. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+18. [provider remove](#provider-remove) — Remove a provider non-interactively
+19. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+20. [prompt](#prompt) — Manage prompt templates
+21. [prompt list](#prompt-list) — List available prompt templates
+22. [prompt render](#prompt-render) — Render a prompt template
+23. [prompt run](#prompt-run) — Render and execute a prompt template
+24. [satellite](#satellite) — Manage satellite nodes
+25. [Examples](#examples)
 
 ---
 
@@ -756,6 +759,112 @@ botnexus config schema --output my-schema.json
 
 ---
 
+## gateway
+
+Manage the BotNexus Gateway lifecycle: start, stop, status, restart. For foreground/development mode, use `serve` or `serve gateway` instead.
+
+### Usage
+
+```powershell
+botnexus gateway <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `start` | Start the gateway process (detached by default) |
+| `stop` | Stop the gateway process |
+| `status` | Check gateway process status |
+| `restart` | Restart the gateway process |
+| `install` | Install the gateway as an OS service |
+| `uninstall` | Remove the OS service registration |
+
+### gateway start
+
+Start the gateway process in detached (background) mode. Builds the solution first unless `--skip-build` is passed.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port <PORT>` | `5005` | Port to listen on |
+| `--source <DIR>` | `~/botnexus` | Path to the BotNexus repository root |
+| `--attached` | off | Run in foreground instead of detached mode |
+| `--skip-build` | off | Skip the implicit solution rebuild before starting |
+
+```powershell
+# Start detached on default port
+botnexus gateway start
+
+# Start on custom port, skip build
+botnexus gateway start --port 8080 --skip-build
+
+# Start in foreground (like serve)
+botnexus gateway start --attached
+```
+
+### gateway stop
+
+Stop the running gateway process.
+
+```powershell
+botnexus gateway stop
+```
+
+### gateway status
+
+Check whether the gateway process is running.
+
+```powershell
+botnexus gateway status
+```
+
+### gateway restart
+
+Stop and restart the gateway process.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port <PORT>` | `5005` | Port to listen on |
+| `--source <DIR>` | `~/botnexus` | Path to the BotNexus repository root |
+
+```powershell
+botnexus gateway restart
+botnexus gateway restart --port 8080
+```
+
+### gateway install
+
+Install the gateway as an OS-managed service for automatic startup. Supports:
+
+- **Windows** — Windows Service (via `sc.exe`)
+- **Linux** — systemd unit file
+- **macOS** — launchd plist
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port <PORT>` | `5005` | Port for the service to listen on |
+| `--source <DIR>` | `~/botnexus` | Path to the BotNexus repository root |
+
+```powershell
+# Install as Windows Service
+botnexus gateway install
+
+# Install with custom port
+botnexus gateway install --port 8080
+```
+
+After installation, manage the service with standard OS tools (`sc`, `systemctl`, `launchctl`).
+
+### gateway uninstall
+
+Remove the OS service registration.
+
+```powershell
+botnexus gateway uninstall
+```
+
+---
+
 ## provider
 
 Show provider status or start the setup wizard. When run without a subcommand, shows configured providers if any exist, otherwise launches the setup wizard.
@@ -969,6 +1078,62 @@ botnexus provider remove --name <NAME> [OPTIONS]
 ```powershell
 botnexus provider remove --name integration-mock
 ```
+
+---
+
+## provider ollama
+
+Diagnostic subcommands for local Ollama instances. Verifies connectivity, lists pulled models, and tests inference without requiring a running gateway.
+
+### Usage
+
+```powershell
+botnexus provider ollama <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `status` | Check Ollama server connectivity and version |
+| `models` | List models available on the local instance |
+| `test` | Send a test prompt to verify model inference |
+
+### provider ollama status
+
+```powershell
+botnexus provider ollama status
+botnexus provider ollama status --url http://192.168.1.100:11434
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url <URL>` | `http://localhost:11434` | Ollama server URL |
+
+### provider ollama models
+
+```powershell
+botnexus provider ollama models
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url <URL>` | `http://localhost:11434` | Ollama server URL |
+
+### provider ollama test
+
+Send a simple chat completion request to verify end-to-end inference.
+
+```powershell
+botnexus provider ollama test --model llama3
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url <URL>` | `http://localhost:11434` | Ollama server URL |
+| `--model <ID>` | (required) | Model to test |
+
+See [Ollama Provider](providers/ollama.md) for full setup and configuration details.
 
 ---
 
@@ -1204,6 +1369,68 @@ Output includes:
 [dim]Rendering template 'code-review-summary' with agent 'assistant'...[/]
 [dim]Rendered template and invoked http://localhost:5005/api/chat[/]
 [Agent response...]
+```
+
+---
+
+## satellite
+
+Manage satellite nodes — remote presence points that extend BotNexus to additional machines (desktop notifications, canvas windows, remote command execution).
+
+### Usage
+
+```powershell
+botnexus satellite <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all registered satellites |
+| `register` | Register a new satellite and generate its API key |
+| `remove` | Remove a satellite registration |
+
+### satellite list
+
+List all registered satellites with their status and capabilities.
+
+```powershell
+botnexus satellite list
+```
+
+### satellite register
+
+Register a new satellite and generate a unique API key (prefixed `sat_`).
+
+```powershell
+botnexus satellite register <NAME> --owner <USER_ID> [OPTIONS]
+```
+
+| Argument/Option | Required | Description |
+|-----------------|----------|-------------|
+| `<NAME>` | Yes | Satellite ID (e.g., `sat_desktop_home`) |
+| `--owner <ID>` | Yes | Owner user ID |
+| `--display-name <NAME>` | No | Human-readable display name |
+| `--platform <OS>` | No | Platform: `windows`, `macos`, `linux` (default: `windows`) |
+| `--capabilities <LIST>` | No | Comma-separated capabilities: `notify`, `canvas`, `exec` (default: `notify,canvas`) |
+
+```powershell
+# Register a Windows desktop satellite
+botnexus satellite register sat_desktop_home --owner jon --display-name "Home Desktop"
+
+# Register with exec capability
+botnexus satellite register sat_workstation --owner jon --capabilities notify,canvas,exec
+```
+
+The generated API key is displayed once after registration. Store it securely — it cannot be retrieved later.
+
+### satellite remove
+
+Remove a satellite registration. The satellite's API key is immediately invalidated.
+
+```powershell
+botnexus satellite remove <NAME>
 ```
 
 ---
