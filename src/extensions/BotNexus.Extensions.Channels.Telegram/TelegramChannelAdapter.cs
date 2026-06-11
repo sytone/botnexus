@@ -272,6 +272,8 @@ public sealed class TelegramChannelAdapter(
                 case AgentStreamEventType.MessageEnd:
                     await FlushStreamingStateAsync(runtime, state, force: true, cancellationToken);
                     state.Reset();
+                    // Remove the entry to prevent unbounded dictionary growth over time.
+                    runtime.StreamingStates.TryRemove(stateKey, out _);
                     return;
             }
 
@@ -287,6 +289,7 @@ public sealed class TelegramChannelAdapter(
     private async Task RunPollingLoopAsync(BotRuntime runtime, int pollingTimeoutSeconds, CancellationToken cancellationToken)
     {
         long? offset = null;
+        var lastEvictionUtc = DateTimeOffset.UtcNow;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -296,6 +299,13 @@ public sealed class TelegramChannelAdapter(
                 {
                     offset = update.UpdateId + 1;
                     await HandleUpdateAsync(runtime, update, cancellationToken);
+                }
+
+                // Periodically evict stale error-reply tracking entries (every 5 minutes).
+                if (DateTimeOffset.UtcNow - lastEvictionUtc > TimeSpan.FromMinutes(5))
+                {
+                    EvictStaleErrorStateForRuntime(runtime, TimeSpan.FromMinutes(30));
+                    lastEvictionUtc = DateTimeOffset.UtcNow;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -593,6 +603,41 @@ public sealed class TelegramChannelAdapter(
     {
         if (builder.Length > 0)
             builder.AppendLine();
+    }
+
+    /// <summary>
+    /// Returns the total number of streaming state entries across all bot runtimes.
+    /// Used for diagnostics and testing to verify state is properly evicted.
+    /// </summary>
+    internal int GetStreamingStateCount()
+        => _bots.Values.Sum(r => r.StreamingStates.Count);
+
+    /// <summary>
+    /// Returns the total number of error reply tracking entries across all bot runtimes.
+    /// Used for diagnostics and testing to verify state is properly evicted.
+    /// </summary>
+    internal int GetErrorReplyStateCount()
+        => _bots.Values.Sum(r => r.LastErrorReplyUtcByChat.Count);
+
+    /// <summary>
+    /// Removes error reply tracking entries older than <paramref name="maxAge"/>.
+    /// Prevents unbounded growth of the per-chat error cooldown dictionary.
+    /// </summary>
+    /// <param name="maxAge">Maximum age for retained entries. Entries older than this are removed.</param>
+    internal void EvictStaleErrorState(TimeSpan maxAge)
+    {
+        foreach (var runtime in _bots.Values)
+            EvictStaleErrorStateForRuntime(runtime, maxAge);
+    }
+
+    private static void EvictStaleErrorStateForRuntime(BotRuntime runtime, TimeSpan maxAge)
+    {
+        var cutoff = DateTimeOffset.UtcNow - maxAge;
+        foreach (var kvp in runtime.LastErrorReplyUtcByChat)
+        {
+            if (kvp.Value < cutoff)
+                runtime.LastErrorReplyUtcByChat.TryRemove(kvp.Key, out _);
+        }
     }
 
     private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient)
