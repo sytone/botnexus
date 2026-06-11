@@ -680,7 +680,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         }
                     }
 
-                    session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+                    // NO_REPLY responses are intentional silences — do not persist them
+                    // in the session store. Channel adapters already suppress delivery (#1237).
+                    if (!IsNoReply(response.Content))
+                        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
                 }
 
                 // Remove crash sentinel on clean turn completion (#363).
@@ -976,6 +979,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         var trimmed = response.Trim();
         return trimmed.Equals("HEARTBEAT_OK", StringComparison.Ordinal)
                || trimmed.StartsWith("HEARTBEAT_OK", StringComparison.Ordinal);
+    }
+
+    private static bool IsNoReply(string? response)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+            return false;
+
+        return response.Trim().Equals("NO_REPLY", StringComparison.Ordinal);
     }
 
     private async Task HandleUserInputRequiredAsync(
