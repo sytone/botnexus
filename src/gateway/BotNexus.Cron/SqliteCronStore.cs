@@ -583,4 +583,23 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
         return JsonSerializer.Deserialize<Dictionary<string, string?>>(parametersJson, JsonOptions);
     }
+
+    /// <inheritdoc />
+    public async Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
+    {
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM cron_runs
+            WHERE completed_at IS NOT NULL
+              AND completed_at < $cutoff
+              AND status IN ('completed', 'failed')
+            """;
+        command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
+        var deleted = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        if (deleted > 0)
+            _logger.LogDebug("Purged {Count} cron run record(s) older than {Cutoff}.", deleted, cutoff);
+        return deleted;
+    }
 }
