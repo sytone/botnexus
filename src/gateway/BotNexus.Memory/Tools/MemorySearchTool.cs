@@ -2,18 +2,27 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Memory.Tools;
 
+/// <summary>
+/// Searches the agent's persistent memory via the <see cref="IAgentMemory"/> abstraction.
+/// Results are ranked by relevance with optional temporal decay.
+/// </summary>
 public sealed class MemorySearchTool : IAgentTool
 {
-    private readonly IMemoryStore _memoryStore;
+    private readonly IAgentMemory _agentMemory;
+    private readonly string _agentId;
     private readonly int _defaultTopK;
 
-    public MemorySearchTool(IMemoryStore memoryStore, MemoryAgentConfig? config = null)
+    public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null)
     {
-        _memoryStore = memoryStore;
+        _agentMemory = agentMemory ?? throw new ArgumentNullException(nameof(agentMemory));
+        _agentId = string.IsNullOrWhiteSpace(agentId)
+            ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
+            : agentId;
         _defaultTopK = Math.Max(1, config?.Search?.DefaultTopK ?? 10);
     }
 
@@ -96,7 +105,13 @@ public sealed class MemorySearchTool : IAgentTool
             : _defaultTopK;
         var filter = ParseFilter(arguments.TryGetValue("filter", out var filterValue) ? filterValue : null);
 
-        var entries = await _memoryStore.SearchAsync(query, topK, filter, cancellationToken).ConfigureAwait(false);
+        var request = new AgentMemorySearchRequest(
+            AgentId: _agentId,
+            Query: query,
+            TopK: topK,
+            Filter: filter);
+
+        var entries = await _agentMemory.SearchAsync(request, cancellationToken).ConfigureAwait(false);
         if (entries.Count == 0)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matching memories found.")]);
 
@@ -127,7 +142,7 @@ public sealed class MemorySearchTool : IAgentTool
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, string.Join(Environment.NewLine, lines))]);
     }
 
-    private static MemorySearchFilter? ParseFilter(object? value)
+    private static AgentMemorySearchFilter? ParseFilter(object? value)
     {
         if (value is null)
             return null;
@@ -142,7 +157,7 @@ public sealed class MemorySearchTool : IAgentTool
         if (element.ValueKind != JsonValueKind.Object)
             return null;
 
-        return new MemorySearchFilter
+        return new AgentMemorySearchFilter
         {
             SourceType = ReadOptionalString(element, "sourceType"),
             SessionId = ReadOptionalString(element, "sessionId"),

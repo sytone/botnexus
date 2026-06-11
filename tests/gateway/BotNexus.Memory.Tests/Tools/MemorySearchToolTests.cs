@@ -1,6 +1,8 @@
 using BotNexus.Agent.Core.Types;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Memory.Tests.TestInfrastructure;
 using BotNexus.Memory.Tools;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory.Tests.Tools;
 
@@ -11,7 +13,8 @@ public sealed class MemorySearchToolTests
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
         await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", "agent-a", "searchablememorytext"));
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var result = await tool.ExecuteAsync(
             "call-1",
@@ -27,7 +30,8 @@ public sealed class MemorySearchToolTests
     public async Task ExecuteAsync_WithNoResults_ReturnsEmptyMessage()
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemorySearchTool(context.Store);
+        var agentMemory = CreateAgentMemory(context);
+        var tool = new MemorySearchTool(agentMemory, "agent-a");
 
         var result = await tool.ExecuteAsync(
             "call-2",
@@ -36,6 +40,19 @@ public sealed class MemorySearchToolTests
         GetText(result).ShouldBe("No matching memories found.");
     }
 
+    private static MarkdownAgentMemory CreateAgentMemory(MemoryStoreTestContext context)
+        => new("agent-a", new StubWorkspaceManager(), context.Store, new FileSystem());
+
     private static string GetText(AgentToolResult result)
         => result.Content.Single(content => content.Type == AgentToolContentType.Text).Value;
+
+    private sealed class StubWorkspaceManager : IAgentWorkspaceManager
+    {
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
+            => Task.FromResult(new AgentWorkspace(agentName, Soul: "", Identity: "", User: "", Memory: ""));
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, string? memoryPathOverride, CancellationToken ct = default) => Task.CompletedTask;
+        public string GetWorkspacePath(string agentName) => $@"C:\agents\{agentName}\workspace";
+    }
 }

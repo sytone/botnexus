@@ -1,36 +1,15 @@
 using BotNexus.Gateway.Contracts.Memory;
-using BotNexus.Memory.Tools;
 
-namespace BotNexus.Memory.Tests.Tools;
+namespace BotNexus.Gateway.Tests.TestInfrastructure;
 
-public sealed class MemorySaveToolContractTests
+/// <summary>
+/// Stub IAgentMemoryFactory for tests that construct InProcessIsolationStrategy.
+/// Returns a no-op IAgentMemory implementation.
+/// </summary>
+internal sealed class StubAgentMemoryFactory : IAgentMemoryFactory
 {
-    [Fact]
-    public void Contract_ExposesMemorySaveNameOnly()
-    {
-        var tool = new MemorySaveTool(new StubAgentMemory(), "agent-a");
-
-        tool.Name.ShouldBe("memory_save");
-        tool.Label.ShouldBe("Memory Save");
-        tool.Definition.Description.ShouldContain("Append markdown memory notes");
-    }
-
-    [Fact]
-    public async Task PrepareArguments_WithFilePath_ProducesSaveArguments()
-    {
-        var tool = new MemorySaveTool(new StubAgentMemory(), "agent-a");
-
-        var prepared = await tool.PrepareArgumentsAsync(
-            new Dictionary<string, object?>
-            {
-                ["content"] = "remember this",
-                ["file_path"] = @"memory\2026-01-01.md"
-            });
-
-        prepared.Count.ShouldBe(2);
-        prepared["content"].ShouldBe("remember this");
-        prepared["file_path"].ShouldBe(@"memory\2026-01-01.md");
-    }
+    public IAgentMemory Create(string agentId, string? providerName = null) => new StubAgentMemory();
+    public IReadOnlyList<string> GetRegisteredProviders() => ["markdown"];
 
     private sealed class StubAgentMemory : IAgentMemory
     {

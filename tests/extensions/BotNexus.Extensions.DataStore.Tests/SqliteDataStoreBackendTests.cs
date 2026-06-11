@@ -360,4 +360,36 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
         result.Success.ShouldBeFalse();
         (result.Error ?? string.Empty).ShouldContain("does not exist");
     }
+
+    // ── Count ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Count_FullTable_ReturnsCorrectCount()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("items", """[{"id":1},{"id":2},{"id":3}]""");
+        var result = await backend.CountAsync("items");
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(3);
+        result.Payload!.ShouldContain("3");
+    }
+
+    [Fact]
+    public async Task Count_WithWhere_ReturnsFilteredCount()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("items", """[{"id":1,"status":"done"},{"id":2,"status":"open"},{"id":3,"status":"done"}]""");
+        var result = await backend.CountAsync("items", "status = 'done'");
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Count_NonExistentTable_ReturnsError()
+    {
+        var backend = CreateBackend();
+        var result = await backend.CountAsync("nonexistent");
+        result.Success.ShouldBeFalse();
+        (result.Error ?? string.Empty).ShouldContain("Count failed");
+    }
 }

@@ -31,7 +31,7 @@ public sealed class DataStoreToolTests
     [Fact]
     public void ValidActions_ContainsAllExpectedActions()
     {
-        var expected = new[] { "ingest", "query", "insert", "update", "delete", "schema", "tables", "drop" };
+        var expected = new[] { "ingest", "query", "insert", "update", "delete", "count", "schema", "tables", "drop" };
         foreach (var a in expected)
             DataStoreTool.ValidActions.Contains(a).ShouldBeTrue($"'{a}' missing from ValidActions");
     }
@@ -232,6 +232,46 @@ public sealed class DataStoreToolTests
         backend.LastTable.ShouldBe("events");
     }
 
+    // ── count ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_Count_MissingTable_ReturnsError()
+    {
+        var tool = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("count"));
+        IsError(result).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Count_InvalidTableName_ReturnsError()
+    {
+        var tool = CreateTool();
+        var result = await tool.ExecuteAsync("tc1", Args("count", ("table", "My-Table")));
+        IsError(result).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Count_FullTable_DelegatesToBackend()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool = CreateTool(backend);
+        var result = await tool.ExecuteAsync("tc1", Args("count", ("table", "events")));
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe("count");
+        backend.LastTable.ShouldBe("events");
+        TextOf(result).ShouldContain("42");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Count_WithWhere_DelegatesToBackend()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool = CreateTool(backend);
+        var result = await tool.ExecuteAsync("tc1", Args("count", ("table", "events"), ("where", "status = 'done'")));
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe("count");
+    }
+
     // ── schema ────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -394,6 +434,8 @@ internal sealed class FakeDataStoreBackend : IDataStoreBackend
     public Task<DataStoreResult> TablesAsync(CancellationToken ct = default)
     { LastAction = "tables"; return Task.FromResult(DataStoreResult.Ok("events", 0)); }
 
+    public Task<DataStoreResult> CountAsync(string table, string? where = null, CancellationToken ct = default)
+    { LastAction = "count"; LastTable = table; return Task.FromResult(DataStoreResult.Ok("{\"table\":\"" + table + "\",\"count\":42}", 42)); }
     public Task<DataStoreResult> DropAsync(string table, CancellationToken ct = default)
     { LastAction = "drop"; LastTable = table; return Task.FromResult(DataStoreResult.Ok("dropped", 0)); }
 
