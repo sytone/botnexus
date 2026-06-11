@@ -174,6 +174,32 @@ public sealed class SqliteWebhookRunStore(
         return results;
     }
 
+    public async Task<int> PurgeOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                DELETE FROM webhook_runs
+                WHERE completed_at IS NOT NULL
+                  AND completed_at < $cutoff
+                  AND status IN ('Completed', 'Failed', 'Timeout')
+                """;
+            cmd.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
+            var deleted = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            return deleted;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     private SqliteConnection CreateConnection() => new(_connectionString);
 
     private static void BindRun(SqliteCommand cmd, WebhookRun r)

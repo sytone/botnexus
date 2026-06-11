@@ -124,21 +124,24 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         await InitializeAsync(ct).ConfigureAwait(false);
 
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(ct).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
-                   embedding, created_at, updated_at, expires_at, is_archived
-            FROM memories
-            WHERE id = $id
-            """;
-        command.Parameters.AddWithValue("$id", id);
+        return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(token).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
+                       embedding, created_at, updated_at, expires_at, is_archived
+                FROM memories
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$id", id);
 
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        return await reader.ReadAsync(ct).ConfigureAwait(false)
-            ? ReadMemory(reader)
-            : null;
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false)
+                ? ReadMemory(reader)
+                : null;
+        }, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<MemoryEntry>> GetBySessionAsync(string sessionId, int limit = 20, CancellationToken ct = default)
@@ -147,26 +150,29 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
         await InitializeAsync(ct).ConfigureAwait(false);
 
         var cappedLimit = Math.Clamp(limit, 1, int.MaxValue);
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(ct).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
-                   embedding, created_at, updated_at, expires_at, is_archived
-            FROM memories
-            WHERE session_id = $sessionId
-            ORDER BY created_at DESC
-            LIMIT $limit
-            """;
-        command.Parameters.AddWithValue("$sessionId", sessionId);
-        command.Parameters.AddWithValue("$limit", cappedLimit);
+        return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(token).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
+                       embedding, created_at, updated_at, expires_at, is_archived
+                FROM memories
+                WHERE session_id = $sessionId
+                ORDER BY created_at DESC
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            command.Parameters.AddWithValue("$limit", cappedLimit);
 
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        List<MemoryEntry> results = [];
-        while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            results.Add(ReadMemory(reader));
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            List<MemoryEntry> results = [];
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+                results.Add(ReadMemory(reader));
 
-        return results;
+            return results as IReadOnlyList<MemoryEntry>;
+        }, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
@@ -257,8 +263,14 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
                 .Select(item => item.Entry)
                 .ToList();
         }
+        catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
+        {
+            // Transient lock/busy — retry the whole search once via LIKE fallback
+            return await SearchWithLikeFallbackAsync(sanitized, limit, filter, lambda, ct).ConfigureAwait(false);
+        }
         catch (SqliteException)
         {
+            // FTS syntax or corruption — fall back to LIKE search
             return await SearchWithLikeFallbackAsync(sanitized, limit, filter, lambda, ct).ConfigureAwait(false);
         }
     }
@@ -306,22 +318,25 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
     {
         await InitializeAsync(ct).ConfigureAwait(false);
 
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(ct).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COUNT(*), MAX(created_at)
-            FROM memories
-            """;
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        await reader.ReadAsync(ct).ConfigureAwait(false);
+        return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(token).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*), MAX(created_at)
+                FROM memories
+                """;
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            await reader.ReadAsync(token).ConfigureAwait(false);
 
-        var count = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
-        DateTimeOffset? lastIndexedAt = reader.IsDBNull(1)
-            ? null
-            : DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture);
-        var sizeBytes = _fileSystem.File.Exists(_dbPath) ? _fileSystem.FileInfo.New(_dbPath).Length : 0L;
-        return new MemoryStoreStats(count, sizeBytes, lastIndexedAt);
+            var count = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
+            DateTimeOffset? lastIndexedAt = reader.IsDBNull(1)
+                ? null
+                : DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture);
+            var sizeBytes = _fileSystem.File.Exists(_dbPath) ? _fileSystem.FileInfo.New(_dbPath).Length : 0L;
+            return new MemoryStoreStats(count, sizeBytes, lastIndexedAt);
+        }, ct).ConfigureAwait(false);
     }
 
     public ValueTask DisposeAsync()

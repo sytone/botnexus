@@ -141,7 +141,20 @@ public sealed class MarkdownAgentMemory : IAgentMemory
 
         foreach (var file in files)
         {
-            var content = await _fileSystem.File.ReadAllTextAsync(file.FullPath, ct).ConfigureAwait(false);
+            string? content = null;
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    content = await _fileSystem.File.ReadAllTextAsync(file.FullPath, ct).ConfigureAwait(false);
+                    break;
+                }
+                catch (IOException) when (attempt < 2)
+                {
+                    await Task.Delay(50 * (attempt + 1), ct).ConfigureAwait(false);
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(content))
             {
                 var trimmed = content.Trim();

@@ -21,4 +21,13 @@ public interface IWebhookRunStore
         WebhookId webhookId,
         int limit = 20,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Purges completed, failed, and timed-out runs older than the specified cutoff.
+    /// Runs in Pending or Running state are never purged regardless of age.
+    /// </summary>
+    /// <param name="cutoff">Runs with CompletedAt before this time will be deleted.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The number of runs purged.</returns>
+    Task<int> PurgeOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default);
 }
