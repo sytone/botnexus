@@ -29,6 +29,7 @@ public static class ToolCallValidator
 
         ValidateRequired(arguments, parameterSchema, errors);
         ValidateTopLevelProperties(arguments, parameterSchema, errors);
+        ValidateAdditionalProperties(arguments, parameterSchema, errors);
 
         return errors.Count == 0
             ? (true, [])
@@ -90,6 +91,42 @@ public static class ToolCallValidator
 
             ValidateType(argumentProperty, propertySchema, errors);
             ValidateEnum(argumentProperty, propertySchema, errors);
+        }
+    }
+
+    private static void ValidateAdditionalProperties(JsonElement arguments, JsonElement schema, ICollection<string> errors)
+    {
+        if (arguments.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (!schema.TryGetProperty("additionalProperties", out var additionalProps))
+        {
+            return;
+        }
+
+        if (additionalProps.ValueKind != JsonValueKind.False)
+        {
+            return;
+        }
+
+        if (!schema.TryGetProperty("properties", out var propertiesElement) || propertiesElement.ValueKind != JsonValueKind.Object)
+        {
+            // No properties defined but additionalProperties is false — all properties are unknown
+            foreach (var argumentProperty in arguments.EnumerateObject())
+            {
+                errors.Add($"Property '{argumentProperty.Name}' is not defined in the schema.");
+            }
+            return;
+        }
+
+        foreach (var argumentProperty in arguments.EnumerateObject())
+        {
+            if (!propertiesElement.TryGetProperty(argumentProperty.Name, out _))
+            {
+                errors.Add($"Property '{argumentProperty.Name}' is not defined in the schema.");
+            }
         }
     }
 
