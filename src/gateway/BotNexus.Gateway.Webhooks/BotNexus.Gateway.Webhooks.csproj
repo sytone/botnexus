@@ -1,11 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RootNamespace>BotNexus.Gateway.Webhooks</RootNamespace>
     <Description>Domain models, store interfaces, and security helpers for the BotNexus webhook subsystem.</Description>
   </PropertyGroup>
-
   <ItemGroup>
     <Compile Include="WebhookRegistration.cs" />
     <Compile Include="WebhookResponseMode.cs" />
@@ -18,17 +16,18 @@
     <Compile Include="SqliteWebhookRunStore.cs" />
     <Compile Include="WebhookServiceCollectionExtensions.cs" />
     <Compile Include="WebhookCallbackValidator.cs" />
+    <Compile Include="WebhookRunRetentionHostedService.cs" />
+    <Compile Include="WebhookRunRetentionOptions.cs" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
-
 </Project>
