@@ -61,6 +61,7 @@ public sealed class PersonalPathLeakArchitectureTests
     {
         "username",   // generic docs placeholder (docs/development/workspace-and-memory.md)
         "test",       // generic test fixture (tests/gateway/BotNexus.Cron.Tests/CronOptionsPromptTemplateResolverTests.cs)
+        "you",        // generic docs placeholder for the reader (docs/cli-reference.md)
     };
 
     // Built from fragments so the test source doesn't itself match the
