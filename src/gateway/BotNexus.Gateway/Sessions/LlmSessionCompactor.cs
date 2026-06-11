@@ -26,6 +26,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private readonly ILogger<LlmSessionCompactor> _logger;
     private readonly ISecretRedactor? _redactor;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
+    private readonly GatewayAuthManager? _authManager;
 
     /// <summary>
     /// Tracks consecutive compaction failures per session for circuit breaker logic.
@@ -52,12 +53,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// Based on ~80% of a 128K token model's input capacity (chars/4 ≈ tokens).
     /// </summary>
     internal const int MaxSummarizationPromptChars = 400_000;
-    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null)
+    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null, GatewayAuthManager? authManager = null)
     {
         _llmClient = llmClient;
         _logger = logger;
         _redactor = redactor;
         _platformConfig = platformConfig;
+        _authManager = authManager;
     }
 
     public bool ShouldCompact(Session session, CompactionOptions options)
@@ -461,6 +463,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 new UserMessage(new UserMessageContent(summaryPrompt), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             ]);
 
+        // Resolve API key from GatewayAuthManager (OAuth token from auth.json).
+        // Without this, the provider falls back to environment variables which
+        // are not set in the gateway process — resulting in auth failures that
+        // surface as empty content responses.
+        string? apiKey = null;
+        if (_authManager is not null)
+        {
+            apiKey = await _authManager.GetApiKeyAsync(model.Provider, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var streamOptions = apiKey is not null
+            ? new SimpleStreamOptions { ApiKey = apiKey, CancellationToken = cancellationToken }
+            : null;
+
         // Create a timeout-linked token so hung provider calls are cancelled after
         // CompactionOptions.TimeoutSeconds. The linked token fires on whichever
         // triggers first: the caller's cancellation or the configured timeout.
@@ -468,7 +485,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
 
         var completion = await _llmClient
-            .CompleteSimpleAsync(model, context)
+            .CompleteSimpleAsync(model, context, streamOptions)
             .WaitAsync(timeoutCts.Token)
             .ConfigureAwait(false);
 
@@ -489,9 +506,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         {
             _logger.LogWarning(
                 "Model {ModelId} returned no usable TextContent for compaction summary. " +
-                "Raw content types: {Types}",
+                "Raw content types: {Types}. StopReason: {StopReason}. ErrorMessage: {ErrorMessage}",
                 model.Id,
-                string.Join(", ", completion.Content.Select(c => c.GetType().Name)));
+                string.Join(", ", completion.Content.Select(c => c.GetType().Name)),
+                completion.StopReason,
+                completion.ErrorMessage ?? "(none)");
         }
 
         return result;
