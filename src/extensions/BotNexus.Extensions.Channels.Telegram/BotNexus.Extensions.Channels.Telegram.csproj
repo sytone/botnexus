@@ -3,6 +3,9 @@
     <RootNamespace>BotNexus.Extensions.Channels.Telegram</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
