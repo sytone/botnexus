@@ -74,7 +74,15 @@ You should see the root command help listing all available subcommands.
 22. [prompt render](#prompt-render) — Render a prompt template
 23. [prompt run](#prompt-run) — Render and execute a prompt template
 24. [satellite](#satellite) — Manage satellite nodes
-25. [Examples](#examples)
+25. [doctor](#doctor) — Diagnose configuration issues
+26. [locations](#locations) — Show resolved file paths
+27. [update](#update) — Check for and apply updates
+28. [memory](#memory) — Manage agent memory
+29. [cron](#cron-command) — Manage cron jobs from the CLI
+30. [debug sessions](#debug-sessions) — Inspect session SQLite database
+31. [debug logs](#debug-logs) — Inspect log files
+32. [debug db](#debug-db) — Inspect raw databases
+33. [Examples](#examples)
 
 ---
 
@@ -1431,6 +1439,321 @@ Remove a satellite registration. The satellite's API key is immediately invalida
 
 ```powershell
 botnexus satellite remove <NAME>
+```
+
+---
+
+## doctor
+
+Run diagnostic checks against your BotNexus configuration, providers, and environment. Reports issues with actionable fix suggestions.
+
+### Usage
+
+```powershell
+botnexus doctor [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show detailed check output. |
+
+### Examples
+
+```powershell
+# Run all diagnostics
+botnexus doctor
+
+# Check a specific instance
+botnexus doctor --target /opt/botnexus-prod
+```
+
+Checks include: config validity, provider reachability, directory permissions, extension loading, and port availability.
+
+---
+
+## locations
+
+Show resolved paths for all BotNexus directories and files (config, logs, sessions, agents, extensions).
+
+### Usage
+
+```powershell
+botnexus locations [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+
+### Examples
+
+```powershell
+botnexus locations
+```
+
+Example output:
+
+```text
+Home:       C:\Users\you\.botnexus
+Config:     C:\Users\you\.botnexus\config.json
+Logs:       C:\Users\you\.botnexus\logs
+Sessions:   C:\Users\you\.botnexus\sessions
+Agents:     C:\Users\you\.botnexus\agents
+Extensions: C:\Users\you\.botnexus\extensions
+```
+
+---
+
+## update
+
+Check for available updates and optionally apply them.
+
+### Usage
+
+```powershell
+botnexus update [COMMAND] [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `check` | Check if updates are available (default) |
+| `apply` | Pull latest changes and rebuild |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--path <DIR>` | Repository root. Defaults to install location. |
+| `--verbose` | Show detailed update output. |
+
+### Exit Codes (for `update check`)
+
+| Code | Meaning |
+|------|--------|
+| `0` | Up to date |
+| `1` | Updates available |
+| `2` | Check failed |
+
+### Examples
+
+```powershell
+# Check for updates
+botnexus update check
+
+# Apply updates
+botnexus update apply
+```
+
+---
+
+## memory
+
+Manage agent memory files from the CLI.
+
+### Usage
+
+```powershell
+botnexus memory <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List memory entries for an agent |
+| `search` | Search memory content |
+| `consolidate` | Trigger memory consolidation |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--agent <ID>` | Target agent ID. |
+| `--target <DIR>` | BotNexus home directory. |
+
+### Examples
+
+```powershell
+# List memory files for an agent
+botnexus memory list --agent assistant
+
+# Search memory content
+botnexus memory search --agent assistant --query "deployment"
+```
+
+---
+
+## cron (command) {#cron-command}
+
+Manage cron jobs from the CLI.
+
+### Usage
+
+```powershell
+botnexus cron <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all configured cron jobs |
+| `status` | Show job status and last run time |
+| `run` | Manually trigger a job |
+| `enable` | Enable a disabled job |
+| `disable` | Disable a job |
+
+### Examples
+
+```powershell
+# List all cron jobs
+botnexus cron list
+
+# Check status
+botnexus cron status
+
+# Trigger a job manually
+botnexus cron run morning-briefing
+```
+
+---
+
+## debug sessions
+
+Directly inspect the sessions SQLite database without requiring a running gateway. Useful for offline diagnostics.
+
+### Usage
+
+```powershell
+botnexus debug sessions <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all sessions with summary info |
+| `get` | Show details for a specific session |
+| `compaction` | Show compaction history for a session |
+| `stats` | Database-wide statistics |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
+| `--format` | `table` | Output format: `table` or `json` |
+
+### Examples
+
+```powershell
+# List sessions
+botnexus debug sessions list
+
+# Get session details
+botnexus debug sessions get --id "session-abc123"
+
+# Show compaction history
+botnexus debug sessions compaction --id "session-abc123"
+
+# Database statistics
+botnexus debug sessions stats
+
+# JSON output for scripting
+botnexus debug sessions list --format json
+```
+
+---
+
+## debug logs
+
+Directly inspect log files without requiring a running gateway. Reads the hourly Serilog structured log files.
+
+### Usage
+
+```powershell
+botnexus debug logs <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `tail` | Show the most recent log entries |
+| `errors` | Filter to ERROR and FATAL entries |
+| `search` | Search log content by text |
+| `session` | Filter logs for a specific session |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
+| `--format` | `table` | Output format: `table` or `json` |
+| `--lines <N>` | `50` | Number of entries to show |
+
+### Examples
+
+```powershell
+# Tail recent logs
+botnexus debug logs tail
+
+# Show recent errors
+botnexus debug logs errors
+
+# Search for a pattern
+botnexus debug logs search --query "timeout"
+
+# Filter by session
+botnexus debug logs session --id "session-abc123"
+```
+
+---
+
+## debug db
+
+Directly inspect raw SQLite databases in the BotNexus home directory. Useful for understanding schema and diagnosing storage issues.
+
+### Usage
+
+```powershell
+botnexus debug db <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `tables` | List tables in a database |
+| `schema` | Show column definitions for a table |
+| `size` | Show database file sizes |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
+| `--db <NAME>` | (all) | Filter to a specific database file |
+| `--format` | `table` | Output format: `table` or `json` |
+
+### Examples
+
+```powershell
+# List all databases and their sizes
+botnexus debug db size
+
+# Show tables in sessions database
+botnexus debug db tables --db sessions
+
+# Inspect table schema
+botnexus debug db schema --db sessions --table SessionEntries
 ```
 
 ---
