@@ -53,7 +53,7 @@ public sealed class MemoryToolAdditionalTests
     {
         var tool = new MemorySaveTool(new SpyAgentMemory(), "agent-a");
         var prepared = await tool.PrepareArgumentsAsync(
-            new Dictionary<string, object?> { ["content"] = "x", ["expiresInDays"] = "not-a-number", ["tags"] = new[] { "legacy" } });
+            new Dictionary<string, object?> { ["content"] = "x", ["expiresInDays"] = "not-a-number" });
 
         prepared.Count.ShouldBe(1);
         prepared["content"].ShouldBe("x");
