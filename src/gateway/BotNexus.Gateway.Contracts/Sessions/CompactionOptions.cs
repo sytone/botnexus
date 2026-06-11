@@ -25,6 +25,14 @@ public sealed record CompactionOptions
     /// <summary>Provider to use for summarization (e.g., "github-copilot"). If null, auto-detected from registered providers.</summary>
     public string? SummarizationProvider { get; init; }
 
+    /// <summary>
+    /// Maximum seconds to wait for the LLM summarization call to complete before
+    /// aborting compaction (default: 90). Prevents hung provider calls from blocking
+    /// the session indefinitely. The timeout is enforced via a linked CancellationToken
+    /// that cancels the wait on the provider response.
+    /// </summary>
+    public int TimeoutSeconds { get; init; } = 90;
+
     /// <summary>Pre-compaction memory flush configuration.</summary>
     public MemoryFlushOptions MemoryFlush { get; init; } = new();
 }
