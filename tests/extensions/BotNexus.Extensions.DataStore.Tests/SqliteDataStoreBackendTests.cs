@@ -267,6 +267,89 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
         doc.RootElement[0].GetProperty("cnt").GetInt64().ShouldBe(1);
     }
 
+    // ── Update ───────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Update_ModifiesMatchingRows()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"},{"id":2,"status":"open"}]""");
+
+        var result = await backend.UpdateAsync("tasks", """{"status":"done"}""", "id = 1");
+
+        result.Success.ShouldBeTrue(result.Error);
+        result.RowCount.ShouldBe(1);
+
+        var query = await backend.QueryAsync("SELECT status FROM tasks WHERE id = 1");
+        using var doc = JsonDocument.Parse(query.Payload ?? "[]");
+        doc.RootElement[0].GetProperty("status").GetString().ShouldBe("done");
+    }
+
+    [Fact]
+    public async Task Update_MultipleColumns_AllUpdated()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("items", """[{"id":1,"name":"old","count":0}]""");
+
+        var result = await backend.UpdateAsync("items", """{"name":"new","count":5}""", "id = 1");
+
+        result.Success.ShouldBeTrue(result.Error);
+        result.RowCount.ShouldBe(1);
+
+        var query = await backend.QueryAsync("SELECT name, count FROM items WHERE id = 1");
+        using var doc = JsonDocument.Parse(query.Payload ?? "[]");
+        doc.RootElement[0].GetProperty("name").GetString().ShouldBe("new");
+        doc.RootElement[0].GetProperty("count").GetInt64().ShouldBe(5);
+    }
+
+    [Fact]
+    public async Task Update_NoMatchingRows_Returns0()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"}]""");
+
+        var result = await backend.UpdateAsync("tasks", """{"status":"done"}""", "id = 999");
+
+        result.Success.ShouldBeTrue(result.Error);
+        result.RowCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Update_InvalidJson_ReturnsError()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"}]""");
+
+        var result = await backend.UpdateAsync("tasks", "not-json", "id = 1");
+
+        result.Success.ShouldBeFalse();
+        (result.Error ?? string.Empty).ShouldContain("Update failed");
+    }
+
+    [Fact]
+    public async Task Update_EmptySetObject_ReturnsError()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"}]""");
+
+        var result = await backend.UpdateAsync("tasks", "{}", "id = 1");
+
+        result.Success.ShouldBeFalse();
+        (result.Error ?? string.Empty).ShouldContain("at least one");
+    }
+
+    [Fact]
+    public async Task Update_NonObjectJson_ReturnsError()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"}]""");
+
+        var result = await backend.UpdateAsync("tasks", "[1,2,3]", "id = 1");
+
+        result.Success.ShouldBeFalse();
+        (result.Error ?? string.Empty).ShouldContain("JSON object");
+    }
+
     // ── Schema not found ─────────────────────────────────────────────────────
 
     [Fact]
