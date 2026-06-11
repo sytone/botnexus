@@ -341,6 +341,17 @@ public sealed class CronControllerTests
                 .ToList();
             return Task.FromResult<IReadOnlyList<CronRun>>(runs);
         }
+
+        public Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
+        {
+            var toRemove = _runs.Values
+                .Where(r => r.CompletedAt.HasValue && r.CompletedAt.Value < cutoff && r.Status is "completed" or "failed")
+                .Select(r => r.Id.Value)
+                .ToList();
+            foreach (var id in toRemove)
+                _runs.Remove(id);
+            return Task.FromResult(toRemove.Count);
+        }
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>

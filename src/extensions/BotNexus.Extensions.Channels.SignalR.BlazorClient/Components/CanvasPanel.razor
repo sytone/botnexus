@@ -51,8 +51,8 @@
     }
 
     /// <summary>
-    /// Returns the canvas HTML with the bridge SDK script injected before the closing body tag
-    /// (or appended if no body tag exists). This gives iframe code access to window.canvasState.
+    /// Returns the canvas HTML with the bridge SDK script prepended so window.canvasState
+    /// is available synchronously before any user scripts execute.
     /// </summary>
     private string? EnrichedHtml
     {
@@ -63,11 +63,23 @@
                 return html;
 
             var bridgeScript = BridgeSdkScript;
-            var bodyCloseIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-            if (bodyCloseIdx >= 0)
-                return html.Insert(bodyCloseIdx, bridgeScript);
 
-            return html + bridgeScript;
+            // Insert after <head> if present so the bridge is first to execute
+            var headIdx = html.IndexOf("<head>", StringComparison.OrdinalIgnoreCase);
+            if (headIdx >= 0)
+                return html.Insert(headIdx + "<head>".Length, bridgeScript);
+
+            // Insert after <html> if no head tag
+            var htmlIdx = html.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
+            if (htmlIdx >= 0)
+            {
+                var closeTag = html.IndexOf('>', htmlIdx);
+                if (closeTag >= 0)
+                    return html.Insert(closeTag + 1, bridgeScript);
+            }
+
+            // No structural HTML — prepend the bridge script
+            return bridgeScript + html;
         }
     }
 
