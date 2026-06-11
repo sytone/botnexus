@@ -179,14 +179,13 @@ public static class StreamingSessionHelper
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
         {
             // The model produced only reasoning/thinking blocks and no visible text or tool calls.
-            // Without this sentinel the session transcript ends with the user message and no
-            // assistant reply, so the next turn replays the abandoned user prompt, causing
-            // duplicate-message confusion and skipped tool calls (same pattern as #656).
-            // Surface a system entry so the conversation is in a known good state.
+            // Add an empty assistant entry so the transcript is in a valid state (prevents the
+            // duplicate-message replay bug from #656). Do NOT surface any user-visible message —
+            // thinking-only responses are a normal model behaviour, not an error (#1198).
             session.AddEntry(new SessionEntry
             {
-                Role = MessageRole.System,
-                Content = "Agent produced only reasoning content and could not generate a visible response. Please try again or rephrase your message."
+                Role = MessageRole.Assistant,
+                Content = string.Empty
             });
         }
 

@@ -235,7 +235,7 @@ public sealed class StreamingSessionHelperTests
     }
 
     [Fact]
-    public async Task ProcessAndSaveAsync_ThinkingOnlyWithMessageEnd_AddsSystemStallEntry()
+    public async Task ProcessAndSaveAsync_ThinkingOnlyWithMessageEnd_AddsEmptyAssistantEntry()
     {
         // Arrange: provider returned only thinking blocks, no visible text, no tools.
         // MessageEnd signals a clean turn completion — but no user-visible content was produced.
@@ -252,10 +252,10 @@ public sealed class StreamingSessionHelperTests
             session,
             store.Object);
 
-        // Assert: exactly one system entry with the stall message.
+        // Assert: exactly one empty assistant entry to close the turn (no user-visible message).
         session.History.ShouldHaveSingleItem();
-        session.History[0].Role.ShouldBe(MessageRole.System);
-        session.History[0].Content.ShouldContain("only reasoning content");
+        session.History[0].Role.ShouldBe(MessageRole.Assistant);
+        session.History[0].Content.ShouldBe(string.Empty);
         store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
     }
 
