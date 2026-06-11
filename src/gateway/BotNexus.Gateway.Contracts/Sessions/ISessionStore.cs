@@ -144,4 +144,10 @@ public interface ISessionStore
         SessionId sessionId,
         CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+
+    /// <summary>
+    /// Gets aggregate session statistics. Default implementation returns null (not supported).
+    /// </summary>
+    Task<SessionStats?> GetStatsAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
+        => Task.FromResult<SessionStats?>(null);
 }
