@@ -31,6 +31,9 @@ public interface IDataStoreBackend : IDisposable
     /// <summary>List all tables in the data store.</summary>
     Task<DataStoreResult> TablesAsync(CancellationToken ct = default);
 
+    /// <summary>Count rows in a table, optionally filtered by a WHERE clause.</summary>
+    Task<DataStoreResult> CountAsync(string table, string? where = null, CancellationToken ct = default);
+
     /// <summary>Drop a table entirely.</summary>
     Task<DataStoreResult> DropAsync(string table, CancellationToken ct = default);
 }

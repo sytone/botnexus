@@ -18,7 +18,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
     // Actions the tool supports.
     internal static readonly HashSet<string> ValidActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "ingest", "query", "insert", "update", "delete", "schema", "tables", "drop"
+        "ingest", "query", "insert", "update", "delete", "count", "schema", "tables", "drop"
     };
 
     public string Name => "data_store";
@@ -26,15 +26,15 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
 
     public Tool Definition => new(
         Name,
-        "Manage a per-agent structured SQLite data store. Ingest JSON arrays, run SELECT queries, insert rows, update rows, delete rows, inspect schema, list tables, or drop tables.",
+        "Manage a per-agent structured SQLite data store. Ingest JSON arrays, run SELECT queries, insert rows, update rows, delete rows, count rows, inspect schema, list tables, or drop tables.",
         JsonDocument.Parse("""
             {
               "type": "object",
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["ingest", "query", "insert", "update", "delete", "schema", "tables", "drop"],
-                  "description": "Action to perform: 'ingest' - bulk load a JSON array; 'query' - run a SELECT; 'insert' - add a single JSON object row; 'update' - modify rows matching a WHERE clause; 'delete' - remove rows matching a WHERE clause; 'schema' - show column names and types; 'tables' - list all tables; 'drop' - drop a table."
+                  "enum": ["ingest", "query", "insert", "update", "delete", "count", "schema", "tables", "drop"],
+                  "description": "Action to perform: 'ingest' - bulk load a JSON array; 'query' - run a SELECT; 'insert' - add a single JSON object row; 'update' - modify rows matching a WHERE clause; 'delete' - remove rows matching a WHERE clause; 'count' - count rows with optional WHERE filter; 'schema' - show column names and types; 'tables' - list all tables; 'drop' - drop a table."
                 },
                 "table": {
                   "type": "string",
@@ -87,6 +87,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
             "insert"  => await InsertAsync(arguments, cancellationToken),
             "update"  => await UpdateAsync(arguments, cancellationToken),
             "delete"  => await DeleteAsync(arguments, cancellationToken),
+            "count"   => await CountAsync(arguments, cancellationToken),
             "schema"  => await SchemaAsync(arguments, cancellationToken),
             "tables"  => await backend.TablesAsync(cancellationToken),
             "drop"    => await DropAsync(arguments, cancellationToken),
@@ -150,6 +151,15 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'. Use lowercase letters, digits, and underscores only.");
         if (string.IsNullOrWhiteSpace(where)) return DataStoreResult.Fail("'where' clause is required for delete to prevent accidental full-table wipe.");
         return await backend.DeleteAsync(table, where, ct);
+    }
+
+    private async Task<DataStoreResult> CountAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct)
+    {
+        var table = GetString(args, "table");
+        if (string.IsNullOrWhiteSpace(table)) return DataStoreResult.Fail("'table' is required for count.");
+        if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'.");
+        var where = GetString(args, "where");
+        return await backend.CountAsync(table, where, ct);
     }
 
     private async Task<DataStoreResult> SchemaAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct)
