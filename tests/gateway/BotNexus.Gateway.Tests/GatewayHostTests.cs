@@ -2151,11 +2151,11 @@ public sealed class GatewayHostTests
     // #849 -- thinking-only response stall detection
 
     [Fact]
-    public async Task DispatchAsync_WhenAgentReturnsThinkingOnlyResponse_SendsStallNotice()
+    public async Task DispatchAsync_WhenAgentReturnsThinkingOnlyResponse_DoesNotSendMessage()
     {
         // Arrange: agent returns a response that consists solely of a thinking block.
         // The channel does NOT support thinking display (most channels).
-        // Expected: stall notice delivered instead of empty message.
+        // Expected: no message delivered — thinking-only is silently dropped (#1198).
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
@@ -2177,12 +2177,10 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
-        // Assert: channel received the stall notice, NOT the raw thinking block.
+        // Assert: channel received NO message — thinking-only responses are silently dropped.
         channel.Verify(c => c.SendAsync(
-            It.Is<OutboundMessage>(m =>
-                m.Content.Contains("wasn't able to generate",
-                    StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<OutboundMessage>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

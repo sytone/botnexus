@@ -646,9 +646,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     {
                         // Detect thinking-only responses: when the model returns only a
                         // reasoning/thinking block with no user-visible content, StripThinkingTags
-                        // produces an empty string. Delivering an empty message would leave the
-                        // user with no reply and the conversation apparently stuck (#849).
-                        // Fall back to a stall notice so the turn completes gracefully.
+                        // produces an empty string. Silently skip delivery (#1198).
                         var outboundContent = ch.SupportsThinkingDisplay
                             ? response.Content
                             : AssistantTextSanitizer.StripThinkingTags(response.Content);
@@ -657,26 +655,29 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             string.IsNullOrWhiteSpace(outboundContent) &&
                             AssistantTextSanitizer.IsThinkingOnlyResponse(response.Content))
                         {
-                            _logger.LogWarning(
+                            _logger.LogInformation(
                                 "Agent '{AgentId}' session '{SessionId}' returned a thinking-only response " +
                                 "(no user-visible content after stripping reasoning blocks). " +
-                                "Sending stall notice to prevent stuck conversation.",
+                                "Closing turn silently.",
                                 agentId, sessionId);
-                            outboundContent = "[I wasn't able to generate a response. Please try again.]"; // #849
+                            // Don't send anything to the user — thinking-only responses are
+                            // normal model behaviour, not an error (#1198).
                         }
-
-                        await ch.SendAsync(new OutboundMessage
+                        else
                         {
-                            ChannelType = message.ChannelType,
-                            ChannelAddress = message.ChannelAddress,
-                            Content = outboundContent,
-                            SessionId = sessionId,
-                            // Binding-aware fields from originating binding fix #126:
-                            // ensure replies carry the binding's decoration. Native sub-addresses
-                            // (e.g. Telegram forum topics) are already encoded in ChannelAddress.
-                            BindingId = resolvedSource.BindingId,
-                            DisplayPrefix = resolvedSource.DisplayPrefix
-                        }, cancellationToken);
+                            await ch.SendAsync(new OutboundMessage
+                            {
+                                ChannelType = message.ChannelType,
+                                ChannelAddress = message.ChannelAddress,
+                                Content = outboundContent,
+                                SessionId = sessionId,
+                                // Binding-aware fields from originating binding fix #126:
+                                // ensure replies carry the binding's decoration. Native sub-addresses
+                                // (e.g. Telegram forum topics) are already encoded in ChannelAddress.
+                                BindingId = resolvedSource.BindingId,
+                                DisplayPrefix = resolvedSource.DisplayPrefix
+                            }, cancellationToken);
+                        }
                     }
 
                     session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });

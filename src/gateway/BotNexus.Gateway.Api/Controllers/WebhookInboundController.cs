@@ -24,6 +24,7 @@ public sealed class WebhookInboundController(
     IInboundMessageOrchestrator orchestrator,
     IConversationStore conversationStore,
     ISessionStore sessionStore,
+    IHttpClientFactory httpClientFactory,
     ILogger<WebhookInboundController> logger) : ControllerBase
 {
     private const string SignatureHeader = "X-BotNexus-Signature-256";
@@ -324,12 +325,23 @@ public sealed class WebhookInboundController(
 
     private async Task DeliverCallbackAsync(WebhookRunId runId, string callbackUrl, CancellationToken ct)
     {
+        // Validate callback URL against SSRF before making any outbound request
+        var validation = WebhookCallbackValidator.IsCallbackUrlSafe(callbackUrl);
+        if (!validation.IsSafe)
+        {
+            logger.LogWarning(
+                "Webhook run '{RunId}' callback to '{CallbackUrl}' blocked: {Reason}",
+                runId, callbackUrl, validation.Reason);
+            return;
+        }
+
         var run = await runStore.GetAsync(runId, ct);
         if (run is null) return;
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using var http = httpClientFactory.CreateClient("WebhookCallback");
+            http.Timeout = TimeSpan.FromSeconds(30);
             var payload = System.Text.Json.JsonSerializer.Serialize(new
             {
                 runId = run.Id.Value,

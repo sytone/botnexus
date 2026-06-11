@@ -69,36 +69,58 @@ public sealed class CanvasPanelTests : IDisposable
     }
 
     [Fact]
-    public void Bridge_sdk_injected_before_closing_body_tag()
+    public void Bridge_sdk_injected_after_head_tag_before_user_scripts()
     {
         var agent = _store.GetAgent("agent-1")!;
-        agent.CanvasHtml = "<html><body><p>Content</p></body></html>";
+        agent.CanvasHtml = "<html><head><script>var user = 1;</script></head><body><p>Content</p></body></html>";
 
         var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
 
         var frame = cut.Find("iframe[data-testid='canvas-iframe']");
         var srcdoc = frame.GetAttribute("srcdoc")!;
 
-        // The bridge script should appear before </body>
-        var scriptIdx = srcdoc.IndexOf("window.canvasState", StringComparison.Ordinal);
-        var bodyCloseIdx = srcdoc.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        scriptIdx.ShouldBeGreaterThan(0);
-        bodyCloseIdx.ShouldBeGreaterThan(scriptIdx);
+        // The bridge script should appear after <head> but before user script
+        var bridgeIdx = srcdoc.IndexOf("window.canvasState", StringComparison.Ordinal);
+        var userScriptIdx = srcdoc.IndexOf("var user = 1", StringComparison.Ordinal);
+        bridgeIdx.ShouldBeGreaterThan(0);
+        userScriptIdx.ShouldBeGreaterThan(bridgeIdx);
     }
 
     [Fact]
-    public void Bridge_sdk_appended_when_no_body_tag()
+    public void Bridge_sdk_prepended_when_no_head_or_html_tag()
     {
         var agent = _store.GetAgent("agent-1")!;
-        agent.CanvasHtml = "<h1>No body tag</h1>";
+        agent.CanvasHtml = "<h1>No structural tags</h1><script>var x = 1;</script>";
 
         var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
 
         var frame = cut.Find("iframe[data-testid='canvas-iframe']");
         var srcdoc = frame.GetAttribute("srcdoc")!;
 
-        srcdoc.ShouldContain("<h1>No body tag</h1>");
-        srcdoc.ShouldContain("window.canvasState");
+        // Bridge script should be at the very beginning
+        var bridgeIdx = srcdoc.IndexOf("window.canvasState", StringComparison.Ordinal);
+        var userIdx = srcdoc.IndexOf("<h1>No structural tags</h1>", StringComparison.Ordinal);
+        bridgeIdx.ShouldBeGreaterThan(0);
+        userIdx.ShouldBeGreaterThan(bridgeIdx);
+    }
+
+    [Fact]
+    public void Bridge_sdk_injected_after_html_tag_when_no_head_tag()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<html><body><script>var x = 1;</script></body></html>";
+
+        var cut = _ctx.Render<CanvasPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var frame = cut.Find("iframe[data-testid='canvas-iframe']");
+        var srcdoc = frame.GetAttribute("srcdoc")!;
+
+        // Bridge should be after <html> but before <body> content
+        var bridgeIdx = srcdoc.IndexOf("window.canvasState", StringComparison.Ordinal);
+        var htmlIdx = srcdoc.IndexOf("<html>", StringComparison.Ordinal);
+        var userScriptIdx = srcdoc.IndexOf("var x = 1", StringComparison.Ordinal);
+        bridgeIdx.ShouldBeGreaterThan(htmlIdx);
+        userScriptIdx.ShouldBeGreaterThan(bridgeIdx);
     }
 
     [Fact]

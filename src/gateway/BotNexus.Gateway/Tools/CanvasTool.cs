@@ -54,12 +54,7 @@ public sealed class CanvasTool(
 
     public Tool Definition => new(
         Name,
-        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state."
-        + " Rendered HTML runs in a sandboxed iframe (allow-scripts). The iframe has access to a 'window.canvasState' JavaScript API that persists state server-side."
-        + " JS methods (all async): await canvasState.get(key), await canvasState.set(key, value), await canvasState.delete(key), await canvasState.getAll(), await canvasState.clear()."
-        + " IMPORTANT: canvasState is injected asynchronously after iframe load. Do NOT check it synchronously at page load. Use this pattern: function onReady(fn) { if (window.canvasState) fn(); else { const i = setInterval(() => { if (window.canvasState) { clearInterval(i); fn(); } }, 50); } } then call onReady(async () => { const state = await canvasState.getAll(); });"
-        + " State is shared bidirectionally: keys written by the agent via set_state are readable in the iframe via canvasState.get(), and keys written in the iframe via canvasState.set() are readable by the agent via get_state."
-        + " The iframe can persist user interactions independently of agent turns, useful for interactive dashboards and forms that maintain state across renders.",
+        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state. Rendered HTML has access to a 'window.canvasState' JavaScript API (get/set/delete/getAll/clear) that persists state server-side; the iframe can read and write the same state keys the agent uses via set_state/get_state. The canvasState bridge is injected synchronously before user scripts execute, so it is safe to use immediately without polling or ready-event checks.",
         ToolSchema);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(

@@ -97,4 +97,7 @@ public sealed class ConversationHistoryEntry
 
     /// <summary>Reason for the boundary (for kind = "boundary").</summary>
     public string? Reason { get; init; }
+
+    /// <summary>Thinking/reasoning content from the model (for assistant messages).</summary>
+    public string? ThinkingContent { get; init; }
 }

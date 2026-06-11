@@ -74,7 +74,7 @@
                                 value="@Store.ActiveAgentId"
                                 @onchange="OnAgentSelected">
                             <option value="">— select agent —</option>
-                            @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly))
+                            @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly).OrderBy(kv => kv.Value.IsBuiltIn).ThenBy(kv => kv.Value.DisplayName))
                             {
                                 <option value="@agentId">
                                     @FormatAgentName(agent)

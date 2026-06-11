@@ -441,7 +441,8 @@ public sealed class ConversationsController : ControllerBase
                     ToolName = entry.ToolName,
                     ToolCallId = entry.ToolCallId,
                     ToolArgs = entry.ToolArgs,
-                    ToolIsError = entry.ToolIsError
+                    ToolIsError = entry.ToolIsError,
+                    ThinkingContent = entry.ThinkingContent
                 });
             }
         }

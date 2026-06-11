@@ -512,6 +512,114 @@ public sealed class CronToolTests
         var ex = await Record.ExceptionAsync(act);
         ex.ShouldNotBeOfType<UnauthorizedAccessException>();
     }
+
+    // ── History ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_History_ReturnsRunHistory()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new CronRun { Id = RunId.From("run-1"), JobId = JobId.From("job-1"), Status = "completed", StartedAt = DateTimeOffset.UtcNow },
+                new CronRun { Id = RunId.From("run-2"), JobId = JobId.From("job-1"), Status = "failed", Error = "timeout", StartedAt = DateTimeOffset.UtcNow }
+            ]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1"
+        });
+
+        var text = ReadText(result);
+        text.ShouldContain("run-1");
+        text.ShouldContain("completed");
+        text.ShouldContain("run-2");
+        text.ShouldContain("failed");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_JobNotFound_Throws()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("nope"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CronJob?)null);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "nope"
+        });
+
+        await act.ShouldThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_AccessDenied_Throws()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "other-agent"));
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-b"));
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1"
+        });
+
+        await act.ShouldThrowAsync<UnauthorizedAccessException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_RespectsLimitParameter()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = 5
+        });
+
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 5, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_ClampsLimitToMax100()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = 500
+        });
+
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 100, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
     private static CronScheduler CreateScheduler()
     {
         var store = new Mock<ICronStore>().Object;

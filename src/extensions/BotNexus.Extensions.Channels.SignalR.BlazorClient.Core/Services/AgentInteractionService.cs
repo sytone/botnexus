@@ -481,6 +481,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                             ToolCallId = entry.ToolCallId,
                             ToolArgs = entry.ToolArgs,
                             ToolIsError = entry.ToolIsError,
+                            ThinkingContent = entry.ThinkingContent,
                             IsToolCall = entry.ToolName is not null,
                             ToolResult = entry.ToolName is not null ? AnsiStripper.Strip(entry.Content) : null
                         });
@@ -533,7 +534,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
                             IsToolCall = isToolCall,
                             ToolResult = isToolCall ? AnsiStripper.Strip(entry.Content) : null,
                             ToolArgs = entry.ToolArgs,
-                            ToolIsError = entry.ToolIsError
+                            ToolIsError = entry.ToolIsError,
+                            ThinkingContent = entry.ThinkingContent
                         });
                     }
                 }
@@ -632,7 +634,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         ToolName = entry.ToolName,
                         ToolCallId = entry.ToolCallId,
                         ToolArgs = entry.ToolArgs,
-                        ToolIsError = entry.ToolIsError,
+                            ToolIsError = entry.ToolIsError,
+                            ThinkingContent = entry.ThinkingContent,
                         ToolResult = entry.ToolName is not null ? AnsiStripper.Strip(entry.Content) : null,
                         IsToolCall = entry.ToolName is not null
                     });

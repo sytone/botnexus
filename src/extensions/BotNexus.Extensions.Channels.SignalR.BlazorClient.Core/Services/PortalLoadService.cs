@@ -1,4 +1,4 @@
-﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// Owns the portal startup sequence: REST first, SignalR second.
@@ -57,6 +57,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    IsBuiltIn = agent.IsBuiltIn,
                     IsConnected = true
                 });
             }
@@ -234,6 +235,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    IsBuiltIn = agent.IsBuiltIn,
                     IsConnected = true
                 });
             }
