@@ -31,6 +31,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,6 +113,7 @@ public static class GatewayServiceCollectionExtensions
             });
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
+        services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          services.AddSingleton<IUserRegistry, DefaultUserRegistry>();

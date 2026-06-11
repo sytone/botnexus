@@ -19,6 +19,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Tests.TestInfrastructure;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -138,6 +139,7 @@ public sealed class SystemPromptCaptureTests
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             Array.Empty<IAgentToolContributor>(),
             new NoOpMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }

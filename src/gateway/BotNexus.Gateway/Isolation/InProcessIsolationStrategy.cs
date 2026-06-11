@@ -29,6 +29,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,6 +63,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly IToolRegistry _toolRegistry;
     private readonly IEnumerable<IAgentToolContributor> _toolContributors;
     private readonly IMemoryStoreFactory _memoryStoreFactory;
+    private readonly IAgentMemoryFactory _agentMemoryFactory;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
 
@@ -74,6 +76,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         IToolRegistry toolRegistry,
         IEnumerable<IAgentToolContributor> toolContributors,
         IMemoryStoreFactory memoryStoreFactory,
+        IAgentMemoryFactory agentMemoryFactory,
         IServiceProvider serviceProvider,
         ILogger<InProcessIsolationStrategy> logger)
     {
@@ -85,6 +88,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _toolRegistry = toolRegistry;
         _toolContributors = toolContributors;
         _memoryStoreFactory = memoryStoreFactory;
+        _agentMemoryFactory = agentMemoryFactory;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -138,8 +142,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Initialize asynchronously ΓÇö don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
-            tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId.Value, descriptor.Memory.Path));
-            tools.Add(new MemorySearchTool(memoryStore, descriptor.Memory));
+            var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
+            tools.Add(new MemorySaveTool(agentMemory, descriptor.AgentId.Value));
+            tools.Add(new MemorySearchTool(agentMemory, descriptor.AgentId.Value, descriptor.Memory));
             tools.Add(new MemoryGetTool(memoryStore));
         }
 
