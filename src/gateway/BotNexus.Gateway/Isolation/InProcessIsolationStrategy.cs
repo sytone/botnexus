@@ -64,6 +64,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly IEnumerable<IAgentToolContributor> _toolContributors;
     private readonly IMemoryStoreFactory _memoryStoreFactory;
     private readonly IAgentMemoryFactory _agentMemoryFactory;
+    private readonly ISharedMemoryStoreRegistry? _sharedMemoryRegistry;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
 
@@ -78,7 +79,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         IMemoryStoreFactory memoryStoreFactory,
         IAgentMemoryFactory agentMemoryFactory,
         IServiceProvider serviceProvider,
-        ILogger<InProcessIsolationStrategy> logger)
+        ILogger<InProcessIsolationStrategy> logger,
+        ISharedMemoryStoreRegistry? sharedMemoryRegistry = null)
     {
         _llmClient = llmClient;
         _authManager = authManager;
@@ -89,6 +91,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _toolContributors = toolContributors;
         _memoryStoreFactory = memoryStoreFactory;
         _agentMemoryFactory = agentMemoryFactory;
+        _sharedMemoryRegistry = sharedMemoryRegistry;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -143,8 +146,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
             var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
-            tools.Add(new MemorySaveTool(agentMemory, descriptor.AgentId.Value));
-            tools.Add(new MemorySearchTool(agentMemory, descriptor.AgentId.Value, descriptor.Memory));
+            tools.Add(new MemorySaveTool(agentMemory, descriptor.AgentId.Value, _sharedMemoryRegistry));
+            tools.Add(new MemorySearchTool(agentMemory, descriptor.AgentId.Value, descriptor.Memory, _sharedMemoryRegistry));
             tools.Add(new MemoryGetTool(memoryStore));
         }
 
