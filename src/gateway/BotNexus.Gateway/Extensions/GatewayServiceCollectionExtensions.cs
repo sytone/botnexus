@@ -80,6 +80,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentOptions>(config.GetSection("gateway:subAgents"));
             services.Configure<DelayToolOptions>(config.GetSection("gateway:delayTool"));
             services.Configure<FileWatcherToolOptions>(config.GetSection("gateway:fileWatcherTool"));
+            services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
 
             var compactionSection = config.GetSection("gateway:compaction");
@@ -120,6 +121,7 @@ public static class GatewayServiceCollectionExtensions
          services.AddSingleton<ICitizenRegistry, DefaultCitizenRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
+        services.AddSingleton<AgentExchangeBudgetTracker>();
         services.AddSingleton<IAgentExchangeService, AgentExchangeService>();
         services.AddSingleton<CrossWorldInboundAuthService>();
         services.TryAddSingleton<IWorldContext, PlatformWorldContext>();
