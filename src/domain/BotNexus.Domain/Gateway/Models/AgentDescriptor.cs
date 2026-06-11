@@ -128,6 +128,12 @@ public sealed record AgentDescriptor : ICitizen
         new Dictionary<string, object?>();
 
     /// <summary>
+    /// Whether this agent is a built-in platform agent (determined by <c>metadata.builtin</c>).
+    /// Built-in agents sort after user-configured agents in portal UI.
+    /// </summary>
+    public bool IsBuiltIn => Metadata.TryGetValue("builtin", out var v) && v is true;
+
+    /// <summary>
     /// Strategy-specific isolation configuration for <see cref="IsolationStrategy" />.
     /// </summary>
     public IReadOnlyDictionary<string, object?> IsolationOptions { get; init; } =
