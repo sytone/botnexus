@@ -202,8 +202,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(effectiveCt);
-            throw new HttpRequestException(
-                $"Copilot Messages API returned {(int)response.StatusCode}: {errorBody}");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Messages");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);

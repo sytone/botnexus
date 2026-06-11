@@ -317,9 +317,12 @@ public static class AgentLoopRunner
             catch (Exception ex) when (IsTransientError(ex) && attempt < maxAttempts - 1)
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
-                var delayMs = config.MaxRetryDelayMs is > 0
-                    ? Math.Min(backoffMs, config.MaxRetryDelayMs.Value)
-                    : backoffMs;
+                var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
+                var delayMs = retryAfterDelay is not null
+                    ? (int)retryAfterDelay.Value.TotalMilliseconds
+                    : config.MaxRetryDelayMs is > 0
+                        ? Math.Min(backoffMs, config.MaxRetryDelayMs.Value)
+                        : backoffMs;
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 attempt++;
                 backoffMs *= 2;
@@ -356,6 +359,9 @@ public static class AgentLoopRunner
 
     private static bool IsTransientError(Exception exception)
     {
+        if (exception is ProviderRateLimitException)
+            return true;
+
         var message = exception.Message;
         if (string.IsNullOrWhiteSpace(message))
         {
