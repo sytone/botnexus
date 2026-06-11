@@ -95,6 +95,27 @@ public sealed class SessionsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Gets aggregate session statistics.
+    /// </summary>
+    /// <param name="agentId">Optional agent ID filter.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    [HttpGet("stats")]
+    public async Task<ActionResult> GetStats(
+        [FromQuery] string? agentId,
+        CancellationToken cancellationToken = default)
+    {
+        AgentId? parsedAgentId = null;
+        if (!string.IsNullOrWhiteSpace(agentId))
+            parsedAgentId = AgentId.From(agentId);
+
+        var stats = await _sessions.GetStatsAsync(parsedAgentId, cancellationToken);
+        if (stats is null)
+            return NotFound("Session statistics not supported by the current store implementation.");
+
+        return Ok(stats);
+    }
+
     /// <summary>Gets a specific session by ID.</summary>
     /// <summary>
     /// Executes get.

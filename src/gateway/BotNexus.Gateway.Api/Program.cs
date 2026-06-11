@@ -94,6 +94,7 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddBotNexusGateway(builder.Configuration);
 builder.Services.AddDiagnosticsHardening();
+builder.Services.AddProviderHealthCheck();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.Configure<CronOptions>(options =>
