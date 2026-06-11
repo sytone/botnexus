@@ -703,4 +703,55 @@ public sealed class ChatPanelTests : IDisposable
 
         Assert.Empty(cut.FindAll(".interrupt-steer-btn"));
     }
+
+    [Fact]
+    public void ThinkingOnly_Message_Does_Not_Render_Empty_Message_Bubble()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "", DateTimeOffset.UtcNow)
+        {
+            ThinkingContent = "I am reasoning about this..."
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Thinking block should render
+        Assert.Single(cut.FindAll(".thinking-block"));
+        // No assistant message bubble should render (content is empty)
+        Assert.Empty(cut.FindAll(".message.assistant"));
+    }
+
+    [Fact]
+    public void ThinkingWithContent_Message_Renders_Both_ThinkingBlock_And_MessageBubble()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Here is my answer.", DateTimeOffset.UtcNow)
+        {
+            ThinkingContent = "Let me think about this..."
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Both should render
+        Assert.Single(cut.FindAll(".thinking-block"));
+        Assert.Single(cut.FindAll(".message.assistant"));
+    }
+
+    [Fact]
+    public void Normal_Assistant_Message_Without_Thinking_Renders_MessageBubble()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Hello world", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll(".thinking-block"));
+        Assert.Single(cut.FindAll(".message.assistant"));
+    }
 }

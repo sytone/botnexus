@@ -236,6 +236,8 @@
                     </div>
                 }
 
+                @if (!(msg.Role == "Assistant" && string.IsNullOrEmpty(msg.Content) && !string.IsNullOrEmpty(msg.ThinkingContent)))
+                {
                 <div class="message @msg.CssClass"
                      data-testid="message"
                      data-message-role="@msg.Role">
@@ -284,6 +286,7 @@
                         <div class="message-content">@msg.Content</div>
                     }
                 </div>
+                }
             }
         }
 
