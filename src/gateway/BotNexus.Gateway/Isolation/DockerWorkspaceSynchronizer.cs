@@ -105,4 +105,53 @@ public sealed class DockerWorkspaceSynchronizer : IWorkspaceSynchronizer
                 Error: ex.Message);
         }
     }
+
+    /// <summary>
+    /// Copies skill scripts from the host skills directory into the sandbox.
+    /// This ensures skill references in the agent prompt resolve correctly inside the container.
+    /// </summary>
+    /// <param name="sandboxName">Target sandbox name.</param>
+    /// <param name="hostSkillsDir">Absolute path to the host skills directory.</param>
+    /// <param name="sandboxSkillsPath">Path inside the sandbox to copy skills into.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Result describing what was synced.</returns>
+    public async Task<WorkspaceSyncResult> SyncSkillsToSandboxAsync(
+        string sandboxName,
+        string hostSkillsDir,
+        string sandboxSkillsPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sandboxName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostSkillsDir);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sandboxSkillsPath);
+
+        _logger.LogInformation(
+            "Skills sync: copying host '{HostSkillsDir}' → sandbox '{SandboxName}:{SandboxSkillsPath}'",
+            hostSkillsDir, sandboxName, sandboxSkillsPath);
+
+        try
+        {
+            await _runner.CopyToSandboxAsync(
+                sandboxName, hostSkillsDir, sandboxSkillsPath, cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Skills sync: host → sandbox complete for '{SandboxName}'",
+                sandboxName);
+
+            return new WorkspaceSyncResult(Success: true, Direction: SyncDirection.ToSandbox);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Skills sync: host → sandbox FAILED for '{SandboxName}': {Message}",
+                sandboxName, ex.Message);
+
+            return new WorkspaceSyncResult(
+                Success: false,
+                Direction: SyncDirection.ToSandbox,
+                Error: ex.Message);
+        }
+    }
 }

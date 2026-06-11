@@ -583,6 +583,41 @@ Archived 8 log files older than 30 days.
 }
 ```
 
+### 8.4 `memory-dreaming`
+
+**Name:** `memory-dreaming`  
+**Description:** Periodic memory consolidation via LLM — reads recent daily notes, builds a consolidation prompt, and dispatches a session to update `MEMORY.md` with distilled insights.
+
+Unlike `consolidate-memory` (which merges files mechanically), memory dreaming uses an LLM to extract patterns, decisions, and knowledge from daily notes and weave them into the agent's long-term memory.
+
+**Configuration Properties:**
+- `Action`: `"memory-dreaming"`
+- `lookbackDays` (in job metadata): Number of days of daily notes to read (default: 14)
+- `maxContentChars` (in job metadata): Maximum characters of source material (default: 50000)
+
+**Configuration:**
+```json
+{
+  "Type": "maintenance",
+  "Action": "memory-dreaming",
+  "Schedule": "0 3 * * 0",
+  "Agent": "my-agent",
+  "Metadata": {
+    "lookbackDays": 14,
+    "maxContentChars": 50000
+  },
+  "Enabled": true
+}
+```
+
+**Behavior:**
+- Reads `memory/YYYY-MM-DD.md` files from the last N days in the agent's workspace
+- Builds a consolidation prompt with the collected daily notes as context
+- Dispatches a cron-triggered session that writes distilled insights back to `MEMORY.md`
+- Skips execution if no daily notes exist in the lookback window
+
+**Use case:** Keep an agent's long-term memory fresh and relevant without manual curation. Schedule weekly during off-hours.
+
 ---
 
 ## 9. CronTool — Runtime Job Management

@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -12,11 +13,19 @@ namespace BotNexus.Gateway.Api.Controllers;
 public sealed class DiagnosticsController(
     ILogger<DiagnosticsController> logger,
     LogDiagnosticsRingBuffer? logBuffer = null,
-    MemoryPressureMonitor? memoryMonitor = null) : ControllerBase
+    MemoryPressureMonitor? memoryMonitor = null,
+    IThreadPoolMetrics? threadPoolMetrics = null,
+    IOptions<ThreadPoolWatchdogOptions>? threadPoolOptions = null,
+    IActivityTracker? activityTracker = null,
+    IOptions<LivenessWatchdogOptions>? livenessOptions = null) : ControllerBase
 {
     private readonly ILogger<DiagnosticsController> _logger = logger;
     private readonly LogDiagnosticsRingBuffer? _logBuffer = logBuffer;
     private readonly MemoryPressureMonitor? _memoryMonitor = memoryMonitor;
+    private readonly IThreadPoolMetrics? _threadPoolMetrics = threadPoolMetrics;
+    private readonly ThreadPoolWatchdogOptions? _threadPoolOptions = threadPoolOptions?.Value;
+    private readonly IActivityTracker? _activityTracker = activityTracker;
+    private readonly LivenessWatchdogOptions? _livenessOptions = livenessOptions?.Value;
 
     /// <summary>
     /// Accepts an error report from any channel adapter and logs it at Error level.
@@ -160,6 +169,54 @@ public sealed class DiagnosticsController(
     private static string? Sanitise(string? value) =>
         value?.Replace("\r", string.Empty, StringComparison.Ordinal)
               .Replace("\n", " ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Returns a point-in-time threadpool snapshot with health assessment.
+    /// </summary>
+    [HttpGet("threadpool")]
+    public IActionResult GetThreadpool()
+    {
+        if (_threadPoolMetrics is null)
+            return NotFound("Threadpool diagnostics not enabled.");
+
+        var counts = _threadPoolMetrics.GetThreadCounts();
+        var pending = _threadPoolMetrics.PendingWorkItemCount;
+        var threshold = _threadPoolOptions?.QueueDepthThreshold ?? 100;
+
+        return Ok(new ThreadPoolSnapshotDto
+        {
+            PendingWorkItems = pending,
+            WorkerAvailable = counts.WorkerAvailable,
+            WorkerMax = counts.WorkerMax,
+            WorkerMin = counts.WorkerMin,
+            IoAvailable = counts.IoAvailable,
+            IoMax = counts.IoMax,
+            IoMin = counts.IoMin,
+            IsHealthy = pending < threshold,
+            QueueDepthThreshold = threshold
+        });
+    }
+
+    /// <summary>
+    /// Returns gateway activity tracking snapshot with health assessment.
+    /// </summary>
+    [HttpGet("activity")]
+    public IActionResult GetActivity()
+    {
+        if (_activityTracker is null)
+            return NotFound("Activity tracking not enabled.");
+
+        var inactivity = _activityTracker.TimeSinceLastActivity;
+        var threshold = _livenessOptions?.WarningThreshold ?? TimeSpan.FromMinutes(5);
+
+        return Ok(new ActivitySnapshotDto
+        {
+            LastActivityUtc = _activityTracker.LastActivityUtc,
+            InactivitySeconds = (long)inactivity.TotalSeconds,
+            IsHealthy = inactivity < threshold,
+            WarningThresholdSeconds = (long)threshold.TotalSeconds
+        });
+    }
 }
 
 /// <summary>
@@ -268,4 +325,55 @@ public sealed class MemoryPressureHistoryResponse
 
     /// <summary>Total snapshots retained in the ring buffer.</summary>
     public required int SnapshotsRetained { get; init; }
+}
+
+/// <summary>
+/// Point-in-time threadpool snapshot including health assessment.
+/// </summary>
+public sealed class ThreadPoolSnapshotDto
+{
+    /// <summary>Number of pending work items in the threadpool queue.</summary>
+    public required long PendingWorkItems { get; init; }
+
+    /// <summary>Available worker threads.</summary>
+    public required int WorkerAvailable { get; init; }
+
+    /// <summary>Maximum worker threads.</summary>
+    public required int WorkerMax { get; init; }
+
+    /// <summary>Minimum worker threads.</summary>
+    public required int WorkerMin { get; init; }
+
+    /// <summary>Available IO completion port threads.</summary>
+    public required int IoAvailable { get; init; }
+
+    /// <summary>Maximum IO completion port threads.</summary>
+    public required int IoMax { get; init; }
+
+    /// <summary>Minimum IO completion port threads.</summary>
+    public required int IoMin { get; init; }
+
+    /// <summary>True when pending work items are below the configured threshold.</summary>
+    public required bool IsHealthy { get; init; }
+
+    /// <summary>Configured queue depth threshold above which the pool is considered unhealthy.</summary>
+    public required int QueueDepthThreshold { get; init; }
+}
+
+/// <summary>
+/// Gateway activity tracking snapshot with health assessment.
+/// </summary>
+public sealed class ActivitySnapshotDto
+{
+    /// <summary>UTC timestamp of the last recorded gateway activity.</summary>
+    public required DateTimeOffset LastActivityUtc { get; init; }
+
+    /// <summary>Seconds since last activity.</summary>
+    public required long InactivitySeconds { get; init; }
+
+    /// <summary>True when inactivity is below the configured warning threshold.</summary>
+    public required bool IsHealthy { get; init; }
+
+    /// <summary>Configured warning threshold in seconds.</summary>
+    public required long WarningThresholdSeconds { get; init; }
 }
