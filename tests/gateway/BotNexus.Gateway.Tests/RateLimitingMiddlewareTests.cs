@@ -332,6 +332,88 @@ public sealed class RateLimitingMiddlewareTests
         rateLimit.WindowSeconds.ShouldBe(45);
     }
 
+    // ── Rate limit headers ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task InvokeAsync_WhenEnabled_SetsRateLimitHeaders()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 10, windowSeconds: 60));
+
+        var context = CreateContext("10.0.0.1");
+        await middleware.InvokeAsync(context);
+
+        context.Response.Headers["X-RateLimit-Limit"].ToString().ShouldBe("10");
+        context.Response.Headers["X-RateLimit-Remaining"].ToString().ShouldBe("9");
+        context.Response.Headers["X-RateLimit-Reset"].ToString().ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task InvokeAsync_RemainingDecrementsCorrectly()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 3, windowSeconds: 60));
+
+        var ctx1 = CreateContext("10.0.0.2");
+        await middleware.InvokeAsync(ctx1);
+        ctx1.Response.Headers["X-RateLimit-Remaining"].ToString().ShouldBe("2");
+
+        var ctx2 = CreateContext("10.0.0.2");
+        await middleware.InvokeAsync(ctx2);
+        ctx2.Response.Headers["X-RateLimit-Remaining"].ToString().ShouldBe("1");
+
+        var ctx3 = CreateContext("10.0.0.2");
+        await middleware.InvokeAsync(ctx3);
+        ctx3.Response.Headers["X-RateLimit-Remaining"].ToString().ShouldBe("0");
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WhenOverLimit_HeadersShowZeroRemaining()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 1, windowSeconds: 60));
+
+        await middleware.InvokeAsync(CreateContext("10.0.0.3"));
+        var blocked = CreateContext("10.0.0.3");
+        await middleware.InvokeAsync(blocked);
+
+        blocked.Response.StatusCode.ShouldBe(StatusCodes.Status429TooManyRequests);
+        blocked.Response.Headers["X-RateLimit-Limit"].ToString().ShouldBe("1");
+        blocked.Response.Headers["X-RateLimit-Remaining"].ToString().ShouldBe("0");
+        blocked.Response.Headers["X-RateLimit-Reset"].ToString().ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WhenDisabled_NoRateLimitHeaders()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            Microsoft.Extensions.Options.Options.Create(new PlatformConfig()));
+
+        var context = CreateContext("10.0.0.4");
+        context.Request.Path = "/api/chat";
+        await middleware.InvokeAsync(context);
+
+        context.Response.Headers.ContainsKey("X-RateLimit-Limit").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ExemptPath_NoRateLimitHeaders()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 10, windowSeconds: 60));
+
+        var context = CreateContext("10.0.0.5");
+        context.Request.Path = "/health";
+        await middleware.InvokeAsync(context);
+
+        context.Response.Headers.ContainsKey("X-RateLimit-Limit").ShouldBeFalse();
+    }
+
     private static IOptions<PlatformConfig> CreateConfig(int requestsPerMinute, int windowSeconds)
         => Microsoft.Extensions.Options.Options.Create(new PlatformConfig
         {
