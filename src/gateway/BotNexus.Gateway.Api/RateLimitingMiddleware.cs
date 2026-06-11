@@ -68,6 +68,8 @@ public sealed class RateLimitingMiddleware
 
         bool isLimited;
         TimeSpan retryAfter;
+        int remaining;
+        long resetEpoch;
         lock (clientWindow.Sync)
         {
             if (now - clientWindow.WindowStart >= windowLength)
@@ -79,6 +81,8 @@ public sealed class RateLimitingMiddleware
             clientWindow.RequestCount++;
             clientWindow.LastAccessed = now;
             isLimited = clientWindow.RequestCount > requestsPerMinute;
+            remaining = Math.Max(0, requestsPerMinute - clientWindow.RequestCount);
+            resetEpoch = (clientWindow.WindowStart + windowLength).ToUnixTimeSeconds();
             retryAfter = (clientWindow.WindowStart + windowLength) - now;
             if (retryAfter < MinimumRetryAfter)
                 retryAfter = MinimumRetryAfter;
@@ -88,8 +92,15 @@ public sealed class RateLimitingMiddleware
         {
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             context.Response.Headers.RetryAfter = Math.Ceiling(retryAfter.TotalSeconds).ToString();
+            context.Response.Headers["X-RateLimit-Limit"] = requestsPerMinute.ToString();
+            context.Response.Headers["X-RateLimit-Remaining"] = "0";
+            context.Response.Headers["X-RateLimit-Reset"] = resetEpoch.ToString();
             return;
         }
+
+        context.Response.Headers["X-RateLimit-Limit"] = requestsPerMinute.ToString();
+        context.Response.Headers["X-RateLimit-Remaining"] = remaining.ToString();
+        context.Response.Headers["X-RateLimit-Reset"] = resetEpoch.ToString();
 
         await _next(context);
     }

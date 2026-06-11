@@ -26,6 +26,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Tests.TestInfrastructure;
 
 namespace BotNexus.Gateway.Tests.Agents;
 
@@ -387,6 +388,7 @@ public sealed class SubAgentIntegrationTests
             new DefaultToolRegistry([]),
             Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             services.BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }

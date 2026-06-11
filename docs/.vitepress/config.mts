@@ -145,6 +145,7 @@ export default defineConfig({
         text: 'Features',
         items: [
           { text: 'Sub-Agent Spawning', link: '/features/sub-agent-spawning' },
+          { text: 'Built-in Agents', link: '/features/built-in-agents' },
           { text: 'Shell Execution', link: '/features/shell-execution' },
           { text: 'Canvas', link: '/features/canvas' },
           { text: 'Skills', link: '/skills' },

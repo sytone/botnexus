@@ -31,6 +31,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,6 +113,7 @@ public static class GatewayServiceCollectionExtensions
             });
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
+        services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          services.AddSingleton<IUserRegistry, DefaultUserRegistry>();
@@ -319,6 +321,16 @@ public static class GatewayServiceCollectionExtensions
             var writer = serviceProvider.GetRequiredService<PlatformConfigWriter>();
             return new PlatformConfigAgentWriter(writer, home);
         }));
+        // Config hydration — populate missing keys with defaults on startup
+        services.AddSingleton<IConfigSchemaContributor, GatewaySchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, CompactionSchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, AuxiliarySchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, AutoUpdateSchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, CronSchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, SessionStoreSchemaContributor>();
+        services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
+        services.AddHostedService<ConfigHydrationService>();
+
         services.AddHostedService<BuiltInAgentRegistrationService>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
