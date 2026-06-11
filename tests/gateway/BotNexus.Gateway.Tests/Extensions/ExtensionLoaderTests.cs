@@ -229,6 +229,50 @@ public sealed class ExtensionLoaderTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_SignalRExtension_RegistersHubAuthorizationPolicyAndUserIdProvider()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "signalr-extension");
+        Directory.CreateDirectory(extensionDirectory);
+        CopySignalRExtensionArtifacts(extensionDirectory);
+
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"), JsonSerializer.Serialize(new ExtensionManifest
+        {
+            Id = "botnexus-signalr",
+            Name = "SignalR Channel",
+            Version = "1.0.0",
+            EntryAssembly = "BotNexus.Extensions.Channels.SignalR.dll",
+            ExtensionTypes = ["channel", "endpoint-contributor"]
+        }));
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        var loader = CreateLoader(services);
+        var discovered = await loader.DiscoverAsync(_rootPath);
+        var loadResult = await loader.LoadAsync(discovered.Single(x => x.Manifest.Id == "botnexus-signalr"));
+
+        loadResult.Success.ShouldBeTrue(loadResult.Error);
+
+        // The claims-based IUserIdProvider must override SignalR's connection-id default.
+        var userIdProvider = services
+            .Where(descriptor => descriptor.ServiceType == typeof(Microsoft.AspNetCore.SignalR.IUserIdProvider))
+            .Select(descriptor => descriptor.ImplementationType)
+            .LastOrDefault(type => type?.FullName == "BotNexus.Extensions.Channels.SignalR.ClaimsUserIdProvider");
+
+        userIdProvider.ShouldNotBeNull(
+            "SignalR extension load should register ClaimsUserIdProvider as the IUserIdProvider");
+
+        // The hub's [Authorize(Policy = "SignalRHubAuth")] attribute requires the named policy to
+        // be registered, otherwise AuthorizationMiddleware throws and negotiate returns HTTP 500.
+        using var provider = services.BuildServiceProvider();
+        var policyProvider = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+        var policy = await policyProvider.GetPolicyAsync("SignalRHubAuth");
+
+        policy.ShouldNotBeNull(
+            "SignalR extension load should register the 'SignalRHubAuth' authorization policy required by GatewayHub");
+    }
+
+    [Fact]
     public async Task LoadAsync_SkillsExtension_RegistersSkillPromptHookHandler()
     {
         var extensionDirectory = Path.Combine(_rootPath, "skills-extension");
