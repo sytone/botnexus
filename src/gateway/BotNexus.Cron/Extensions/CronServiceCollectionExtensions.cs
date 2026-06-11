@@ -34,6 +34,7 @@ public static class CronServiceCollectionExtensions
         services.TryAddSingleton<IPromptTemplateResolver, CronOptionsPromptTemplateResolver>();
         services.AddOptions<CronRunRetentionOptions>();
         services.AddSingleton<IHostedService, CronRunRetentionHostedService>();
+        services.AddSingleton<IHostedService, MissedRunDetectionService>();
         return services;
     }
 

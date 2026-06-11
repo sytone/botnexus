@@ -618,6 +618,39 @@ Unlike `consolidate-memory` (which merges files mechanically), memory dreaming u
 
 **Use case:** Keep an agent's long-term memory fresh and relevant without manual curation. Schedule weekly during off-hours.
 
+### 8.5 `cron-run-retention`
+
+**Name:** `cron-run-retention`  
+**Description:** Purges old completed cron run history records to prevent unbounded database growth.
+
+Periodically sweeps the cron run store and deletes records with status `Completed`, `Failed`, or `Timeout` that are older than the configured retention period.
+
+**Configuration Properties:**
+- `Action`: `"cron-run-retention"`
+- `RetentionDays`: Number of days to keep run records (default: 30)
+- `CheckIntervalMinutes`: How often the service checks for expired records (default: 60)
+
+**Configuration:**
+```json
+{
+  "Type": "maintenance",
+  "Action": "cron-run-retention",
+  "Schedule": "0 4 * * *",
+  "Metadata": {
+    "RetentionDays": 30,
+    "CheckIntervalMinutes": 60
+  },
+  "Enabled": true
+}
+```
+
+**Output:**
+```text
+Purged 156 cron run records older than 30 days.
+```
+
+**Use case:** Prevent the cron SQLite database from growing indefinitely on long-running instances.
+
 ---
 
 ## 9. CronTool — Runtime Job Management
@@ -627,9 +660,37 @@ Agents can schedule, remove, or list cron jobs at runtime using the **`cron` too
 ### 9.1 Tool Definition
 
 **Name:** `cron`  
-**Description:** Schedule or manage cron jobs. Actions: schedule, remove, list.
+**Description:** Schedule or manage cron jobs. Actions: list, create, update, delete, run, history.
 
 ### 9.2 Actions
+
+#### `history`
+
+Retrieves execution history for a specific job.
+
+**Arguments:**
+- `action` = `"history"`
+- `jobId`: Job identifier (required)
+- `limit`: Maximum entries to return (1–100, default: 20)
+
+**Example:**
+```json
+{
+  "action": "history",
+  "jobId": "morning-briefing",
+  "limit": 10
+}
+```
+
+**Response:**
+```text
+Run History for 'morning-briefing' (last 10 runs):
+
+| # | Started | Duration | Status | Result |
+|---|---------|----------|--------|--------|
+| 1 | 2026-06-10 09:00:05Z | 12.3s | Completed | Success |
+| 2 | 2026-06-09 09:00:03Z | 8.1s | Completed | Success |
+```
 
 #### `list`
 

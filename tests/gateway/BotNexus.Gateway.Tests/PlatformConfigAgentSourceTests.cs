@@ -23,6 +23,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.IO.Abstractions;
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Tests.TestInfrastructure;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -546,6 +547,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
@@ -607,6 +609,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
 

@@ -1266,6 +1266,161 @@ X-Api-Key: your-api-key
 
 ---
 
+### Diagnostics: Thread Pool
+
+**Endpoint:** `GET /api/diagnostics/threadpool`
+
+**Description:** Returns thread pool health metrics including pending work items, thread counts, and a health assessment.
+
+**Request:**
+```http
+GET /api/diagnostics/threadpool
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "pendingWorkItems": 3,
+  "workerThreads": { "available": 28, "max": 32 },
+  "completionPortThreads": { "available": 8, "max": 8 },
+  "health": "healthy"
+}
+```
+
+Returns `404` if the threadpool watchdog service is not registered.
+
+---
+
+### Diagnostics: Activity
+
+**Endpoint:** `GET /api/diagnostics/activity`
+
+**Description:** Returns the gateway's last activity timestamp and inactivity duration.
+
+**Request:**
+```http
+GET /api/diagnostics/activity
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "lastActivityUtc": "2026-06-10T14:30:00Z",
+  "inactivitySeconds": 120,
+  "health": "healthy"
+}
+```
+
+Returns `404` if the activity tracking service is not registered.
+
+---
+
+### Memory Statistics
+
+**Endpoint:** `GET /api/memory`
+
+**Description:** Returns memory store statistics for all agents.
+
+**Request:**
+```http
+GET /api/memory
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "agentId": "assistant",
+    "entryCount": 42,
+    "totalSizeBytes": 128000
+  }
+]
+```
+
+---
+
+### Memory Statistics (Per Agent)
+
+**Endpoint:** `GET /api/memory/{agentId}`
+
+**Description:** Returns memory store statistics for a specific agent.
+
+**Parameters:**
+- `agentId` (string, path) — Agent ID
+
+**Response:** 200 OK
+```json
+{
+  "agentId": "assistant",
+  "entryCount": 42,
+  "totalSizeBytes": 128000
+}
+```
+
+---
+
+### Memory Search (Per Agent)
+
+**Endpoint:** `GET /api/memory/{agentId}/entries?query=`
+
+**Description:** Search memory entries for an agent.
+
+**Parameters:**
+- `agentId` (string, path) — Agent ID
+- `query` (string, query) — Search text
+
+**Response:** 200 OK — Returns matching memory entries.
+
+---
+
+### Satellites
+
+**Endpoint:** `GET /api/satellites`
+
+**Description:** List all registered satellite nodes with their connection status.
+
+**Request:**
+```http
+GET /api/satellites
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "id": "sat_desktop_home",
+    "displayName": "Home Desktop",
+    "owner": "jon",
+    "platform": "windows",
+    "capabilities": ["notify", "canvas"],
+    "status": "online",
+    "lastSeenUtc": "2026-06-10T14:30:00Z"
+  }
+]
+```
+
+---
+
+### Get Satellite
+
+**Endpoint:** `GET /api/satellites/{id}`
+
+**Description:** Get details for a specific satellite.
+
+**Parameters:**
+- `id` (string, path) — Satellite ID
+
+**Response:** 200 OK — Returns the satellite details.
+
+**Error Responses:**
+- `404 Not Found` — Satellite does not exist
+
+---
+
 ## Error Handling
 
 ### Error Response Format
