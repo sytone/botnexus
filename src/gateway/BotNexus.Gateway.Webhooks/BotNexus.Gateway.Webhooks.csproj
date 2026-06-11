@@ -17,6 +17,7 @@
     <Compile Include="SqliteWebhookRegistrationStore.cs" />
     <Compile Include="SqliteWebhookRunStore.cs" />
     <Compile Include="WebhookServiceCollectionExtensions.cs" />
+    <Compile Include="WebhookCallbackValidator.cs" />
   </ItemGroup>
 
   <ItemGroup>
