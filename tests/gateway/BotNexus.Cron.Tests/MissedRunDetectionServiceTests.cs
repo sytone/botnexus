@@ -20,8 +20,8 @@ public sealed class MissedRunDetectionServiceTests
     [Fact]
     public void GetMissedRuns_NoMissedRuns_ReturnsEmpty()
     {
-        // Last ran 30 seconds ago, schedule is every minute — next run hasn't been missed yet
-        var now = DateTimeOffset.UtcNow;
+        // Fixed time at :02 — last ran at :01:30, next occurrence is :05, which is after now
+        var now = new DateTimeOffset(2026, 6, 11, 12, 2, 0, TimeSpan.Zero);
         var job = CreateJob("j1") with
         {
             Schedule = "*/5 * * * *",
