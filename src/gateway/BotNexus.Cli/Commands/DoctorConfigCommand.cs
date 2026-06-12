@@ -20,6 +20,8 @@ internal sealed class DoctorConfigCommand
         new SkillsWorldDefaultCheck(),
         new CronCheck(),
         new MemoryAgentDefaultCheck(),
+        new CompactionModelCheck(),
+        new CompactionModelMissingCheck(),
     ];
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)

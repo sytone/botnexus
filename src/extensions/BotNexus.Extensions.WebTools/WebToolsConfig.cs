@@ -21,7 +21,7 @@ public sealed class WebToolsConfig
 /// </summary>
 public sealed class WebSearchConfig
 {
-    /// <summary>Search provider: "brave", "tavily", "bing", or "copilot". Default: "brave".</summary>
+    /// <summary>Search provider: "brave", "tavily", "bing", "microsoft", or "copilot". Default: "brave".</summary>
     [JsonPropertyName("provider")]
     public string Provider { get; set; } = "brave";
 
