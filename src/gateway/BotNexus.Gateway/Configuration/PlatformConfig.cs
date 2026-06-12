@@ -632,6 +632,7 @@ public sealed class AuxiliaryConfig
     /// <c>AuxiliarySchemaContributor</c> as a nested object (<c>{ model, timeoutSeconds }</c>);
     /// this property must remain an object so the bound config matches the on-disk shape.
     /// </summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(TitlingConfigJsonConverter))]
     public TitlingConfig? Titling { get; set; }
 
     /// <summary>

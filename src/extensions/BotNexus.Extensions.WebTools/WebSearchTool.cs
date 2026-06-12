@@ -126,7 +126,7 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         if (provider is null)
         {
             return TextResult(
-                $"Unknown search provider: '{_config.Provider}'. Supported: brave, tavily, bing, copilot.");
+                $"Unknown search provider: '{_config.Provider}'. Supported: brave, tavily, bing, microsoft, copilot.");
         }
 
         try
@@ -186,6 +186,7 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
                 "brave" when !string.IsNullOrWhiteSpace(apiKey) => new BraveSearchProvider(_httpClient, apiKey),
                 "tavily" when !string.IsNullOrWhiteSpace(apiKey) => new TavilySearchProvider(_httpClient, apiKey),
                 "bing" when !string.IsNullOrWhiteSpace(apiKey) => new BingSearchProvider(_httpClient, apiKey),
+                "microsoft" or "microsoft-ai" when !string.IsNullOrWhiteSpace(apiKey) => new MicrosoftAiSearchProvider(_httpClient, apiKey),
                 "copilot" when _copilotApiKeyResolver is not null =>
                     new CopilotMcpSearchProvider(_copilotApiKeyResolver, _httpClient, _copilotApiEndpoint,
                         _loggerFactory?.CreateLogger<CopilotMcpSearchProvider>()),
