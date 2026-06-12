@@ -14,6 +14,7 @@ The Data Store extension provides agents with a per-agent structured SQLite data
 
 - Bulk ingest JSON arrays with automatic schema inference
 - Run SELECT queries against stored data
+- Count rows in a table with optional filtering
 - Insert individual rows
 - Update existing rows matching conditions
 - Delete rows matching conditions
@@ -25,7 +26,7 @@ The Data Store extension provides agents with a per-agent structured SQLite data
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | string | Yes | Action: `ingest`, `query`, `insert`, `update`, `delete`, `schema`, `tables`, or `drop`. |
+| `action` | string | Yes | Action: `ingest`, `query`, `count`, `insert`, `update`, `delete`, `schema`, `tables`, or `drop`. |
 | `table` | string | Conditional | Table name. Required for `ingest`, `insert`, `delete`, `schema`, `drop`. Lowercase alphanumeric + underscores only. |
 | `data` | string | Conditional | JSON array of objects for `ingest`, or single JSON object for `insert`. |
 | `sql` | string | Conditional | SELECT statement for `query` action. Only SELECT is permitted. |
@@ -76,6 +77,22 @@ Run a SELECT statement and return results as JSON.
   "sql": "SELECT name, email FROM contacts WHERE name LIKE 'A%'"
 }
 ```
+
+### `count`
+
+Count rows in a table, optionally filtered by a WHERE clause.
+
+```json
+{
+  "action": "count",
+  "table": "contacts",
+  "where": "name LIKE 'A%'"
+}
+```
+
+Returns: `{"table": "contacts", "count": 42}`
+
+The `where` parameter is optional — omit it to count all rows.
 
 ### `insert`
 
