@@ -15,7 +15,7 @@ public sealed class MemoryIndexerTests
         var lifecycle = new TestSessionLifecycleEvents();
         var store = new FakeMemoryStore();
         var factory = new FakeMemoryStoreFactory(store);
-        var indexer = new MemoryIndexer(factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -49,7 +49,7 @@ public sealed class MemoryIndexerTests
         var lifecycle = new TestSessionLifecycleEvents();
         var store = new FakeMemoryStore();
         var factory = new FakeMemoryStoreFactory(store);
-        var indexer = new MemoryIndexer(factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -80,7 +80,7 @@ public sealed class MemoryIndexerTests
         var lifecycle = new TestSessionLifecycleEvents();
         var store = new FakeMemoryStore();
         var factory = new FakeMemoryStoreFactory(store);
-        var indexer = new MemoryIndexer(factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -110,7 +110,7 @@ public sealed class MemoryIndexerTests
         var lifecycle = new TestSessionLifecycleEvents();
         var store = new FakeMemoryStore();
         var factory = new FakeMemoryStoreFactory(store);
-        var indexer = new MemoryIndexer(factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), factory, lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
