@@ -12,7 +12,10 @@ using SessionId = BotNexus.Domain.Primitives.SessionId;
 using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
+using BotNexus.Domain;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Citizens;
+using BotNexus.Gateway.Abstractions.Configuration;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -48,6 +51,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly IConversationResetService? _resetService;
     private readonly ISessionCompactionCoordinator _compactionCoordinator;
+    private readonly IUserRegistry? _userRegistry;
+    private readonly IWorldContext? _worldContext;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -65,7 +70,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
-        ISessionCompactionCoordinator? compactionCoordinator = null)
+        ISessionCompactionCoordinator? compactionCoordinator = null,
+        IUserRegistry? userRegistry = null,
+        IWorldContext? worldContext = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -81,6 +88,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
+        _userRegistry = userRegistry;
+        _worldContext = worldContext;
         // Required for the /compact RPC path. Tests constructing the hub directly
         // must pass one (see SignalRHubTests.CreateHub which uses TestSessionCompactionCoordinator).
         _compactionCoordinator = compactionCoordinator
@@ -626,6 +635,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             },
             Context.ConnectionAborted);
 
+        // Phase 2: register/upsert the authenticated user in the UserRegistry
+        // with a ChannelIdentity for this SignalR connection. This ensures identity
+        // persists across reconnects (same UserId survives connection cycling).
+        AttachChannelIdentity();
+
         await base.OnConnectedAsync();
     }
 
@@ -661,6 +675,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         }
 
         await base.OnDisconnectedAsync(exception);
+
+        // Phase 2: detach the ChannelIdentity for this connection from the user.
+        // This runs after base so SignalR cleanup is complete.
+        DetachChannelIdentity();
     }
 
     // GetSessionGroup is gone — the hub now subscribes/unsubscribes via SignalRChannelAdapter.GetConversationGroup.
@@ -681,6 +699,92 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// </summary>
     private string GetAuthenticatedUserId()
         => Context.UserIdentifier ?? Context.ConnectionId;
+
+    /// <summary>
+    /// Registers or updates the authenticated user in the <see cref="IUserRegistry"/>
+    /// with a <see cref="ChannelIdentity"/> for this SignalR connection. Ensures identity
+    /// persists across reconnects — the same UserId survives connection cycling.
+    /// No-op when auth is not configured (anonymous mode) or registry is not registered.
+    /// </summary>
+    private void AttachChannelIdentity()
+    {
+        if (_userRegistry is null) return;
+
+        var userIdentifier = Context.UserIdentifier;
+        if (string.IsNullOrEmpty(userIdentifier)) return; // anonymous — no identity to attach
+
+        var userId = UserId.From(userIdentifier);
+        var channelIdentity = new ChannelIdentity(
+            ChannelKey.From("signalr"),
+            ChannelAddress.From(Context.ConnectionId));
+
+        var existing = _userRegistry.Get(userId);
+        if (existing is null)
+        {
+            // First connection from this user — register them
+            _userRegistry.Register(new User
+            {
+                Id = userId,
+                DisplayName = ResolveDisplayName(),
+                World = _worldContext?.Current ?? new WorldIdentity { Id = Environment.MachineName, Name = "BotNexus Gateway" },
+                ChannelIdentities = [channelIdentity]
+            });
+            _logger.LogInformation(
+                "Attached ChannelIdentity for new user '{UserId}' on connection {ConnectionId}",
+                userId, Context.ConnectionId);
+        }
+        else
+        {
+            // Existing user reconnecting — add this connection's identity
+            var updatedIdentities = existing.ChannelIdentities
+                .Where(ci => !(ci.Channel == ChannelKey.From("signalr") && ci.SenderAddress == ChannelAddress.From(Context.ConnectionId)))
+                .Append(channelIdentity)
+                .ToList();
+
+            _userRegistry.Update(userId, existing with { ChannelIdentities = updatedIdentities });
+            _logger.LogInformation(
+                "Attached ChannelIdentity for existing user '{UserId}' on connection {ConnectionId}",
+                userId, Context.ConnectionId);
+        }
+    }
+
+    /// <summary>
+    /// Removes the <see cref="ChannelIdentity"/> for this connection from the user's record.
+    /// Called on disconnect to keep the registry accurate.
+    /// </summary>
+    private void DetachChannelIdentity()
+    {
+        if (_userRegistry is null) return;
+
+        var userIdentifier = Context.UserIdentifier;
+        if (string.IsNullOrEmpty(userIdentifier)) return;
+
+        var userId = UserId.From(userIdentifier);
+        var existing = _userRegistry.Get(userId);
+        if (existing is null) return;
+
+        var updatedIdentities = existing.ChannelIdentities
+            .Where(ci => !(ci.Channel == ChannelKey.From("signalr") && ci.SenderAddress == ChannelAddress.From(Context.ConnectionId)))
+            .ToList();
+
+        _userRegistry.Update(userId, existing with { ChannelIdentities = updatedIdentities });
+        _logger.LogDebug(
+            "Detached ChannelIdentity for user '{UserId}' on connection {ConnectionId}",
+            userId, Context.ConnectionId);
+    }
+
+    /// <summary>
+    /// Resolves a display name for a new user from available claims. Falls back to the
+    /// user identifier when no name claim is present.
+    /// </summary>
+    private string ResolveDisplayName()
+    {
+        var name = Context.User?.FindFirst("name")?.Value
+            ?? Context.User?.FindFirst("preferred_username")?.Value
+            ?? Context.UserIdentifier
+            ?? "Unknown";
+        return name;
+    }
 
     private static SessionId NormalizeSessionId(SessionId sessionId)
     {
