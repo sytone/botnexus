@@ -30,6 +30,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly IOptions<PlatformConfig> _platformConfigOptions;
     private readonly IOptions<AgentExchangeOptions> _exchangeOptions;
     private readonly CrossWorldChannelAdapter _crossWorldChannelAdapter;
+    private readonly AgentExchangeBudgetTracker? _budgetTracker;
     private readonly string _sourceWorldId;
 
     public AgentExchangeService(
@@ -41,7 +42,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
         ILogger<AgentExchangeService> logger,
         IOptions<PlatformConfig>? platformConfigOptions = null,
         CrossWorldChannelAdapter? crossWorldChannelAdapter = null,
-        IOptions<AgentExchangeOptions>? exchangeOptions = null)
+        IOptions<AgentExchangeOptions>? exchangeOptions = null,
+        AgentExchangeBudgetTracker? budgetTracker = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -51,6 +53,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _logger = logger;
         _platformConfigOptions = platformConfigOptions ?? Options.Create(new PlatformConfig());
         _exchangeOptions = exchangeOptions ?? Options.Create(new AgentExchangeOptions());
+        _budgetTracker = budgetTracker;
         _crossWorldChannelAdapter = crossWorldChannelAdapter ?? new CrossWorldChannelAdapter(
             NullLogger<CrossWorldChannelAdapter>.Instance,
             new HttpClient());
@@ -88,6 +91,9 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         var normalizedChain = NormalizeChain(request.CallChain, request.InitiatorId);
         EnsureCallChainAllowed(normalizedChain, request.TargetId);
+
+        // Budget enforcement: daily cap, loop detection, cooldown
+        _budgetTracker?.EnsureWithinBudget(request.InitiatorId, request.TargetId);
 
         if (!isLocalTarget && parsedCrossWorldTarget is not null)
             return await ConverseCrossWorldAsync(request, parsedCrossWorldTarget, normalizedChain, cancellationToken).ConfigureAwait(false);
@@ -234,6 +240,9 @@ public sealed class AgentExchangeService : IAgentExchangeService
             throw;
         }
 
+
+        // Record budget usage after successful exchange
+        _budgetTracker?.RecordExchangeComplete(request.InitiatorId, request.TargetId, transcript.Count);
         return new AgentExchangeResult
         {
             SessionId = sessionId,
@@ -420,6 +429,9 @@ public sealed class AgentExchangeService : IAgentExchangeService
             throw;
         }
 
+
+        // Record budget usage after successful exchange
+        _budgetTracker?.RecordExchangeComplete(request.InitiatorId, request.TargetId, transcript.Count);
         return new AgentExchangeResult
         {
             SessionId = sessionId,
