@@ -88,7 +88,7 @@ public sealed class ToolEnforcementSectionTests
     {
         var section = ToolEnforcementSection.Create();
 
-        section.Order.ShouldBe(32);
+        section.Order.ShouldBe(30);
     }
 
     [Fact]
@@ -116,10 +116,9 @@ public sealed class ToolEnforcementSectionTests
         var lines = section.Build(DefaultContext);
 
         lines.Count.ShouldBeGreaterThan(1);
-        lines[0].ShouldBe("## Tool Enforcement");
-        lines.ShouldContain(l => l.Contains("execute the tool immediately"));
-        lines.ShouldContain(l => l.Contains("Do not describe"));
+        lines[0].ShouldContain("MUST use your tools");
         lines.ShouldContain(l => l.Contains("Never simulate"));
+        lines.ShouldContain(l => l.Contains("Do not ask for confirmation"));
     }
 
     [Fact]
@@ -140,7 +139,7 @@ public sealed class ToolEnforcementSectionTests
 
         var lines = pipeline.BuildLines(DefaultContext);
 
-        var enforcementIdx = lines.ToList().FindIndex(l => l.Contains("Tool Enforcement"));
+        var enforcementIdx = lines.ToList().FindIndex(l => l.Contains("MUST use your tools"));
         var toolsIdx = lines.ToList().FindIndex(l => l.Contains("Tools content"));
         var safetyIdx = lines.ToList().FindIndex(l => l.Contains("Safety content"));
 
