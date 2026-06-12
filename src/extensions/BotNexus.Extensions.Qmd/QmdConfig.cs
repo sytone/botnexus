@@ -25,6 +25,23 @@ public sealed class QmdConfig
 
     /// <summary>Configured knowledge stores to index and search.</summary>
     public List<QmdStoreConfig> Stores { get; set; } = [];
+
+    /// <summary>
+    /// When set, restricts this agent to only see the listed store names.
+    /// Null or empty means the agent can see ALL configured stores.
+    /// </summary>
+    public List<string>? AllowedStores { get; set; }
+
+    /// <summary>
+    /// Returns true if the given store name is accessible to this agent.
+    /// When <see cref="AllowedStores"/> is null or empty, all stores are accessible.
+    /// </summary>
+    public bool IsStoreAllowed(string storeName)
+    {
+        if (AllowedStores is null || AllowedStores.Count == 0)
+            return true;
+        return AllowedStores.Contains(storeName, StringComparer.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>

@@ -26,8 +26,9 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt();
 
-        prompt.ShouldContain("## Tool Enforcement");
-        prompt.ShouldContain("execute the tool immediately");
+        prompt.ShouldContain("<tool_use>");
+        prompt.ShouldContain("</tool_use>");
+        prompt.ShouldContain("MUST use your tools");
     }
 
     [Fact]
@@ -35,7 +36,8 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt();
 
-        prompt.ShouldContain("## Shell Efficiency");
+        prompt.ShouldContain("<shell>");
+        prompt.ShouldContain("</shell>");
         prompt.ShouldContain("temporary script file");
     }
 
@@ -44,7 +46,8 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(tools: ["read", "skills", "skill_manage"]);
 
-        prompt.ShouldContain("## Skills");
+        prompt.ShouldContain("<skills>");
+        prompt.ShouldContain("</skills>");
         prompt.ShouldContain("check available skills");
     }
 
@@ -61,7 +64,8 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(model: "claude-sonnet-4-20250514");
 
-        prompt.ShouldContain("## Model Guidance (Claude)");
+        prompt.ShouldContain("<model_guidance>");
+        prompt.ShouldContain("</model_guidance>");
         prompt.ShouldContain("edit tool over write");
     }
 
@@ -70,7 +74,7 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(model: "gpt-4.1");
 
-        prompt.ShouldContain("## Model Guidance (GPT)");
+        prompt.ShouldContain("<model_guidance>");
         prompt.ShouldContain("Never answer from memory");
     }
 
@@ -79,7 +83,7 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(model: "gemini-2.5-pro");
 
-        prompt.ShouldContain("## Model Guidance (Gemini)");
+        prompt.ShouldContain("<model_guidance>");
         prompt.ShouldContain("absolute paths");
     }
 
@@ -88,7 +92,7 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(model: "some-unknown-model-v1");
 
-        prompt.ShouldNotContain("## Model Guidance");
+        prompt.ShouldNotContain("<model_guidance>");
     }
 
     [Fact]
@@ -96,7 +100,7 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(model: null);
 
-        prompt.ShouldNotContain("## Model Guidance");
+        prompt.ShouldNotContain("<model_guidance>");
     }
 
     [Fact]
@@ -104,8 +108,8 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt();
 
-        var toolEnforcementIdx = prompt.IndexOf("## Tool Enforcement", StringComparison.Ordinal);
-        var safetyIdx = prompt.IndexOf("## Safety", StringComparison.Ordinal);
+        var toolEnforcementIdx = prompt.IndexOf("<tool_use>", StringComparison.Ordinal);
+        var safetyIdx = prompt.IndexOf("<safety>", StringComparison.Ordinal);
 
         toolEnforcementIdx.ShouldBeGreaterThan(-1);
         safetyIdx.ShouldBeGreaterThan(-1);
@@ -117,8 +121,8 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt();
 
-        var shellIdx = prompt.IndexOf("## Shell Efficiency", StringComparison.Ordinal);
-        var safetyIdx = prompt.IndexOf("## Safety", StringComparison.Ordinal);
+        var shellIdx = prompt.IndexOf("<shell>", StringComparison.Ordinal);
+        var safetyIdx = prompt.IndexOf("<safety>", StringComparison.Ordinal);
 
         shellIdx.ShouldBeGreaterThan(-1);
         safetyIdx.ShouldBeGreaterThan(-1);
@@ -131,7 +135,7 @@ public sealed class PromptSectionWiringTests
         var prompt = BuildFullPrompt(model: "claude-sonnet-4-20250514");
 
         var workspaceIdx = prompt.IndexOf("## Workspace Files (injected)", StringComparison.Ordinal);
-        var modelIdx = prompt.IndexOf("## Model Guidance (Claude)", StringComparison.Ordinal);
+        var modelIdx = prompt.IndexOf("<model_guidance>", StringComparison.Ordinal);
 
         workspaceIdx.ShouldBeGreaterThan(-1);
         modelIdx.ShouldBeGreaterThan(-1);
