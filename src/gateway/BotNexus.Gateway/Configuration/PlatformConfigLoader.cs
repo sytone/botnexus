@@ -711,9 +711,7 @@ public static class PlatformConfigLoader
 
         if (configuredType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
-            if (string.IsNullOrWhiteSpace(sessionStore.ConnectionString))
-                errors.Add("gateway.sessionStore.connectionString is required when gateway.sessionStore.type is 'Sqlite'.");
-
+            // connectionString is optional — defaults to sessions.sqlite in config directory
             return;
         }
 

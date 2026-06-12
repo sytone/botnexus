@@ -70,9 +70,26 @@ var resolvedConfigPath = string.IsNullOrWhiteSpace(platformConfigPath)
 
 // Add config.json to the IConfiguration pipeline so IOptionsMonitor<T> gets reload and extension
 // assemblies can bind their own config sections without a separate file-reading path.
-builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+// Wrapped in try/catch: malformed JSON should not prevent startup (gateway uses defaults).
+try
+{
+    builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Failed to parse {ConfigPath} — using defaults. Fix the JSON and restart.", resolvedConfigPath);
+}
 
-var startupPlatformConfig = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
+PlatformConfig startupPlatformConfig;
+try
+{
+    startupPlatformConfig = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
+}
+catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
+{
+    Log.Warning(ex, "Failed to load platform config from {ConfigPath} — using defaults", resolvedConfigPath);
+    startupPlatformConfig = new PlatformConfig();
+}
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>

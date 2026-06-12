@@ -481,7 +481,7 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
-    public void PlatformConfigLoader_Validate_WithSqliteSessionStoreMissingConnectionString_ReturnsActionableError()
+    public void PlatformConfigLoader_Validate_WithSqliteSessionStoreMissingConnectionString_DefaultsWithoutError()
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
@@ -491,7 +491,7 @@ public sealed class PlatformConfigurationTests
             }
         });
 
-        errors.Where(e => e.Contains("gateway.sessionStore.connectionString", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        errors.Where(e => e.Contains("gateway.sessionStore.connectionString", StringComparison.Ordinal)).ShouldBeEmpty();
     }
 
     [Fact]

@@ -222,6 +222,7 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>()));
         services.AddHostedService<SessionCleanupService>();
+        services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
