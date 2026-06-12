@@ -316,7 +316,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var includeListAgents = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
             if (includeListAgents)
-                tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
+            {
+                var exchangeOptions = _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()?.Value;
+                tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId, exchangeOptions));
+            }
         }
 
         var configurationWriter = _serviceProvider.GetService<IAgentConfigurationWriter>();

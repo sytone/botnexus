@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
 using Moq;
 
@@ -117,6 +118,62 @@ public sealed class ListAgentsToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_OpenPolicy_AllAgentsCanConverse()
+    {
+        var registry = MakeRegistry(MakeAgent("specialist"), MakeAgent("other"));
+        registry.Setup(r => r.Get(AgentId.From("caller"))).Returns((AgentDescriptor?)null);
+
+        var options = new AgentExchangeOptions { AccessPolicy = "open" };
+        var tool = new ListAgentsTool(registry.Object, AgentId.From("caller"), options);
+        var result = await tool.ExecuteAsync("t1", new Dictionary<string, object?>());
+
+        var list = JsonSerializer.Deserialize<List<JsonElement>>(result.Content[0].Value)!;
+        list.ShouldAllBe(e => e.GetProperty("canConverse").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhitelistPolicy_OnlyWhitelistedCanConverse()
+    {
+        var callerDescriptor = new AgentDescriptor
+        {
+            AgentId = AgentId.From("caller"),
+            DisplayName = "Caller",
+            ModelId = "m",
+            ApiProvider = "p",
+            SubAgentIds = ["specialist"]
+        };
+        var specialist = MakeAgent("specialist");
+        var other = MakeAgent("other");
+
+        var registry = MakeRegistry(specialist, other);
+        registry.Setup(r => r.Get(AgentId.From("caller"))).Returns(callerDescriptor);
+
+        var options = new AgentExchangeOptions { AccessPolicy = "whitelist" };
+        var tool = new ListAgentsTool(registry.Object, AgentId.From("caller"), options);
+        var result = await tool.ExecuteAsync("t1", new Dictionary<string, object?>());
+
+        var list = JsonSerializer.Deserialize<List<JsonElement>>(result.Content[0].Value)!;
+        var specialistEntry = list.First(e => e.GetProperty("agentId").GetString() == "specialist");
+        var otherEntry = list.First(e => e.GetProperty("agentId").GetString() == "other");
+
+        specialistEntry.GetProperty("canConverse").GetBoolean().ShouldBeTrue();
+        otherEntry.GetProperty("canConverse").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NullOptions_DefaultsToOpen()
+    {
+        var registry = MakeRegistry(MakeAgent("target"));
+        registry.Setup(r => r.Get(AgentId.From("caller"))).Returns((AgentDescriptor?)null);
+
+        var tool = new ListAgentsTool(registry.Object, AgentId.From("caller"), exchangeOptions: null);
+        var result = await tool.ExecuteAsync("t1", new Dictionary<string, object?>());
+
+        var list = JsonSerializer.Deserialize<List<JsonElement>>(result.Content[0].Value)!;
+        list[0].GetProperty("canConverse").GetBoolean().ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CallerHasSubAgentId_CanConverseIsTrue()
     {
         var callerDescriptor = new AgentDescriptor
@@ -133,15 +190,12 @@ public sealed class ListAgentsToolTests
         var registry = MakeRegistry(specialist, other);
         registry.Setup(r => r.Get(AgentId.From("caller"))).Returns(callerDescriptor);
 
+        // Default null options → open policy → all canConverse
         var tool = new ListAgentsTool(registry.Object, AgentId.From("caller"));
         var result = await tool.ExecuteAsync("t1", new Dictionary<string, object?>());
 
         var list = JsonSerializer.Deserialize<List<JsonElement>>(result.Content[0].Value)!;
-        var specialistEntry = list.First(e => e.GetProperty("agentId").GetString() == "specialist");
-        var otherEntry = list.First(e => e.GetProperty("agentId").GetString() == "other");
-
-        specialistEntry.GetProperty("canConverse").GetBoolean().ShouldBeTrue();
-        otherEntry.GetProperty("canConverse").GetBoolean().ShouldBeFalse();
+        list.ShouldAllBe(e => e.GetProperty("canConverse").GetBoolean());
     }
 
     [Fact]
