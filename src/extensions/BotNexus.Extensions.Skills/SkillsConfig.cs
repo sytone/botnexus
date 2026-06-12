@@ -1,3 +1,5 @@
+using BotNexus.Extensions.Skills.Security;
+
 namespace BotNexus.Extensions.Skills;
 
 /// <summary>
@@ -22,6 +24,12 @@ public sealed class SkillsConfig
 
     /// <summary>Maximum total characters of skill content in the prompt.</summary>
     public int MaxSkillContentChars { get; set; } = 100_000;
+
+    /// <summary>
+    /// Trust verification mode for skill scripts.
+    /// Disabled = no verification (default), Warn = log warning, Enforce = block untrusted.
+    /// </summary>
+    public SkillTrustMode TrustMode { get; set; } = SkillTrustMode.Disabled;
 
     // ── SkillManagerTool gates ──────────────────────────────────────────────
 

@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Contracts.Memory;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -24,6 +25,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private readonly IHookDispatcher? _hookDispatcher;
     private readonly IConversationStore? _conversationStore;
     private readonly ISessionStore? _sessionStore;
+    private readonly IAgentMemoryFactory? _agentMemoryFactory;
     private readonly string? _homePath;
 
     public WorkspaceContextBuilder(IAgentWorkspaceManager workspaceManager, IFileSystem fileSystem)
@@ -82,6 +84,24 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         _homePath = botNexusHome.RootPath;
     }
 
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        BotNexusHome botNexusHome,
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        IAgentMemoryFactory agentMemoryFactory,
+        IHookDispatcher? hookDispatcher = null)
+    {
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _homePath = botNexusHome.RootPath;
+        _conversationStore = conversationStore;
+        _sessionStore = sessionStore;
+        _agentMemoryFactory = agentMemoryFactory;
+        _hookDispatcher = hookDispatcher;
+    }
+
     public async Task<string> BuildSystemPromptAsync(
         AgentDescriptor descriptor,
         AgentExecutionContext? executionContext,
@@ -110,7 +130,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         {
             if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
             {
-                var recentMemoryFiles = await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
+                var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
                 contextFiles.AddRange(recentMemoryFiles);
             }
         }
@@ -261,6 +281,55 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     private static bool IsMemoryPromptInjectionNone(string promptInjection) =>
         promptInjection.Equals(MemoryPromptInjectionNone, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Loads daily memory context, delegating to IAgentMemory when available,
+    /// falling back to direct file I/O for backward compatibility.
+    /// </summary>
+    private async Task<IReadOnlyList<ContextFile>> LoadDailyMemoryAsync(
+        AgentDescriptor descriptor,
+        string workspacePath,
+        CancellationToken cancellationToken)
+    {
+        if (_agentMemoryFactory is not null)
+        {
+            try
+            {
+                var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
+                var request = new AgentMemoryPromptRequest(descriptor.AgentId.Value);
+                var context = await agentMemory.GetPromptContextAsync(request, cancellationToken).ConfigureAwait(false);
+                return MapMemoryContextToFiles(context, descriptor.Memory?.Path);
+            }
+            catch (NotSupportedException)
+            {
+                // Provider not registered — fall through to file-based loading
+            }
+        }
+
+        return await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
+    }
+
+    /// <summary>
+    /// Maps an <see cref="AgentMemoryContext"/> to context files compatible with the prompt pipeline.
+    /// </summary>
+    private static IReadOnlyList<ContextFile> MapMemoryContextToFiles(AgentMemoryContext context, string? memoryPathOverride)
+    {
+        var memoryDir = string.IsNullOrWhiteSpace(memoryPathOverride) ? "memory" : memoryPathOverride.Trim().Replace('\\', '/');
+        if (memoryDir.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            memoryDir = Path.GetDirectoryName(memoryDir)?.Replace('\\', '/') ?? "memory";
+
+        List<ContextFile> result = [];
+        foreach (var note in context.DailyNotes)
+        {
+            if (!string.IsNullOrWhiteSpace(note.Content))
+            {
+                var relativePath = $"{memoryDir}/{note.Date:yyyy-MM-dd}.md";
+                result.Add(new ContextFile(relativePath, note.Content.Trim()));
+            }
+        }
+
+        return result;
+    }
 
     private static async Task<IReadOnlyList<ContextFile>> LoadRecentDailyMemoryFilesAsync(
         IFileSystem fileSystem,

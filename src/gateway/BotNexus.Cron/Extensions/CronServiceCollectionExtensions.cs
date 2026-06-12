@@ -31,6 +31,7 @@ public static class CronServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, WebhookAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, CommandCronAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, MemoryDreamingCronAction>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentConverseCronAction>());
         services.TryAddSingleton<IPromptTemplateResolver, CronOptionsPromptTemplateResolver>();
         services.AddOptions<CronRunRetentionOptions>();
         services.AddSingleton<IHostedService, CronRunRetentionHostedService>();
