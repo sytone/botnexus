@@ -1,7 +1,11 @@
-﻿using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Contracts.Memory;
+using NSubstitute;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
@@ -437,5 +441,210 @@ public sealed class WorkspaceContextBuilderTests
         var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
         property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection behavior.");
         property!.SetValue(config, mode);
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithAgentMemoryFactory_DelegatesToGetPromptContextAsync()
+    {
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-" + Guid.NewGuid().ToString("N"));
+            _fileSystem.Directory.CreateDirectory(homePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+
+            var memoryContext = new AgentMemoryContext(
+                null,
+                [new AgentMemoryDailyNote(DateOnly.FromDateTime(DateTime.Now), "Daily note from IAgentMemory")],
+                50);
+            var mockFactory = new StubAgentMemoryFactory(memoryContext);
+            var builder = new WorkspaceContextBuilder(
+                manager, _fileSystem, home,
+                Substitute.For<IConversationStore>(), Substitute.For<ISessionStore>(),
+                mockFactory);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("test-agent"),
+                DisplayName = "Test",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("Daily note from IAgentMemory");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WhenMemoryFactoryThrowsNotSupported_FallsBackToFileLoading()
+    {
+        var today = DateTime.Now.Date;
+        var todayFileName = $"memory/{today:yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            (todayFileName, "File-based daily note"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-" + Guid.NewGuid().ToString("N"));
+            _fileSystem.Directory.CreateDirectory(homePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+
+            var mockFactory = new StubAgentMemoryFactory(throwNotSupported: true);
+            var builder = new WorkspaceContextBuilder(
+                manager, _fileSystem, home,
+                Substitute.For<IConversationStore>(), Substitute.For<ISessionStore>(),
+                mockFactory);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("test-agent"),
+                DisplayName = "Test",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("File-based daily note");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithMemoryFactoryAndPromptInjectionNone_SkipsMemoryLoading()
+    {
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-" + Guid.NewGuid().ToString("N"));
+            _fileSystem.Directory.CreateDirectory(homePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+
+            var memoryContext = new AgentMemoryContext(
+                null,
+                [new AgentMemoryDailyNote(DateOnly.FromDateTime(DateTime.Now), "Should not appear")],
+                50);
+            var mockFactory = new StubAgentMemoryFactory(memoryContext);
+            var builder = new WorkspaceContextBuilder(
+                manager, _fileSystem, home,
+                Substitute.For<IConversationStore>(), Substitute.For<ISessionStore>(),
+                mockFactory);
+
+            var memory = new MemoryAgentConfig();
+            SetPromptInjection(memory, "none");
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("test-agent"),
+                DisplayName = "Test",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                Memory = memory
+            });
+
+            result.ShouldNotContain("Should not appear");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithMemoryFactory_MapsMultipleDailyNotesInOrder()
+    {
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-" + Guid.NewGuid().ToString("N"));
+            _fileSystem.Directory.CreateDirectory(homePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var yesterday = today.AddDays(-1);
+            var memoryContext = new AgentMemoryContext(
+                null,
+                [
+                    new AgentMemoryDailyNote(today, "Today note"),
+                    new AgentMemoryDailyNote(yesterday, "Yesterday note")
+                ],
+                100);
+            var mockFactory = new StubAgentMemoryFactory(memoryContext);
+            var builder = new WorkspaceContextBuilder(
+                manager, _fileSystem, home,
+                Substitute.For<IConversationStore>(), Substitute.For<ISessionStore>(),
+                mockFactory);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("test-agent"),
+                DisplayName = "Test",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("Today note");
+            result.ShouldContain("Yesterday note");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    private sealed class StubAgentMemoryFactory : IAgentMemoryFactory
+    {
+        private readonly AgentMemoryContext? _context;
+        private readonly bool _throwNotSupported;
+
+        public StubAgentMemoryFactory(AgentMemoryContext? context = null, bool throwNotSupported = false)
+        {
+            _context = context;
+            _throwNotSupported = throwNotSupported;
+        }
+
+        public IAgentMemory Create(string agentId, string? providerName = null)
+        {
+            if (_throwNotSupported)
+                throw new NotSupportedException("Provider not registered");
+            return new StubAgentMemory(_context ?? AgentMemoryContext.Empty);
+        }
+
+        public IReadOnlyList<string> GetRegisteredProviders() => ["markdown"];
+    }
+
+    private sealed class StubAgentMemory : IAgentMemory
+    {
+        private readonly AgentMemoryContext _context;
+
+        public StubAgentMemory(AgentMemoryContext context) => _context = context;
+
+        public Task<AgentMemoryContext> GetPromptContextAsync(
+            AgentMemoryPromptRequest request, CancellationToken ct = default)
+            => Task.FromResult(_context);
+
+        public Task SaveAsync(AgentMemorySaveRequest request, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task<IReadOnlyList<AgentMemorySearchResult>> SearchAsync(
+            AgentMemorySearchRequest request, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<AgentMemorySearchResult>>([]);
+
+        public Task<AgentMemorySearchResult?> GetAsync(string entryId, CancellationToken ct = default)
+            => Task.FromResult<AgentMemorySearchResult?>(null);
+
+        public Task OnSessionCompleteAsync(AgentMemorySessionEvent sessionEvent, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task ConsolidateAsync(AgentMemoryConsolidateRequest request, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }
