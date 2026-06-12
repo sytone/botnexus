@@ -63,13 +63,21 @@ public sealed class ShellEfficiencySectionTests
     }
 
     [Fact]
-    public void Build_StartsWithMarkdownHeader()
+    public void Build_StartsWithScriptGuidance()
     {
         var section = ShellEfficiencySection.Create();
 
         var lines = section.Build(DefaultContext);
 
-        lines[0].ShouldBe("## Shell Efficiency");
+        lines[0].ShouldContain("script", Case.Insensitive);
+    }
+
+    [Fact]
+    public void Create_HasXmlTag()
+    {
+        var section = ShellEfficiencySection.Create();
+
+        section.XmlTag.ShouldBe("shell");
     }
 
     [Fact]
