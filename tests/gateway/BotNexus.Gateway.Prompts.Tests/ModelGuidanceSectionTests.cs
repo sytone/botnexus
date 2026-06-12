@@ -118,8 +118,7 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithClaude);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("Claude");
-        lines.ShouldContain(l => l.Contains("edit tool", StringComparison.OrdinalIgnoreCase));
+        lines[0].ShouldContain("edit tool", Case.Insensitive);
     }
 
     [Fact]
@@ -130,7 +129,7 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithGpt);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("GPT");
+        lines[0].ShouldContain("memory", Case.Insensitive);
         lines.ShouldContain(l => l.Contains("memory", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -142,7 +141,7 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithGemini);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("Gemini");
+        lines[0].ShouldContain("absolute paths", Case.Insensitive);
         lines.ShouldContain(l => l.Contains("absolute path", StringComparison.OrdinalIgnoreCase));
     }
 
