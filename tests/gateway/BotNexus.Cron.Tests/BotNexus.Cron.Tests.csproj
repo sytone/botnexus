@@ -16,6 +16,7 @@
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Memory\BotNexus.Memory.csproj" />
   </ItemGroup>
 
 
