@@ -215,7 +215,31 @@ public sealed class CronScheduler(
                 Services = scope.ServiceProvider
             };
 
-            await action.ExecuteAsync(context, ct).ConfigureAwait(false);
+            var timeoutSeconds = ResolveJobTimeout(jobForRun);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+            try
+            {
+                await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
+                    timeoutSeconds, job.Id, job.ActionType);
+                await _cronStore.RecordRunCompleteAsync(run.Id, "timed_out", $"Job exceeded {timeoutSeconds}s timeout", ct: ct).ConfigureAwait(false);
+
+                var timedOutLatest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? jobForRun;
+                await _cronStore.UpdateAsync(timedOutLatest with
+                {
+                    LastRunAt = triggeredAt,
+                    LastRunStatus = "timed_out",
+                    LastRunError = $"Job exceeded {timeoutSeconds}s timeout"
+                }, ct).ConfigureAwait(false);
+                return run with { Status = "timed_out", CompletedAt = DateTimeOffset.UtcNow, Error = $"Job exceeded {timeoutSeconds}s timeout" };
+            }
+
             _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
                 jobForRun.Name, jobForRun.Id, jobForRun.ActionType, triggerType);
             await _cronStore.RecordRunCompleteAsync(run.Id, "ok", sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
@@ -539,6 +563,23 @@ public sealed class CronScheduler(
         {
             return TimeZoneInfo.Utc;
         }
+    }
+
+    private int ResolveJobTimeout(CronJob job)
+    {
+        if (job.Metadata is not null &&
+            job.Metadata.TryGetValue("timeoutSeconds", out var raw) &&
+            raw is not null)
+        {
+            if (raw is int i && i > 0) return i;
+            if (raw is long l && l > 0) return (int)Math.Min(l, int.MaxValue);
+            if (raw is double d && d > 0) return (int)d;
+            if (raw is System.Text.Json.JsonElement je && je.TryGetInt32(out var parsed) && parsed > 0) return parsed;
+            if (raw is string s && int.TryParse(s, out var ps) && ps > 0) return ps;
+        }
+
+        var options = _optionsMonitor.CurrentValue ?? new CronOptions();
+        return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 300;
     }
 
     private async Task SyncConfiguredJobsAsync(CronOptions options, CancellationToken ct)
