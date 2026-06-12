@@ -23,7 +23,8 @@ public sealed class ConversationTool(
     IReadOnlyList<string>? allowedAgents = null,
     ISessionStore? sessionStore = null,
     IInboundMessageOrchestrator? messageOrchestrator = null,
-    IConversationChangeNotifier? changeNotifier = null) : IAgentTool
+    IConversationChangeNotifier? changeNotifier = null,
+    IConversationAuditStore? auditStore = null) : IAgentTool
 {
     public string Name => "conversation";
     public string Label => "Conversation Context";
@@ -199,9 +200,11 @@ public sealed class ConversationTool(
 
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
+        var previousTitle = conversation.Title;
         conversation.Title = title.Trim();
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
+        await AuditBestEffortAsync(conversation.ConversationId.Value, conversation.AgentId.Value, "title_changed", previousTitle, title.Trim(), ct).ConfigureAwait(false);
         await NotifyBestEffortAsync("updated", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(ToToolResponse(conversation), JsonOptions));
     }
@@ -258,6 +261,7 @@ public sealed class ConversationTool(
         };
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);
+        await AuditBestEffortAsync(created.ConversationId.Value, created.AgentId.Value, "created", null, created.Title, ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(message))
         {
             if (sessionStore is null)
@@ -328,6 +332,7 @@ public sealed class ConversationTool(
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
         await conversationStore.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+        await AuditBestEffortAsync(conversation.ConversationId.Value, conversation.AgentId.Value, "archived", null, null, ct).ConfigureAwait(false);
         await NotifyBestEffortAsync("archived", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(new
         {
@@ -424,6 +429,31 @@ public sealed class ConversationTool(
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    private async Task AuditBestEffortAsync(
+        string conversationId, string agentIdValue, string action,
+        string? previousValue, string? newValue, CancellationToken ct)
+    {
+        if (auditStore is null) return;
+        try
+        {
+            await auditStore.RecordAsync(new ConversationAuditEntry
+            {
+                ConversationId = conversationId,
+                AgentId = agentIdValue,
+                Action = action,
+                Actor = agentId.Value,
+                Source = "tool",
+                PreviousValue = previousValue,
+                NewValue = newValue,
+                Timestamp = DateTimeOffset.UtcNow
+            }, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Audit is best-effort: must not fail the tool call.
+        }
+    }
 }
 
 /// <summary>Conversation access level for the conversation tool.</summary>

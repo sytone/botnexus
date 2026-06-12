@@ -31,6 +31,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IConversationResetService? _resetService;
     private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers;
+    private readonly IConversationAuditStore? _auditStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -45,6 +46,7 @@ public sealed class ConversationsController : ControllerBase
     /// the controller falls back to a best-effort in-place seal — used only by tests that construct the controller
     /// directly without DI.</param>
     /// <param name="canvasNotifiers">Optional notifiers that broadcast canvas state changes to connected clients.</param>
+    /// <param name="auditStore">Optional audit store for recording conversation mutations.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -52,7 +54,8 @@ public sealed class ConversationsController : ControllerBase
         ILogger<ConversationsController>? logger = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
-        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null)
+        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null,
+        IConversationAuditStore? auditStore = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -61,6 +64,7 @@ public sealed class ConversationsController : ControllerBase
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
         _canvasNotifiers = canvasNotifiers?.ToArray() ?? [];
+        _auditStore = auditStore;
     }
 
     /// <summary>
@@ -182,6 +186,7 @@ public sealed class ConversationsController : ControllerBase
         };
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);
+        await AuditBestEffortAsync(created.ConversationId.Value, created.AgentId.Value, "created", "api", "rest-api", null, created.Title, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("created", created.AgentId.Value, created.ConversationId.Value, cancellationToken);
         return CreatedAtAction(nameof(Get), new { conversationId = created.ConversationId.Value }, ToResponse(created));
     }
@@ -232,6 +237,10 @@ public sealed class ConversationsController : ControllerBase
             });
         }
 
+        var previousTitle = conversation.Title;
+        var previousPurpose = conversation.Purpose;
+        var previousInstructions = conversation.Instructions;
+
         if (request.Title is not null)
             conversation.Title = request.Title;
         if (request.Purpose is not null)
@@ -240,6 +249,15 @@ public sealed class ConversationsController : ControllerBase
             conversation.Instructions = NormalizeInstructions(request.Instructions);
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
+
+        // Audit each changed field
+        if (request.Title is not null && request.Title != previousTitle)
+            await AuditBestEffortAsync(conversationId, conversation.AgentId.Value, "title_changed", "api", "rest-api", previousTitle, request.Title, cancellationToken);
+        if (request.Purpose is not null && NormalizePurpose(request.Purpose) != previousPurpose)
+            await AuditBestEffortAsync(conversationId, conversation.AgentId.Value, "purpose_changed", "api", "rest-api", previousPurpose, request.Purpose, cancellationToken);
+        if (request.Instructions is not null && NormalizeInstructions(request.Instructions) != previousInstructions)
+            await AuditBestEffortAsync(conversationId, conversation.AgentId.Value, "instructions_changed", "api", "rest-api", previousInstructions, request.Instructions, cancellationToken);
+
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return Ok(ToResponse(conversation));
     }
@@ -499,6 +517,7 @@ public sealed class ConversationsController : ControllerBase
         }
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
+        await AuditBestEffortAsync(conversation.ConversationId.Value, conversation.AgentId.Value, "archived", "api", "rest-api", null, null, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }
@@ -755,5 +774,52 @@ public sealed class ConversationsController : ControllerBase
         return NoContent();
     }
 
+    // ── Audit ──────────────────────────────────────────────────────────────────
+
+    /// <summary>Returns the audit trail for a conversation.</summary>
+    [HttpGet("{conversationId}/audit")]
+    [ProducesResponseType(typeof(IReadOnlyList<ConversationAuditEntry>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
+    public async Task<ActionResult> GetAudit(
+        string conversationId,
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (_auditStore is null)
+            return StatusCode(StatusCodes.Status501NotImplemented, new { error = "Audit store is not configured." });
+
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        var entries = await _auditStore.GetByConversationAsync(conversationId, limit, cancellationToken);
+        return Ok(entries);
+    }
+
+    private async Task AuditBestEffortAsync(
+        string conversationId, string agentId, string action, string actor, string source,
+        string? previousValue, string? newValue, CancellationToken cancellationToken)
+    {
+        if (_auditStore is null) return;
+        try
+        {
+            await _auditStore.RecordAsync(new ConversationAuditEntry
+            {
+                ConversationId = conversationId,
+                AgentId = agentId,
+                Action = action,
+                Actor = actor,
+                Source = source,
+                PreviousValue = previousValue,
+                NewValue = newValue,
+                Timestamp = DateTimeOffset.UtcNow
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record audit entry for conversation {ConversationId}", conversationId);
+        }
+    }
 }
 

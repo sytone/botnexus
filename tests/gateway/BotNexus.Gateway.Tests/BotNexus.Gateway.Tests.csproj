@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR\BotNexus.Extensions.Channels.SignalR.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
