@@ -13,6 +13,11 @@ public static class SkillsGuidanceSection
     public const string Id = "skills-guidance";
 
     /// <summary>
+    /// The XML tag name for this section in the assembled prompt.
+    /// </summary>
+    public const string Tag = "skills";
+
+    /// <summary>
     /// The ordering position for this section within the prompt pipeline.
     /// Placed later in the pipeline (55) after content/tool sections to serve as
     /// behavioral guidance once the agent knows what tools and skills are available.
@@ -21,7 +26,6 @@ public static class SkillsGuidanceSection
 
     private static readonly string[] Lines =
     [
-        "## Skills",
         "Before starting domain-specific work, check available skills with `skills list` and load relevant ones.",
         "Skills contain reusable procedures, references, and templates — always load before improvising.",
         "When you discover a repeatable multi-step procedure, create a skill to capture it for future use.",
@@ -34,7 +38,7 @@ public static class SkillsGuidanceSection
     /// The section is only included when the agent has skill-related tools available.
     /// </summary>
     public static LambdaPromptSection Create() =>
-        new(SectionOrder, static _ => Lines, sectionId: Id, shouldIncludeFunc: HasSkillTools);
+        new(SectionOrder, static _ => Lines, sectionId: Id, shouldIncludeFunc: HasSkillTools, xmlTag: Tag);
 
     private static bool HasSkillTools(PromptContext context) =>
         context.AvailableTools.Contains("skills") || context.AvailableTools.Contains("skill_manage");
