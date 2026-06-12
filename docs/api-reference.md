@@ -1421,6 +1421,100 @@ X-Api-Key: your-api-key
 
 ---
 
+### Provider Health Check
+
+**Endpoint:** `GET /api/providers/{id}/health`
+
+**Description:** Check the health of a configured provider (model registration + credential validation).
+
+**Parameters:**
+- `id` (string, path) — Provider ID
+
+**Response:** 200 OK (healthy)
+```json
+{
+  "providerId": "anthropic",
+  "status": "healthy",
+  "checkedAtUtc": "2026-06-12T10:00:00Z"
+}
+```
+
+**Response:** 503 Service Unavailable (unhealthy)
+```json
+{
+  "providerId": "anthropic",
+  "status": "unhealthy",
+  "reason": "API key not configured",
+  "checkedAtUtc": "2026-06-12T10:00:00Z"
+}
+```
+
+---
+
+### Session Statistics
+
+**Endpoint:** `GET /api/sessions/stats`
+
+**Description:** Get aggregate session metrics.
+
+**Query Parameters:**
+- `agentId` (string, optional) — Filter to a specific agent
+
+**Response:** 200 OK
+```json
+{
+  "totalSessions": 1542,
+  "activeSessions": 23,
+  "averageTurns": 8.3,
+  "oldestSessionUtc": "2026-01-15T09:00:00Z",
+  "newestSessionUtc": "2026-06-12T09:55:00Z"
+}
+```
+
+---
+
+### Exchange Budget Diagnostics
+
+**Endpoint:** `GET /api/exchanges/budget`
+
+**Description:** Get current agent exchange budget state for all or specific agent pairs.
+
+**Query Parameters:**
+- `initiator` (string, optional) — Filter by initiating agent
+- `target` (string, optional) — Filter by target agent
+
+**Response:** 200 OK
+```json
+[
+  {
+    "initiator": "coordinator",
+    "target": "reporter",
+    "exchangesToday": 12,
+    "dailyCap": 200,
+    "inCooldown": false,
+    "cooldownExpiresUtc": null
+  }
+]
+```
+
+---
+
+### Rate Limit Headers
+
+All non-exempt API responses include standard rate limit headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Maximum requests per window |
+| `X-RateLimit-Remaining` | Remaining requests in current window |
+| `X-RateLimit-Reset` | Unix timestamp when the window resets |
+
+On `429 Too Many Requests`, the same headers are returned with `Remaining=0`.
+
+Headers are absent when rate limiting is disabled or on exempt paths (e.g., health check).
+
+---
+
 ## Error Handling
 
 ### Error Response Format

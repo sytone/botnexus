@@ -32,7 +32,7 @@ public sealed class PlatformConfigValidationTests
                 var errors = PlatformConfigLoader.Validate(config);
 
                 errors.ShouldBeEmpty();
-                config.Version.ShouldBe(1);
+                config.PlatformVersion.ShouldBe(1);
                 config.Agents.ShouldNotBeNull();
                 var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
                 agents.ShouldContainKey("assistant");

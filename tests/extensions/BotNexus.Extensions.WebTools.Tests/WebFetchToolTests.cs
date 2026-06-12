@@ -32,7 +32,7 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldStartWith("abcdefghij");
+        result.Content[0].Value.ShouldContain("abcdefghij");
         result.Content[0].Value.ShouldContain("Content truncated");
     }
 
@@ -51,7 +51,7 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldBe(html);
+        result.Content[0].Value.ShouldContain(html);
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldBe("Hello [Link](https://example.com)");
+        result.Content[0].Value.ShouldContain("Hello [Link](https://example.com)");
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldStartWith("56789A");
+        result.Content[0].Value.ShouldContain("56789A");
     }
 
     [Theory]
@@ -310,7 +310,7 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.Length.ShouldBeLessThan(650);
+        result.Content[0].Value.Length.ShouldBeLessThan(750);
         result.Content[0].Value.ShouldContain("Content truncated");
     }
 
@@ -328,7 +328,57 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldBe("[No content at this offset]");
+        result.Content[0].Value.ShouldContain("[No content at this offset]");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReturnsMetadataWithFinalUrlAndContentType()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>test</body></html>", "text/html");
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/page" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        var output = result.Content[0].Value;
+        output.ShouldContain("\"url\":");
+        output.ShouldContain("\"status\":200");
+        output.ShouldContain("\"content_type\":\"text/html");
+        output.ShouldContain("\"total_length\":");
+        output.ShouldContain("\"has_more\":false");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithTruncation_HasMoreIsTrue()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>abcdefghijklmnopqrstuvwxyz</body></html>", "text/html");
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["url"] = "https://example.com",
+            ["max_length"] = 5
+        });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("\"has_more\":true");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ErrorResponse_IncludesMetadata()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.NotFound, "not found", "text/plain");
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/missing" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        var output = result.Content[0].Value;
+        output.ShouldContain("\"status\":404");
+        output.ShouldContain("HTTP 404");
     }
 
     private static WebFetchTool CreateTool(MockHttpMessageHandler handler)

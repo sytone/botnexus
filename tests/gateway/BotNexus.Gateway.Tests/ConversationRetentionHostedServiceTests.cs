@@ -170,6 +170,29 @@ public sealed class ConversationRetentionHostedServiceTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    // ── Null notifier (not registered) ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunRetentionOnceAsync_WhenNotifierIsNull_ArchivesWithoutThrowing()
+    {
+        var store = new InMemoryConversationStore();
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        await store.CreateAsync(CreateConversation("c-1", "a-1", inactiveDays: 31));
+        var options = new ConversationRetentionOptions { AutoArchiveEnabled = true, AutoArchiveAfterDays = 30 };
+
+        var svc = new ConversationRetentionHostedService(
+            store,
+            null,
+            registry,
+            Options.Create(options),
+            NullLogger<ConversationRetentionHostedService>.Instance);
+        var archived = await svc.RunRetentionOnceAsync();
+
+        archived.ShouldBe(1);
+        var conv = await store.GetAsync(ConversationId.From("c-1"));
+        conv!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
     // ── SignalR push fires on archive ─────────────────────────────────────────────
 
     [Fact]

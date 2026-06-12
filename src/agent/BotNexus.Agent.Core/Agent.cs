@@ -479,7 +479,7 @@ public sealed class Agent
             try
             {
                 await HandleEventAsync(
-                        new AgentEndEvent([abortedMessage], DateTimeOffset.UtcNow),
+                        new AgentEndEvent([abortedMessage], null, DateTimeOffset.UtcNow),
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -509,7 +509,7 @@ public sealed class Agent
             try
             {
                 await HandleEventAsync(
-                        new AgentEndEvent([failureMessage], DateTimeOffset.UtcNow),
+                        new AgentEndEvent([failureMessage], null, DateTimeOffset.UtcNow),
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }

@@ -16,6 +16,11 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
 
+    private static readonly JsonSerializerOptions MetadataJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
     public WebFetchTool(WebFetchConfig config, HttpClient? httpClient = null)
     {
         _config = config;
@@ -150,21 +155,47 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         try
         {
             var response = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
+            var statusCode = (int)response.StatusCode;
+            var contentType = response.Content.Headers.ContentType?.ToString();
 
             if (!response.IsSuccessStatusCode)
             {
+                var errorMetadata = new Dictionary<string, object?>
+                {
+                    ["url"] = finalUrl,
+                    ["status"] = statusCode,
+                    ["content_type"] = contentType
+                };
+                var errorJson = JsonSerializer.Serialize(errorMetadata, MetadataJsonOptions);
                 return TextResult(
-                    $"HTTP {(int)response.StatusCode} {response.ReasonPhrase} when fetching {url}");
+                    $"{errorJson}\n\nHTTP {statusCode} {response.ReasonPhrase} when fetching {url}");
             }
 
             var html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             var content = raw ? html : HtmlToText.Convert(html);
 
+            var totalLength = content.Length;
+            var endIndex = Math.Min(startIndex + maxLength, totalLength);
+            var hasMore = endIndex < totalLength;
+
+            var metadata = new Dictionary<string, object?>
+            {
+                ["url"] = finalUrl,
+                ["status"] = statusCode,
+                ["content_type"] = contentType,
+                ["total_length"] = totalLength,
+                ["start_index"] = startIndex,
+                ["end_index"] = endIndex,
+                ["has_more"] = hasMore
+            };
+            var metadataJson = JsonSerializer.Serialize(metadata, MetadataJsonOptions);
+
             // Apply pagination
             if (startIndex >= content.Length)
             {
-                return TextResult("[No content at this offset]");
+                return TextResult($"{metadataJson}\n\n[No content at this offset]");
             }
 
             var remaining = content.Length - startIndex;
@@ -177,7 +208,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
                 output += $"\n\n[Content truncated. Use start_index={nextIndex} to continue reading.]";
             }
 
-            return TextResult(output);
+            return TextResult($"{metadataJson}\n\n{output}");
         }
         catch (HttpRequestException ex)
         {

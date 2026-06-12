@@ -82,7 +82,9 @@ You should see the root command help listing all available subcommands.
 30. [debug sessions](#debug-sessions) — Inspect session SQLite database
 31. [debug logs](#debug-logs) — Inspect log files
 32. [debug db](#debug-db) — Inspect raw databases
-33. [Examples](#examples)
+33. [debug gateway](#debug-gateway) — Live gateway diagnostics
+34. [debug cron](#debug-cron) — Cron scheduler diagnostics
+35. [Examples](#examples)
 
 ---
 
@@ -1754,6 +1756,89 @@ botnexus debug db tables --db sessions
 
 # Inspect table schema
 botnexus debug db schema --db sessions --table SessionEntries
+```
+
+---
+
+## debug gateway
+
+Connect to a running BotNexus gateway and query live diagnostics via its REST API.
+
+### Usage
+
+```powershell
+botnexus debug gateway <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show gateway health and uptime |
+| `sessions` | List active sessions |
+| `providers` | List configured providers and status |
+| `config` | Dump running configuration |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url <URL>` | `http://localhost:5000` | Gateway base URL |
+| `--format` | `table` | Output format: `table` or `json` |
+
+### Examples
+
+```powershell
+# Check if the gateway is reachable and healthy
+botnexus debug gateway status
+
+# List active sessions in JSON
+botnexus debug gateway sessions --format json
+
+# Query a remote gateway
+botnexus debug gateway providers --url http://192.168.1.100:5000
+```
+
+---
+
+## debug cron
+
+Inspect the cron scheduler state including job status, execution history, and missed runs.
+
+### Usage
+
+```powershell
+botnexus debug cron <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show scheduler state and per-job next/last run |
+| `history` | Show execution history for a job |
+| `missed` | List runs detected as missed on startup |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
+| `--job <ID>` | (all) | Filter to a specific job |
+| `--limit <N>` | 20 | Maximum history entries |
+| `--format` | `table` | Output format: `table` or `json` |
+
+### Examples
+
+```powershell
+# Show all job status
+botnexus debug cron status
+
+# View history for a specific job
+botnexus debug cron history --job morning-briefing --limit 10
+
+# List missed runs
+botnexus debug cron missed
 ```
 
 ---

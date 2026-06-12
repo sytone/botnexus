@@ -21,13 +21,13 @@ namespace BotNexus.Gateway.Conversations;
 /// </summary>
 public sealed class ConversationRetentionHostedService(
     IConversationStore conversationStore,
-    IConversationChangeNotifier changeNotifier,
+    IConversationChangeNotifier? changeNotifier,
     IAgentRegistry agentRegistry,
     IOptions<ConversationRetentionOptions> optionsAccessor,
     ILogger<ConversationRetentionHostedService> logger) : BackgroundService
 {
     private readonly IConversationStore _conversationStore = conversationStore;
-    private readonly IConversationChangeNotifier _changeNotifier = changeNotifier;
+    private readonly IConversationChangeNotifier? _changeNotifier = changeNotifier;
     private readonly IAgentRegistry _agentRegistry = agentRegistry;
     private readonly ILogger<ConversationRetentionHostedService> _logger = logger;
 
@@ -150,6 +150,9 @@ public sealed class ConversationRetentionHostedService(
 
     private async Task NotifyBestEffortAsync(Conversation conv, CancellationToken cancellationToken)
     {
+        if (_changeNotifier is null)
+            return;
+
         try
         {
             await _changeNotifier.NotifyConversationChangedAsync(
