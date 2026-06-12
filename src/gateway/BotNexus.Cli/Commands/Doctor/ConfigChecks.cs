@@ -104,6 +104,68 @@ public sealed class CronCheck : IConfigCheck
 }
 
 /// <summary>
+/// Checks that <c>compaction.summarizationModel</c> is not set to an expensive reasoning model.
+/// Reasoning models (claude-opus-4.6, o3, gpt-5) are overkill for summarization and may
+/// return empty responses when the thinking parameter is misconfigured.
+/// </summary>
+public sealed class CompactionModelCheck : IConfigCheck
+{
+    public string Id => "compaction-model";
+    public string Description => "compaction.summarizationModel uses an expensive reasoning model — may fail or waste tokens.";
+    public string FixDescription => "Change compaction.summarizationModel to \"claude-haiku-4.5\" (fast, cheap, reliable for summarization)";
+
+    private static readonly string[] ExpensiveModels =
+    [
+        "claude-opus-4.6", "claude-opus-4-6", "o3", "o4-mini",
+        "gpt-5", "gpt-5.2", "claude-opus-4"
+    ];
+
+    public bool IsApplicable(JsonObject root)
+    {
+        var model = GetSummarizationModel(root);
+        if (string.IsNullOrWhiteSpace(model)) return false; // no model set — different concern
+        return ExpensiveModels.Any(e => model.Contains(e, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public void Apply(JsonObject root)
+    {
+        var compaction = root["compaction"] as JsonObject ?? new JsonObject();
+        root["compaction"] = compaction;
+        compaction["summarizationModel"] = "claude-haiku-4.5";
+    }
+
+    private static string? GetSummarizationModel(JsonObject root)
+        => (root["compaction"] as JsonObject)?["summarizationModel"]?.GetValue<string>();
+}
+
+/// <summary>
+/// Checks that <c>compaction.summarizationModel</c> is configured at all.
+/// Without an explicit model, the compactor falls back to a default waterfall
+/// which may pick an expensive or unavailable model.
+/// </summary>
+public sealed class CompactionModelMissingCheck : IConfigCheck
+{
+    public string Id => "compaction-model-missing";
+    public string Description => "compaction.summarizationModel is not configured — compactor will use default model waterfall.";
+    public string FixDescription => "Set compaction.summarizationModel to \"claude-haiku-4.5\"";
+
+    public bool IsApplicable(JsonObject root)
+    {
+        var compaction = root["compaction"] as JsonObject;
+        if (compaction is null) return true;
+        var model = compaction["summarizationModel"]?.GetValue<string>();
+        return string.IsNullOrWhiteSpace(model);
+    }
+
+    public void Apply(JsonObject root)
+    {
+        var compaction = root["compaction"] as JsonObject ?? new JsonObject();
+        root["compaction"] = compaction;
+        compaction["summarizationModel"] = "claude-haiku-4.5";
+    }
+}
+
+/// <summary>
 /// Checks that <c>agents.defaults.memory</c> block is present.
 /// </summary>
 public sealed class MemoryAgentDefaultCheck : IConfigCheck
