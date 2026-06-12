@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -31,6 +32,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IConversationResetService? _resetService;
     private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers;
+    private readonly IConversationAuditLog? _auditLog;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -45,6 +47,7 @@ public sealed class ConversationsController : ControllerBase
     /// the controller falls back to a best-effort in-place seal — used only by tests that construct the controller
     /// directly without DI.</param>
     /// <param name="canvasNotifiers">Optional notifiers that broadcast canvas state changes to connected clients.</param>
+    /// <param name="auditLog">Optional audit log for recording conversation mutations.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -52,7 +55,8 @@ public sealed class ConversationsController : ControllerBase
         ILogger<ConversationsController>? logger = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
-        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null)
+        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null,
+        IConversationAuditLog? auditLog = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -61,6 +65,7 @@ public sealed class ConversationsController : ControllerBase
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
         _canvasNotifiers = canvasNotifiers?.ToArray() ?? [];
+        _auditLog = auditLog;
     }
 
     /// <summary>
@@ -182,6 +187,7 @@ public sealed class ConversationsController : ControllerBase
         };
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);
+        await AuditAsync(created.ConversationId.Value, "created", "api", "rest-api", null, created.Title, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("created", created.AgentId.Value, created.ConversationId.Value, cancellationToken);
         return CreatedAtAction(nameof(Get), new { conversationId = created.ConversationId.Value }, ToResponse(created));
     }
@@ -233,11 +239,23 @@ public sealed class ConversationsController : ControllerBase
         }
 
         if (request.Title is not null)
+        {
+            var prevTitle = conversation.Title;
             conversation.Title = request.Title;
+            await AuditAsync(conversationId, "title_changed", "api", "rest-api", prevTitle, request.Title, cancellationToken);
+        }
         if (request.Purpose is not null)
+        {
+            var prevPurpose = conversation.Purpose;
             conversation.Purpose = NormalizePurpose(request.Purpose);
+            await AuditAsync(conversationId, "purpose_set", "api", "rest-api", prevPurpose, conversation.Purpose, cancellationToken);
+        }
         if (request.Instructions is not null)
+        {
+            var prevInstructions = conversation.Instructions;
             conversation.Instructions = NormalizeInstructions(request.Instructions);
+            await AuditAsync(conversationId, "instructions_set", "api", "rest-api", prevInstructions, conversation.Instructions, cancellationToken);
+        }
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
@@ -499,6 +517,7 @@ public sealed class ConversationsController : ControllerBase
         }
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
+        await AuditAsync(conversation.ConversationId.Value, "archived", "api", "rest-api", null, null, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }
@@ -754,6 +773,59 @@ public sealed class ConversationsController : ControllerBase
 
         return NoContent();
     }
+
+    /// <summary>
+    /// Returns the audit log for a conversation.
+    /// </summary>
+    [HttpGet("{conversationId}/audit")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetAudit(
+        string conversationId,
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (_auditLog is null)
+            return Ok(Array.Empty<ConversationAuditEntry>());
+
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        var entries = await _auditLog.GetAsync(conversationId, Math.Min(limit, 200), cancellationToken);
+        return Ok(entries);
+    }
+
+    private async Task AuditAsync(string conversationId, string action, string actor, string source, string? previousValue, string? newValue, CancellationToken ct)
+    {
+        if (_auditLog is null)
+            return;
+
+        try
+        {
+            await _auditLog.LogAsync(new ConversationAuditEntry
+            {
+                ConversationId = conversationId,
+                Action = action,
+                Actor = actor,
+                Source = source,
+                PreviousValue = Truncate(previousValue, 200),
+                NewValue = Truncate(newValue, 200),
+                Timestamp = DateTimeOffset.UtcNow
+            }, ct).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Conversation {ConversationId} {Action} by {Actor} via {Source}",
+                conversationId, action, actor, source);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to write audit entry for conversation {ConversationId}", conversationId);
+        }
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+        => value is null ? null : value.Length <= maxLength ? value : value[..maxLength];
 
 }
 
