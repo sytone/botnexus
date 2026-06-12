@@ -71,6 +71,10 @@ public sealed class KnowledgeSearchTool(IQmdBackend backend, QmdConfig config) :
             return TextResult("Error: The 'query' parameter is required.");
 
         var store = GetString(arguments, "store");
+
+        if (!string.IsNullOrWhiteSpace(store) && !config.IsStoreAllowed(store))
+            return TextResult($"Error: Access denied. Store '{store}' is not in your allowed stores.");
+
         var modeStr = GetString(arguments, "mode") ?? config.DefaultSearchMode;
         var limit = GetInt(arguments, "limit") ?? config.MaxResults;
 
