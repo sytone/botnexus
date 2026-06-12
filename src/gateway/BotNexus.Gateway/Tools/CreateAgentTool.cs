@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tools;
@@ -20,7 +21,8 @@ public sealed class CreateAgentTool(
     IAgentConfigurationWriter configurationWriter,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
     BotNexusHome botNexusHome,
-    IOptions<PlatformConfig>? platformConfigOptions = null) : IAgentTool
+    IOptions<PlatformConfig>? platformConfigOptions = null,
+    ApiProviderRegistry? apiProviderRegistry = null) : IAgentTool
 {
     private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9-]*[a-z0-9]$", RegexOptions.Compiled);
 
@@ -108,6 +110,9 @@ public sealed class CreateAgentTool(
 
         if (string.IsNullOrWhiteSpace(apiProvider))
             return Error("Parameter 'apiProvider' is required.");
+
+        if (apiProviderRegistry is not null && apiProviderRegistry.Get(apiProvider) is null)
+            return Error($"Unknown API provider '{apiProvider}'. Available providers: {string.Join(", ", apiProviderRegistry.GetAll().Select(p => p.Api))}.");
 
         var agentId = AgentId.From(id);
         if (agentRegistry.Contains(agentId))

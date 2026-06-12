@@ -369,6 +369,70 @@ public sealed class ConversationToolTests
         document.RootElement.GetProperty("sessionId").GetString().ShouldBe(session.SessionId.Value);
     }
 
+    // --- List status filter tests (#1301) ---
+
+    [Fact]
+    public async Task List_WithActiveStatusFilter_ReturnsOnlyActiveConversations()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Active Chat", null));
+        var archived = await store.CreateAsync(CreateConversation("agent-a", "Old Chat", null));
+        archived.Status = ConversationStatus.Archived;
+        await store.SaveAsync(archived, default);
+
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list", ["status"] = "active" });
+        var text = ReadText(result);
+
+        text.ShouldContain("Active Chat");
+        text.ShouldNotContain("Old Chat");
+    }
+
+    [Fact]
+    public async Task List_WithArchivedStatusFilter_ReturnsOnlyArchivedConversations()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Active Chat", null));
+        var archived = await store.CreateAsync(CreateConversation("agent-a", "Old Chat", null));
+        archived.Status = ConversationStatus.Archived;
+        await store.SaveAsync(archived, default);
+
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list", ["status"] = "archived" });
+        var text = ReadText(result);
+
+        text.ShouldNotContain("Active Chat");
+        text.ShouldContain("Old Chat");
+    }
+
+    [Fact]
+    public async Task List_WithNoStatusFilter_ReturnsAllConversations()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Active Chat", null));
+        var archived = await store.CreateAsync(CreateConversation("agent-a", "Old Chat", null));
+        archived.Status = ConversationStatus.Archived;
+        await store.SaveAsync(archived, default);
+
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list" });
+        var text = ReadText(result);
+
+        text.ShouldContain("Active Chat");
+        text.ShouldContain("Old Chat");
+    }
+
+    [Fact]
+    public async Task List_WithInvalidStatusFilter_ThrowsArgumentException()
+    {
+        var store = new InMemoryConversationStore();
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list", ["status"] = "invalid" });
+
+        (await act.ShouldThrowAsync<ArgumentException>()).Message.ShouldContain("Invalid status filter");
+    }
+
     private static Conversation CreateConversation(string agentId, string title, string? purpose)
         => new()
         {

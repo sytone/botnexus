@@ -5,9 +5,10 @@ namespace BotNexus.Gateway.Configuration;
 public sealed class BotNexusHome
 {
     public const string HomeOverrideEnvVar = "BOTNEXUS_HOME";
+    public const string DataDirOverrideEnvVar = "BOTNEXUS_DATA_DIR";
     private const string HomeDirectoryName = ".botnexus";
 
-    private static readonly string[] RequiredDirectories =
+    private static readonly string[] DataDirectories =
     [
         "extensions",
         "tokens",
@@ -35,20 +36,31 @@ public sealed class BotNexusHome
 
     private readonly IFileSystem _fileSystem;
 
-    public BotNexusHome(IFileSystem fileSystem, string? homePath = null)
+    public BotNexusHome(IFileSystem fileSystem, string? homePath = null, string? dataPath = null)
     {
         _fileSystem = fileSystem;
         RootPath = ResolveHomePath(homePath);
+        DataPath = ResolveDataPath(dataPath) ?? RootPath;
     }
 
     public BotNexusHome(string? homePath = null)
-        : this(new FileSystem(), homePath)
+        : this(new FileSystem(), homePath, dataPath: null)
     {
     }
 
+    /// <summary>
+    /// Configuration root path. May be read-only in containerized deployments.
+    /// Contains config.json and agent descriptor files.
+    /// </summary>
     public string RootPath { get; }
 
-    public string AgentsPath => Path.Combine(RootPath, "agents");
+    /// <summary>
+    /// Writable data directory for runtime state (sessions, logs, tokens, extensions, agents, backups).
+    /// Defaults to <see cref="RootPath"/> when BOTNEXUS_DATA_DIR is not set.
+    /// </summary>
+    public string DataPath { get; }
+
+    public string AgentsPath => Path.Combine(DataPath, "agents");
 
     public static string ResolveHomePath(string? homePath = null)
     {
@@ -72,11 +84,36 @@ public sealed class BotNexusHome
         return Path.GetFullPath(Path.Combine(userProfile, HomeDirectoryName));
     }
 
+    /// <summary>
+    /// Resolves the data directory path from explicit parameter or BOTNEXUS_DATA_DIR environment variable.
+    /// Returns null when no override is configured (caller falls back to RootPath).
+    /// </summary>
+    public static string? ResolveDataPath(string? dataPath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(dataPath))
+            return Path.GetFullPath(dataPath);
+
+        var dataOverride = Environment.GetEnvironmentVariable(DataDirOverrideEnvVar);
+        if (!string.IsNullOrWhiteSpace(dataOverride))
+            return Path.GetFullPath(dataOverride);
+
+        return null;
+    }
+
     public void Initialize()
     {
-        _fileSystem.Directory.CreateDirectory(RootPath);
-        foreach (var directory in RequiredDirectories)
-            _fileSystem.Directory.CreateDirectory(Path.Combine(RootPath, directory));
+        // Create data directory structure (always writable)
+        _fileSystem.Directory.CreateDirectory(DataPath);
+        foreach (var directory in DataDirectories)
+            _fileSystem.Directory.CreateDirectory(Path.Combine(DataPath, directory));
+
+        // Only create RootPath if it is separate from DataPath and doesn't already exist.
+        // When RootPath is mounted read-only (e.g. Docker :ro), it already exists and we skip creation.
+        if (!string.Equals(RootPath, DataPath, StringComparison.OrdinalIgnoreCase)
+            && !_fileSystem.Directory.Exists(RootPath))
+        {
+            _fileSystem.Directory.CreateDirectory(RootPath);
+        }
     }
 
     public string GetAgentDirectory(string agentName)

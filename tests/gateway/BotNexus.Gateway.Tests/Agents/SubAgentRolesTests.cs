@@ -257,7 +257,8 @@ public sealed class SubAgentRolesTests
         registry.Setup(r => r.GetAll()).Returns([callerDescriptor, specialistAgent, notGranted]);
         registry.Setup(r => r.Get(callerDescriptor.AgentId)).Returns(callerDescriptor);
 
-        var tool = new ListAgentsTool(registry.Object, callerDescriptor.AgentId);
+        var whitelistPolicy = new AgentExchangeOptions { AccessPolicy = "whitelist" };
+        var tool = new ListAgentsTool(registry.Object, callerDescriptor.AgentId, whitelistPolicy);
         var result = await tool.ExecuteAsync("tc", new Dictionary<string, object?>());
 
         var entries = JsonSerializer.Deserialize<JsonElement>(result.Content[0].Value);

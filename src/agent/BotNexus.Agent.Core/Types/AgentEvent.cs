@@ -37,7 +37,7 @@ public sealed record AgentStartEvent(DateTimeOffset Timestamp) : AgentEvent(Agen
 /// Emitted after all turns and tool executions complete, or after an error/abort.
 /// </para>
 /// </remarks>
-public sealed record AgentEndEvent(IReadOnlyList<AgentMessage> Messages, DateTimeOffset Timestamp)
+public sealed record AgentEndEvent(IReadOnlyList<AgentMessage> Messages, RunMetrics? Metrics, DateTimeOffset Timestamp)
     : AgentEvent(AgentEventType.AgentEnd, Timestamp);
 
 /// <summary>

@@ -64,6 +64,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IOptions<PlatformConfig>? _platformConfig;
     private readonly ConversationAutoTitleService? _autoTitleService;
     private readonly IActivityTracker? _activityTracker;
+    private readonly IActiveLoopTracker? _activeLoopTracker;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -87,7 +88,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IOptions<PlatformConfig>? platformConfig = null,
         LlmClient? llmClient = null,
         IConversationChangeNotifier? conversationChangeNotifier = null,
-        IActivityTracker? activityTracker = null)
+        IActivityTracker? activityTracker = null,
+        IActiveLoopTracker? activeLoopTracker = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -107,6 +109,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _conversationStore = conversationStore;
         _platformConfig = platformConfig;
         _activityTracker = activityTracker;
+        _activeLoopTracker = activeLoopTracker;
         // Wire up the auto-title service when the required dependencies are present.
         if (llmClient is not null && conversationStore is not null)
         {
@@ -565,6 +568,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
 
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
+                    _activeLoopTracker?.TrackStart();
+                    try
+                    {
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
                         session,
@@ -632,12 +638,26 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             }),
                         _sessionLifecycleEvents,
                         cancellationToken);
+                    }
+                    finally
+                    {
+                        _activeLoopTracker?.TrackEnd();
+                    }
                     sessionSaved = true;
                 }
                 else
                 {
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
-                    var response = await handle.PromptAsync(userMessage, cancellationToken);
+                    _activeLoopTracker?.TrackStart();
+                    AgentResponse response;
+                    try
+                    {
+                        response = await handle.PromptAsync(userMessage, cancellationToken);
+                    }
+                    finally
+                    {
+                        _activeLoopTracker?.TrackEnd();
+                    }
                     if (IsHeartbeatAck(response.Content))
                     {
                         _logger.LogDebug("Heartbeat ack from agent '{AgentId}' session '{SessionId}'", agentId, sessionId);

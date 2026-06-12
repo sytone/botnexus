@@ -392,4 +392,70 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
         result.Success.ShouldBeFalse();
         (result.Error ?? string.Empty).ShouldContain("Count failed");
     }
+
+    // ── Query row limit ───────────────────────────────────────────────────────
+
+    private SqliteDataStoreBackend CreateBackendWithQueryLimit(int maxQueryRows)
+    {
+        _backend?.Dispose();
+        var dbPath = Path.Combine(_dbDir, ".store", "agent-data.db");
+        _backend = new SqliteDataStoreBackend(dbPath, 50 * 1024 * 1024, maxQueryRows);
+        return _backend;
+    }
+
+    [Fact]
+    public async Task Query_UnderLimit_ReturnsAllRows()
+    {
+        var backend = CreateBackendWithQueryLimit(10);
+        var rows = Enumerable.Range(1, 5).Select(i => new { id = i, name = $"user{i}" });
+        await backend.IngestAsync("items", System.Text.Json.JsonSerializer.Serialize(rows));
+
+        var result = await backend.QueryAsync("SELECT * FROM items");
+
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(5);
+        result.Payload!.ShouldNotContain("truncated");
+    }
+
+    [Fact]
+    public async Task Query_ExceedsLimit_TruncatesWithWarning()
+    {
+        var backend = CreateBackendWithQueryLimit(3);
+        var rows = Enumerable.Range(1, 10).Select(i => new { id = i, name = $"user{i}" });
+        await backend.IngestAsync("items", System.Text.Json.JsonSerializer.Serialize(rows));
+
+        var result = await backend.QueryAsync("SELECT * FROM items");
+
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(3);
+        result.Payload!.ShouldContain("truncated to 3 rows");
+    }
+
+    [Fact]
+    public async Task Query_ExactlyAtLimit_DoesNotTruncate()
+    {
+        var backend = CreateBackendWithQueryLimit(5);
+        var rows = Enumerable.Range(1, 5).Select(i => new { id = i, name = $"user{i}" });
+        await backend.IngestAsync("items", System.Text.Json.JsonSerializer.Serialize(rows));
+
+        var result = await backend.QueryAsync("SELECT * FROM items");
+
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(5);
+        result.Payload!.ShouldNotContain("truncated");
+    }
+
+    [Fact]
+    public async Task Query_WithExplicitLimit_RespectsUserLimit()
+    {
+        var backend = CreateBackendWithQueryLimit(3);
+        var rows = Enumerable.Range(1, 10).Select(i => new { id = i, name = $"user{i}" });
+        await backend.IngestAsync("items", System.Text.Json.JsonSerializer.Serialize(rows));
+
+        var result = await backend.QueryAsync("SELECT * FROM items LIMIT 2");
+
+        result.Success.ShouldBeTrue();
+        result.RowCount.ShouldBe(2);
+        result.Payload!.ShouldNotContain("truncated");
+    }
 }

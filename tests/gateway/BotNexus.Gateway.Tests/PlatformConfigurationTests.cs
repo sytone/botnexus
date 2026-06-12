@@ -23,7 +23,7 @@ public sealed class PlatformConfigurationTests
         var config = await PlatformConfigLoader.LoadAsync(Path.Combine(Guid.NewGuid().ToString("N"), "missing.json"));
 
         config.ShouldNotBeNull();
-        config.Version.ShouldBe(1);
+        config.PlatformVersion.ShouldBe(1);
         config.Gateway.ShouldBeNull();
     }
 
@@ -236,7 +236,7 @@ public sealed class PlatformConfigurationTests
     {
         var config = new PlatformConfig();
 
-        config.Version.ShouldBe(1);
+        config.PlatformVersion.ShouldBe(1);
         config.ApiKey.ShouldBeNull();
         config.Gateway.ShouldBeNull();
         config.Agents.ShouldBeNull();
@@ -254,7 +254,7 @@ public sealed class PlatformConfigurationTests
 
         var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
 
-        config.Version.ShouldBe(1);
+        config.PlatformVersion.ShouldBe(1);
     }
 
     [Fact]
@@ -266,13 +266,13 @@ public sealed class PlatformConfigurationTests
 
         var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
 
-        config.Version.ShouldBe(1);
+        config.PlatformVersion.ShouldBe(1);
     }
 
     [Fact]
     public void PlatformConfigLoader_ValidateWarnings_WithUnknownVersion_ReturnsWarning()
     {
-        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { Version = 2 });
+        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { PlatformVersion = 2 });
 
         warnings.Where(warning => warning.Contains("version '2'", StringComparison.Ordinal)).ShouldHaveSingleItem();
     }
@@ -280,7 +280,7 @@ public sealed class PlatformConfigurationTests
     [Fact]
     public void PlatformConfigLoader_ValidateWarnings_WithKnownVersion_ReturnsNoWarnings()
     {
-        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { Version = 1 });
+        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { PlatformVersion = 1 });
 
         warnings.ShouldBeEmpty();
     }

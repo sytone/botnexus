@@ -18,4 +18,12 @@ public sealed class DataStoreConfig
     /// </summary>
     [JsonPropertyName("maxSizeBytes")]
     public long MaxSizeBytes { get; init; } = 50 * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum number of rows returned by a single query action.
+    /// Queries that would return more rows are truncated with a warning.
+    /// Default: 1000.
+    /// </summary>
+    [JsonPropertyName("maxQueryRows")]
+    public int MaxQueryRows { get; init; } = 1000;
 }

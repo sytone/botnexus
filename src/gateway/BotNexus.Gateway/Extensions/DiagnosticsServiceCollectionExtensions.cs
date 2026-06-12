@@ -14,6 +14,7 @@ public static class DiagnosticsServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddDiagnosticsHardening(this IServiceCollection services)
     {
+        services.AddSingleton<IActiveLoopTracker, ActiveLoopTracker>();
         services.AddSingleton<IThreadPoolMetrics, SystemThreadPoolMetrics>();
         services.Configure<ThreadPoolWatchdogOptions>(_ => { });
         services.AddHostedService<ThreadPoolWatchdogService>();
