@@ -20,6 +20,20 @@ public sealed class InMemoryQmdBackend : IQmdBackend
     /// <summary>Records calls to <see cref="EmbedAsync"/> for test assertions.</summary>
     public ConcurrentBag<string?> EmbedCalls { get; } = [];
 
+    /// <summary>Replaces all stores with the given set.</summary>
+    public void SetStores(IEnumerable<QmdStoreInfo> stores)
+    {
+        Stores.Clear();
+        foreach (var store in stores) Stores.Add(store);
+    }
+
+    /// <summary>Replaces all documents with the given set.</summary>
+    public void SetDocuments(IEnumerable<QmdDocument> documents)
+    {
+        Documents.Clear();
+        foreach (var doc in documents) Documents.Add(doc);
+    }
+
     /// <inheritdoc />
     public Task<QmdSearchResult[]> SearchAsync(string query, string? store, QmdSearchMode mode, int limit, CancellationToken ct = default)
     {

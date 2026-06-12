@@ -60,6 +60,12 @@ public sealed class KnowledgeStoresTool(IQmdBackend backend, QmdConfig config) :
                 $"Failed to retrieve knowledge stores: {ex.Message}")]);
         }
 
+        // Filter to allowed stores only
+        if (config.AllowedStores is { Count: > 0 })
+        {
+            stores = stores.Where(s => config.IsStoreAllowed(s.Name)).ToArray();
+        }
+
         // Enrich with descriptions from config
         var configDescriptions = config.Stores
             .Where(s => !string.IsNullOrWhiteSpace(s.Description))
