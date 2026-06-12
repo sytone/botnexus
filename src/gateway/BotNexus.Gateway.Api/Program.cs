@@ -36,7 +36,7 @@ const string GatewayCorsPolicy = "GatewayCorsPolicy";
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .WriteTo.File(
-        Path.Combine(BotNexusHome.ResolveHomePath(), "logs", "botnexus-bootstrap-.log"),
+        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs", "botnexus-bootstrap-.log"),
         rollingInterval: RollingInterval.Day)
     .CreateBootstrapLogger();
 
@@ -58,7 +58,7 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
         restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning)
     .WriteTo.File(
-        Path.Combine(BotNexusHome.ResolveHomePath(), "logs", "botnexus-.log"),
+        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs", "botnexus-.log"),
         rollingInterval: RollingInterval.Hour,
         retainedFileCountLimit: 168),
     preserveStaticLogger: true);
