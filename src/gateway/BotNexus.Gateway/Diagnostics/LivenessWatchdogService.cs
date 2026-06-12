@@ -15,14 +15,16 @@ public sealed class LivenessWatchdogOptions
     public TimeSpan CheckInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Duration of inactivity after which a warning is logged. Default: 5 minutes.
+    /// Duration of inactivity after which a warning is logged. Default: 15 minutes.
     /// </summary>
-    public TimeSpan WarningThreshold { get; set; } = TimeSpan.FromMinutes(5);
+    public TimeSpan WarningThreshold { get; set; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// Duration of inactivity after which a critical alert is logged. Default: 10 minutes.
+    /// Duration of inactivity after which a critical alert is logged. Default: 30 minutes.
+    /// Previously 10 minutes, which caused excessive false positives during normal quiet periods
+    /// (overnight, between cron jobs). Increased to 30 minutes per #1320.
     /// </summary>
-    public TimeSpan CriticalThreshold { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan CriticalThreshold { get; set; } = TimeSpan.FromMinutes(30);
 }
 
 /// <summary>
