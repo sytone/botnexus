@@ -6,6 +6,7 @@ namespace BotNexus.Gateway.Tests;
 public sealed class BotNexusHomeTests
 {
     private static readonly string HomePath = Path.Combine(Path.GetTempPath(), "botnexus-home");
+    private static readonly string DataDirPath = Path.Combine(Path.GetTempPath(), "botnexus-data");
 
     [Fact]
     public void Initialize_CreatesRequiredDirectoriesIncludingAgents()
@@ -87,6 +88,77 @@ public sealed class BotNexusHomeTests
 
         agentsContent.ShouldContain("memory/YYYY-MM-DD.md");
         agentsContent.ShouldContain("MEMORY.md");
+    }
+
+    [Fact]
+    public void Initialize_WithSeparateDataDir_CreatesDirectoriesInDataPath()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath, DataDirPath);
+
+        home.Initialize();
+
+        fs.Directory.Exists(Path.Combine(DataDirPath, "extensions")).ShouldBeTrue();
+        fs.Directory.Exists(Path.Combine(DataDirPath, "tokens")).ShouldBeTrue();
+        fs.Directory.Exists(Path.Combine(DataDirPath, "sessions")).ShouldBeTrue();
+        fs.Directory.Exists(Path.Combine(DataDirPath, "logs")).ShouldBeTrue();
+        fs.Directory.Exists(Path.Combine(DataDirPath, "agents")).ShouldBeTrue();
+        fs.Directory.Exists(Path.Combine(DataDirPath, "backups")).ShouldBeTrue();
+        // RootPath directories should NOT be created
+        fs.Directory.Exists(Path.Combine(HomePath, "extensions")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Initialize_WithSeparateDataDir_DoesNotCreateRootPathWhenItExists()
+    {
+        var fs = new MockFileSystem();
+        // Pre-create root to simulate read-only mount
+        fs.Directory.CreateDirectory(HomePath);
+        var home = new BotNexusHome(fs, HomePath, DataDirPath);
+
+        home.Initialize();
+
+        // Should not throw and should not try to create subdirs in RootPath
+        fs.Directory.Exists(DataDirPath).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DataPath_DefaultsToRootPath_WhenNoOverrideSet()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath, dataPath: null);
+
+        home.DataPath.ShouldBe(home.RootPath);
+    }
+
+    [Fact]
+    public void DataPath_UsesOverride_WhenProvided()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath, DataDirPath);
+
+        home.DataPath.ShouldBe(Path.GetFullPath(DataDirPath));
+    }
+
+    [Fact]
+    public void AgentsPath_UsesDataPath_WhenSeparateDataDir()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath, DataDirPath);
+
+        home.AgentsPath.ShouldBe(Path.Combine(Path.GetFullPath(DataDirPath), "agents"));
+    }
+
+    [Fact]
+    public void GetAgentDirectory_WithSeparateDataDir_CreatesAgentInDataPath()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath, DataDirPath);
+
+        var path = home.GetAgentDirectory("test-agent");
+
+        path.ShouldStartWith(Path.GetFullPath(DataDirPath));
+        fs.Directory.Exists(Path.Combine(path, "workspace")).ShouldBeTrue();
     }
 
     [Fact]
