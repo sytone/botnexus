@@ -12,13 +12,15 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 {
     private readonly string _dbPath;
     private readonly long _maxSizeBytes;
+    private readonly int _maxQueryRows;
     private SqliteConnection? _connection;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public SqliteDataStoreBackend(string dbPath, long maxSizeBytes)
+    public SqliteDataStoreBackend(string dbPath, long maxSizeBytes, int maxQueryRows = 1000)
     {
         _dbPath = dbPath;
         _maxSizeBytes = maxSizeBytes;
+        _maxQueryRows = maxQueryRows > 0 ? maxQueryRows : 1000;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -96,8 +98,15 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
                 using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
 
                 var results = new List<Dictionary<string, object?>>();
+                var truncated = false;
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
+                    if (results.Count >= _maxQueryRows)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
                     var row = new Dictionary<string, object?>();
                     for (int i = 0; i < reader.FieldCount; i++)
                         row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
@@ -105,6 +114,8 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
                 }
 
                 var payload = JsonSerializer.Serialize(results);
+                if (truncated)
+                    payload += $"\n(results truncated to {_maxQueryRows} rows; use LIMIT/OFFSET for pagination)";
                 return DataStoreResult.Ok(payload, results.Count);
             }
             finally { _lock.Release(); }
