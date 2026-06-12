@@ -5,16 +5,20 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Gateway.Tools;
 
 /// <summary>
 /// Tool that lets agents discover other registered agents and their capabilities.
+/// Respects <see cref="AgentExchangeOptions.AccessPolicy"/> when computing the
+/// <c>canConverse</c> field — when the policy is "open", all agents can converse.
 /// </summary>
 public sealed class ListAgentsTool(
     IAgentRegistry agentRegistry,
-    AgentId callerAgentId) : IAgentTool
+    AgentId callerAgentId,
+    AgentExchangeOptions? exchangeOptions = null) : IAgentTool
 {
     public string Name => "list_agents";
     public string Label => "List Agents";
@@ -61,6 +65,7 @@ public sealed class ListAgentsTool(
         var callerDescriptor = agentRegistry.Get(callerAgentId);
         var subAgentIds = callerDescriptor?.SubAgentIds ?? [];
         var subAgentRoles = callerDescriptor?.SubAgentRoles ?? [];
+        var isOpenPolicy = exchangeOptions?.IsOpen ?? true;
 
         var agents = agentRegistry.GetAll()
             .Where(d => MatchesFilter(d, filter))
@@ -71,7 +76,8 @@ public sealed class ListAgentsTool(
                 Description: d.Description,
                 Emoji: d.Emoji,
                 Capabilities: ResolveCapabilities(d),
-                CanConverse: subAgentIds.Contains(d.AgentId.Value, StringComparer.OrdinalIgnoreCase)
+                CanConverse: isOpenPolicy
+                    || subAgentIds.Contains(d.AgentId.Value, StringComparer.OrdinalIgnoreCase)
                     || IsRoleGranted(subAgentRoles, d)))
             .OrderBy(e => e.AgentId, StringComparer.OrdinalIgnoreCase)
             .ToList();

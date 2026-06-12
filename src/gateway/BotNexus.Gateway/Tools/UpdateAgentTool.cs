@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -15,7 +16,8 @@ namespace BotNexus.Gateway.Tools;
 public sealed class UpdateAgentTool(
     IAgentRegistry agentRegistry,
     IAgentConfigurationWriter configurationWriter,
-    IEnumerable<IAgentChangeNotifier> changeNotifiers) : IAgentTool
+    IEnumerable<IAgentChangeNotifier> changeNotifiers,
+    ApiProviderRegistry? apiProviderRegistry = null) : IAgentTool
 {
     public string Name => "update_agent";
     public string Label => "Update Agent";
@@ -100,7 +102,11 @@ public sealed class UpdateAgentTool(
         if (arguments.ContainsKey("modelId") && ReadString(arguments, "modelId") is { } mid)
             updated = updated with { ModelId = mid };
         if (arguments.ContainsKey("apiProvider") && ReadString(arguments, "apiProvider") is { } ap)
+        {
+            if (apiProviderRegistry is not null && apiProviderRegistry.Get(ap) is null)
+                return Error($"Unknown API provider '{ap}'. Available providers: {string.Join(", ", apiProviderRegistry.GetAll().Select(p => p.Api))}.");
             updated = updated with { ApiProvider = ap };
+        }
         if (arguments.ContainsKey("systemPrompt"))
             updated = updated with { SystemPrompt = ReadString(arguments, "systemPrompt") };
         if (arguments.ContainsKey("toolIds"))

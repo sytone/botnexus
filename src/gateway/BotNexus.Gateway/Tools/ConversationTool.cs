@@ -68,6 +68,10 @@ public sealed class ConversationTool(
                 "message": {
                   "type": "string",
                   "description": "Optional initial user message to seed the new conversation."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Filter by conversation status for list action: 'active' or 'archived'. Omit to return all."
                 }
               },
               "required": ["action"]
@@ -233,7 +237,22 @@ public sealed class ConversationTool(
         EnsureCanAccess(targetAgentId);
 
         var conversations = await conversationStore.ListAsync(targetAgentId, ct).ConfigureAwait(false);
-        var result = conversations.Select(ToToolResponse);
+
+        var statusFilter = ReadString(arguments, "status");
+        IEnumerable<Conversation> filtered = conversations;
+        if (!string.IsNullOrWhiteSpace(statusFilter))
+        {
+            if (Enum.TryParse<ConversationStatus>(statusFilter, ignoreCase: true, out var parsedStatus))
+            {
+                filtered = conversations.Where(c => c.Status == parsedStatus);
+            }
+            else
+            {
+                throw new ArgumentException($"Invalid status filter '{statusFilter}'. Valid values: active, archived.");
+            }
+        }
+
+        var result = filtered.Select(ToToolResponse);
         return TextResult(JsonSerializer.Serialize(result, JsonOptions));
     }
 

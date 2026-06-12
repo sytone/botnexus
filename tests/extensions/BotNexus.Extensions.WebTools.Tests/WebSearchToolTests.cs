@@ -209,6 +209,64 @@ public class WebSearchToolTests
         provider.CallCount.ShouldBe(20);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithCountParameter_LimitsResultsToRequestedCount()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 10 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["query"] = "test", ["count"] = 3 });
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCountExceedingMax_ClampsToConfiguredMax()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 5 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["query"] = "test", ["count"] = 50 });
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(5);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCountOmitted_UsesConfiguredMax()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 7 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["query"] = "test" });
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(7);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task ExecuteAsync_WithCountBelowOne_UsesConfiguredMax(int count)
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 5 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["query"] = "test", ["count"] = count });
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(5);
+    }
+
     private static ISearchProvider? GetProvider(WebSearchTool tool)
     {
         var field = typeof(WebSearchTool).GetField("_provider", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -245,6 +303,17 @@ public class WebSearchToolTests
             Interlocked.Increment(ref _callCount);
             await Task.Delay(delay, ct);
             return [new SearchResult("Title", "https://example.com", query)];
+        }
+    }
+
+    private sealed class CapturingSearchProvider : ISearchProvider
+    {
+        public int LastMaxResults { get; private set; }
+
+        public Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int maxResults, CancellationToken ct)
+        {
+            LastMaxResults = maxResults;
+            return Task.FromResult<IReadOnlyList<SearchResult>>([new SearchResult("R", "https://example.com", "S")]);
         }
     }
 }

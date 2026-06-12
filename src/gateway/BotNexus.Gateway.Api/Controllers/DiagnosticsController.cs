@@ -17,7 +17,8 @@ public sealed class DiagnosticsController(
     IThreadPoolMetrics? threadPoolMetrics = null,
     IOptions<ThreadPoolWatchdogOptions>? threadPoolOptions = null,
     IActivityTracker? activityTracker = null,
-    IOptions<LivenessWatchdogOptions>? livenessOptions = null) : ControllerBase
+    IOptions<LivenessWatchdogOptions>? livenessOptions = null,
+    IActiveLoopTracker? activeLoopTracker = null) : ControllerBase
 {
     private readonly ILogger<DiagnosticsController> _logger = logger;
     private readonly LogDiagnosticsRingBuffer? _logBuffer = logBuffer;
@@ -26,6 +27,7 @@ public sealed class DiagnosticsController(
     private readonly ThreadPoolWatchdogOptions? _threadPoolOptions = threadPoolOptions?.Value;
     private readonly IActivityTracker? _activityTracker = activityTracker;
     private readonly LivenessWatchdogOptions? _livenessOptions = livenessOptions?.Value;
+    private readonly IActiveLoopTracker? _activeLoopTracker = activeLoopTracker;
 
     /// <summary>
     /// Accepts an error report from any channel adapter and logs it at Error level.
@@ -217,6 +219,23 @@ public sealed class DiagnosticsController(
             WarningThresholdSeconds = (long)threshold.TotalSeconds
         });
     }
+
+    /// <summary>
+    /// Returns active agent loop metrics for capacity monitoring.
+    /// </summary>
+    [HttpGet("loops")]
+    public IActionResult GetActiveLoops()
+    {
+        if (_activeLoopTracker is null)
+            return NotFound("Active loop tracking not enabled.");
+
+        return Ok(new ActiveLoopSnapshotDto
+        {
+            ActiveCount = _activeLoopTracker.ActiveCount,
+            PeakCount = _activeLoopTracker.PeakCount,
+            TotalCompleted = _activeLoopTracker.TotalCompleted
+        });
+    }
 }
 
 /// <summary>
@@ -376,4 +395,19 @@ public sealed class ActivitySnapshotDto
 
     /// <summary>Configured warning threshold in seconds.</summary>
     public required long WarningThresholdSeconds { get; init; }
+}
+
+/// <summary>
+/// Active agent loop metrics for capacity monitoring.
+/// </summary>
+public sealed class ActiveLoopSnapshotDto
+{
+    /// <summary>Current number of active agent loops.</summary>
+    public required int ActiveCount { get; init; }
+
+    /// <summary>Peak concurrent loop count since startup.</summary>
+    public required int PeakCount { get; init; }
+
+    /// <summary>Total number of completed loops since startup.</summary>
+    public required long TotalCompleted { get; init; }
 }

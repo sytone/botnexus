@@ -42,6 +42,7 @@ public static class AgentLoopRunner
         var runStartIndex = context.Messages.Count;
         var timeline = context.Messages.ToList();
         var newMessages = new List<AgentMessage>(prompts.Count);
+        var metrics = new RunMetricsAccumulator(DateTimeOffset.UtcNow);
 
         await emit(new AgentStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
         await emit(new TurnStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
@@ -59,6 +60,7 @@ public static class AgentLoopRunner
                 newMessages,
                 config,
                 emit,
+                metrics,
                 cancellationToken,
                 runStartIndex,
                 firstTurn: true)
@@ -106,10 +108,11 @@ public static class AgentLoopRunner
 
         var runStartIndex = context.Messages.Count;
         var newMessages = new List<AgentMessage>();
+        var metrics = new RunMetricsAccumulator(DateTimeOffset.UtcNow);
         await emit(new AgentStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
         await emit(new TurnStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
-        await RunLoopAsync(context, newMessages, config, emit, cancellationToken, runStartIndex, firstTurn: true)
+        await RunLoopAsync(context, newMessages, config, emit, metrics, cancellationToken, runStartIndex, firstTurn: true)
             .ConfigureAwait(false);
 
         return newMessages;
@@ -120,6 +123,7 @@ public static class AgentLoopRunner
         List<AgentMessage> newMessages,
         AgentLoopConfig config,
         Func<AgentEvent, Task> emit,
+        RunMetricsAccumulator metrics,
         CancellationToken cancellationToken,
         int runStartIndex,
         bool firstTurn)
@@ -187,8 +191,11 @@ public static class AgentLoopRunner
 
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
                 {
+                    metrics.IncrementTurns();
+                    metrics.AddTokens(assistantMessage.Usage?.InputTokens, assistantMessage.Usage?.OutputTokens);
                     await emit(new TurnEndEvent(assistantMessage, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
-                    await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    var endTime = DateTimeOffset.UtcNow;
+                    await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime), endTime)).ConfigureAwait(false);
                     return;
                 }
 
@@ -214,6 +221,10 @@ public static class AgentLoopRunner
                     newMessages.Add(toolResult);
                 }
 
+                metrics.IncrementTurns();
+                metrics.AddTokens(assistantMessage.Usage?.InputTokens, assistantMessage.Usage?.OutputTokens);
+                metrics.AddToolCalls(toolResults.Count);
+
                 await emit(new TurnEndEvent(assistantMessage, toolResults, DateTimeOffset.UtcNow))
                     .ConfigureAwait(false);
 
@@ -231,7 +242,8 @@ public static class AgentLoopRunner
             break;
         }
 
-        await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        var endTime2 = DateTimeOffset.UtcNow;
+        await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime2), endTime2)).ConfigureAwait(false);
     }
 
     private static async Task<SimpleStreamOptions> BuildStreamOptionsAsync(

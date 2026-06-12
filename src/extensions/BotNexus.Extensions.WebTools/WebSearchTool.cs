@@ -71,6 +71,10 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
                 "query": {
                   "type": "string",
                   "description": "Search query."
+                },
+                "count": {
+                  "type": "integer",
+                  "description": "Maximum number of results to return. Clamped to [1, configured max]. Default: configured max."
                 }
               },
               "required": ["query"]
@@ -88,9 +92,12 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(query))
             throw new ArgumentException("query is required.");
 
+        var count = ReadInt(args: arguments, key: "count");
+
         IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["query"] = query,
+            ["count"] = count,
         };
 
         return Task.FromResult(prepared);
@@ -131,7 +138,13 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
 
         try
         {
-            var results = await provider.SearchAsync(query, _config.MaxResults, cancellationToken)
+            var effectiveCount = _config.MaxResults;
+            if (arguments.TryGetValue("count", out var countVal) && countVal is int requestedCount && requestedCount > 0)
+            {
+                effectiveCount = Math.Min(requestedCount, _config.MaxResults);
+            }
+
+            var results = await provider.SearchAsync(query, effectiveCount, cancellationToken)
                 .ConfigureAwait(false);
             _logger.LogInformation("WebSearch completed: provider={Provider} query={Query} resultCount={Count}", providerName, query, results.Count);
 
@@ -229,6 +242,19 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
             JsonElement { ValueKind: JsonValueKind.String } el => el.GetString(),
             JsonElement el => el.ToString(),
             _ => value.ToString()
+        };
+    }
+
+    private static int? ReadInt(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null) return null;
+        return value switch
+        {
+            int i => i,
+            long l => (int)l,
+            JsonElement { ValueKind: JsonValueKind.Number } el => el.GetInt32(),
+            string s when int.TryParse(s, out var parsed) => parsed,
+            _ => null
         };
     }
 
