@@ -26,7 +26,7 @@ public sealed class QmdToolContributor(ILoggerFactory? loggerFactory = null) : I
 
         var logger = loggerFactory?.CreateLogger<QmdCliBackend>();
         var backend = new QmdCliBackend(config.QmdPath, TimeSpan.FromSeconds(30), logger);
-        IReadOnlyList<IAgentTool> tools = [new KnowledgeSearchTool(backend, config), new KnowledgeStoresTool(backend, config), new KnowledgeGetTool(backend)];
+        IReadOnlyList<IAgentTool> tools = [new KnowledgeSearchTool(backend, config), new KnowledgeStoresTool(backend, config), new KnowledgeGetTool(backend, config)];
 
         return Task.FromResult(new AgentToolContribution(tools, [backend]));
     }

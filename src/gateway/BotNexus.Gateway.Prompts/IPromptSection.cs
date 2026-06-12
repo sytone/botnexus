@@ -18,6 +18,13 @@ public interface IPromptSection
     string? SectionId => null;
 
     /// <summary>
+    /// Gets the optional XML tag name used to wrap this section's output in the assembled prompt.
+    /// When non-null, the pipeline wraps the section output in &lt;tag&gt;...&lt;/tag&gt;.
+    /// Null means no wrapping (content emitted raw — used for user workspace files).
+    /// </summary>
+    string? XmlTag => null;
+
+    /// <summary>
     /// Determines whether this section should be included given the current prompt context.
     /// </summary>
     bool ShouldInclude(PromptContext context);
