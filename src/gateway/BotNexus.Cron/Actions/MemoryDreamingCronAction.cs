@@ -1,6 +1,9 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Triggers;
+using BotNexus.Memory;
+using BotNexus.Memory.Learning;
+using BotNexus.Memory.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -110,6 +113,116 @@ public sealed class MemoryDreamingCronAction : ICronAction
 
         if (triggerRequest.ResolvedConversationId is { } resolvedConversationId)
             context.RecordConversationId(resolvedConversationId);
+
+        // Phase 2: Promote insights to shared stores (runs independently of consolidation)
+        await PromoteToSharedStoresAsync(context, agentId, lookbackDays, logger, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the learning extraction pipeline on the agent's memory store and promotes
+    /// routed knowledge items to shared stores.
+    /// </summary>
+    private static async Task PromoteToSharedStoresAsync(
+        CronExecutionContext context,
+        AgentId agentId,
+        int lookbackDays,
+        ILogger? logger,
+        CancellationToken ct)
+    {
+        var sharedRegistry = context.Services.GetService<ISharedMemoryStoreRegistry>();
+        if (sharedRegistry is null)
+        {
+            logger?.LogDebug("Shared memory promotion skipped: no ISharedMemoryStoreRegistry registered");
+            return;
+        }
+
+        var writableStores = sharedRegistry.GetWritableStores(agentId.Value);
+        if (writableStores.Count == 0)
+        {
+            logger?.LogDebug("Shared memory promotion skipped: agent '{AgentId}' has no writable shared stores", agentId.Value);
+            return;
+        }
+
+        var memoryFactory = context.Services.GetService<IMemoryStoreFactory>();
+        if (memoryFactory is null)
+        {
+            logger?.LogDebug("Shared memory promotion skipped: no IMemoryStoreFactory registered");
+            return;
+        }
+
+        var agentStore = memoryFactory.Create(agentId.Value);
+        await agentStore.InitializeAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            // Get recent entries from the agent's private store
+            var cutoffDate = DateTimeOffset.UtcNow.AddDays(-lookbackDays);
+            var recentEntries = await agentStore.SearchAsync(
+                "*", topK: 200, filter: new MemorySearchFilter { AfterDate = cutoffDate }, ct: ct)
+                .ConfigureAwait(false);
+
+            if (recentEntries.Count == 0)
+            {
+                logger?.LogDebug("Shared memory promotion skipped: no recent entries for agent '{AgentId}'", agentId.Value);
+                return;
+            }
+
+            // Build routing rules from config (route all categories to writable stores)
+            var rules = BuildRoutingRules(sharedRegistry, agentId.Value);
+            if (rules.Count == 0)
+            {
+                logger?.LogDebug("Shared memory promotion skipped: no routing rules generated for agent '{AgentId}'", agentId.Value);
+                return;
+            }
+
+            var pipeline = new LearningExtractionPipeline(
+                rules,
+                logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+            var extracted = await pipeline.ExtractAsync(recentEntries, ct).ConfigureAwait(false);
+
+            var promotable = extracted.Where(e => e.TargetStore is not null).ToList();
+            if (promotable.Count == 0)
+            {
+                logger?.LogInformation("Shared memory promotion: no promotable items found for agent '{AgentId}'", agentId.Value);
+                return;
+            }
+
+            var promoter = new SharedMemoryPromoter(
+                sharedRegistry,
+                logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+            var promoted = await promoter.PromoteAsync(agentId.Value, promotable, ct).ConfigureAwait(false);
+            logger?.LogInformation(
+                "Shared memory promotion complete for agent '{AgentId}': {Promoted} items promoted",
+                agentId.Value, promoted);
+        }
+        finally
+        {
+            await agentStore.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Builds routing rules that send high-confidence knowledge to the agent's writable shared stores.
+    /// Uses a default confidence threshold of 0.7 for all categories.
+    /// </summary>
+    internal static IReadOnlyList<KnowledgeRoutingRule> BuildRoutingRules(
+        ISharedMemoryStoreRegistry registry, string agentId)
+    {
+        var writableStores = registry.GetWritableStores(agentId);
+        if (writableStores.Count == 0)
+            return [];
+
+        // Route to the first writable store by default
+        // Future: allow per-category store mapping via metadata
+        var targetStore = writableStores[0];
+
+        return
+        [
+            new KnowledgeRoutingRule { Category = null, MinConfidence = 0.7, TargetStore = targetStore }
+        ];
     }
 
     /// <summary>

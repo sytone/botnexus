@@ -99,10 +99,62 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     }
 
     /// <inheritdoc />
-    public Task OnSessionCompleteAsync(AgentMemorySessionEvent sessionEvent, CancellationToken ct = default)
+    public async Task OnSessionCompleteAsync(AgentMemorySessionEvent sessionEvent, CancellationToken ct = default)
     {
-        // The markdown provider has no session-level bookkeeping — file writes are immediate.
-        return Task.CompletedTask;
+        ct.ThrowIfCancellationRequested();
+        if (sessionEvent.History is null || sessionEvent.History.Count == 0)
+            return;
+
+        await _memoryStore.InitializeAsync(ct).ConfigureAwait(false);
+
+        var existing = await _memoryStore.GetBySessionAsync(sessionEvent.SessionId, int.MaxValue, ct).ConfigureAwait(false);
+        var indexedTurns = existing
+            .Where(entry => entry.TurnIndex.HasValue)
+            .Select(entry => entry.TurnIndex!.Value)
+            .ToHashSet();
+
+        AgentMemorySessionTurn? pendingUser = null;
+
+        foreach (var turn in sessionEvent.History)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (turn.Role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (turn.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+            {
+                pendingUser = turn;
+                continue;
+            }
+
+            if (pendingUser is null || !turn.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!indexedTurns.Contains(pendingUser.Index))
+            {
+                var memory = new MemoryEntry
+                {
+                    Id = string.Empty,
+                    AgentId = sessionEvent.AgentId,
+                    SessionId = sessionEvent.SessionId,
+                    TurnIndex = pendingUser.Index,
+                    SourceType = "conversation",
+                    Content = $"User: {pendingUser.Content}\nAssistant: {turn.Content}",
+                    MetadataJson = null,
+                    Embedding = null,
+                    CreatedAt = turn.Timestamp,
+                    UpdatedAt = null,
+                    ExpiresAt = null,
+                    IsArchived = false
+                };
+
+                await _memoryStore.InsertAsync(memory, ct).ConfigureAwait(false);
+                indexedTurns.Add(pendingUser.Index);
+            }
+
+            pendingUser = null;
+        }
     }
 
     /// <inheritdoc />
