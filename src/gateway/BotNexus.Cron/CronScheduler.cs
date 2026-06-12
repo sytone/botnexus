@@ -579,7 +579,7 @@ public sealed class CronScheduler(
         }
 
         var options = _optionsMonitor.CurrentValue ?? new CronOptions();
-        return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 300;
+        return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 3600;
     }
 
     private async Task SyncConfiguredJobsAsync(CronOptions options, CancellationToken ct)
