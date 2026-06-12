@@ -23,7 +23,7 @@ public sealed class DataStoreToolContributor : IAgentToolContributor
             return Task.FromResult(new AgentToolContribution(Array.Empty<IAgentTool>()));
 
         var storePath = Path.Combine(context.WorkspacePath, ".store", "agent-data.db");
-        var backend   = new SqliteDataStoreBackend(storePath, config.MaxSizeBytes);
+        var backend   = new SqliteDataStoreBackend(storePath, config.MaxSizeBytes, config.MaxQueryRows);
         IReadOnlyList<IAgentTool> tools = [new DataStoreTool(backend)];
 
         return Task.FromResult(new AgentToolContribution(tools, [backend]));
