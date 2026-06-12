@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -165,6 +166,13 @@ public sealed class ConversationsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.AgentId))
             return BadRequest(new { error = "agentId is required." });
 
+        if (ConversationInputValidator.ValidateTitle(request.Title) is { } titleError)
+            return BadRequest(new { error = titleError });
+        if (ConversationInputValidator.ValidatePurpose(request.Purpose) is { } purposeError)
+            return BadRequest(new { error = purposeError });
+        if (ConversationInputValidator.ValidateInstructions(request.Instructions) is { } instructionsError)
+            return BadRequest(new { error = instructionsError });
+
         var conversation = new Conversation
         {
             ConversationId = ConversationId.Create(),
@@ -205,11 +213,15 @@ public sealed class ConversationsController : ControllerBase
         if (request.Title is null && request.Purpose is null && request.Instructions is null)
             return BadRequest(new { error = "title or purpose is required." });
 
-        if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
-            return BadRequest(new { error = "title must not be empty." });
-
-        if (request.Title is { Length: > 500 })
-            return BadRequest(new { error = "title must be 500 characters or fewer." });
+        if (request.Title is not null)
+        {
+            if (ConversationInputValidator.ValidateTitle(request.Title, required: true) is { } titleError)
+                return BadRequest(new { error = titleError });
+        }
+        if (ConversationInputValidator.ValidatePurpose(request.Purpose) is { } purposeError)
+            return BadRequest(new { error = purposeError });
+        if (ConversationInputValidator.ValidateInstructions(request.Instructions) is { } instructionsError)
+            return BadRequest(new { error = instructionsError });
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
