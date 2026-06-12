@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Hosting;
@@ -8,10 +9,12 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Memory;
 
 public sealed class MemoryIndexer(
+    IAgentMemoryFactory agentMemoryFactory,
     IMemoryStoreFactory storeFactory,
     ISessionLifecycleEvents lifecycleEvents,
     ILogger<MemoryIndexer> logger) : IHostedService
 {
+    private readonly IAgentMemoryFactory _agentMemoryFactory = agentMemoryFactory;
     private readonly IMemoryStoreFactory _storeFactory = storeFactory;
     private readonly ISessionLifecycleEvents _lifecycleEvents = lifecycleEvents;
     private readonly ILogger<MemoryIndexer> _logger = logger;
@@ -61,15 +64,51 @@ public sealed class MemoryIndexer(
     private async Task IndexSessionAsync(SessionLifecycleEvent lifecycleEvent, CancellationToken cancellationToken)
     {
         var session = lifecycleEvent.Session!;
-        var store = _storeFactory.Create(lifecycleEvent.AgentId);
-        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        var agentId = lifecycleEvent.AgentId;
+        var sessionId = lifecycleEvent.SessionId;
 
-        await IndexSessionCoreAsync(session, AgentId.From(lifecycleEvent.AgentId), SessionId.From(lifecycleEvent.SessionId), store, cancellationToken).ConfigureAwait(false);
+        var sessionEvent = BuildSessionEvent(session, agentId, sessionId);
+
+        try
+        {
+            var agentMemory = _agentMemoryFactory.Create(agentId);
+            await agentMemory.OnSessionCompleteAsync(sessionEvent, cancellationToken).ConfigureAwait(false);
+        }
+        catch (NotSupportedException)
+        {
+            // Provider not registered — fall back to direct store indexing
+            var store = _storeFactory.Create(agentId);
+            await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            await IndexSessionCoreAsync(session, AgentId.From(agentId), SessionId.From(sessionId), store, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Builds an <see cref="AgentMemorySessionEvent"/> from a gateway session, including history turns.
+    /// </summary>
+    internal static AgentMemorySessionEvent BuildSessionEvent(GatewaySession session, string agentId, string sessionId)
+    {
+        var history = session.GetHistorySnapshot();
+        var turns = new List<AgentMemorySessionTurn>(history.Count);
+        for (var i = 0; i < history.Count; i++)
+        {
+            var entry = history[i];
+            turns.Add(new AgentMemorySessionTurn(i, entry.Role.Value, entry.Content, entry.Timestamp));
+        }
+
+        return new AgentMemorySessionEvent(
+            AgentId: agentId,
+            SessionId: sessionId,
+            ConversationId: null,
+            EndedAt: DateTimeOffset.UtcNow,
+            TurnCount: history.Count,
+            History: turns);
     }
 
     /// <summary>
     /// Core indexing logic that extracts user/assistant turn pairs from a session and inserts
     /// any turns not already indexed into the memory store.
+    /// Preserved as internal fallback for when IAgentMemory is unavailable.
     /// </summary>
     /// <returns>The number of new turns indexed.</returns>
     internal static async Task<int> IndexSessionCoreAsync(
@@ -139,16 +178,11 @@ public sealed class MemoryIndexer(
 
     /// <summary>
     /// Backfills memory entries from all existing sessions in the session store.
-    /// Can be called standalone without the hosted service running.
+    /// Routes through IAgentMemory when available, falling back to direct store access.
     /// </summary>
-    /// <param name="sessionStore">The session store to read sessions from.</param>
-    /// <param name="storeFactory">Factory to create per-agent memory stores.</param>
-    /// <param name="logger">Logger for progress reporting.</param>
-    /// <param name="agentFilter">Optional agent ID to limit backfill to a single agent.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>A summary of sessions processed and turns indexed.</returns>
     public static async Task<BackfillResult> BackfillAsync(
         ISessionStore sessionStore,
+        IAgentMemoryFactory agentMemoryFactory,
         IMemoryStoreFactory storeFactory,
         ILogger logger,
         AgentId? agentFilter = null,
@@ -169,19 +203,22 @@ public sealed class MemoryIndexer(
 
             try
             {
-                var store = storeFactory.Create(agentId.Value);
-                await store.InitializeAsync(ct).ConfigureAwait(false);
+                var sessionEvent = BuildSessionEvent(session, agentId.Value, sessionId.Value);
 
-                var turnsIndexed = await IndexSessionCoreAsync(session, agentId, sessionId, store, ct).ConfigureAwait(false);
-                sessionsProcessed++;
-                totalTurns += turnsIndexed;
-
-                if (turnsIndexed > 0)
+                try
                 {
-                    logger.LogInformation(
-                        "Indexed {TurnsIndexed} turn(s) from session '{SessionId}' (agent: {AgentId}).",
-                        turnsIndexed, sessionId, agentId);
+                    var agentMemory = agentMemoryFactory.Create(agentId.Value);
+                    await agentMemory.OnSessionCompleteAsync(sessionEvent, ct).ConfigureAwait(false);
                 }
+                catch (NotSupportedException)
+                {
+                    var store = storeFactory.Create(agentId.Value);
+                    await store.InitializeAsync(ct).ConfigureAwait(false);
+                    await IndexSessionCoreAsync(session, agentId, sessionId, store, ct).ConfigureAwait(false);
+                }
+
+                sessionsProcessed++;
+                totalTurns += sessionEvent.TurnCount;
             }
             catch (OperationCanceledException)
             {
@@ -198,6 +235,28 @@ public sealed class MemoryIndexer(
             sessionsProcessed, totalTurns);
 
         return new BackfillResult(sessionsProcessed, totalTurns);
+    }
+
+    /// <summary>
+    /// Legacy overload for backward compatibility.
+    /// </summary>
+    public static Task<BackfillResult> BackfillAsync(
+        ISessionStore sessionStore,
+        IMemoryStoreFactory storeFactory,
+        ILogger logger,
+        AgentId? agentFilter = null,
+        CancellationToken ct = default)
+    {
+        // Create a throwing factory to force fallback path
+        return BackfillAsync(sessionStore, new ThrowingAgentMemoryFactory(), storeFactory, logger, agentFilter, ct);
+    }
+
+    private sealed class ThrowingAgentMemoryFactory : IAgentMemoryFactory
+    {
+        public IAgentMemory Create(string agentId, string? providerName = null)
+            => throw new NotSupportedException();
+
+        public IReadOnlyList<string> GetRegisteredProviders() => [];
     }
 }
 

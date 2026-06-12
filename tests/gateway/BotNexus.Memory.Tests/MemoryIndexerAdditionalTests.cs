@@ -7,6 +7,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Memory.Tests;
 
+internal sealed class ThrowingMemoryFactory : BotNexus.Gateway.Contracts.Memory.IAgentMemoryFactory
+{
+    public BotNexus.Gateway.Contracts.Memory.IAgentMemory Create(string agentId, string? providerName = null) => throw new NotSupportedException();
+    public IReadOnlyList<string> GetRegisteredProviders() => [];
+}
+
 public sealed class MemoryIndexerAdditionalTests
 {
     [Fact]
@@ -14,7 +20,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore();
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -34,7 +40,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore();
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -60,7 +66,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore();
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -93,7 +99,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore();
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -124,7 +130,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore { ThrowOnFirstInsert = true };
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
 
         try
@@ -158,7 +164,7 @@ public sealed class MemoryIndexerAdditionalTests
     {
         var lifecycle = new TestLifecycleEvents();
         var store = new RecordingMemoryStore();
-        var indexer = new MemoryIndexer(new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), new TestFactory(store), lifecycle, NullLogger<MemoryIndexer>.Instance);
         await indexer.StartAsync(CancellationToken.None);
         await indexer.StopAsync(CancellationToken.None);
 
