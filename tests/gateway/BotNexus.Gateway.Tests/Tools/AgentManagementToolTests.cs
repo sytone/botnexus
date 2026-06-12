@@ -5,6 +5,10 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Streaming;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -395,5 +399,102 @@ public sealed class AgentManagementToolTests
         savedDescriptor!.Memory.ShouldNotBeNull();
         savedDescriptor.Memory!.Enabled.ShouldBeTrue();
         savedDescriptor.Memory.Indexing.ShouldBe("auto");
+    }
+
+    // --- Provider Validation Tests ---
+
+    [Fact]
+    public async Task CreateAgent_UnknownProvider_ReturnsError()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new FakeProvider("anthropic"));
+        providerRegistry.Register(new FakeProvider("copilot"));
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, providerRegistry);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "bad-provider"),
+            ("displayName", "Bad"),
+            ("modelId", "model"),
+            ("apiProvider", "nonexistent")));
+
+        result.Content[0].Value.ShouldContain("error");
+        result.Content[0].Value.ShouldContain("Unknown API provider");
+        result.Content[0].Value.ShouldContain("nonexistent");
+        registry.Verify(r => r.Register(It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAgent_ValidProvider_Succeeds()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new FakeProvider("anthropic"));
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, providerRegistry);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "valid-provider"),
+            ("displayName", "Good"),
+            ("modelId", "model"),
+            ("apiProvider", "anthropic")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        result.Content[0].Value.ShouldContain("created");
+    }
+
+    [Fact]
+    public async Task CreateAgent_NoProviderRegistry_SkipsValidation()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "no-registry"),
+            ("displayName", "No Registry"),
+            ("modelId", "model"),
+            ("apiProvider", "anything-goes")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+    }
+
+    [Fact]
+    public async Task UpdateAgent_UnknownProvider_ReturnsError()
+    {
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-test");
+        registry.Setup(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>())).Returns(true);
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new FakeProvider("anthropic"));
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], providerRegistry);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "update-test"),
+            ("apiProvider", "bad-provider")));
+
+        result.Content[0].Value.ShouldContain("error");
+        result.Content[0].Value.ShouldContain("Unknown API provider");
+        registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAgent_ValidProvider_Succeeds()
+    {
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-valid");
+        registry.Setup(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>())).Returns(true);
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new FakeProvider("copilot"));
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], providerRegistry);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "update-valid"),
+            ("apiProvider", "copilot")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+    }
+
+    private sealed class FakeProvider(string api) : IApiProvider
+    {
+        public string Api => api;
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null) => throw new NotImplementedException();
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null) => throw new NotImplementedException();
     }
 }

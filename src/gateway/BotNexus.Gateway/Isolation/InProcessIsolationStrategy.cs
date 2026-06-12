@@ -29,6 +29,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
@@ -324,18 +325,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var changeNotifiers = _serviceProvider.GetServices<IAgentChangeNotifier>();
         if (agentRegistry is not null && configurationWriter is not null && botNexusHome is not null)
         {
+            var apiProviderRegistry = _serviceProvider.GetService<ApiProviderRegistry>();
             var includeCreateAgent = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("create_agent", StringComparer.OrdinalIgnoreCase);
             if (includeCreateAgent)
             {
                 var platformConfigOptions = _serviceProvider.GetService<IOptions<PlatformConfig>>();
-                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions));
+                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions, apiProviderRegistry));
             }
 
             var includeUpdateAgent = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("update_agent", StringComparer.OrdinalIgnoreCase);
             if (includeUpdateAgent)
-                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers));
+                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers, apiProviderRegistry));
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
