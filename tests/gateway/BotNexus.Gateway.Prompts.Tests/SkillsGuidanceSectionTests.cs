@@ -105,13 +105,21 @@ public sealed class SkillsGuidanceSectionTests
     }
 
     [Fact]
-    public void Build_StartsWithMarkdownHeader()
+    public void Build_StartsWithLoadGuidance()
     {
         var section = SkillsGuidanceSection.Create();
 
         var lines = section.Build(ContextWithSkillTools);
 
-        lines[0].ShouldBe("## Skills");
+        lines[0].ShouldContain("skills", Case.Insensitive);
+    }
+
+    [Fact]
+    public void Create_HasXmlTag()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        section.XmlTag.ShouldBe("skills");
     }
 
     [Fact]

@@ -2,7 +2,8 @@ namespace BotNexus.Gateway.Prompts;
 
 /// <summary>
 /// A prompt section backed by a delegate that lazily builds its content lines.
-/// Supports an optional <see cref="SectionId"/> for override resolution.
+/// Supports an optional <see cref="SectionId"/> for override resolution and
+/// an optional <see cref="XmlTag"/> for XML wrapping in the assembled prompt.
 /// </summary>
 public sealed class LambdaPromptSection : IPromptSection
 {
@@ -16,17 +17,20 @@ public sealed class LambdaPromptSection : IPromptSection
     /// <param name="buildFunc">Delegate that produces the prompt lines.</param>
     /// <param name="sectionId">Optional stable identifier for override resolution.</param>
     /// <param name="shouldIncludeFunc">Optional predicate controlling inclusion. Defaults to always included.</param>
+    /// <param name="xmlTag">Optional XML tag name for wrapping this section's output.</param>
     public LambdaPromptSection(
         int order,
         Func<PromptContext, IReadOnlyList<string>> buildFunc,
         string? sectionId = null,
-        Func<PromptContext, bool>? shouldIncludeFunc = null)
+        Func<PromptContext, bool>? shouldIncludeFunc = null,
+        string? xmlTag = null)
     {
         ArgumentNullException.ThrowIfNull(buildFunc);
         Order = order;
         _buildFunc = buildFunc;
         SectionId = sectionId;
         _shouldIncludeFunc = shouldIncludeFunc;
+        XmlTag = xmlTag;
     }
 
     /// <inheritdoc/>
@@ -34,6 +38,9 @@ public sealed class LambdaPromptSection : IPromptSection
 
     /// <inheritdoc/>
     public string? SectionId { get; }
+
+    /// <inheritdoc/>
+    public string? XmlTag { get; }
 
     /// <inheritdoc/>
     public bool ShouldInclude(PromptContext context) =>
