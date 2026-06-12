@@ -8,7 +8,7 @@ namespace BotNexus.Extensions.Qmd;
 /// <summary>
 /// Agent-facing tool for retrieving a specific document from the knowledge base by ID or path.
 /// </summary>
-public sealed class KnowledgeGetTool(IQmdBackend backend) : IAgentTool
+public sealed class KnowledgeGetTool(IQmdBackend backend, QmdConfig config) : IAgentTool
 {
     private const int MaxContentChars = 50_000;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -75,6 +75,10 @@ public sealed class KnowledgeGetTool(IQmdBackend backend) : IAgentTool
         if (document is null)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text,
                 $"Document not found: '{id}'")]);
+
+        if (!string.IsNullOrWhiteSpace(document.Store) && !config.IsStoreAllowed(document.Store))
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text,
+                $"Error: Access denied. Store '{document.Store}' is not in your allowed stores.")]);
 
         var content = document.Content;
         var truncated = false;
