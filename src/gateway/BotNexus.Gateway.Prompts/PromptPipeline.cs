@@ -1,7 +1,8 @@
 namespace BotNexus.Gateway.Prompts;
 
 /// <summary>
-/// Represents prompt pipeline.
+/// Assembles system prompt content from ordered sections and contributors,
+/// optionally wrapping each block in XML tags for improved model attention.
 /// </summary>
 public sealed class PromptPipeline
 {
@@ -9,10 +10,8 @@ public sealed class PromptPipeline
     private readonly List<IPromptContributor> _contributors = [];
 
     /// <summary>
-    /// Executes add.
+    /// Adds a prompt section to the pipeline.
     /// </summary>
-    /// <param name="section">The section.</param>
-    /// <returns>The add result.</returns>
     public PromptPipeline Add(IPromptSection section)
     {
         ArgumentNullException.ThrowIfNull(section);
@@ -21,10 +20,8 @@ public sealed class PromptPipeline
     }
 
     /// <summary>
-    /// Executes add contributors.
+    /// Adds prompt contributors to the pipeline.
     /// </summary>
-    /// <param name="contributors">The contributors.</param>
-    /// <returns>The add contributors result.</returns>
     public PromptPipeline AddContributors(IEnumerable<IPromptContributor> contributors)
     {
         ArgumentNullException.ThrowIfNull(contributors);
@@ -33,29 +30,26 @@ public sealed class PromptPipeline
     }
 
     /// <summary>
-    /// Executes build.
+    /// Builds the complete system prompt string from all sections and contributors.
     /// </summary>
-    /// <param name="context">The context.</param>
-    /// <returns>The build result.</returns>
     public string Build(PromptContext context)
     {
         return string.Join("\n", BuildLines(context));
     }
 
     /// <summary>
-    /// Executes build lines.
+    /// Builds the ordered list of prompt lines from all sections and contributors,
+    /// wrapping each block in XML tags when the section specifies an <see cref="IPromptSection.XmlTag"/>.
     /// </summary>
-    /// <param name="context">The context.</param>
-    /// <returns>The build lines result.</returns>
     public IReadOnlyList<string> BuildLines(PromptContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var blocks = new List<(int Order, int TieBreaker, IReadOnlyList<string> Lines)>();
+        var blocks = new List<(int Order, int TieBreaker, string? XmlTag, IReadOnlyList<string> Lines)>();
         var sectionIndex = 0;
         foreach (var section in _sections.Where(section => section.ShouldInclude(context)).OrderBy(section => section.Order))
         {
-            blocks.Add((section.Order, sectionIndex++, section.Build(context)));
+            blocks.Add((section.Order, sectionIndex++, section.XmlTag, section.Build(context)));
         }
 
         foreach (var contributor in _contributors.Where(contributor => contributor.Target is null && contributor.ShouldInclude(context)))
@@ -68,13 +62,29 @@ public sealed class PromptPipeline
             }
 
             lines.AddRange(contribution.Lines);
-            blocks.Add((contribution.Order ?? contributor.Priority, sectionIndex++, lines));
+            blocks.Add((contribution.Order ?? contributor.Priority, sectionIndex++, null, lines));
         }
 
-        return blocks
-            .OrderBy(static item => item.Order)
-            .ThenBy(static item => item.TieBreaker)
-            .SelectMany(static item => item.Lines)
-            .ToList();
+        var result = new List<string>();
+        foreach (var block in blocks.OrderBy(static item => item.Order).ThenBy(static item => item.TieBreaker))
+        {
+            if (block.Lines.Count == 0)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(block.XmlTag))
+            {
+                result.Add($"<{block.XmlTag}>");
+                result.AddRange(block.Lines);
+                result.Add($"</{block.XmlTag}>");
+            }
+            else
+            {
+                result.AddRange(block.Lines);
+            }
+        }
+
+        return result;
     }
 }
