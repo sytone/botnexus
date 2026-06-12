@@ -19,6 +19,7 @@ Search the web using a configurable provider and return formatted markdown resul
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Search query. |
+| `count` | integer | No | Number of results to return (1 to maxResults). Overrides the configured default per call. |
 
 ### `web_fetch`
 
@@ -60,7 +61,7 @@ Configure in your agent's extension config block:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | string | `"brave"` | Search provider: `brave`, `tavily`, `bing`, or `copilot`. |
+| `provider` | string | `"brave"` | Search provider: `brave`, `tavily`, `bing`, `microsoft-ai`, or `copilot`. |
 | `apiKey` | string | — | API key for the search provider. Supports `${env:VAR}` syntax. |
 | `maxResults` | integer | 5 | Maximum number of results to return. |
 
@@ -81,6 +82,7 @@ Configure in your agent's extension config block:
 | `brave` | Yes | Brave Search API. Set `BRAVE_API_KEY`. |
 | `tavily` | Yes | Tavily Search API. Set `TAVILY_API_KEY`. |
 | `bing` | Yes | Bing Web Search API. Set `BING_API_KEY`. |
+| `microsoft-ai` | Yes | Microsoft AI Search (`api.microsoft.ai`). Rich markdown results. Set `MICROSOFT_AI_SEARCH_API_KEY`. |
 | `copilot` | No | Uses GitHub Copilot MCP bridge (requires Copilot provider configured). |
 
 ## Security
