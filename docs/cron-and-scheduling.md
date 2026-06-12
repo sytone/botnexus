@@ -651,6 +651,66 @@ Purged 156 cron run records older than 30 days.
 
 **Use case:** Prevent the cron SQLite database from growing indefinitely on long-running instances.
 
+### 8.6 `agent-converse`
+
+**Name:** `agent-converse`  
+**Description:** Initiates a scheduled conversation between two agents, with budget enforcement.
+
+Delegates to `IAgentExchangeService.ConverseAsync` — the same pathway used by the `agent_converse` tool, including loop detection and daily caps.
+
+**Configuration Properties (in Metadata):**
+- `targetAgentId`: Agent to converse with (required)
+- `message`: Opening message to send (required)
+- `objective`: What the conversation should achieve (optional)
+- `maxTurns`: Maximum turns for the conversation (optional, default: 1)
+
+**Configuration:**
+```json
+{
+  "Type": "system",
+  "Action": "agent-converse",
+  "Schedule": "0 9 * * 1-5",
+  "Agent": "coordinator",
+  "Metadata": {
+    "targetAgentId": "reporter",
+    "message": "Generate the morning status report.",
+    "objective": "Get daily status",
+    "maxTurns": 5
+  }
+}
+```
+
+**Behavior:**
+- Subject to exchange budget enforcement — skipped if pair is in cooldown or at daily cap
+- The initiating agent is the one specified in the job's `Agent` field
+- Results are logged; output channels can route the response
+
+**Use case:** Schedule recurring agent check-ins, status syncs, or delegation workflows on a fixed schedule.
+
+See also: [Agent-to-Agent Communication](/features/agent-exchange)
+
+### 8.7 Missed Run Detection
+
+On gateway startup, BotNexus scans all enabled cron jobs and detects runs that were missed while the service was offline. Missed runs are recorded in the cron run store with status `missed`.
+
+For jobs with `catchUp: true` in their metadata, BotNexus will execute the missed run immediately on startup (capped at 100 missed runs per job to prevent flood).
+
+```json
+{
+  "morning-briefing": {
+    "Type": "agent",
+    "Schedule": "0 9 * * *",
+    "Agent": "analyst",
+    "Prompt": "Morning briefing.",
+    "Metadata": {
+      "catchUp": true
+    }
+  }
+}
+```
+
+Missed runs appear in `cron history` output and via `GET /api/cron/{jobId}/runs`.
+
 ---
 
 ## 9. CronTool — Runtime Job Management
