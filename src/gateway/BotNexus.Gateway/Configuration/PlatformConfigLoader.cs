@@ -132,10 +132,10 @@ public static class PlatformConfigLoader
         ArgumentNullException.ThrowIfNull(config);
 
         List<string> warnings = [];
-        if (config.Version > SupportedConfigVersion)
+        if (config.PlatformVersion > SupportedConfigVersion)
         {
             warnings.Add(
-                $"version '{config.Version}' is newer than supported version '{SupportedConfigVersion}'. " +
+                $"version '{config.PlatformVersion}' is newer than supported version '{SupportedConfigVersion}'. " +
                 "The gateway will continue with best-effort compatibility.");
         }
 
