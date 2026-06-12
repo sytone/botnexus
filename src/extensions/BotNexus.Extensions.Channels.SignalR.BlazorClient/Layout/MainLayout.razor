@@ -10,6 +10,7 @@
 @inject IUpdateStatusService UpdateStatus
 @inject IJSRuntime JS
 @inject IPortalPreferencesService Prefs
+@inject CronApiClient CronApi
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -308,6 +309,7 @@
 
 @code {
     private bool _cronGroupCollapsed = true;
+    private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
 
     private record Announcement(string Id, string Text, string Type = "info");
@@ -352,6 +354,7 @@
                 await Interaction.RefreshConversationsAsync(activeAgentId);
 
             await LoadSidebarAgentsAsync();
+            await LoadCronConversationIdsAsync();
             StateHasChanged();
         }
     }
@@ -503,9 +506,10 @@
         return true;
     }
 
-    private static bool IsCronConversation(ConversationState c) =>
+    private bool IsCronConversation(ConversationState c) =>
         c.ConversationId.StartsWith("cronconv:", StringComparison.OrdinalIgnoreCase) ||
-        (c.IsVirtualSession && string.Equals(c.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase));
+        (c.IsVirtualSession && string.Equals(c.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase)) ||
+        _cronConversationIds.Contains(c.ConversationId);
 
     private static bool IsPinnedConversation(ConversationState c) => c.IsPinned;
 
@@ -731,6 +735,19 @@
                 .ToList();
         }
         catch { _sidebarAgents = []; }
+    }
+
+    private async Task LoadCronConversationIdsAsync()
+    {
+        try
+        {
+            var (jobs, _) = await CronApi.ListAsync();
+            _cronConversationIds = jobs
+                .Where(j => !string.IsNullOrEmpty(j.ConversationId))
+                .Select(j => j.ConversationId!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        catch { _cronConversationIds = new(StringComparer.OrdinalIgnoreCase); }
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

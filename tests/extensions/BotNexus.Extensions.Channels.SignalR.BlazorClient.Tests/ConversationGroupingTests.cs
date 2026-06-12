@@ -1,4 +1,5 @@
 using Bunit;
+using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -43,6 +44,7 @@ public sealed class ConversationGroupingTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
+        _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -198,5 +200,81 @@ public sealed class ConversationGroupingTests : IDisposable
 
         // Cron should NOT be in the normal conversations group
         Assert.DoesNotContain("Cron Job", convsGroup.TextContent);
+    }
+
+    [Fact]
+    public async Task ConversationAssignedToCronJob_RenderedInScheduledGroup()
+    {
+        // Arrange: set up a mock HTTP handler that returns cron jobs with a conversationId
+        var handler = new MockCronHttpHandler();
+        handler.SetCronResponse("[{\"id\":\"job-1\",\"name\":\"Daily Digest\",\"schedule\":\"0 8 * * *\",\"enabled\":true,\"conversationId\":\"conv:assigned-to-cron\"}]");
+        using var ctx = new BunitContext();
+        var httpWithMock = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
+        var restClient = Substitute.For<IGatewayRestClient>();
+        restClient.ApiBaseUrl.Returns("");
+        var store = new ClientStateStore();
+        ctx.Services.AddSingleton<IClientStateStore>(store);
+        ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        var portalLoad = Substitute.For<IPortalLoadService>();
+        portalLoad.IsReady.Returns(false);
+        portalLoad.IsLoading.Returns(true);
+        portalLoad.LoadError.Returns((string?)null);
+        ctx.Services.AddSingleton(portalLoad);
+        ctx.Services.AddSingleton(new GatewayHubConnection());
+        ctx.Services.AddSingleton(new GatewayInfoService(httpWithMock, restClient));
+        ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
+        var mockPrefs = Substitute.For<IPortalPreferencesService>();
+        mockPrefs.Current.Returns(new PortalPreferences());
+        ctx.Services.AddSingleton(mockPrefs);
+        ctx.Services.AddSingleton(restClient);
+        ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
+        ctx.Services.AddSingleton(httpWithMock);
+        ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
+        ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
+        ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+        store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        store.SeedConversations("a-1", [
+            new ConversationSummaryDto("conv:assigned-to-cron", "a-1", "Digest Conv", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("conv:normal", "a-1", "Normal Conv", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        store.ActiveAgentId = "a-1";
+
+        var cut = ctx.Render<MainLayout>(p => p
+            .Add(c => c.Body, (RenderFragment)(_ => { })));
+
+        // Wait for async OnAfterRenderAsync to complete
+        await Task.Delay(100);
+        cut.Render();
+
+        // Expand the cron group
+        cut.Find("[data-testid='cron-group-toggle']").Click();
+
+        // The assigned conversation should be in the scheduled group
+        var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
+        Assert.Contains("Digest Conv", scheduledGroup.TextContent);
+
+        // The normal conversation should NOT be in the scheduled group
+        Assert.DoesNotContain("Normal Conv", scheduledGroup.TextContent);
+    }
+
+    private sealed class MockCronHttpHandler : HttpMessageHandler
+    {
+        private string _cronJson = "[]";
+
+        public void SetCronResponse(string json) => _cronJson = json;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.PathAndQuery ?? "";
+            if (path.Contains("/api/cron", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(_cronJson, System.Text.Encoding.UTF8, "application/json")
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+        }
     }
 }

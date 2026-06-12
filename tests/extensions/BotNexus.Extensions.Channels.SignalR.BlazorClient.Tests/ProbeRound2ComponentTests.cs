@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
@@ -29,8 +29,10 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var restClient = Substitute.For<IGatewayRestClient>();
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
-        _ctx.Services.AddSingleton(new HttpClient());
+        var http = new HttpClient();
+        _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
+        _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         var _mockPrefs = Substitute.For<IPortalPreferencesService>(); _mockPrefs.Current.Returns(new PortalPreferences()); _ctx.Services.AddSingleton(_mockPrefs);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -183,6 +185,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
+        ctx.Services.AddSingleton(new CronApiClient(http));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         var mockPrefs2 = Substitute.For<IPortalPreferencesService>(); mockPrefs2.Current.Returns(new PortalPreferences()); ctx.Services.AddSingleton(mockPrefs2);
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -223,6 +226,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
+        _ctx.Services.AddSingleton(new CronApiClient(http));
 
         _store.SeedAgents([new AgentSummary("a-1", "Agent One")]);
         _store.SeedConversations("a-1", []);
