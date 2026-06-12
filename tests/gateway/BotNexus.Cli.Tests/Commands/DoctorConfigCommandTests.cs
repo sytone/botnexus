@@ -40,6 +40,7 @@ public sealed class DoctorConfigCommandTests
                 }
               },
               "cron": { "enabled": true, "tickIntervalSeconds": 60 },
+              "compaction": { "summarizationModel": "claude-haiku-4.5" },
               "agents": {
                 "defaults": {
                   "memory": { "enabled": true, "indexing": "auto" }
