@@ -24,6 +24,7 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
         {
             PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
             PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+            PopulateVersionFromRawJson(config, rawJson);
             PopulateJsonElementFields(config, rawJson);
         }
         else
@@ -41,6 +42,24 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
         // IConfiguration cannot bind JsonElement fields — null out any that were left in
         // an invalid/undefined state to prevent serialization crashes (e.g. schema validation).
         NullifyInvalidJsonElements(config);
+    }
+
+    /// <summary>
+    /// Populate Version from raw JSON since IConfiguration binding uses a remapped key
+    /// (via ConfigurationKeyName) to avoid collision with DOTNET_VERSION env var.
+    /// </summary>
+    private static void PopulateVersionFromRawJson(PlatformConfig config, string rawJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            if (doc.RootElement.TryGetProperty("version", out var versionEl) &&
+                versionEl.TryGetInt32(out var version))
+            {
+                config.PlatformVersion = version;
+            }
+        }
+        catch { /* non-fatal — Version defaults to 1 */ }
     }
 
     /// <summary>

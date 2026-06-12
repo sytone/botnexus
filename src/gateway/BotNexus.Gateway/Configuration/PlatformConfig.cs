@@ -17,7 +17,13 @@ public sealed class PlatformConfig
     public string? Schema { get; set; }
 
     /// <summary>Configuration schema version for forward compatibility.</summary>
-    public int Version { get; set; } = 1;
+    /// <remarks>
+    /// Named "PlatformVersion" (not "Version") to avoid collision with the DOTNET_VERSION
+    /// environment variable which the .NET host prefix-strips to just "VERSION" in IConfiguration.
+    /// JsonPropertyName keeps config.json reading from the "version" key.
+    /// </remarks>
+    [JsonPropertyName("version")]
+    public int PlatformVersion { get; set; } = 1;
 
     /// <summary>Gateway-specific settings.</summary>
     public GatewaySettingsConfig? Gateway { get; set; }

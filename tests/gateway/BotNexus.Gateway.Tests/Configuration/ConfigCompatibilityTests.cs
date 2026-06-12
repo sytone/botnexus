@@ -39,7 +39,7 @@ public sealed class ConfigCompatibilityTests
         var config = PlatformConfigLoader.Load(FixturePath);
 
         config.ShouldNotBeNull();
-        config.Version.ShouldBe(1);
+        config.PlatformVersion.ShouldBe(1);
         config.Schema.ShouldBe("https://botnexus.dev/schemas/config.json");
         config.Gateway.ShouldNotBeNull();
         config.Gateway!.ListenUrl.ShouldBe("http://localhost:18790");
