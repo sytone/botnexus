@@ -80,7 +80,7 @@ public sealed class KnowledgeGetToolTests
         var backend = new InMemoryQmdBackend();
         backend.Documents.Add(new QmdDocument("doc1", "vault", "/vault/test.md", "Test Doc", "# Hello\nContent here"));
 
-        var tool = new KnowledgeGetTool(backend);
+        var tool = new KnowledgeGetTool(backend, new QmdConfig());
         var result = await tool.ExecuteAsync("tc1", new Dictionary<string, object?> { ["id"] = "doc1" });
 
         var text = result.Content[0].Value;
@@ -93,7 +93,7 @@ public sealed class KnowledgeGetToolTests
     public async Task Execute_NotFound_ReturnsMessage()
     {
         var backend = new InMemoryQmdBackend();
-        var tool = new KnowledgeGetTool(backend);
+        var tool = new KnowledgeGetTool(backend, new QmdConfig());
         var result = await tool.ExecuteAsync("tc1", new Dictionary<string, object?> { ["id"] = "nonexistent" });
 
         result.Content[0].Value.ShouldContain("Document not found");
@@ -106,7 +106,7 @@ public sealed class KnowledgeGetToolTests
         var backend = new InMemoryQmdBackend();
         backend.Documents.Add(new QmdDocument("big", "vault", "/vault/big.md", "Big", largeContent));
 
-        var tool = new KnowledgeGetTool(backend);
+        var tool = new KnowledgeGetTool(backend, new QmdConfig());
         var result = await tool.ExecuteAsync("tc1", new Dictionary<string, object?> { ["id"] = "big" });
 
         var text = result.Content[0].Value;
@@ -118,7 +118,7 @@ public sealed class KnowledgeGetToolTests
     public async Task Execute_BackendFailure_ReturnsErrorMessage()
     {
         var backend = new FailingQmdBackend();
-        var tool = new KnowledgeGetTool(backend);
+        var tool = new KnowledgeGetTool(backend, new QmdConfig());
         var result = await tool.ExecuteAsync("tc1", new Dictionary<string, object?> { ["id"] = "doc1" });
 
         result.Content[0].Value.ShouldContain("Failed to retrieve");
@@ -128,7 +128,7 @@ public sealed class KnowledgeGetToolTests
     public async Task PrepareArguments_MissingId_Throws()
     {
         var backend = new InMemoryQmdBackend();
-        var tool = new KnowledgeGetTool(backend);
+        var tool = new KnowledgeGetTool(backend, new QmdConfig());
 
         var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["id"] = "   " });
         await act.ShouldThrowAsync<ArgumentException>();
