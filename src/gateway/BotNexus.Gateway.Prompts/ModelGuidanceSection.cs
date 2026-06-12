@@ -14,6 +14,11 @@ public static class ModelGuidanceSection
     public const string Id = "model-guidance";
 
     /// <summary>
+    /// The XML tag name for this section in the assembled prompt.
+    /// </summary>
+    public const string Tag = "model_guidance";
+
+    /// <summary>
     /// The ordering position for this section within the prompt pipeline.
     /// Placed late (135) so model-specific instructions come after all content sections.
     /// </summary>
@@ -27,7 +32,6 @@ public static class ModelGuidanceSection
 
     private static readonly string[] ClaudeGuidance =
     [
-        "## Model Guidance (Claude)",
         "Prefer the edit tool over write for modifying existing files — it preserves context and is more precise.",
         "When editing, use the smallest possible oldText/newText to target changes precisely.",
         "You have extended thinking capabilities — use them for complex reasoning before acting."
@@ -35,7 +39,6 @@ public static class ModelGuidanceSection
 
     private static readonly string[] GptGuidance =
     [
-        "## Model Guidance (GPT)",
         "Never answer from memory when a tool can verify the answer — always check the source.",
         "When asked about file contents, always read the file rather than guessing from context.",
         "Be explicit about uncertainty — say when you are unsure rather than confabulating."
@@ -43,7 +46,6 @@ public static class ModelGuidanceSection
 
     private static readonly string[] GeminiGuidance =
     [
-        "## Model Guidance (Gemini)",
         "Always use absolute paths in file operations — relative paths may resolve incorrectly.",
         "When referencing files, use the full path from the workspace root.",
         "Verify tool output carefully before proceeding — do not assume success without checking."
@@ -54,7 +56,7 @@ public static class ModelGuidanceSection
     /// The section is only included when a recognized model family is detected.
     /// </summary>
     public static LambdaPromptSection Create() =>
-        new(SectionOrder, BuildLines, sectionId: Id, shouldIncludeFunc: ShouldInclude);
+        new(SectionOrder, BuildLines, sectionId: Id, shouldIncludeFunc: ShouldInclude, xmlTag: Tag);
 
     private static bool ShouldInclude(PromptContext context)
     {

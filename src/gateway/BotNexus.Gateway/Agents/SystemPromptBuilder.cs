@@ -112,20 +112,19 @@ public static class SystemPromptBuilder
         };
 
         var pipeline = new PromptPipeline()
-            .Add(new LambdaPromptSection(10, BuildToolingSection))
-            .Add(new LambdaPromptSection(20, BuildToolCallStyleSection))
-            .Add(new LambdaPromptSection(30, static context => buildOverridablePromptSection(null, buildExecutionBiasSection(GetGatewayData(context).IsMinimal))))
+            .Add(new LambdaPromptSection(10, BuildToolingSection, xmlTag: "tooling"))
             .Add(ToolEnforcementSection.Create())
             .Add(ShellEfficiencySection.Create())
-            .Add(new LambdaPromptSection(40, BuildSafetyAndCliSection))
+            .Add(new LambdaPromptSection(40, BuildSafetySection, xmlTag: "safety"))
+            .Add(new LambdaPromptSection(42, BuildCliSection, xmlTag: "cli"))
             .Add(SkillsGuidanceSection.Create())
             .Add(new LambdaPromptSection(60, static context => buildMemorySection(
                 GetGatewayData(context).IsMinimal,
                 GetGatewayData(context).Parameters.MemoryPromptInjection,
-                GetGatewayData(context).NormalizedTools)))
+                GetGatewayData(context).NormalizedTools), xmlTag: "memory"))
             .Add(new LambdaPromptSection(70, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
             .Add(new LambdaPromptSection(80, BuildModelAliasesSection))
-            .Add(new LambdaPromptSection(90, BuildWorkspaceSection))
+            .Add(new LambdaPromptSection(90, BuildWorkspaceSection, xmlTag: "workspace"))
             .Add(new LambdaPromptSection(100, static context => buildDocsSection(GetGatewayData(context).Parameters.DocsPath, GetGatewayData(context).IsMinimal, GetGatewayData(context).ReadToolName)))
             .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
             .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
@@ -134,11 +133,11 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(ModelGuidanceSection.Create())
             .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
-            .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
+            .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled), xmlTag: "messaging"))
             .Add(new LambdaPromptSection(160, static context => buildVoiceSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).Parameters.TtsHint)))
             .Add(new LambdaPromptSection(170, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
             .Add(new LambdaPromptSection(180, static context => buildProjectContextSection(GetGatewayData(context).StableContextFiles, "# Project Context", dynamic: false)))
-            .Add(new LambdaPromptSection(190, BuildSilentRepliesSection, static context => !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(190, BuildSilentRepliesSection, static context => !GetGatewayData(context).IsMinimal, xmlTag: "silent_replies"))
             .Add(new LambdaPromptSection(200, static _ => [SystemPromptCacheBoundary]))
             .Add(new LambdaPromptSection(210, static context => buildProjectContextSection(
                 GetGatewayData(context).DynamicContextFiles,
@@ -146,7 +145,7 @@ public static class SystemPromptBuilder
                 dynamic: true)))
             .Add(new LambdaPromptSection(220, BuildExtraSystemPromptSection))
             .Add(new LambdaPromptSection(230, BuildHeartbeatSection, static context => !GetGatewayData(context).IsMinimal))
-            .Add(new LambdaPromptSection(240, BuildRuntimeSection));
+            .Add(new LambdaPromptSection(240, BuildRuntimeSection, xmlTag: "runtime"));
 
         var lines = pipeline.BuildLines(promptContext);
         return string.Join("\n", lines.Where(static line => !string.IsNullOrEmpty(line)));
@@ -209,7 +208,6 @@ public static class SystemPromptBuilder
         {
             return
             [
-                "## Memory",
                 "Memory context is a snapshot loaded at session start and does not auto-refresh during this turn.",
                 BuildMemoryWriteGuidance(availableTools),
                 "Durable memory writes become available in future sessions after persistence.",
@@ -219,7 +217,6 @@ public static class SystemPromptBuilder
 
         return
         [
-            "## Memory",
             "Memory context in this prompt is frozen at session start; do not assume memory files changed unless a new session starts.",
             BuildMemoryWriteGuidance(availableTools),
             "Use `MEMORY.md` as long-lived consolidated context and `memory/YYYY-MM-DD.md` as append-only daily notes.",
@@ -274,7 +271,6 @@ public static class SystemPromptBuilder
 
         var lines = new List<string>
         {
-            "## Messaging",
             "- Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)",
             "- Cross-session messaging → use sessions_send(sessionKey, message)",
             "- Sub-agent orchestration → use subagents(action=list|steer|kill)",
@@ -334,22 +330,6 @@ public static class SystemPromptBuilder
         ];
     }
 
-    public static IReadOnlyList<string> buildExecutionBiasSection(bool isMinimal)
-    {
-        if (isMinimal)
-            return [];
-
-        return
-        [
-            "## Execution Bias",
-            "If the user asks you to do the work, start doing it in the same turn.",
-            "Use a real tool call or concrete action first when the task is actionable; do not stop at a plan or promise-to-act reply.",
-            "Commentary-only turns are incomplete when tools are available and the next action is clear.",
-            "If the work will take multiple steps or a while to finish, send one short progress update before or while acting.",
-            ""
-        ];
-    }
-
     public static string buildRuntimeLine(RuntimeInfo? runtime)
     {
         return RuntimeLineFormatter.BuildRuntimeLine(runtime is null ? null : new PromptRuntimeInfo
@@ -389,7 +369,6 @@ public static class SystemPromptBuilder
         {
             "You are a personal assistant running inside BotNexus.",
             string.Empty,
-            "## Tooling",
             "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
             "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
             "If a tool is present in the structured tool definitions, it is available unless a later tool call reports a policy/runtime restriction.",
@@ -422,47 +401,34 @@ public static class SystemPromptBuilder
         lines.Add("If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.");
         lines.Add("Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).");
         lines.Add(string.Empty);
+        lines.Add(buildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled));
+        lines.Add("Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.");
+        lines.Add("Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.");
+        lines.Add("When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.");
         return lines;
     }
 
-    private static IReadOnlyList<string> BuildToolCallStyleSection(PromptContext context)
-    {
-        var data = GetGatewayData(context);
-        return buildOverridablePromptSection(
-            null,
-            [
-                "## Tool Call Style",
-                "Default: do not narrate routine, low-risk tool calls (just call the tool).",
-                "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when the user explicitly asks.",
-                "Keep narration brief and value-dense; avoid repeating obvious steps.",
-                "Use plain human language for narration unless in a technical context.",
-                "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
-                buildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled),
-                "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
-                "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
-                "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
-                ""
-            ]);
-    }
-
-    private static IReadOnlyList<string> BuildSafetyAndCliSection(PromptContext _)
+    private static IReadOnlyList<string> BuildSafetySection(PromptContext _)
     {
         return
         [
-            "## Safety",
             "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.",
             "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards. (Inspired by Anthropic's constitution.)",
-            "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.",
-            "",
-            "## BotNexus CLI Quick Reference",
+            "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested."
+        ];
+    }
+
+    private static IReadOnlyList<string> BuildCliSection(PromptContext _)
+    {
+        return
+        [
             "BotNexus is controlled via subcommands. Do not invent commands.",
             "To manage the Gateway daemon service (start/stop/restart):",
             "- botnexus gateway status",
             "- botnexus gateway start",
             "- botnexus gateway stop",
             "- botnexus gateway restart",
-            "If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output.",
-            ""
+            "If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output."
         ];
     }
 
@@ -507,7 +473,6 @@ public static class SystemPromptBuilder
         if (!string.IsNullOrWhiteSpace(data.Parameters.UserTimezone))
             lines.Add("If you need the current date, time, or day of week, run session_status (📊 session_status).");
 
-        lines.Add("## Workspace");
         lines.Add($"Your working directory is: {data.Parameters.WorkspaceDir}");
         lines.Add("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.");
         lines.AddRange((data.Parameters.WorkspaceNotes ?? []).Select(NormalizeStructuredPromptSection).Where(static line => !string.IsNullOrWhiteSpace(line)));
@@ -521,7 +486,6 @@ public static class SystemPromptBuilder
     private static IReadOnlyList<string> BuildSilentRepliesSection(PromptContext _)
         =>
         [
-            "## Silent Replies",
             $"Use {SilentReplyToken} ONLY when no user-visible reply is required.",
             "",
             "⚠️ Rules:",
@@ -580,7 +544,6 @@ public static class SystemPromptBuilder
         var data = GetGatewayData(context);
         return
         [
-            "## Runtime",
             buildRuntimeLine(data.Parameters.Runtime),
             $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
         ];
@@ -634,9 +597,12 @@ public static class SystemPromptBuilder
     private sealed class LambdaPromptSection(
         int order,
         Func<PromptContext, IReadOnlyList<string>> build,
-        Func<PromptContext, bool>? shouldInclude = null) : IPromptSection
+        Func<PromptContext, bool>? shouldInclude = null,
+        string? xmlTag = null) : IPromptSection
     {
         public int Order => order;
+
+        public string? XmlTag => xmlTag;
 
         public bool ShouldInclude(PromptContext context) => shouldInclude?.Invoke(context) ?? true;
 
