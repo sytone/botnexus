@@ -7,6 +7,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
 
 namespace BotNexus.Gateway.Tools;
@@ -197,6 +198,8 @@ public sealed class ConversationTool(
             ?? throw new ArgumentException("Missing required argument: title or displayName.");
         if (string.IsNullOrWhiteSpace(title))
             throw new ArgumentException("title must not be empty.");
+        if (ConversationInputValidator.ValidateTitle(title) is { } titleValidationError)
+            throw new ArgumentException(titleValidationError);
 
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
@@ -213,6 +216,8 @@ public sealed class ConversationTool(
     {
         var purpose = ReadString(arguments, "purpose")
             ?? throw new ArgumentException("Missing required argument: purpose.");
+        if (ConversationInputValidator.ValidatePurpose(purpose) is { } purposeValidationError)
+            throw new ArgumentException(purposeValidationError);
 
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
@@ -244,6 +249,10 @@ public sealed class ConversationTool(
 
         var title = ReadString(arguments, "displayName") ?? ReadString(arguments, "title");
         var purpose = ReadString(arguments, "purpose");
+        if (ConversationInputValidator.ValidateTitle(title) is { } newTitleError)
+            throw new ArgumentException(newTitleError);
+        if (ConversationInputValidator.ValidatePurpose(purpose) is { } newPurposeError)
+            throw new ArgumentException(newPurposeError);
         var message = ReadString(arguments, "message");
         var now = DateTimeOffset.UtcNow;
         var conversation = new Conversation
@@ -317,6 +326,8 @@ public sealed class ConversationTool(
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
         var instructions = ReadString(arguments, "instructions");
+        if (ConversationInputValidator.ValidateInstructions(instructions) is { } instructionsValidationError)
+            throw new ArgumentException(instructionsValidationError);
         if (arguments.ContainsKey("instructions"))
         {
             conversation.Instructions = string.IsNullOrWhiteSpace(instructions) ? null : instructions.Trim();
