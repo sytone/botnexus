@@ -357,19 +357,11 @@ public static class GatewayServiceCollectionExtensions
 
     private static PlatformConfig LoadConfigForRegistration(IConfiguration? configuration, string resolvedConfigPath, IFileSystem fileSystem)
     {
-        if (configuration is null)
-            return PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-
-        var config = new PlatformConfig();
-        configuration.Bind(config);
-        var rawJson = TryReadConfigFile(resolvedConfigPath, fileSystem);
-        if (!string.IsNullOrWhiteSpace(rawJson))
-        {
-            PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
-            PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
-        }
-
-        return config;
+        // Always load from the JSON file directly. Using configuration.Bind(config) on the
+        // full IConfiguration root causes crashes in Docker where the runtime injects keys
+        // (e.g. runtimeOptions:framework:version) that conflict with PlatformConfig properties.
+        // The file-based path handles migration and validation correctly.
+        return PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
     }
 
     private static string? TryReadConfigFile(string path, IFileSystem fileSystem)
