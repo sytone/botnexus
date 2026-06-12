@@ -20,7 +20,8 @@
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
     <Compile Include="Prompts\PromptTemplateRenderer.cs" />
     <Compile Include="Actions\CommandCronAction.cs" />
-    <Compile Include="Actions\MemoryDreamingCronAction.cs" />
+    <Compile Include="Actions\AgentConverseCronAction.cs" />
+     <Compile Include="Actions\MemoryDreamingCronAction.cs" />
     <Compile Include="Properties\InternalsVisibleTo.cs" />
     <Compile Include="Actions\HeartbeatAction.cs" />
     <Compile Include="Actions\TimeZoneHelper.cs" />

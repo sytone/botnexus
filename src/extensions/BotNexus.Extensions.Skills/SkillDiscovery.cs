@@ -28,14 +28,15 @@ public static class SkillDiscovery
         string? agentSkillsDir,
         string? workspaceSkillsDir,
         IFileSystem? fileSystem = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        SkillTrustMode trustMode = SkillTrustMode.Disabled)
     {
         var fs = fileSystem ?? new FileSystem();
         var skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
 
-        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger);
-        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger);
-        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger);
+        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode);
+        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode);
+        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger, trustMode);
 
         return skills.Values.ToList();
     }
@@ -45,7 +46,8 @@ public static class SkillDiscovery
         string? directory,
         SkillSource source,
         IFileSystem fileSystem,
-        ILogger? logger)
+        ILogger? logger,
+        SkillTrustMode trustMode)
     {
         if (string.IsNullOrWhiteSpace(directory) || !fileSystem.Directory.Exists(directory))
             return;
@@ -87,6 +89,28 @@ public static class SkillDiscovery
                         "Skill at '{SkillDir}' skipped: security scan found {CriticalCount} critical finding(s).",
                         skillDir, scanSummary.Critical);
                     continue;
+                }
+
+                // Trust verification: check script integrity against catalog
+                if (trustMode != SkillTrustMode.Disabled)
+                {
+                    var trustResult = SkillTrustVerifier.Verify(skillDir, fileSystem);
+                    if (!trustResult.Trusted)
+                    {
+                        var violations = string.Join("; ", trustResult.Violations);
+                        if (trustMode == SkillTrustMode.Enforce)
+                        {
+                            logger?.LogWarning(
+                                "Skill at '{SkillDir}' skipped: trust verification failed ({Violations}).",
+                                skillDir, violations);
+                            continue;
+                        }
+
+                        // Warn mode: log but allow
+                        logger?.LogWarning(
+                            "Skill at '{SkillDir}' has trust violations ({Violations}) — loading anyway (trust mode: warn).",
+                            skillDir, violations);
+                    }
                 }
 
                 skills[skill.Name] = skill;
