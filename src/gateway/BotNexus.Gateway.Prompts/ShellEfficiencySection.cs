@@ -13,6 +13,11 @@ public static class ShellEfficiencySection
     public const string Id = "shell-efficiency";
 
     /// <summary>
+    /// The XML tag name for this section in the assembled prompt.
+    /// </summary>
+    public const string Tag = "shell";
+
+    /// <summary>
     /// The ordering position for this section within the prompt pipeline.
     /// Placed after tool-enforcement (32) to build on established tool-call behavior.
     /// </summary>
@@ -20,7 +25,6 @@ public static class ShellEfficiencySection
 
     private static readonly string[] Lines =
     [
-        "## Shell Efficiency",
         "Prefer writing a temporary script file and executing it over chaining many individual shell commands.",
         "Combine related operations into a single shell invocation where possible.",
         "Avoid repeated read-modify-write cycles — batch edits into one tool call.",
@@ -33,5 +37,5 @@ public static class ShellEfficiencySection
     /// Creates a <see cref="LambdaPromptSection"/> for shell-efficiency guidance.
     /// </summary>
     public static LambdaPromptSection Create() =>
-        new(SectionOrder, static _ => Lines, sectionId: Id);
+        new(SectionOrder, static _ => Lines, sectionId: Id, xmlTag: Tag);
 }
