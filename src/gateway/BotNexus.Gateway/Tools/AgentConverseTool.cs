@@ -5,6 +5,7 @@ using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Gateway.Tools;
@@ -13,15 +14,18 @@ public sealed class AgentConverseTool(
     IAgentExchangeService conversationService,
     ISessionStore sessionStore,
     AgentId initiatorAgentId,
-    SessionId sessionId) : IAgentTool
+    SessionId sessionId,
+    AgentExchangeOptions? exchangeOptions = null) : IAgentTool
 {
+    private readonly AgentExchangeOptions _exchangeOptions = exchangeOptions ?? new AgentExchangeOptions();
+
     public string Name => "agent_converse";
     public string Label => "Agent Converse";
 
     public Tool Definition => new(
         Name,
         "Start a conversation with another registered agent.",
-        JsonDocument.Parse("""
+        JsonDocument.Parse($$"""
             {
               "type": "object",
               "properties": {
@@ -31,6 +35,7 @@ public sealed class AgentConverseTool(
                 "maxTurns": {
                   "type": "integer",
                   "minimum": 1,
+                  "maximum": {{_exchangeOptions.EffectiveMaxTurnsCeiling}},
                   "default": 1,
                   "description": "Maximum number of turns."
                 }
@@ -69,7 +74,7 @@ public sealed class AgentConverseTool(
                 TargetId = AgentId.From(targetAgentId),
                 Message = message,
                 Objective = ReadString(arguments, "objective"),
-                MaxTurns = Math.Max(1, ReadInt(arguments, "maxTurns", 1)),
+                MaxTurns = Math.Clamp(ReadInt(arguments, "maxTurns", 1), 1, _exchangeOptions.EffectiveMaxTurnsCeiling),
                 CallChain = await ResolveCallChainAsync(cancellationToken).ConfigureAwait(false)
             },
             cancellationToken).ConfigureAwait(false);

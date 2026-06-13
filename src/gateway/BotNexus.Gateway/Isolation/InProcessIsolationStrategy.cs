@@ -295,7 +295,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var includeConverse = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
             if (includeConverse)
-                tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
+            {
+                var converseExchangeOptions = _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()?.Value;
+                tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId, converseExchangeOptions));
+            }
         }
 
         // Phase 8 (F-11): register finish_agent_exchange when this is an agent-to-agent session.
