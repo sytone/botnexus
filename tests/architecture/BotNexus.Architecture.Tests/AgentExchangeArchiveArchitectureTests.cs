@@ -36,27 +36,49 @@ public sealed class AgentExchangeArchiveArchitectureTests
     private const string HelperName = "ArchiveOnExchangeEndAsync";
 
     [Fact]
-    public void AgentExchangeService_ConverseAsync_InvokesArchiveHelper()
+    public void AgentExchangeService_ConverseAsync_DelegatesToSharedExchangeLoop()
     {
+        // P9-C (#1384): the local A↔A path no longer inlines the seal/archive epilogue — it is
+        // single-sourced in RunExchangeLoopAsync. The fence now asserts ConverseAsync routes
+        // through that shared loop (so it cannot seal without going through the archive call),
+        // and a dedicated fence below pins that RunExchangeLoopAsync invokes the archive helper.
         var (source, methods) = LoadAndSplit(LocateAgentExchangeServiceFile());
 
-        AssertMethodInvokesHelper(methods, source, "ConverseAsync",
-            "P9-C: the local A↔A path in AgentExchangeService.ConverseAsync MUST invoke " +
-            $"{HelperName}(...) on its terminal seal paths (success + error catch). " +
-            "Without this, A↔A conversations stay Active forever in portal/list APIs " +
-            "after the exchange ends.");
+        AssertMethodInvokesHelper(methods, source, "ConverseAsync", "RunExchangeLoopAsync",
+            "P9-C: the local A↔A path in AgentExchangeService.ConverseAsync MUST drive the shared " +
+            "RunExchangeLoopAsync(...) which owns the terminal seal + ArchiveOnExchangeEndAsync " +
+            "contract. If you inline the loop again, restore a direct ArchiveOnExchangeEndAsync " +
+            "fence on its seal paths or A↔A conversations stay Active forever.");
     }
 
     [Fact]
-    public void AgentExchangeService_ConverseCrossWorldAsync_InvokesArchiveHelper()
+    public void AgentExchangeService_ConverseCrossWorldAsync_DelegatesToSharedExchangeLoop()
     {
+        // P9-C (#1384): the cross-world sender path likewise delegates the seal/archive lifecycle
+        // to the shared RunExchangeLoopAsync. See the local-path fence above for rationale.
         var (source, methods) = LoadAndSplit(LocateAgentExchangeServiceFile());
 
-        AssertMethodInvokesHelper(methods, source, "ConverseCrossWorldAsync",
+        AssertMethodInvokesHelper(methods, source, "ConverseCrossWorldAsync", "RunExchangeLoopAsync",
             "P9-C: the cross-world sender path in AgentExchangeService.ConverseCrossWorldAsync " +
-            $"MUST invoke {HelperName}(...) on its terminal seal paths (success + error catch). " +
-            "Without this, sender-side A↔A conversations stay Active forever after the " +
-            "exchange ends.");
+            "MUST drive the shared RunExchangeLoopAsync(...) which owns the terminal seal + " +
+            "ArchiveOnExchangeEndAsync contract. Without it, sender-side A↔A conversations stay " +
+            "Active forever after the exchange ends.");
+    }
+
+    [Fact]
+    public void AgentExchangeService_RunExchangeLoop_InvokesArchiveHelper()
+    {
+        // The single source of truth for the A↔A seal/archive lifecycle (#1384). Both
+        // ConverseAsync and ConverseCrossWorldAsync delegate here, so this is where the
+        // ArchiveOnExchangeEndAsync(...) call must live — on BOTH the success seal and the
+        // error catch arm.
+        var (source, methods) = LoadAndSplit(LocateAgentExchangeServiceFile());
+
+        AssertMethodInvokesHelper(methods, source, "RunExchangeLoopAsync", HelperName,
+            "P9-C: the shared AgentExchangeService.RunExchangeLoopAsync MUST invoke " +
+            $"{HelperName}(...) on its terminal seal paths (success + error catch). This is the " +
+            "single-sourced lifecycle that ConverseAsync and ConverseCrossWorldAsync both drive. " +
+            "Without it, A↔A conversations stay Active forever in portal/list APIs.");
     }
 
     [Fact]
@@ -64,7 +86,7 @@ public sealed class AgentExchangeArchiveArchitectureTests
     {
         var (source, methods) = LoadAndSplit(LocateCrossWorldFederationControllerFile());
 
-        AssertMethodInvokesHelper(methods, source, "ExecuteRelayAsync",
+        AssertMethodInvokesHelper(methods, source, "ExecuteRelayAsync", HelperName,
             "P9-C: the cross-world receiver path in CrossWorldFederationController.ExecuteRelayAsync " +
             $"MUST invoke {HelperName}(...) on its terminal paths " +
             "(exchangeFinished, CloseAfterResponse, and error catch). Without this, " +
@@ -216,6 +238,7 @@ public sealed class AgentExchangeArchiveArchitectureTests
         List<(string Name, string Body, int StartIndex)> methods,
         string source,
         string methodName,
+        string invokedLiteral,
         string failureMessage)
     {
         var method = methods.FirstOrDefault(m => m.Name == methodName);
@@ -224,12 +247,14 @@ public sealed class AgentExchangeArchiveArchitectureTests
             "renamed or refactored away, update this test accordingly. Found methods: " +
             string.Join(", ", methods.Select(m => m.Name)));
 
-        MethodInvokesHelper(method.Body).ShouldBeTrue(failureMessage);
+        MethodInvokes(method.Body, invokedLiteral).ShouldBeTrue(failureMessage);
     }
 
-    private static bool MethodInvokesHelper(string body)
+    private static bool MethodInvokesHelper(string body) => MethodInvokes(body, HelperName);
+
+    private static bool MethodInvokes(string body, string invokedLiteral)
     {
-        var pattern = new Regex(@"\b" + Regex.Escape(HelperName) + @"\s*\(", RegexOptions.Compiled);
+        var pattern = new Regex(@"\b" + Regex.Escape(invokedLiteral) + @"\s*\(", RegexOptions.Compiled);
         return pattern.IsMatch(body);
     }
 
