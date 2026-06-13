@@ -1222,7 +1222,7 @@ public sealed class PlatformConfigValidationTests
             });
 
     [Fact]
-    public async Task Validate_SqliteSessionStoreMissingConnectionString_ThrowsValidationError()
+    public async Task Validate_SqliteSessionStoreMissingConnectionString_DefaultsWithoutError()
     {
         await WithConfigFileAsync(
             """
@@ -1245,8 +1245,8 @@ public sealed class PlatformConfigValidationTests
             """,
             async configPath =>
             {
-                var ex = await Should.ThrowAsync<OptionsValidationException>(() => PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: true));
-                ex.Failures.ShouldContain("gateway.sessionStore.connectionString is required when gateway.sessionStore.type is 'Sqlite'.");
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: true);
+                config.Gateway!.SessionStore!.Type.ShouldBe("Sqlite");
             });
     }
 
