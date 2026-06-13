@@ -410,64 +410,16 @@ internal class UpdateCommand
 
     private static async Task<GitCommandResult> RunGitFetchCoreAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
-        Process? proc = null;
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" fetch origin main",
-                UseShellExecute = false,
-                RedirectStandardOutput = !verbose,
-                RedirectStandardError = !verbose,
-                CreateNoWindow = true
-            };
-
-            proc = Process.Start(psi);
-            if (proc is null)
-                return new GitCommandResult(1, "Failed to start git process.", false);
-
-            var stdoutTask = verbose
-                ? Task.FromResult(string.Empty)
-                : proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = verbose
-                ? Task.FromResult(string.Empty)
-                : proc.StandardError.ReadToEndAsync(cancellationToken);
-
-            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
-
-            if (proc.ExitCode == 0)
-                return new GitCommandResult(0, null, false);
-
-            var stderr = await stderrTask;
-            var stdout = await stdoutTask;
-            var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
-            return new GitCommandResult(proc.ExitCode, details, false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            if (proc is { HasExited: false })
-            {
-                try
-                {
-                    proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Best-effort kill to avoid orphaned git processes.
-                }
-            }
-
+        var result = await RunGitAsync(repoRoot, "fetch origin main", captureOutput: !verbose, cancellationToken);
+        if (result.WasCanceled)
             return new GitCommandResult(CancelledExitCode, null, true);
-        }
-        catch (Exception ex)
-        {
-            return new GitCommandResult(1, ex.Message, false);
-        }
-        finally
-        {
-            proc?.Dispose();
-        }
+        if (!result.Started)
+            return new GitCommandResult(1, "Failed to start git process.", false);
+        if (result.ExitCode == 0)
+            return new GitCommandResult(0, null, false);
+
+        var details = FirstNonEmptyLine(result.Stderr) ?? FirstNonEmptyLine(result.Stdout);
+        return new GitCommandResult(result.ExitCode, details, false);
     }
 
     protected virtual Task<GitBehindResult> GetBehindCountAsync(string repoRoot, CancellationToken cancellationToken)
@@ -475,126 +427,35 @@ internal class UpdateCommand
 
     private static async Task<GitBehindResult> GetBehindCountCoreAsync(string repoRoot, CancellationToken cancellationToken)
     {
-        Process? proc = null;
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" rev-list --count HEAD..origin/main",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            proc = Process.Start(psi);
-            if (proc is null)
-                return new GitBehindResult(1, 0, "Failed to start git process.", false);
-
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
-
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-            if (proc.ExitCode != 0)
-            {
-                var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
-                return new GitBehindResult(proc.ExitCode, 0, details, false);
-            }
-
-            if (!int.TryParse(stdout.Trim(), out var count))
-                return new GitBehindResult(1, 0, "Unexpected git output while parsing behind count.", false);
-
-            return new GitBehindResult(0, count, null, false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            if (proc is { HasExited: false })
-            {
-                try
-                {
-                    proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Best-effort kill to avoid orphaned git processes.
-                }
-            }
-
+        var result = await RunGitAsync(repoRoot, "rev-list --count HEAD..origin/main", captureOutput: true, cancellationToken);
+        if (result.WasCanceled)
             return new GitBehindResult(CancelledExitCode, 0, null, true);
-        }
-        catch (Exception ex)
+        if (!result.Started)
+            return new GitBehindResult(1, 0, "Failed to start git process.", false);
+        if (result.ExitCode != 0)
         {
-            return new GitBehindResult(1, 0, ex.Message, false);
+            var details = FirstNonEmptyLine(result.Stderr) ?? FirstNonEmptyLine(result.Stdout);
+            return new GitBehindResult(result.ExitCode, 0, details, false);
         }
-        finally
-        {
-            proc?.Dispose();
-        }
+
+        if (!int.TryParse(result.Stdout.Trim(), out var count))
+            return new GitBehindResult(1, 0, "Unexpected git output while parsing behind count.", false);
+
+        return new GitBehindResult(0, count, null, false);
     }
 
     private static async Task<GitPullResult> RunGitPullCoreAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
-        Process? proc = null;
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" pull origin main",
-                UseShellExecute = false,
-                RedirectStandardOutput = !verbose,
-                RedirectStandardError = !verbose,
-                CreateNoWindow = true
-            };
-
-            proc = Process.Start(psi);
-            if (proc is null)
-                return new GitPullResult(1, "Failed to start git process.", false);
-
-            var stdoutTask = verbose
-                ? Task.FromResult(string.Empty)
-                : proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = verbose
-                ? Task.FromResult(string.Empty)
-                : proc.StandardError.ReadToEndAsync(cancellationToken);
-
-            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
-
-            if (proc.ExitCode == 0)
-                return new GitPullResult(0, null, false);
-
-            var stderr = await stderrTask;
-            var stdout = await stdoutTask;
-            var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
-            return new GitPullResult(proc.ExitCode, details, false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            if (proc is { HasExited: false })
-            {
-                try
-                {
-                    proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Best-effort kill to avoid orphaned git processes.
-                }
-            }
-
+        var result = await RunGitAsync(repoRoot, "pull origin main", captureOutput: !verbose, cancellationToken);
+        if (result.WasCanceled)
             return new GitPullResult(CancelledExitCode, null, true);
-        }
-        catch (Exception ex)
-        {
-            return new GitPullResult(1, ex.Message, false);
-        }
-        finally
-        {
-            proc?.Dispose();
-        }
+        if (!result.Started)
+            return new GitPullResult(1, "Failed to start git process.", false);
+        if (result.ExitCode == 0)
+            return new GitPullResult(0, null, false);
+
+        var details = FirstNonEmptyLine(result.Stderr) ?? FirstNonEmptyLine(result.Stdout);
+        return new GitPullResult(result.ExitCode, details, false);
     }
 
     protected virtual string GetCommitSha(string repoRoot)
@@ -630,27 +491,10 @@ internal class UpdateCommand
 
     private static async Task<int> CountCommitsBetweenCoreAsync(string repoRoot, string from, string to, CancellationToken cancellationToken)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" rev-list --count {from}..{to}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return 0;
-            var output = await proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            await proc.WaitForExitAsync(cancellationToken);
-            return int.TryParse(output.Trim(), out var n) ? n : 0;
-        }
-        catch
-        {
+        var result = await RunGitAsync(repoRoot, $"rev-list --count {from}..{to}", captureOutput: true, cancellationToken);
+        if (result.WasCanceled || !result.Started)
             return 0;
-        }
+        return int.TryParse(result.Stdout.Trim(), out var n) ? n : 0;
     }
 
     /// <summary>
@@ -669,32 +513,13 @@ internal class UpdateCommand
         string to,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" log --format=%s --reverse {from}..{to}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return Array.Empty<string>();
-            var output = await proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            await proc.WaitForExitAsync(cancellationToken);
-            if (proc.ExitCode != 0)
-                return Array.Empty<string>();
-
-            return output
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToArray();
-        }
-        catch
-        {
+        var result = await RunGitAsync(repoRoot, $"log --format=%s --reverse {from}..{to}", captureOutput: true, cancellationToken);
+        if (result.WasCanceled || !result.Started || result.ExitCode != 0)
             return Array.Empty<string>();
-        }
+
+        return result.Stdout
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToArray();
     }
 
     /// <summary>
@@ -797,6 +622,82 @@ internal class UpdateCommand
         }
     }
 
+    /// <summary>
+    /// Runs a single <c>git</c> subprocess against <paramref name="repoRoot"/> and returns its
+    /// exit code plus captured output. This is the single source of the process-spawn,
+    /// output-capture and cancel-kill plumbing shared by every git helper on the update path
+    /// (previously copy-pasted five times). When <paramref name="captureOutput"/> is false the
+    /// child's stdout/stderr stream straight to the console (interactive/verbose pull/fetch) and
+    /// the returned <c>Stdout</c>/<c>Stderr</c> are empty.
+    /// </summary>
+    /// <remarks>
+    /// Getting the cancellation behaviour right matters here: a leaked <c>git</c> child during a
+    /// self-update is a bad failure mode, so on cancellation the whole process tree is killed
+    /// best-effort before rethrowing as a canceled result.
+    /// </remarks>
+    private static async Task<GitExec> RunGitAsync(
+        string repoRoot,
+        string arguments,
+        bool captureOutput,
+        CancellationToken cancellationToken)
+    {
+        Process? proc = null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = $"-C \"{repoRoot}\" {arguments}",
+                UseShellExecute = false,
+                RedirectStandardOutput = captureOutput,
+                RedirectStandardError = captureOutput,
+                CreateNoWindow = true
+            };
+
+            proc = Process.Start(psi);
+            if (proc is null)
+                return new GitExec(1, string.Empty, string.Empty, WasCanceled: false, Started: false);
+
+            var stdoutTask = captureOutput
+                ? proc.StandardOutput.ReadToEndAsync(cancellationToken)
+                : Task.FromResult(string.Empty);
+            var stderrTask = captureOutput
+                ? proc.StandardError.ReadToEndAsync(cancellationToken)
+                : Task.FromResult(string.Empty);
+
+            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
+
+            return new GitExec(proc.ExitCode, await stdoutTask, await stderrTask, WasCanceled: false, Started: true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (proc is { HasExited: false })
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort kill to avoid orphaned git processes.
+                }
+            }
+
+            return new GitExec(CancelledExitCode, string.Empty, string.Empty, WasCanceled: true, Started: proc is not null);
+        }
+        catch (Exception ex)
+        {
+            // Surface a process-launch/IO failure (e.g. git not on PATH) as a failed
+            // result with the message in Stderr so callers can render a detail line,
+            // matching the previous per-helper general catch behaviour.
+            return new GitExec(1, string.Empty, ex.Message, WasCanceled: false, Started: proc is not null);
+        }
+        finally
+        {
+            proc?.Dispose();
+        }
+    }
+
     private static string? FirstNonEmptyLine(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -850,4 +751,13 @@ internal class UpdateCommand
     internal readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
     internal readonly record struct GitCommandResult(int ExitCode, string? FailureDetail, bool WasCanceled);
     internal readonly record struct GitBehindResult(int ExitCode, int BehindCount, string? FailureDetail, bool WasCanceled);
+
+    /// <summary>
+    /// Result of a single <c>git</c> subprocess invocation run through <see cref="RunGitAsync"/>.
+    /// <paramref name="Stdout"/>/<paramref name="Stderr"/> are empty when output capture was
+    /// disabled (interactive/verbose pass-through). <paramref name="WasCanceled"/> is set when the
+    /// process was killed in response to cancellation. <paramref name="Started"/> is false when the
+    /// process failed to start at all.
+    /// </summary>
+    internal readonly record struct GitExec(int ExitCode, string Stdout, string Stderr, bool WasCanceled, bool Started);
 }
