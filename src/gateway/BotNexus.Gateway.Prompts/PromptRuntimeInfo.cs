@@ -45,4 +45,15 @@ public sealed record PromptRuntimeInfo
     /// Gets or sets the capabilities.
     /// </summary>
     public IReadOnlyList<string>? Capabilities { get; init; }
+    /// <summary>
+    /// Gets the agent's own session id for the active run, so the agent can reference
+    /// and target itself at runtime (for example for self-diagnosis or session-scoped tooling).
+    /// </summary>
+    public string? SessionId { get; init; }
+    /// <summary>
+    /// Gets the agent's own session key (channel-scoped routing identifier) for the active run.
+    /// Emitted separately from <see cref="SessionId"/> because the two identify the session at
+    /// different layers (persistence id vs channel routing key).
+    /// </summary>
+    public string? SessionKey { get; init; }
 }

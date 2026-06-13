@@ -147,7 +147,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
                 Os = Environment.OSVersion.ToString(),
                 Provider = descriptor.ApiProvider,
                 Model = descriptor.ModelId,
-                Channel = "signalr"
+                Channel = "signalr",
+                SessionId = executionContext?.SessionId.Value
             },
             HeartbeatPrompt = descriptor.Heartbeat?.Enabled == true
                 ? descriptor.Heartbeat.Prompt ?? "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK."

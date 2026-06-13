@@ -16,6 +16,8 @@ public static class RuntimeLineFormatter
         var parts = new List<string>
         {
             !string.IsNullOrWhiteSpace(runtime?.AgentId) ? $"agent={runtime!.AgentId}" : string.Empty,
+            !string.IsNullOrWhiteSpace(runtime?.SessionId) ? $"session={runtime!.SessionId}" : string.Empty,
+            !string.IsNullOrWhiteSpace(runtime?.SessionKey) ? $"session_key={runtime!.SessionKey}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Host) ? $"host={runtime!.Host}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Os)
                 ? $"os={runtime!.Os}{(!string.IsNullOrWhiteSpace(runtime.Arch) ? $" ({runtime.Arch})" : string.Empty)}"
