@@ -193,6 +193,14 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
+        // Per-session caller authorization (#558). Killing a sub-agent is a state
+        // mutation, so it must enforce the same caller-identity gate as Delete and
+        // Suspend - otherwise any caller able to name a valid (sessionId, subAgentId)
+        // pair could terminate a sub-agent run owned by a different caller.
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
         var subAgent = await _subAgentManager.GetAsync(subAgentId, cancellationToken);
         if (subAgent is null)
             return NotFound();
