@@ -42,7 +42,7 @@ public sealed class OpenAIStreamProcessor
         CancellationToken ct,
         Action<JsonElement>? inspectChunk = null)
     {
-        var contentBlocks = new List<ContentBlock>();
+        var contentBlocks = new PartialContentTracker();
         var usage = Usage.Empty();
         string? responseId = null;
 
@@ -52,14 +52,22 @@ public sealed class OpenAIStreamProcessor
         var textAccumulator = new StringBuilder();
         var thinkingAccumulator = new StringBuilder();
 
-        var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex, string? ThoughtSignature)>();
+        var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex, string? ThoughtSignature, Dictionary<string, object?>? LastParsedArgs, int LastParsedLength)>();
 
         var startEmitted = false;
         StopReason? stopReason = null;
         string? errorMessage = null;
 
+        // BuildPartial is invoked once per streamed event (start, every text/thinking/tool-call
+        // delta, and the end events). The previous implementation copied the whole content list
+        // (`contentBlocks.ToList()`) on every call, allocating a fresh list plus AssistantMessage
+        // record per token-ish event — linear GC pressure on the hottest path in the agent loop.
+        // PartialContentTracker caches an immutable snapshot and only rebuilds it when the content
+        // list actually changes shape, so back-to-back BuildPartial calls between mutations reuse
+        // the same snapshot list. ContentBlock is an immutable record, so a shape-stable snapshot
+        // is safe to share across events. (#1378)
         AssistantMessage BuildPartial() => new(
-            Content: contentBlocks.ToList(),
+            Content: contentBlocks.Snapshot(),
             Api: api,
             Provider: model.Provider,
             ModelId: model.Id,
@@ -100,7 +108,7 @@ public sealed class OpenAIStreamProcessor
                 if (root.TryGetProperty("error", out _))
                 {
                     var errorMsg = extractProviderErrorMessage(root.GetRawText(), model);
-                    emitError(stream, model, errorMsg, contentBlocks);
+                    emitError(stream, model, errorMsg, contentBlocks.ToList());
                     return;
                 }
 
@@ -277,7 +285,7 @@ public sealed class OpenAIStreamProcessor
 
                                 var contentIndex = contentBlocks.Count;
                                 contentBlocks.Add(new ToolCallContent(tcId, fnName, []));
-                                toolCallState[tcIndex] = (tcId, fnName, new StringBuilder(), contentIndex, thoughtSignature);
+                                toolCallState[tcIndex] = (tcId, fnName, new StringBuilder(), contentIndex, thoughtSignature, null, -1);
 
                                 stream.Push(new ToolCallStartEvent(contentIndex, BuildPartial()));
                             }
@@ -293,9 +301,27 @@ public sealed class OpenAIStreamProcessor
                                     state.Args.Append(argsChunk);
                                     if (thoughtSignature is not null)
                                         state.ThoughtSignature = thoughtSignature;
+
+                                    // Per-delta parse is required: consumers (StreamAccumulator)
+                                    // read the parsed args off the partial message on every delta,
+                                    // so deferring the parse to the end would change observable
+                                    // behavior. We do cache the result + the buffer length it was
+                                    // parsed at, so the closing pass below does not re-parse an
+                                    // unchanged buffer (the redundant final parse this used to do).
+                                    var bufferLength = state.Args.Length;
+                                    Dictionary<string, object?> parsedArgs;
+                                    if (state.LastParsedArgs is not null && state.LastParsedLength == bufferLength)
+                                    {
+                                        parsedArgs = state.LastParsedArgs;
+                                    }
+                                    else
+                                    {
+                                        parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
+                                        state.LastParsedArgs = parsedArgs;
+                                        state.LastParsedLength = bufferLength;
+                                    }
                                     toolCallState[tcIndex] = state;
 
-                                    var parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
                                     contentBlocks[state.ContentIndex] =
                                         new ToolCallContent(state.Id, state.Name, parsedArgs, state.ThoughtSignature);
 
@@ -317,7 +343,13 @@ public sealed class OpenAIStreamProcessor
 
         foreach (var (_, state) in toolCallState)
         {
-            var parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
+            // Reuse the args parsed on the final delta when the buffer has not grown since
+            // (the common case — a tool call's last delta parses the complete buffer). Only
+            // re-parse if no cached parse covers the current buffer length, e.g. a tool call
+            // that received an id/name but never any argument deltas. (#1378)
+            var parsedArgs = state.LastParsedArgs is not null && state.LastParsedLength == state.Args.Length
+                ? state.LastParsedArgs
+                : StreamingJsonParser.Parse(state.Args.ToString());
             var toolCall = new ToolCallContent(state.Id, state.Name, parsedArgs, state.ThoughtSignature);
             contentBlocks[state.ContentIndex] = toolCall;
             stream.Push(new ToolCallEndEvent(state.ContentIndex, toolCall, BuildPartial()));
@@ -559,5 +591,56 @@ public sealed class OpenAIStreamProcessor
         /// Gets the arguments json.
         /// </summary>
         public StringBuilder ArgumentsJson { get; } = new();
+    }
+
+    /// <summary>
+    /// Mutable content-block list with a cached immutable snapshot for the streaming partial
+    /// message. <c>BuildPartial()</c> runs once per streamed event; copying the whole list each
+    /// time was a linear allocation source on the hottest path. This tracker rebuilds the
+    /// snapshot only when the list actually changes shape (an <see cref="Add"/> or an indexer
+    /// replace), so the many <see cref="Snapshot"/> reads that happen between mutations all
+    /// share the same immutable list. <see cref="ContentBlock"/> is an immutable record, so a
+    /// shape-stable snapshot is safe to hand out across events. (#1378)
+    /// </summary>
+    private sealed class PartialContentTracker
+    {
+        private readonly List<ContentBlock> _blocks = [];
+        private IReadOnlyList<ContentBlock>? _snapshot;
+
+        /// <summary>Gets the number of content blocks accumulated so far.</summary>
+        public int Count => _blocks.Count;
+
+        /// <summary>Appends a block and invalidates the cached snapshot.</summary>
+        public void Add(ContentBlock block)
+        {
+            _blocks.Add(block);
+            _snapshot = null;
+        }
+
+        /// <summary>
+        /// Replaces the block at <paramref name="index"/> and invalidates the cached snapshot.
+        /// Only a setter is exposed because the processor never reads blocks back through the
+        /// indexer — it tracks indices in local variables.
+        /// </summary>
+        public ContentBlock this[int index]
+        {
+            set
+            {
+                _blocks[index] = value;
+                _snapshot = null;
+            }
+        }
+
+        /// <summary>
+        /// Returns the current content as an immutable snapshot, reusing the cached instance when
+        /// the list has not changed shape since the last call.
+        /// </summary>
+        public IReadOnlyList<ContentBlock> Snapshot() => _snapshot ??= _blocks.ToArray();
+
+        /// <summary>
+        /// Returns a fresh mutable copy of the current content. Used only on the cold error path
+        /// where a <c>List&lt;ContentBlock&gt;</c> is required by the provider error callback.
+        /// </summary>
+        public List<ContentBlock> ToList() => [.. _blocks];
     }
 }
