@@ -18,13 +18,23 @@ namespace BotNexus.Gateway.Conversations;
 /// reduce the window, or disable auto-archive entirely for a specific agent.
 /// </para>
 /// <para>Pinned conversations are always excluded from auto-archive.</para>
+/// <para>
+/// <paramref name="changeNotifier"/> is an <b>optional</b> dependency with an explicit
+/// <c>= null</c> default. <see cref="IConversationChangeNotifier"/> is only registered when the
+/// SignalR channel extension is active; in minimal or non-SignalR deployments (e.g. the documented
+/// Docker config) it is absent. Microsoft.Extensions.DependencyInjection ignores the C# nullable
+/// annotation for single-service constructor parameters, so without the default value
+/// <c>ValidateOnBuild</c> would fail to activate this hosted service and crash the host on startup
+/// (regression of #1282/#1284). The default keeps the dependency genuinely optional;
+/// <see cref="NotifyBestEffortAsync"/> already null-guards before use.
+/// </para>
 /// </summary>
 public sealed class ConversationRetentionHostedService(
     IConversationStore conversationStore,
-    IConversationChangeNotifier? changeNotifier,
     IAgentRegistry agentRegistry,
     IOptions<ConversationRetentionOptions> optionsAccessor,
-    ILogger<ConversationRetentionHostedService> logger) : BackgroundService
+    ILogger<ConversationRetentionHostedService> logger,
+    IConversationChangeNotifier? changeNotifier = null) : BackgroundService
 {
     private readonly IConversationStore _conversationStore = conversationStore;
     private readonly IConversationChangeNotifier? _changeNotifier = changeNotifier;

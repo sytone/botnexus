@@ -5,6 +5,9 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -25,10 +28,10 @@ public sealed class ConversationRetentionHostedServiceTests
         notifier ??= Substitute.For<IConversationChangeNotifier>();
         return new ConversationRetentionHostedService(
             store,
-            notifier,
             registry,
             Options.Create(options),
-            NullLogger<ConversationRetentionHostedService>.Instance);
+            NullLogger<ConversationRetentionHostedService>.Instance,
+            notifier);
     }
 
     private static AgentDescriptor CreateDescriptor(
@@ -182,10 +185,10 @@ public sealed class ConversationRetentionHostedServiceTests
 
         var svc = new ConversationRetentionHostedService(
             store,
-            null,
             registry,
             Options.Create(options),
-            NullLogger<ConversationRetentionHostedService>.Instance);
+            NullLogger<ConversationRetentionHostedService>.Instance,
+            changeNotifier: null);
         var archived = await svc.RunRetentionOnceAsync();
 
         archived.ShouldBe(1);
@@ -209,5 +212,90 @@ public sealed class ConversationRetentionHostedServiceTests
 
         await notifier.Received(1).NotifyConversationChangedAsync(
             "archived", "a-1", "c-1", Arg.Any<CancellationToken>());
+    }
+
+    // ── DI activation regression (#1360 / #1282 / #1284) ──────────────────────────
+    // The change-notifier is registered only by the SignalR channel extension. In a
+    // minimal / non-SignalR deployment (the documented Docker config) it is absent, so the
+    // hosted service MUST still activate. Microsoft.Extensions.DependencyInjection ignores the
+    // C# nullable annotation for single-service ctor params, hence the `= null` default. These
+    // tests build a real container with ValidateOnBuild + ValidateScopes to reproduce the exact
+    // startup-crash path #1284 left unguarded.
+
+    private static ServiceCollection BuildMinimalServices(bool registerNotifier)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddOptions<ConversationRetentionOptions>();
+        services.AddSingleton<IConversationStore>(new InMemoryConversationStore());
+        services.AddSingleton<IAgentRegistry>(
+            new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
+        if (registerNotifier)
+            services.AddSingleton(Substitute.For<IConversationChangeNotifier>());
+        services.AddHostedService<ConversationRetentionHostedService>();
+        return services;
+    }
+
+    [Fact]
+    public void HostedService_ActivatesWithoutChangeNotifier_WhenValidatingOnBuild()
+    {
+        var services = BuildMinimalServices(registerNotifier: false);
+
+        // Reproduces the host startup path: ValidateOnBuild eagerly activates every IHostedService.
+        using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        var hosted = provider.GetServices<IHostedService>().ToList();
+        hosted.ShouldContain(s => s is ConversationRetentionHostedService);
+    }
+
+    [Fact]
+    public void HostedService_ActivatesWithChangeNotifier_WhenRegistered()
+    {
+        var services = BuildMinimalServices(registerNotifier: true);
+
+        using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        var hosted = provider.GetServices<IHostedService>().ToList();
+        hosted.ShouldContain(s => s is ConversationRetentionHostedService);
+    }
+
+    [Fact]
+    public void ConstructingDirectly_WithoutNotifier_DoesNotThrow()
+    {
+        var store = new InMemoryConversationStore();
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var options = Options.Create(new ConversationRetentionOptions());
+
+        var act = () => new ConversationRetentionHostedService(
+            store,
+            registry,
+            options,
+            NullLogger<ConversationRetentionHostedService>.Instance);
+
+        Should.NotThrow(act);
+    }
+
+    [Fact]
+    public async Task RunRetentionOnceAsync_WithoutNotifier_DoesNotThrowOnArchive()
+    {
+        var store = new InMemoryConversationStore();
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        await store.CreateAsync(CreateConversation("c-1", "a-1", inactiveDays: 31));
+        var options = new ConversationRetentionOptions { AutoArchiveEnabled = true, AutoArchiveAfterDays = 30 };
+
+        // No notifier supplied -> NotifyBestEffortAsync must short-circuit, not NRE.
+        var svc = new ConversationRetentionHostedService(
+            store,
+            registry,
+            Options.Create(options),
+            NullLogger<ConversationRetentionHostedService>.Instance);
+
+        var archived = await svc.RunRetentionOnceAsync();
+
+        archived.ShouldBe(1);
+        var conv = await store.GetAsync(ConversationId.From("c-1"));
+        conv!.Status.ShouldBe(ConversationStatus.Archived);
     }
 }
