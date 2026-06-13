@@ -31,6 +31,12 @@ public sealed class LivenessWatchdogOptions
 /// Background service that monitors gateway activity and logs warnings when the process
 /// appears unresponsive. Detects the scenario where the gateway is alive (port open)
 /// but unable to schedule work (deadlock/threadpool exhaustion).
+///
+/// "Activity" is recorded by <see cref="IActivityTracker"/> from the agent execution
+/// choke point (<c>InProcessAgentHandle</c>) on every streamed agent event and on the
+/// blocking prompt path, plus at inbound dispatch entry. This means a long-running turn
+/// or a cron/soul run keeps the tracker fresh, so crossing a threshold reflects a genuine
+/// stall rather than a normal quiet period or an in-flight turn (#1320).
 /// </summary>
 public sealed class LivenessWatchdogService(
     IActivityTracker activityTracker,
