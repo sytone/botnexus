@@ -1,5 +1,7 @@
 using BotNexus.Domain.Primitives;
 using System.Diagnostics;
+using System.IO.Abstractions;
+using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -229,6 +231,47 @@ public sealed class PlatformConfigurationTests
 
         Directory.Exists(path).ShouldBeTrue();
         Directory.Delete(path, recursive: true);
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_EnsureConfigDirectory_SkipsCreation_WhenDirectoryAlreadyExists()
+    {
+        // Simulates a Docker `:ro` config mount: the directory already exists, so EnsureConfigDirectory
+        // must NOT attempt to (re)create it (which would throw on a read-only filesystem).
+        var fileSystem = new MockFileSystem();
+        var existingDir = Path.Combine(Path.GetTempPath(), "botnexus-ro", Guid.NewGuid().ToString("N"));
+        fileSystem.Directory.CreateDirectory(existingDir);
+
+        var ex = Record.Exception(() => PlatformConfigLoader.EnsureConfigDirectory(existingDir, fileSystem));
+
+        ex.ShouldBeNull();
+        fileSystem.Directory.Exists(existingDir).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void PlatformConfigPostConfigure_DoesNotThrow_WhenConfigJsonIsMalformed()
+    {
+        // A malformed config.json must not crash IOptions resolution (PostConfigure runs when
+        // IOptions<PlatformConfig> is first resolved). The raw-JSON helpers parse the file and
+        // would otherwise throw a JsonException that takes the host down.
+        var dir = Path.Combine(Path.GetTempPath(), "botnexus-postconfig", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(configPath, "not valid json {{{");
+        try
+        {
+            var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
+            var postConfigure = new PlatformConfigPostConfigure(configuration, configPath);
+            var config = new PlatformConfig();
+
+            var ex = Record.Exception(() => postConfigure.PostConfigure(null, config));
+
+            ex.ShouldBeNull();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     [Fact]

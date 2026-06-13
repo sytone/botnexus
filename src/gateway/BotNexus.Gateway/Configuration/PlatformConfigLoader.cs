@@ -200,7 +200,20 @@ public static class PlatformConfigLoader
             return;
         }
 
-        fs.Directory.CreateDirectory(configDir);
+        // Tolerate a read-only config directory (e.g. Docker `:ro` mount). When the directory
+        // already exists we don't need to create it; when the filesystem is read-only we let the
+        // gateway continue and rely on BOTNEXUS_DATA_DIR for writable runtime state.
+        if (fs.Directory.Exists(configDir))
+            return;
+
+        try
+        {
+            fs.Directory.CreateDirectory(configDir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Read-only or permission-denied config directory — continue without creating it.
+        }
     }
 
     /// <summary>

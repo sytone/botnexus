@@ -103,15 +103,15 @@ public sealed class BotNexusHome
     public void Initialize()
     {
         // Create data directory structure (writable in normal deployments).
-        // Tolerate IOException for read-only filesystems (Docker :ro mounts) —
-        // the gateway can still function if directories already exist or aren't needed.
+        // Tolerate IOException/UnauthorizedAccessException for read-only filesystems (Docker :ro
+        // mounts) — the gateway can still function if directories already exist or aren't needed.
         try
         {
             _fileSystem.Directory.CreateDirectory(DataPath);
             foreach (var directory in DataDirectories)
                 _fileSystem.Directory.CreateDirectory(Path.Combine(DataPath, directory));
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Read-only filesystem — skip directory creation.
             // Gateway will function with reduced capabilities (no persistent sessions, no agent workspaces).
@@ -123,7 +123,7 @@ public sealed class BotNexusHome
             && !_fileSystem.Directory.Exists(RootPath))
         {
             try { _fileSystem.Directory.CreateDirectory(RootPath); }
-            catch (IOException) { /* read-only — skip */ }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* read-only — skip */ }
         }
     }
 

@@ -70,14 +70,24 @@ var resolvedConfigPath = string.IsNullOrWhiteSpace(platformConfigPath)
 
 // Add config.json to the IConfiguration pipeline so IOptionsMonitor<T> gets reload and extension
 // assemblies can bind their own config sections without a separate file-reading path.
-// Wrapped in try/catch: malformed JSON should not prevent startup (gateway uses defaults).
-try
+// Pre-validate the JSON: a malformed config.json must not prevent startup. ConfigurationManager
+// eagerly loads (and re-loads on change) each source, and a parse failure there escapes on a
+// background thread which would crash the host. If the file is invalid we skip adding it to the
+// pipeline entirely and the gateway runs on defaults until the file is fixed and the host restarts.
+if (IsValidJsonFile(resolvedConfigPath))
 {
-    builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+    try
+    {
+        builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Failed to add {ConfigPath} to configuration — using defaults. Fix the JSON and restart.", resolvedConfigPath);
+    }
 }
-catch (Exception ex)
+else if (File.Exists(resolvedConfigPath))
 {
-    Log.Warning(ex, "Failed to parse {ConfigPath} — using defaults. Fix the JSON and restart.", resolvedConfigPath);
+    Log.Warning("{ConfigPath} is not valid JSON — using defaults. Fix the JSON and restart to apply it.", resolvedConfigPath);
 }
 
 PlatformConfig startupPlatformConfig;
@@ -164,8 +174,10 @@ builder.Services.Configure<CronOptions>(options =>
             StringComparer.OrdinalIgnoreCase);
 });
 
-// Webhook stores - SQLite co-located with the config directory.
-var webhookDbPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(resolvedConfigPath)!, "webhooks.sqlite");
+// Webhook stores - SQLite placed in the writable data directory (BOTNEXUS_DATA_DIR) so it works
+// when the config directory is mounted read-only; falls back to the config directory locally.
+var webhookDataDir = BotNexusHome.ResolveDataPath() ?? System.IO.Path.GetDirectoryName(resolvedConfigPath)!;
+var webhookDbPath = System.IO.Path.Combine(webhookDataDir, "webhooks.sqlite");
 builder.Services.AddBotNexusWebhooks(webhookDbPath);
 
 static string? ResolveCronModel(CronJobConfig config)
@@ -581,6 +593,32 @@ static string? GetGitCommitHash()
         return string.IsNullOrEmpty(hash) ? null : hash;
     }
     catch { return null; }
+}
+
+// Returns true when the file exists and contains syntactically valid JSON.
+// Used to keep a malformed config.json out of the IConfiguration pipeline so a parse
+// failure can't escape on a ConfigurationManager reload thread and crash the host.
+// A missing file is treated as "not valid" here; the caller handles the optional case.
+static bool IsValidJsonFile(string path)
+{
+    if (!File.Exists(path))
+        return false;
+
+    try
+    {
+        using var stream = File.OpenRead(path);
+        using var doc = System.Text.Json.JsonDocument.Parse(stream);
+        return true;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return false;
+    }
+    catch (IOException)
+    {
+        // Unreadable (e.g. locked) — treat as absent and run on defaults.
+        return false;
+    }
 }
 
 /// <summary>
