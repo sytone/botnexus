@@ -267,6 +267,74 @@ public class WebSearchToolTests
         capturing.LastMaxResults.ShouldBe(5);
     }
 
+    [Fact]
+    public async Task PrepareArgumentsAsync_WithFractionalJsonCount_DoesNotThrowAndFallsBackToMax()
+    {
+        // The agent loop delivers tool arguments as JsonElement. A fractional number
+        // previously caused GetInt32() to throw FormatException out of PrepareArgumentsAsync.
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 6 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(JsonArgs("""{ "query": "test", "count": 3.5 }"""));
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(6);
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WithOutOfRangeJsonCount_DoesNotThrowAndFallsBackToMax()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 4 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        // 99999999999 exceeds Int32.MaxValue.
+        var args = await tool.PrepareArgumentsAsync(JsonArgs("""{ "query": "test", "count": 99999999999 }"""));
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WithNonNumericStringCount_DoesNotThrowAndFallsBackToMax()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 8 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(JsonArgs("""{ "query": "test", "count": "lots" }"""));
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(8);
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WithIntegerJsonCount_ClampsToRequestedValue()
+    {
+        using var tool = new WebSearchTool(
+            new WebSearchConfig { Provider = "brave", ApiKey = "token", MaxResults = 10 });
+        var capturing = new CapturingSearchProvider();
+        SetProvider(tool, capturing);
+
+        var args = await tool.PrepareArgumentsAsync(JsonArgs("""{ "query": "test", "count": 2 }"""));
+        await tool.ExecuteAsync("call-1", args);
+
+        capturing.LastMaxResults.ShouldBe(2);
+    }
+
+    private static Dictionary<string, object?> JsonArgs(string json)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+            dict[prop.Name] = prop.Value.Clone();
+        return dict;
+    }
+
     private static ISearchProvider? GetProvider(WebSearchTool tool)
     {
         var field = typeof(WebSearchTool).GetField("_provider", BindingFlags.Instance | BindingFlags.NonPublic);
