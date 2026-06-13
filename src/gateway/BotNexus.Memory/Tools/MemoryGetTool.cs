@@ -8,11 +8,16 @@ namespace BotNexus.Memory.Tools;
 
 public sealed class MemoryGetTool : IAgentTool
 {
-    private readonly IMemoryStore _memoryStore;
+    /// <summary>Default ceiling for the session listing <c>limit</c> when none is configured.</summary>
+    public const int DefaultMaxLimit = 100;
 
-    public MemoryGetTool(IMemoryStore memoryStore)
+    private readonly IMemoryStore _memoryStore;
+    private readonly int _maxLimit;
+
+    public MemoryGetTool(IMemoryStore memoryStore, int maxLimit = DefaultMaxLimit)
     {
         _memoryStore = memoryStore;
+        _maxLimit = Math.Max(1, maxLimit);
     }
 
     public string Name => "memory_get";
@@ -36,7 +41,7 @@ public sealed class MemoryGetTool : IAgentTool
                 },
                 "limit": {
                   "type": "integer",
-                  "description": "Max entries when listing by session (default: 20)"
+                  "description": "Max entries when listing by session (default: 20). Values above the configured ceiling are clamped."
                 }
               }
             }
@@ -91,7 +96,7 @@ public sealed class MemoryGetTool : IAgentTool
 
         var sessionId = ToStringValue(arguments["sessionId"])!;
         var limit = arguments.TryGetValue("limit", out var limitValue) && limitValue is not null
-            ? Math.Max(1, ToIntValue(limitValue, "limit"))
+            ? Math.Clamp(ToIntValue(limitValue, "limit"), 1, _maxLimit)
             : 20;
 
         var entries = await _memoryStore.GetBySessionAsync(sessionId, limit, cancellationToken).ConfigureAwait(false);
