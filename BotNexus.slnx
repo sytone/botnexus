@@ -86,6 +86,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Qmd.Tests/BotNexus.Extensions.Qmd.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.AudioTranscription.Tests/BotNexus.Extensions.AudioTranscription.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />
