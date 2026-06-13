@@ -556,6 +556,43 @@ public sealed class DebugToolTests : IDisposable
         Assert.Contains("Only SELECT statements are permitted", TextOf(result));
     }
 
+    [Theory]
+    [InlineData("SELECT 1; PRAGMA database_list")]
+    [InlineData("SELECT * FROM conversations; SELECT * FROM sessions")]
+    [InlineData("SELECT id FROM conversations; DELETE FROM conversations")]
+    [InlineData("PRAGMA table_info('conversations'); SELECT 1")]
+    public async Task RawSql_RejectsMultipleStatements(string sql)
+    {
+        var config = new DebugToolConfig { AllowRawSql = true };
+        var tool = CreateTool(config);
+        var result = await tool.ExecuteAsync("tc1", Args("raw_sql", ("sql", sql)));
+        Assert.True(IsError(result));
+        Assert.Contains("single statement", TextOf(result), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RawSql_AllowsSingleStatementWithTrailingSemicolon()
+    {
+        var config = new DebugToolConfig { AllowRawSql = true };
+        var tool = CreateTool(config);
+        var result = await tool.ExecuteAsync("tc1", Args("raw_sql",
+            ("sql", "SELECT id FROM conversations;")));
+        Assert.False(IsError(result));
+        Assert.Contains("conv-1", TextOf(result));
+    }
+
+    [Fact]
+    public async Task RawSql_AllowsSemicolonInsideStringLiteral()
+    {
+        var config = new DebugToolConfig { AllowRawSql = true };
+        var tool = CreateTool(config);
+        // The ';' here is inside a quoted literal and must not be treated as a separator.
+        var result = await tool.ExecuteAsync("tc1", Args("raw_sql",
+            ("sql", "SELECT 'a;b' AS v")));
+        Assert.False(IsError(result));
+        Assert.Contains("a;b", TextOf(result));
+    }
+
     // ── Pagination ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -598,11 +635,17 @@ public sealed class DebugToolTests : IDisposable
     [InlineData("PRAGMA table_info('t')", true)]
     [InlineData("-- comment\nSELECT 1", true)]
     [InlineData("/* block */\nSELECT 1", true)]
+    [InlineData("SELECT 1;", true)]
+    [InlineData("SELECT 1;   ", true)]
+    [InlineData("SELECT 'a;b' AS v", true)]
     [InlineData("INSERT INTO t VALUES (1)", false)]
     [InlineData("UPDATE t SET x = 1", false)]
     [InlineData("DELETE FROM t", false)]
     [InlineData("DROP TABLE t", false)]
     [InlineData("CREATE TABLE t (id INT)", false)]
+    [InlineData("SELECT 1; SELECT 2", false)]
+    [InlineData("SELECT 1; DELETE FROM t", false)]
+    [InlineData("PRAGMA foo; SELECT 1", false)]
     [InlineData("", false)]
     public void IsSelectOnly_CorrectlyClassifiesStatements(string sql, bool expected)
     {
