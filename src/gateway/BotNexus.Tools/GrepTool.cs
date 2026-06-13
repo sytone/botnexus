@@ -17,6 +17,14 @@ namespace BotNexus.Tools;
 public sealed class GrepTool : IAgentTool
 {
     private const int DefaultLimit = 100;
+
+    /// <summary>
+    /// Upper bound for the agent-supplied <c>limit</c>/<c>max_results</c> argument. The result list is
+    /// pre-allocated with this value, so an unbounded <c>limit</c> would let a single call request a
+    /// multi-billion-element list and throw <see cref="OutOfMemoryException"/> before any output-size
+    /// protection runs. Clamping at read time keeps the allocation bounded. Matches GlobTool's fixed cap.
+    /// </summary>
+    private const int MaxLimit = 1000;
     private const int MaxOutputBytes = 50 * 1024;
     private const int MaxLineLength = 500;
     private const int BinaryProbeBytes = 4096;
@@ -150,7 +158,7 @@ public sealed class GrepTool : IAgentTool
                 throw new ArgumentOutOfRangeException(nameof(arguments), "limit must be greater than 0.");
             }
 
-            prepared["limit"] = limit;
+            prepared["limit"] = Math.Min(limit, MaxLimit);
         }
         else if (arguments.TryGetValue("max_results", out var maxResultsObj) && maxResultsObj is not null)
         {
@@ -160,7 +168,7 @@ public sealed class GrepTool : IAgentTool
                 throw new ArgumentOutOfRangeException(nameof(arguments), "max_results must be greater than 0.");
             }
 
-            prepared["limit"] = maxResults;
+            prepared["limit"] = Math.Min(maxResults, MaxLimit);
         }
 
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
@@ -193,6 +201,11 @@ public sealed class GrepTool : IAgentTool
         var maxResults = arguments.TryGetValue("limit", out var maxObj) && maxObj is int parsedMax
             ? parsedMax
             : DefaultLimit;
+
+        // Defence-in-depth: PrepareArgumentsAsync already clamps to [1, MaxLimit], but a direct caller
+        // could pass an out-of-range value straight to ExecuteAsync. Clamp again before pre-allocating
+        // the result list so capacity can never exceed MaxLimit (avoids OutOfMemoryException).
+        maxResults = Math.Clamp(maxResults, 1, MaxLimit);
         var include = arguments.TryGetValue("glob", out var includeObj) ? includeObj?.ToString() : null;
 
         var rawPath = arguments.TryGetValue("path", out var pathObj) && pathObj is not null
