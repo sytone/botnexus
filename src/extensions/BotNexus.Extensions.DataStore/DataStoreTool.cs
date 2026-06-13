@@ -50,7 +50,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
                 },
                 "sql": {
                   "type": "string",
-                  "description": "SELECT statement for 'query' action. Only SELECT is permitted."
+                  "description": "A single SELECT statement for 'query' action. Only one SELECT is permitted (no semicolon-separated batches or non-SELECT statements)."
                 },
                 "where": {
                   "type": "string",
@@ -115,9 +115,10 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
     {
         var sql = GetString(args, "sql");
         if (string.IsNullOrWhiteSpace(sql)) return DataStoreResult.Fail("'sql' is required for query.");
-        var trimmed = sql.TrimStart();
-        if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
-            return DataStoreResult.Fail("Only SELECT statements are permitted in 'query'.");
+        if (!IsSingleSelectStatement(sql))
+            return DataStoreResult.Fail(
+                "'query' accepts a single SELECT statement only. " +
+                "Multiple statements (separated by ';') and non-SELECT statements are not permitted.");
         return await backend.QueryAsync(sql, ct);
     }
 
@@ -195,6 +196,49 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 63) return false;
         return name.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '_');
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> only when <paramref name="sql"/> is a single SELECT statement.
+    /// <para>
+    /// The naive <c>StartsWith("SELECT")</c> guard is insufficient: SQLite executes every statement
+    /// in a batch, so a payload such as <c>SELECT 1; DELETE FROM t</c> would pass a prefix check yet
+    /// still run the trailing write. This method requires the statement to begin with SELECT and to
+    /// contain no statement separator beyond a single optional trailing <c>;</c>. Semicolons inside
+    /// single-quoted string literals are not treated as separators.
+    /// </para>
+    /// </summary>
+    internal static bool IsSingleSelectStatement(string? sql)
+    {
+        if (string.IsNullOrWhiteSpace(sql)) return false;
+
+        var trimmed = sql.TrimStart();
+        if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) return false;
+
+        // Walk the text tracking single-quote literal state. SQLite escapes an embedded
+        // quote by doubling it ('' inside '...'), which this scan handles naturally because
+        // the closing quote immediately toggles back open on the next character.
+        bool inLiteral = false;
+        for (int i = 0; i < sql.Length; i++)
+        {
+            char c = sql[i];
+            if (c == '\'')
+            {
+                inLiteral = !inLiteral;
+                continue;
+            }
+            if (inLiteral || c != ';') continue;
+
+            // Found a statement separator outside a literal. Everything after it must be
+            // whitespace for this to remain a single statement with a trailing semicolon.
+            for (int j = i + 1; j < sql.Length; j++)
+            {
+                if (!char.IsWhiteSpace(sql[j])) return false;
+            }
+            return true;
+        }
+
+        return true;
     }
 
     private static AgentToolResult TextResult(string text) =>
