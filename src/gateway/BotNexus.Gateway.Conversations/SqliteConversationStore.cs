@@ -1300,13 +1300,15 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        // Verify conversation exists first
-        var conversation = await GetAsync(conversationId, ct).ConfigureAwait(false);
-        if (conversation is null)
-            return null;
-
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        // Existence check is a cheap single-row probe, not a full conversation
+        // hydrate. The previous GetAsync guard fanned out into 3 queries
+        // (row + participants + bindings) and materialised a Conversation object
+        // purely to answer "does it exist?" on a hot canvas-render path (#1387).
+        if (!await ConversationExistsAsync(connection, conversationId, ct).ConfigureAwait(false))
+            return null;
 
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT key, value FROM canvas_state WHERE conversation_id = $id";
@@ -1329,13 +1331,12 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        // Verify conversation exists
-        var conversation = await GetAsync(conversationId, ct).ConfigureAwait(false);
-        if (conversation is null)
-            return false;
-
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        // Cheap existence probe instead of a full GetAsync hydrate (#1387).
+        if (!await ConversationExistsAsync(connection, conversationId, ct).ConfigureAwait(false))
+            return false;
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1349,6 +1350,21 @@ public sealed class SqliteConversationStore : IConversationStore
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// Cheap existence probe used by the canvas-state methods. Issues a single
+    /// <c>SELECT 1 ... LIMIT 1</c> against the conversations table instead of
+    /// the full <see cref="GetAsync"/> hydrate (which fans out into row +
+    /// participants + bindings queries). Used purely to gate canvas reads/writes
+    /// with the same null/false semantics as the previous guard.
+    /// </summary>
+    private static async Task<bool> ConversationExistsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
+    {
+        await using var existsCmd = connection.CreateCommand();
+        existsCmd.CommandText = "SELECT 1 FROM conversations WHERE id = $id LIMIT 1";
+        existsCmd.Parameters.AddWithValue("$id", conversationId.Value);
+        return await existsCmd.ExecuteScalarAsync(ct).ConfigureAwait(false) is not null;
     }
 
     /// <inheritdoc />
