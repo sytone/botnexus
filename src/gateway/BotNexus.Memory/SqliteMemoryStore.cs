@@ -6,13 +6,22 @@ using System.IO.Abstractions;
 
 namespace BotNexus.Memory;
 
-public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = null) : IMemoryStore
+public sealed class SqliteMemoryStore(
+    string dbPath,
+    IFileSystem? fileSystem = null,
+    MemoryLikeFallbackOptions? likeFallbackOptions = null) : IMemoryStore
 {
     private const double DefaultHalfLifeDays = 30d;
     private readonly string _dbPath = dbPath;
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+
+    // The LIKE fallback (used only when FTS errors out or the DB is transiently busy)
+    // is an unindexable full scan, so it is bounded by a recency window + row ceiling
+    // to keep degraded-mode cost finite. The FTS primary path is unaffected.
+    private readonly MemoryLikeFallbackOptions _likeFallbackOptions =
+        likeFallbackOptions ?? MemoryLikeFallbackOptions.Default;
     private bool _initialized;
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -204,43 +213,7 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
 
             command.Parameters.AddWithValue("$query", sanitized);
 
-            if (!string.IsNullOrWhiteSpace(filter?.SourceType))
-            {
-                sql.AppendLine("  AND m.source_type = $sourceType");
-                command.Parameters.AddWithValue("$sourceType", filter.SourceType);
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter?.SessionId))
-            {
-                sql.AppendLine("  AND m.session_id = $sessionId");
-                command.Parameters.AddWithValue("$sessionId", filter.SessionId);
-            }
-
-            if (filter?.AfterDate is not null)
-            {
-                sql.AppendLine("  AND m.created_at >= $afterDate");
-                command.Parameters.AddWithValue("$afterDate", filter.AfterDate.Value.ToString("O"));
-            }
-
-            if (filter?.BeforeDate is not null)
-            {
-                sql.AppendLine("  AND m.created_at <= $beforeDate");
-                command.Parameters.AddWithValue("$beforeDate", filter.BeforeDate.Value.ToString("O"));
-            }
-
-            if (filter?.Tags is { Count: > 0 })
-            {
-                for (var i = 0; i < filter.Tags.Count; i++)
-                {
-                    var parameterName = $"$tag{i}";
-                    sql.AppendLine("  AND EXISTS (");
-                    sql.AppendLine("      SELECT 1");
-                    sql.AppendLine("      FROM json_each(COALESCE(m.metadata_json, '{}'), '$.tags') t");
-                    sql.AppendLine($"      WHERE t.value = {parameterName}");
-                    sql.AppendLine("  )");
-                    command.Parameters.AddWithValue(parameterName, filter.Tags[i]);
-                }
-            }
+            AppendFilters(sql, command, filter);
 
             sql.AppendLine("ORDER BY bm25_rank DESC LIMIT $limit");
             command.Parameters.AddWithValue("$limit", limit * 5);
@@ -365,13 +338,36 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
         return string.Join(" ", sanitized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    private async Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+    private Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
         string sanitizedQuery,
         int limit,
         MemorySearchFilter? filter,
         double lambda,
         CancellationToken ct)
+        => SearchWithLikeFallbackAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct);
+
+    /// <summary>
+    /// Best-effort LIKE-based search used only when the FTS primary path errors out
+    /// (syntax/corruption) or the database is transiently busy. Because
+    /// <c>content LIKE '%term%'</c> uses a leading wildcard it cannot use an index and
+    /// would otherwise full-scan the entire <c>memories</c> table on a path that is hit
+    /// precisely when the store is already degraded. It is therefore bounded by a recency
+    /// window (<see cref="MemoryLikeFallbackOptions.RecencyWindowDays"/>) and a hard scan
+    /// ceiling (<see cref="MemoryLikeFallbackOptions.MaxScanRows"/>) so degraded-mode cost
+    /// stays finite. This makes the fallback non-exhaustive by design; the FTS primary
+    /// path is unaffected. The internal overload exists so tests can drive the fallback
+    /// directly with a tight window/ceiling.
+    /// </summary>
+    internal async Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+        string sanitizedQuery,
+        int limit,
+        MemorySearchFilter? filter,
+        double lambda,
+        MemoryLikeFallbackOptions fallbackOptions,
+        CancellationToken ct)
     {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
         var terms = sanitizedQuery
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -399,6 +395,53 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
             command.Parameters.AddWithValue(parameterName, terms[i]);
         }
 
+        // Bound the unindexable full scan to a recency window so the degraded-mode path
+        // cannot drift into an unbounded table scan on a large memories table.
+        if (fallbackOptions.RecencyWindowDays is { } windowDays && windowDays > 0)
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-windowDays);
+            sql.AppendLine("  AND m.created_at >= $fallbackCutoff");
+            command.Parameters.AddWithValue("$fallbackCutoff", cutoff.ToString("O"));
+        }
+
+        AppendFilters(sql, command, filter);
+
+        // Hard ceiling on the candidate scan (kept >= the caller's requested slice so
+        // ranking still has enough rows to order). The result is non-exhaustive by design.
+        var scanCeiling = Math.Max(limit * 5, 1);
+        if (fallbackOptions.MaxScanRows is { } maxRows && maxRows > 0)
+            scanCeiling = Math.Min(scanCeiling, maxRows);
+
+        sql.AppendLine("ORDER BY m.created_at DESC LIMIT $limit");
+        command.Parameters.AddWithValue("$limit", scanCeiling);
+        command.CommandText = sql.ToString();
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        List<(MemoryEntry Entry, double Score)> ranked = [];
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var entry = ReadMemory(reader);
+            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+            var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
+            var finalScore = textScore * Math.Exp(-lambda * ageDays);
+            ranked.Add((entry, finalScore));
+        }
+
+        return ranked
+            .OrderByDescending(item => item.Score)
+            .Take(limit)
+            .Select(item => item.Entry)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Appends the shared <see cref="MemorySearchFilter"/> predicates (source type,
+    /// session, date range, tags) and their parameters to <paramref name="sql"/> /
+    /// <paramref name="command"/>. Single source of truth for the filter SQL used by both
+    /// the FTS primary path and the LIKE fallback so the two cannot silently diverge.
+    /// </summary>
+    private static void AppendFilters(StringBuilder sql, SqliteCommand command, MemorySearchFilter? filter)
+    {
         if (!string.IsNullOrWhiteSpace(filter?.SourceType))
         {
             sql.AppendLine("  AND m.source_type = $sourceType");
@@ -436,27 +479,6 @@ public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = n
                 command.Parameters.AddWithValue(parameterName, filter.Tags[i]);
             }
         }
-
-        sql.AppendLine("ORDER BY m.created_at DESC LIMIT $limit");
-        command.Parameters.AddWithValue("$limit", limit * 5);
-        command.CommandText = sql.ToString();
-
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        List<(MemoryEntry Entry, double Score)> ranked = [];
-        while (await reader.ReadAsync(ct).ConfigureAwait(false))
-        {
-            var entry = ReadMemory(reader);
-            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
-            var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
-            var finalScore = textScore * Math.Exp(-lambda * ageDays);
-            ranked.Add((entry, finalScore));
-        }
-
-        return ranked
-            .OrderByDescending(item => item.Score)
-            .Take(limit)
-            .Select(item => item.Entry)
-            .ToList();
     }
 
     private static void BindParameters(SqliteCommand command, MemoryEntry entry)
