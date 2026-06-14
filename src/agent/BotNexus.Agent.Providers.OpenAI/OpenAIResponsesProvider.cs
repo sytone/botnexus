@@ -97,7 +97,9 @@ public sealed class OpenAIResponsesProvider(
         }
 
         var messages = MessageTransformer.TransformMessages(context.Messages, model);
-        var payload = BuildRequestPayload(model, context.SystemPrompt, messages, context.Tools, options);
+        var payload = OpenAIResponsesRequestBuilder.Build(
+            model, context.SystemPrompt, messages, context.Tools, options,
+            ConvertMessages, ConvertTools);
 
         if (options?.OnPayload is not null)
         {
@@ -141,74 +143,6 @@ public sealed class OpenAIResponsesProvider(
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(responseStream, Encoding.UTF8);
         await ParseSseStream(stream, reader, model, options, ct);
-    }
-
-    private static JsonObject BuildRequestPayload(
-        LlmModel model,
-        string? systemPrompt,
-        IReadOnlyList<Message> messages,
-        IReadOnlyList<Tool>? tools,
-        StreamOptions? options)
-    {
-        var input = ConvertMessages(messages, model);
-        if (!string.IsNullOrWhiteSpace(systemPrompt))
-        {
-            input.Insert(0, new JsonObject
-            {
-                ["role"] = model.Reasoning ? "developer" : "system",
-                ["content"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt)
-            });
-        }
-
-        var payload = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["stream"] = true,
-            ["store"] = false,
-            ["input"] = input
-        };
-
-        if (options?.MaxTokens is not null)
-            payload["max_output_tokens"] = options.MaxTokens.Value;
-
-        if (options?.Temperature is not null)
-            payload["temperature"] = options.Temperature.Value;
-
-        if (options is OpenAIResponsesOptions { ServiceTier: not null } responsesOptions)
-            payload["service_tier"] = responsesOptions.ServiceTier;
-
-        if (options?.CacheRetention != CacheRetention.None && !string.IsNullOrWhiteSpace(options?.SessionId))
-            payload["prompt_cache_key"] = options.SessionId;
-        var promptCacheRetention = GetPromptCacheRetention(model.BaseUrl, options?.CacheRetention ?? CacheRetention.Short);
-        if (!string.IsNullOrWhiteSpace(promptCacheRetention))
-            payload["prompt_cache_retention"] = promptCacheRetention;
-
-        if (tools is { Count: > 0 })
-            payload["tools"] = ConvertTools(tools);
-
-        if (model.Reasoning)
-        {
-            var effort = options is OpenAIResponsesOptions { ReasoningEffort: not null } ro ? ro.ReasoningEffort : null;
-            var summary = options is OpenAIResponsesOptions { ReasoningSummary: not null } rs ? rs.ReasoningSummary : null;
-            if (effort is not null || summary is not null)
-            {
-                payload["reasoning"] = new JsonObject
-                {
-                    ["effort"] = effort ?? "medium",
-                    ["summary"] = summary ?? "auto"
-                };
-                payload["include"] = new JsonArray { "reasoning.encrypted_content" };
-            }
-            else if (!string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
-            {
-                payload["reasoning"] = new JsonObject
-                {
-                    ["effort"] = "none"
-                };
-            }
-        }
-
-        return payload;
     }
 
     private static JsonArray ConvertMessages(IReadOnlyList<Message> messages, LlmModel model)
@@ -931,14 +865,6 @@ public sealed class OpenAIResponsesProvider(
         };
 
         return usage with { Cost = cost };
-    }
-
-    private static string? GetPromptCacheRetention(string baseUrl, CacheRetention retention)
-    {
-        if (retention != CacheRetention.Long)
-            return null;
-
-        return baseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase) ? "24h" : null;
     }
 
     private static string? GetString(JsonElement element, string propertyName)

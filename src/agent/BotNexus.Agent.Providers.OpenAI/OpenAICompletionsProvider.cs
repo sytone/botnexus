@@ -103,7 +103,9 @@ public sealed class OpenAICompletionsProvider(
 
         var messages = MessageTransformer.TransformMessages(context.Messages, model);
 
-        var payload = BuildRequestPayload(model, context.SystemPrompt, messages, context.Tools, options, compat);
+        var payload = OpenAICompletionsRequestBuilder.Build(
+            model, context.SystemPrompt, messages, context.Tools, options, compat,
+            ConvertMessages, ConvertTools);
 
         if (options?.OnPayload is not null)
         {
@@ -165,136 +167,7 @@ public sealed class OpenAICompletionsProvider(
             ct);
     }
 
-    #region Payload Building
-
-    private static JsonObject BuildRequestPayload(
-        LlmModel model,
-        string? systemPrompt,
-        IReadOnlyList<Message> messages,
-        IReadOnlyList<Tool>? tools,
-        StreamOptions? options,
-        OpenAICompletionsCompat compat)
-    {
-        var payload = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["stream"] = true,
-        };
-
-        if (options?.MaxTokens is not null)
-            payload[compat.MaxTokensField] = options.MaxTokens.Value;
-
-        if (compat.SupportsTemperature != false && options?.Temperature is not null)
-            payload["temperature"] = options.Temperature.Value;
-
-        if (compat.SupportsStore == true && compat.SupportsStoreParam != false)
-            payload["store"] = false;
-
-        if (compat.SupportsMetadata != false && options?.Metadata is { Count: > 0 })
-            payload["metadata"] = JsonSerializer.SerializeToNode(options.Metadata);
-
-        if (compat.SupportsUsageInStreaming != false)
-            payload["stream_options"] = new JsonObject { ["include_usage"] = true };
-
-        // Reasoning / thinking support
-        if (options is OpenAICompletionsOptions { ReasoningEffort: not null } compOptions && model.Reasoning)
-        {
-            if (compat.ThinkingFormat is "openai" && compat.SupportsReasoningEffort != false)
-            {
-                payload["reasoning_effort"] = compOptions.ReasoningEffort;
-            }
-            else if (compat.ThinkingFormat is "qwen")
-            {
-                payload["enable_thinking"] = true;
-            }
-            else if (compat.ThinkingFormat is "qwen-chat-template")
-            {
-                payload["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = true };
-            }
-            else if (compat.ThinkingFormat is "openrouter")
-            {
-                payload["reasoning"] = new JsonObject
-                {
-                    ["effort"] = compOptions.ReasoningEffort
-                };
-            }
-            else
-            {
-                payload["enable_thinking"] = true;
-                payload["thinking_format"] = compat.ThinkingFormat;
-            }
-        }
-        else if (compat.ThinkingFormat is "openrouter" && model.Reasoning)
-        {
-            payload["reasoning"] = new JsonObject
-            {
-                ["effort"] = "none"
-            };
-        }
-
-        if (options is OpenAICompletionsOptions { ToolChoice: not null } tcOptions)
-            payload["tool_choice"] = tcOptions.ToolChoice;
-
-        payload["messages"] = ConvertMessages(systemPrompt, model, messages, compat);
-
-        if (tools is { Count: > 0 } && compat.SupportsTools != false)
-        {
-            payload["tools"] = ConvertTools(tools, compat);
-            if (compat.ZaiToolStream == true)
-                payload["tool_stream"] = true;
-        }
-        else if (HasToolHistory(messages) && compat.SupportsTools != false)
-        {
-            payload["tools"] = new JsonArray();
-        }
-
-        if (model.BaseUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) &&
-            compat.OpenRouterRouting is { } openRouterRouting &&
-            (openRouterRouting.Only is { Count: > 0 } || openRouterRouting.Order is { Count: > 0 }))
-        {
-            payload["provider"] = JsonSerializer.SerializeToNode(openRouterRouting);
-        }
-
-        if (model.BaseUrl.Contains("ai-gateway.vercel.sh", StringComparison.OrdinalIgnoreCase) &&
-            compat.VercelGatewayRouting is { } routing &&
-            (routing.Only is { Count: > 0 } || routing.Order is { Count: > 0 }))
-        {
-            var gateway = new JsonObject();
-            if (routing.Only is { Count: > 0 })
-                gateway["only"] = JsonSerializer.SerializeToNode(routing.Only);
-            if (routing.Order is { Count: > 0 })
-                gateway["order"] = JsonSerializer.SerializeToNode(routing.Order);
-            payload["providerOptions"] = new JsonObject
-            {
-                ["gateway"] = gateway
-            };
-        }
-
-        MaybeAddOpenRouterAnthropicCacheControl(model, payload);
-
-        return payload;
-    }
-
-    #endregion
-
     #region Message Conversion
-
-    private static bool HasToolHistory(IReadOnlyList<Message> messages)
-    {
-        foreach (var message in messages)
-        {
-            if (message is ToolResultMessage)
-                return true;
-
-            if (message is AssistantMessage assistant &&
-                assistant.Content.Any(block => block is ToolCallContent))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     private static string NormalizeToolCallId(string id, LlmModel sourceModel, string targetProviderId)
     {
@@ -308,54 +181,6 @@ public sealed class OpenAICompletionsProvider(
             return id[..40];
 
         return id;
-    }
-
-    private static void MaybeAddOpenRouterAnthropicCacheControl(LlmModel model, JsonObject payload)
-    {
-        if (!string.Equals(model.Provider, "openrouter", StringComparison.OrdinalIgnoreCase) ||
-            !model.Id.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase) ||
-            payload["messages"] is not JsonArray messages)
-        {
-            return;
-        }
-
-        for (var i = messages.Count - 1; i >= 0; i--)
-        {
-            if (messages[i] is not JsonObject message)
-                continue;
-
-            var role = message["role"]?.GetValue<string>();
-            if (role is not ("user" or "assistant"))
-                continue;
-
-            var content = message["content"];
-            if (content is JsonValue stringContent)
-            {
-                message["content"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["type"] = "text",
-                        ["text"] = stringContent.ToString(),
-                        ["cache_control"] = new JsonObject { ["type"] = "ephemeral" }
-                    }
-                };
-                return;
-            }
-
-            if (content is not JsonArray contentParts)
-                continue;
-
-            for (var j = contentParts.Count - 1; j >= 0; j--)
-            {
-                if (contentParts[j] is JsonObject part &&
-                    string.Equals(part["type"]?.GetValue<string>(), "text", StringComparison.OrdinalIgnoreCase))
-                {
-                    part["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
-                    return;
-                }
-            }
-        }
     }
 
     private static JsonArray ConvertMessages(
