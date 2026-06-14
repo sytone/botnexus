@@ -133,6 +133,67 @@ public sealed class DataStoreToolTests
         backend.LastAction.ShouldBe("query");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Query_MultiStatementSelectThenDelete_ReturnsErrorAndDoesNotDelegate()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var result  = await tool.ExecuteAsync("tc1", Args("query", ("sql", "SELECT 1; DELETE FROM events;")));
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("single");
+        backend.LastAction.ShouldBeNull(); // never reached the backend
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Query_MultiStatementSelectThenDrop_ReturnsError()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var result  = await tool.ExecuteAsync("tc1", Args("query", ("sql", "SELECT * FROM events; DROP TABLE events")));
+        IsError(result).ShouldBeTrue();
+        backend.LastAction.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Query_TrailingSemicolon_IsAccepted()
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var result  = await tool.ExecuteAsync("tc1", Args("query", ("sql", "SELECT * FROM events;  ")));
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe("query");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Query_SemicolonInsideStringLiteral_IsAccepted()
+    {
+        // A semicolon inside a quoted literal is not a statement separator.
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var result  = await tool.ExecuteAsync("tc1", Args("query", ("sql", "SELECT * FROM events WHERE note = 'a; b'")));
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe("query");
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM t")]
+    [InlineData("SELECT * FROM t;")]
+    [InlineData("  select 1  ")]
+    [InlineData("SELECT ';' AS sep FROM t")]
+    public void IsSingleSelectStatement_AcceptsValidSelects(string sql)
+        => DataStoreTool.IsSingleSelectStatement(sql).ShouldBeTrue(sql);
+
+    [Theory]
+    [InlineData("SELECT 1; DELETE FROM t")]
+    [InlineData("SELECT 1; DROP TABLE t")]
+    [InlineData("SELECT 1;SELECT 2")]
+    [InlineData("DROP TABLE t")]               // not a SELECT at all
+    [InlineData("DELETE FROM t")]              // not a SELECT at all
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IsSingleSelectStatement_RejectsInvalidOrMultiStatement(string sql)
+        => DataStoreTool.IsSingleSelectStatement(sql).ShouldBeFalse(sql);
+
     // ── insert ────────────────────────────────────────────────────────────────
 
     [Fact]
