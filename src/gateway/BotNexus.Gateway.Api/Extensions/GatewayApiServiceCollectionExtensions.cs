@@ -1,13 +1,15 @@
 using BotNexus.Gateway.Abstractions.Triggers;
+using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api.Triggers;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Extensions;
 
 /// <summary>
-/// DI registration for the Gateway API layer — controllers, triggers, logging.
+/// DI registration for the Gateway API layer - controllers, triggers, logging.
 /// Channel extensions (SignalR, etc.) are loaded dynamically by the extension loader.
 /// </summary>
 public static class GatewayApiServiceCollectionExtensions
@@ -27,6 +29,12 @@ public static class GatewayApiServiceCollectionExtensions
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<CronTrigger>());
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<SoulTrigger>());
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<HeartbeatTrigger>());
+
+        // Conversation history assembly is stateless (it only holds the conversation/session
+        // stores, both singletons) so it is safe to register as a singleton. Registering it lets
+        // the same assembled history view be reused by the SignalR/portal path; the controller
+        // also has a constructor fallback so the endpoint works even without this registration.
+        services.TryAddSingleton<IConversationHistoryAssembler, ConversationHistoryAssembler>();
 
         services.AddControllers()
             .AddApplicationPart(typeof(GatewayApiServiceCollectionExtensions).Assembly);
