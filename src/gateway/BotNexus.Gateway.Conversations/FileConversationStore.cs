@@ -373,7 +373,14 @@ public sealed class FileConversationStore : IConversationStore
             c.Purpose,
             c.Kind.ToString(),
             c.IsPinned,
-            c.PinnedAt);
+            c.PinnedAt,
+            // #1427: populate the participant roster (avatar-chip list the portal renders)
+            // so File-backed listings match the InMemory reference shape instead of returning
+            // a null roster. The conversation already carries its hydrated Participants here.
+            c.Participants.Select(p => new ParticipantSummary(
+                p.CitizenId.Kind.ToString(),
+                p.CitizenId.Value,
+                p.Role)).ToList());
 
     // ── Canvas State ───────────────────────────────────────────────────────
     // The file store persists canvas state in the CanvasState property of the Conversation
