@@ -1016,7 +1016,65 @@ public sealed class AgentExchangeServiceTests
             "'reply:msg-A' here would prove cross-session response cross-attribution.");
     }
 
-        private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
+    [Fact]
+    public async Task ConverseAsync_LocalPath_WhenPromptThrowsNonCancellation_SealsSession_RecordsError_AndClearsActiveExchangeId()
+    {
+        // Pins the shared RunExchangeLoopAsync error arm (#1384): a non-cancellation exception
+        // raised inside a turn must seal the session, stamp Metadata["error"], remove the active
+        // exchange id (the local `beforeSeal` cleanup), and rethrow. This was previously the
+        // duplicated `catch (Exception ex)` block in ConverseAsync; the refactor single-sources it.
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore(redactor: null, conversationStore: conversationStore);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var act = async () => await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "hello",
+            MaxTurns = 3
+        });
+
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldBe("boom");
+
+        var sessions = await sessionStore.GetExistenceAsync(initiator, new ExistenceQuery());
+        sessions.Count.ShouldBe(1, "exactly one session should have been created before the failure");
+        var session = await sessionStore.GetAsync(sessions[0].SessionId);
+        session.ShouldNotBeNull();
+
+        // A genuine (non-caller-cancellation) failure seals the session and records the error.
+        session!.Status.ShouldBe(GatewaySessionStatus.Sealed);
+        session.Metadata.ShouldContainKey("error");
+        session.Metadata["error"].ShouldBe("boom");
+
+        // beforeSeal removed the active-exchange id so a stale gate cannot be replayed.
+        session.Metadata.ShouldNotContainKey(BotNexus.Gateway.Tools.FinishAgentExchangeTool.ActiveExchangeIdKey);
+
+        // The conversation is archived on exchange end (any reason except caller cancellation).
+        var conversation = await conversationStore.GetAsync(session.ConversationId);
+        conversation.ShouldNotBeNull();
+        conversation!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
     {
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
