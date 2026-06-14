@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Qmd\BotNexus.Extensions.Qmd.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Memory\BotNexus.Memory.csproj" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
