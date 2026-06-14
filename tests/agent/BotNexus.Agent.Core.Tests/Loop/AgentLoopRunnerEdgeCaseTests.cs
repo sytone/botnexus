@@ -12,6 +12,7 @@ using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 /// <summary>
 /// Tests for retry, overflow compaction, and transient error handling in AgentLoopRunner.
 /// </summary>
+[Collection(ApiProviderRegistryCollection.Name)]
 public class AgentLoopRunnerEdgeCaseTests
 {
     // --- Transient error retry tests ---

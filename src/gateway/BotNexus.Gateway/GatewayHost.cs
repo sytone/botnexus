@@ -688,8 +688,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
                 }
 
-                // Outbound fan-out: deliver response to other bindings in the conversation
-                await FanOutResponseAsync(message, typedSessionId, cancellationToken);
+                // Outbound fan-out: deliver response to other bindings in the conversation.
+                // The assistant content + conversation id are already in hand from the in-memory
+                // session we just saved — pass them in so fan-out does not re-read the session from
+                // the store purely to recover the last assistant entry (#1394).
+                var lastAssistantContent = session.GetHistorySnapshot()
+                    .LastOrDefault(e => e.Role == MessageRole.Assistant)?.Content;
+                await FanOutResponseAsync(message, typedSessionId, lastAssistantContent, session.ConversationId, cancellationToken);
 
                 // Bump UpdatedAt on the conversation so the portal list ordering and
                 // retention thresholds reflect the time of the last message, not the
@@ -1269,14 +1274,34 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     }
 
     /// <summary>
-    /// Best-effort outbound fan-out to other conversation bindings after a response is delivered.
+    /// Delivers the just-produced assistant reply to every other binding in the conversation.
     /// </summary>
+    /// <remarks>
+    /// The caller already holds the assistant content (it just generated and delivered it) and the
+    /// conversation id (from the in-memory session it just saved), so both are passed in. This avoids
+    /// the previously redundant <c>ISessionStore.GetAsync</c> round-trip + history re-scan that ran on
+    /// every multi-binding fan-out purely to recover content the caller already had (#1394). On the
+    /// SQLite backend that re-read is itself the multi-query path (#1379), so eliminating it removes
+    /// real I/O from the common outbound path.
+    /// </remarks>
+    /// <param name="message">The originating inbound message (used to exclude its own binding).</param>
+    /// <param name="typedSessionId">The session whose bindings to fan out to.</param>
+    /// <param name="lastAssistantContent">The assistant reply to deliver. When null/empty there is nothing to fan out.</param>
+    /// <param name="conversationId">The conversation id, used to demote stale bindings to Muted on self-heal.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     private async Task FanOutResponseAsync(
         InboundMessage message,
         SessionId typedSessionId,
+        string? lastAssistantContent,
+        ConversationId conversationId,
         CancellationToken cancellationToken)
     {
         if (_conversationRouter is null)
+            return;
+
+        // Nothing to deliver — e.g. a NO_REPLY turn that produced no assistant entry. Preserves the
+        // prior behaviour where a missing last-assistant entry short-circuited the fan-out.
+        if (string.IsNullOrEmpty(lastAssistantContent))
             return;
 
         try
@@ -1289,79 +1314,89 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             if (otherBindings.Count == 0)
                 return;
 
-            // Get last assistant message from session history
-            var session = await _sessions.GetAsync(typedSessionId, cancellationToken);
-            var lastAssistantEntry = session?.GetHistorySnapshot()
-                .LastOrDefault(e => e.Role == MessageRole.Assistant);
-
-            if (lastAssistantEntry is null)
-                return;
-
             foreach (var binding in otherBindings)
-            {
-                try
-                {
-                    // Cron sessions create conversation bindings with channel type "cron" which
-                    // has no registered adapter (by design). Skip silently to avoid log noise.
-                    if (IsNonDeliverableChannel(binding.ChannelType))
-                    {
-                        _logger.LogDebug(
-                            "Fan-out: skipping non-deliverable channel type '{ChannelType}' (binding {BindingId}).",
-                            binding.ChannelType,
-                            binding.BindingId);
-                        continue;
-                    }
-
-                    var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
-                    if (adapter is null)
-                    {
-                        _logger.LogWarning(
-                            "Fan-out: no channel adapter for type '{ChannelType}' (binding {BindingId}). Skipping.",
-                            binding.ChannelType,
-                            binding.BindingId);
-                        continue;
-                    }
-
-                    await adapter.SendAsync(new OutboundMessage
-                    {
-                        ChannelType = binding.ChannelType,
-                        ChannelAddress = binding.ChannelAddress,
-                        Content = lastAssistantEntry.Content,
-                        SessionId = typedSessionId.Value,
-                        // Binding-aware fields: let the adapter render prefix decoration when
-                        // configured. Native sub-addresses (e.g. Telegram forum topics) are
-                        // already encoded in ChannelAddress by the originating adapter.
-                        BindingId = binding.BindingId,
-                        DisplayPrefix = binding.DisplayPrefix
-                    }, cancellationToken);
-
-                    _logger.LogDebug(
-                        "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
-                        binding.ChannelType, binding.ChannelAddress, typedSessionId.Value);
-                }
-                catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
-                {
-                    // Self-heal: demote stale bindings to Muted so future fan-outs skip them.
-                    _logger.LogWarning(
-                        ex,
-                        "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
-                        ex.BindingId, ex.ConversationId);
-
-                    if (session is not null && session.ConversationId.IsInitialized())
-                        await _conversationRouter.MuteBindingAsync(session.ConversationId, ex.BindingId, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Fan-out failed for binding {BindingId} ({ChannelType}:{ChannelAddress}). Continuing.",
-                        binding.BindingId, binding.ChannelType, binding.ChannelAddress);
-                }
-            }
+                await DeliverToBindingAsync(binding, lastAssistantContent, typedSessionId, conversationId, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", typedSessionId.Value);
+        }
+    }
+
+    /// <summary>
+    /// Delivers a single fan-out message to one binding, with stale-binding self-heal.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <see cref="FanOutResponseAsync"/> (#1394 Finding 2) so the resolve-adapter →
+    /// send → catch-stale → demote-to-Muted unit is a flat, independently testable method rather than
+    /// logic buried ~5 levels deep inside two try blocks and a foreach. A stale connection demotes the
+    /// binding to Muted (so future fan-outs skip it); any other send failure is logged and swallowed so
+    /// one bad binding never blocks delivery to the rest.
+    /// </remarks>
+    private async Task DeliverToBindingAsync(
+        ChannelBinding binding,
+        string content,
+        SessionId typedSessionId,
+        ConversationId conversationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Cron sessions create conversation bindings with channel type "cron" which
+            // has no registered adapter (by design). Skip silently to avoid log noise.
+            if (IsNonDeliverableChannel(binding.ChannelType))
+            {
+                _logger.LogDebug(
+                    "Fan-out: skipping non-deliverable channel type '{ChannelType}' (binding {BindingId}).",
+                    binding.ChannelType,
+                    binding.BindingId);
+                return;
+            }
+
+            var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
+            if (adapter is null)
+            {
+                _logger.LogWarning(
+                    "Fan-out: no channel adapter for type '{ChannelType}' (binding {BindingId}). Skipping.",
+                    binding.ChannelType,
+                    binding.BindingId);
+                return;
+            }
+
+            await adapter.SendAsync(new OutboundMessage
+            {
+                ChannelType = binding.ChannelType,
+                ChannelAddress = binding.ChannelAddress,
+                Content = content,
+                SessionId = typedSessionId.Value,
+                // Binding-aware fields: let the adapter render prefix decoration when
+                // configured. Native sub-addresses (e.g. Telegram forum topics) are
+                // already encoded in ChannelAddress by the originating adapter.
+                BindingId = binding.BindingId,
+                DisplayPrefix = binding.DisplayPrefix
+            }, cancellationToken);
+
+            _logger.LogDebug(
+                "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
+                binding.ChannelType, binding.ChannelAddress, typedSessionId.Value);
+        }
+        catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
+        {
+            // Self-heal: demote stale bindings to Muted so future fan-outs skip them.
+            _logger.LogWarning(
+                ex,
+                "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
+                ex.BindingId, ex.ConversationId);
+
+            if (_conversationRouter is not null && conversationId.IsInitialized())
+                await _conversationRouter.MuteBindingAsync(conversationId, ex.BindingId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Fan-out failed for binding {BindingId} ({ChannelType}:{ChannelAddress}). Continuing.",
+                binding.BindingId, binding.ChannelType, binding.ChannelAddress);
         }
     }
 
