@@ -8,6 +8,7 @@ namespace BotNexus.Agent.Core.Tests.Loop;
 
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
+[Collection(ApiProviderRegistryCollection.Name)]
 public class RunMetricsTests
 {
     [Fact]
