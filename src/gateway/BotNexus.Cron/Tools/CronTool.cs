@@ -388,13 +388,40 @@ public sealed class CronTool(
         return value switch
         {
             int i => i,
-            long l => (int)l,
-            double d => (int)d,
-            JsonElement { ValueKind: JsonValueKind.Number } element => element.GetInt32(),
+            long l => SaturateToInt32(l),
+            double d => SaturateToInt32(d),
+            JsonElement { ValueKind: JsonValueKind.Number } element => ReadNumberElement(element, defaultValue),
             JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var parsed) => parsed,
             string text when int.TryParse(text, out var parsed) => parsed,
             _ => defaultValue
         };
+    }
+
+    // Reads a JSON number tolerantly: out-of-Int32-range and fractional values are
+    // saturated/truncated instead of throwing out of JsonElement.GetInt32(). The caller
+    // still clamps the result to a sane range (history limit is bounded to [1, 100]).
+    private static int ReadNumberElement(JsonElement element, int defaultValue)
+    {
+        if (element.TryGetInt32(out var intValue))
+            return intValue;
+        if (element.TryGetInt64(out var longValue))
+            return SaturateToInt32(longValue);
+        if (element.TryGetDouble(out var doubleValue))
+            return SaturateToInt32(doubleValue);
+        return defaultValue;
+    }
+
+    private static int SaturateToInt32(long value)
+        => value > int.MaxValue ? int.MaxValue
+            : value < int.MinValue ? int.MinValue
+            : (int)value;
+
+    private static int SaturateToInt32(double value)
+    {
+        if (double.IsNaN(value)) return 0;
+        if (value >= int.MaxValue) return int.MaxValue;
+        if (value <= int.MinValue) return int.MinValue;
+        return (int)value;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

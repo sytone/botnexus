@@ -20,10 +20,11 @@ COPY --from=build /app/publish .
 # BOTNEXUS_HOME is the config directory; mount a volume here with your config.json (and optionally auth.json).
 # API keys can also be supplied via environment variables (e.g. GITHUB_TOKEN, OPENAI_API_KEY).
 ENV BOTNEXUS_HOME=/app/config
+ENV BOTNEXUS_DATA_DIR=/app/data
 ENV ASPNETCORE_URLS=http://+:5000
-ENV ASPNETCORE_ENVIRONMENT=Development
+ENV ASPNETCORE_ENVIRONMENT=Production
 
-VOLUME ["/app/config"]
+VOLUME ["/app/config", "/app/data"]
 
 EXPOSE 5000
 

@@ -286,6 +286,7 @@ The built-in `WhisperTranscriptionHandler` is a good reference for production-qu
 - **MIME type filtering** via a configurable `SupportedMimeTypes` list
 - **Lazy initialization** of the Whisper model (loaded on first use)
 - **Concurrency control** with `SemaphoreSlim` to limit parallel transcriptions
+- **Payload size guarding** via `MaxAudioBytes` — oversized audio is skipped before buffering or invoking the model, so a single large attachment cannot pin the concurrency slot or exhaust memory
 - **Rich metadata** including duration, segment count, and model path
 - **`IAsyncDisposable`** for proper cleanup of native resources
 
