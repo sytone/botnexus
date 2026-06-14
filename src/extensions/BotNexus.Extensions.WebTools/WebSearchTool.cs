@@ -251,8 +251,10 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         return value switch
         {
             int i => i,
-            long l => (int)l,
-            JsonElement { ValueKind: JsonValueKind.Number } el => el.GetInt32(),
+            long l when l is >= int.MinValue and <= int.MaxValue => (int)l,
+            // Tolerate fractional or out-of-range JSON numbers and non-numeric strings:
+            // return null so callers fall back to the configured default instead of throwing.
+            JsonElement { ValueKind: JsonValueKind.Number } el when el.TryGetInt32(out var n) => n,
             string s when int.TryParse(s, out var parsed) => parsed,
             _ => null
         };
