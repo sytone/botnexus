@@ -1241,6 +1241,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             {
                 try
                 {
+                    // Cron sessions create conversation bindings with channel type "cron" which
+                    // has no registered adapter (by design). Skip silently to avoid log noise.
+                    if (IsNonDeliverableChannel(binding.ChannelType))
+                    {
+                        _logger.LogDebug(
+                            "Fan-out: skipping non-deliverable channel type '{ChannelType}' (binding {BindingId}).",
+                            binding.ChannelType,
+                            binding.BindingId);
+                        continue;
+                    }
+
                     var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
                     if (adapter is null)
                     {
@@ -1293,6 +1304,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", typedSessionId.Value);
         }
     }
+
+    /// <summary>
+    /// Channel types that are not deliverable (no adapter exists by design).
+    /// Fan-out skips these silently at DEBUG level instead of logging a WARNING.
+    /// </summary>
+    internal static readonly HashSet<string> NonDeliverableChannels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cron",
+        "exchange"
+    };
+
+    internal static bool IsNonDeliverableChannel(ChannelKey channelType) =>
+        NonDeliverableChannels.Contains(channelType.Value);
 
     private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType, string? adapterId = null)
     {
