@@ -624,6 +624,65 @@ public sealed class DebugToolTests : IDisposable
         Assert.Equal(DebugTool.MaxLimit, limit);
     }
 
+    [Fact]
+    public void GetInt_JsonNumberOutOfInt32Range_DoesNotThrow_SaturatesAndClamps()
+    {
+        // Agent input arrives as a JsonElement. A direct GetInt32() would throw OverflowException
+        // on this value BEFORE the [1, MaxLimit] clamp could bound it. GetInt must saturate instead.
+        var args = JsonArgs(("limit", "99999999999")); // > int.MaxValue
+        var (_, limit) = DebugTool.GetPagination(args);
+        Assert.Equal(DebugTool.MaxLimit, limit); // saturated to int.MaxValue, then clamped to MaxLimit
+    }
+
+    [Fact]
+    public void GetInt_JsonFractionalNumber_DoesNotThrow_TruncatesAndClamps()
+    {
+        // A fractional JSON number would throw FormatException from GetInt32(); truncate to int.
+        var args = JsonArgs(("limit", "1.9"));
+        var (_, limit) = DebugTool.GetPagination(args);
+        Assert.Equal(1, limit); // 1.9 -> 1, within [1, MaxLimit]
+    }
+
+    [Fact]
+    public void GetInt_JsonNegativeOutOfRange_DoesNotThrow_SaturatesAndClampsToOne()
+    {
+        var args = JsonArgs(("limit", "-99999999999"));
+        var (_, limit) = DebugTool.GetPagination(args);
+        Assert.Equal(1, limit); // saturated to int.MinValue, then clamped up to 1
+    }
+
+    [Fact]
+    public void GetInt_JsonOffsetOutOfRange_DoesNotThrow_SaturatesAndFloorsAtZero()
+    {
+        var args = JsonArgs(("offset", "-99999999999"), ("limit", "10"));
+        var (offset, _) = DebugTool.GetPagination(args);
+        Assert.Equal(0, offset); // saturated to int.MinValue, then Math.Max(0, ...) floors at 0
+    }
+
+    [Fact]
+    public void GetInt_JsonInRangeNumber_StillReadsExactValue()
+    {
+        var args = JsonArgs(("offset", "7"), ("limit", "3"));
+        var (offset, limit) = DebugTool.GetPagination(args);
+        Assert.Equal(7, offset);
+        Assert.Equal(3, limit);
+    }
+
+    /// <summary>
+    /// Builds an argument dictionary whose values are raw <see cref="JsonElement"/> numbers,
+    /// mirroring how agent tool input is deserialized. The values are written as a JSON object so
+    /// large/fractional numbers stay as JSON Number tokens (not boxed ints).
+    /// </summary>
+    private static Dictionary<string, object?> JsonArgs(params (string key, string numberLiteral)[] entries)
+    {
+        var json = "{" + string.Join(",", entries.Select(e => $"\"{e.key}\":{e.numberLiteral}")) + "}";
+        var root = JsonDocument.Parse(json).RootElement;
+        var d = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in root.EnumerateObject())
+            d[prop.Name] = prop.Value.Clone();
+        return d;
+    }
+
     // ── IsSelectOnly ──────────────────────────────────────────────────────────
 
     [Theory]

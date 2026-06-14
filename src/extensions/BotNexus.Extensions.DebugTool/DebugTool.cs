@@ -472,12 +472,40 @@ public sealed class DebugTool : IAgentTool
         return raw switch
         {
             int i => i,
-            long l => (int)l,
+            long l => SaturateToInt32(l),
             string s when int.TryParse(s, out var parsed) => parsed,
-            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32(),
+            JsonElement je when je.ValueKind == JsonValueKind.Number => ReadNumber(je, defaultValue),
             JsonElement je when je.ValueKind == JsonValueKind.String && int.TryParse(je.GetString(), out var parsed) => parsed,
             _ => defaultValue
         };
+    }
+
+    /// <summary>
+    /// Reads a JSON number into an <see cref="int"/> without throwing on out-of-Int32-range or
+    /// fractional values. A direct <see cref="JsonElement.GetInt32"/> throws
+    /// <see cref="FormatException"/>/<see cref="OverflowException"/> for those inputs, crashing the
+    /// tool <em>before</em> the caller's <c>Math.Clamp</c> can bound the value. Saturating to the
+    /// Int32 range (or falling back to <paramref name="defaultValue"/> for non-numeric tokens) lets
+    /// the value flow into the clamp instead. Mirrors the fixes in WebSearchTool (#1339),
+    /// ProcessTool (#1354) and CronTool (#1364).
+    /// </summary>
+    private static int ReadNumber(JsonElement je, int defaultValue)
+    {
+        if (je.TryGetInt32(out var i)) return i;
+        if (je.TryGetInt64(out var l)) return SaturateToInt32(l);
+        if (je.TryGetDouble(out var d)) return SaturateToInt32(d);
+        return defaultValue;
+    }
+
+    private static int SaturateToInt32(long value) =>
+        value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
+
+    private static int SaturateToInt32(double value)
+    {
+        if (double.IsNaN(value)) return 0;
+        if (value >= int.MaxValue) return int.MaxValue;
+        if (value <= int.MinValue) return int.MinValue;
+        return (int)value;
     }
 
     internal static (int Offset, int Limit) GetPagination(IReadOnlyDictionary<string, object?> args)
