@@ -30,12 +30,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly ISessionStore? _sessionStore;
-    private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
+    // Single source of truth per sub-agent. Folds the previously-separate parent/child agent
+    // id, timeout CTS, and the completion/cleanup once-only gates into one record so an add or
+    // teardown is a single atomic dictionary operation. The old design spread these across five
+    // parallel dictionaries keyed by the same subAgentId that had to be kept mutually consistent
+    // by hand — the synthetic child-AgentId fallback in OnCompletedAsync existed precisely
+    // because _childAgentIds could drift out of sync with _subAgents (#1385).
+    private readonly ConcurrentDictionary<string, SubAgentRecord> _records = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
-    private readonly ConcurrentDictionary<string, AgentId> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, AgentId> _childAgentIds = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _timeouts = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, byte> _processedCompletions = new(StringComparer.OrdinalIgnoreCase);
 
     public DefaultSubAgentManager(
         IAgentSupervisor supervisor,
@@ -85,9 +87,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
         if (maxConcurrent > 0)
         {
-            var activeCount = _subAgents.Values.Count(info =>
-                info.ParentSessionId == request.ParentSessionId &&
-                info.Status == SubAgentStatus.Running);
+            var activeCount = _records.Values.Count(record =>
+                record.Info.ParentSessionId == request.ParentSessionId &&
+                record.Info.Status == SubAgentStatus.Running);
 
             if (activeCount >= maxConcurrent)
                 throw new InvalidOperationException(
@@ -246,7 +248,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             TurnsUsed = 0
         };
 
-        if (!_subAgents.TryAdd(subAgentId, info))
+        var record = new SubAgentRecord(info, request.ParentAgentId, childAgentId);
+        if (!_records.TryAdd(subAgentId, record))
             throw new InvalidOperationException($"Sub-agent '{subAgentId}' already exists.");
 
         // Persist the sub-agent session row to sessions.db (best-effort; non-SQLite stores no-op).
@@ -259,8 +262,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        _parentAgentIds[subAgentId] = request.ParentAgentId;
-        _childAgentIds[subAgentId] = childAgentId;
         _parentChildren.GetOrAdd(request.ParentSessionId, _ => []).Add(subAgentId);
 
         // Register inherited deny-list so the child agent can't invoke parent-denied tools
@@ -295,7 +296,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var timeoutCts = new CancellationTokenSource();
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-        _timeouts[subAgentId] = timeoutCts;
+        record.TimeoutCts = timeoutCts;
 
         _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds), CancellationToken.None);
 
@@ -322,7 +323,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             return Task.FromResult<IReadOnlyList<SubAgentInfo>>([]);
 
         var results = subAgentIds
-            .Select(id => _subAgents.TryGetValue(id, out var info) ? info : null)
+            .Select(id => _records.TryGetValue(id, out var record) ? record.Info : null)
             .Where(info => info is not null)
             .Select(info => info!)
             .OrderBy(info => info.StartedAt)
@@ -335,7 +336,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     public Task<SubAgentInfo?> GetAsync(string subAgentId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
-        return Task.FromResult(_subAgents.TryGetValue(subAgentId, out var info) ? info : null);
+        return Task.FromResult(_records.TryGetValue(subAgentId, out var record) ? record.Info : null);
     }
 
     /// <inheritdoc />
@@ -343,8 +344,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
 
-        if (!_subAgents.TryGetValue(subAgentId, out var info))
+        if (!_records.TryGetValue(subAgentId, out var record))
             return false;
+
+        var info = record.Info;
 
         if (info.ParentSessionId != requestingSessionId)
             return false;
@@ -352,11 +355,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut)
             return false;
 
-        if (_timeouts.TryRemove(subAgentId, out var timeoutCts))
-        {
-            timeoutCts.Cancel();
-            timeoutCts.Dispose();
-        }
+        record.CancelTimeout();
 
         await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, ct);
 
@@ -395,12 +394,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
         await PublishLifecycleActivityAsync(
             GatewayActivityType.SubAgentKilled,
             "subagent_killed",
             updatedInfo,
-            parentAgentId.Value,
+            record.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' was killed.");
 
         return true;
@@ -411,10 +409,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
 
-        if (!_subAgents.TryGetValue(subAgentId, out var existing))
+        if (!_records.TryGetValue(subAgentId, out var record))
             return;
 
-        if (!_processedCompletions.TryAdd(subAgentId, 0))
+        var existing = record.Info;
+
+        if (!record.TryBeginCompletion())
         {
             _logger.LogDebug("Skipping duplicate completion for sub-agent '{SubAgentId}'.", subAgentId);
             return;
@@ -461,21 +461,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
+        var parentAgentId = record.ParentAgentId;
         // Producer-side species: this wake-up is FROM the child sub-agent TO the parent.
         // Sender must carry the child's AgentId, not the parent's, so participant
         // tracking and downstream conversation attribution see the correct originator.
-        // (Fix #526 / sub-agent misclassification.)
-        // Fallback to a synthetic agent id derived from the sub-agent id preserves
-        // species (always Agent) without falling back to the parent — which would
-        // re-introduce the very misclassification this change exists to remove.
-        if (!_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
-        {
-            _logger.LogWarning(
-                "Missing child AgentId for sub-agent '{SubAgentId}' during completion; using synthetic agent id.",
-                subAgentId);
-            childAgentId = AgentId.From($"subagent:{subAgentId}");
-        }
+        // (Fix #526 / sub-agent misclassification.) The child AgentId now lives on the
+        // record alongside the rest of the sub-agent state, so it can never drift out of
+        // sync with the live entry the way the old separate _childAgentIds map could —
+        // the synthetic-fallback workaround that drift required is no longer needed (#1385).
+        var childAgentId = record.ChildAgentId;
         if (updated.Status == SubAgentStatus.Completed)
         {
             await PublishLifecycleActivityAsync(
@@ -562,7 +556,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
     private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds)
     {
-        if (!_timeouts.TryGetValue(subAgentId, out var timeoutCts))
+        if (!_records.TryGetValue(subAgentId, out var record) || record.TimeoutCts is not { } timeoutCts)
             return;
 
         try
@@ -604,8 +598,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
         finally
         {
-            if (_timeouts.TryRemove(subAgentId, out var cleanupCts))
-                cleanupCts.Dispose();
+            record.DisposeTimeout();
         }
     }
 
@@ -627,15 +620,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         Func<SubAgentInfo, SubAgentInfo> updateFactory,
         out SubAgentInfo updatedInfo)
     {
-        while (_subAgents.TryGetValue(subAgentId, out var current))
-        {
-            var updated = updateFactory(current);
-            if (_subAgents.TryUpdate(subAgentId, updated, current))
-            {
-                updatedInfo = updated;
-                return true;
-            }
-        }
+        if (_records.TryGetValue(subAgentId, out var record))
+            return record.TryUpdateInfo(updateFactory, out updatedInfo);
 
         updatedInfo = default!;
         return false;
@@ -675,8 +661,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
     private async Task CleanupChildAgentAsync(string subAgentId, SessionId childSessionId, CancellationToken ct)
     {
-        if (!_childAgentIds.TryRemove(subAgentId, out var childAgentId))
+        // The cleanup body must run at most once per sub-agent: it stops the child agent,
+        // removes the dynamic deny-list, unregisters the descriptor and reclaims the
+        // workspace. KillAsync and the OnCompletedAsync `finally` can both reach here, so
+        // the once-only gate lives on the record (previously this role was implicitly served
+        // by _childAgentIds.TryRemove succeeding exactly once).
+        if (!_records.TryGetValue(subAgentId, out var record) || !record.TryBeginCleanup())
             return;
+
+        var childAgentId = record.ChildAgentId;
 
         // Remove the dynamic deny-list registered for this ephemeral sub-agent
         _policyProvider?.RemoveDynamicDenyList(childAgentId);
@@ -735,5 +728,87 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             searchFrom += separator.Length;
         }
         return depth;
+    }
+
+    /// <summary>
+    /// Single source of truth for one sub-agent's mutable runtime state. Consolidates what were
+    /// previously five parallel dictionaries keyed by the same sub-agent id (#1385): the live
+    /// <see cref="SubAgentInfo"/>, the parent/child <see cref="AgentId"/> values, the timeout
+    /// <see cref="CancellationTokenSource"/>, and the completion/cleanup once-only gates. Folding
+    /// them into one record means an add or teardown is a single atomic dictionary operation and
+    /// the maps can no longer drift apart — the drift between <c>_childAgentIds</c> and the live
+    /// entry is exactly what forced the old synthetic-child-id fallback in <c>OnCompletedAsync</c>.
+    /// </summary>
+    private sealed class SubAgentRecord(SubAgentInfo info, AgentId parentAgentId, AgentId childAgentId)
+    {
+        private SubAgentInfo _info = info;
+        private int _completionProcessed;
+        private int _cleanupStarted;
+
+        /// <summary>Parent agent id captured at spawn. Immutable for the record's lifetime.</summary>
+        public AgentId ParentAgentId { get; } = parentAgentId;
+
+        /// <summary>Child agent id captured at spawn. Immutable for the record's lifetime.</summary>
+        public AgentId ChildAgentId { get; } = childAgentId;
+
+        /// <summary>
+        /// The timeout cancellation source. Set once after the spawn budget is resolved and the
+        /// record is already registered, so the background run loop can read it. Cleared (set to
+        /// null) atomically on cancel/dispose so a late kill cannot double-dispose.
+        /// </summary>
+        public CancellationTokenSource? TimeoutCts
+        {
+            get => Volatile.Read(ref _timeoutCts);
+            set => Volatile.Write(ref _timeoutCts, value);
+        }
+
+        /// <summary>The current immutable runtime snapshot. Swapped atomically via <see cref="TryUpdateInfo"/>.</summary>
+        public SubAgentInfo Info => Volatile.Read(ref _info);
+
+        /// <summary>
+        /// Atomically applies <paramref name="updateFactory"/> to the current snapshot using a
+        /// compare-and-swap loop — the same lock-free update semantics the old
+        /// <c>ConcurrentDictionary.TryUpdate</c> loop provided.
+        /// </summary>
+        public bool TryUpdateInfo(Func<SubAgentInfo, SubAgentInfo> updateFactory, out SubAgentInfo updatedInfo)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _info);
+                var updated = updateFactory(current);
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _info, updated, current), current))
+                {
+                    updatedInfo = updated;
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>Returns true exactly once — the first caller wins the completion gate.</summary>
+        public bool TryBeginCompletion() => Interlocked.CompareExchange(ref _completionProcessed, 1, 0) == 0;
+
+        /// <summary>Returns true exactly once — the first caller wins the child-cleanup gate.</summary>
+        public bool TryBeginCleanup() => Interlocked.CompareExchange(ref _cleanupStarted, 1, 0) == 0;
+
+        /// <summary>Cancels and disposes the timeout source (used by an explicit kill). Idempotent.</summary>
+        public void CancelTimeout()
+        {
+            var cts = Interlocked.Exchange(ref _timeoutCts, null);
+            if (cts is null)
+                return;
+            cts.Cancel();
+            cts.Dispose();
+        }
+
+        /// <summary>Disposes the timeout source without cancelling (used by the run loop's finally). Idempotent.</summary>
+        public void DisposeTimeout()
+        {
+            Interlocked.Exchange(ref _timeoutCts, null)?.Dispose();
+        }
+
+        // Backing field for TimeoutCts so set / read / Cancel / Dispose all touch one field and
+        // Cancel/Dispose can clear it atomically, avoiding a double-dispose race between an
+        // in-flight kill and the run loop's finally block.
+        private CancellationTokenSource? _timeoutCts;
     }
 }
