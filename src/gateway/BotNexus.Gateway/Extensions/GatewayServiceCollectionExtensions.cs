@@ -549,6 +549,9 @@ public static class GatewayServiceCollectionExtensions
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
                     serviceProvider.GetService<IWorldContext>())));
+
+            services.AddSingleton<IConversationAuditLog>(
+                new SqliteConversationAuditLog(connectionString));
             return;
         }
 
