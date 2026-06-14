@@ -23,6 +23,8 @@ public sealed record RuntimeInfo
     public string? Shell { get; init; }
     public string? Channel { get; init; }
     public IReadOnlyList<string>? Capabilities { get; init; }
+    public string? SessionId { get; init; }
+    public string? SessionKey { get; init; }
 }
 
 public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null);
@@ -343,7 +345,9 @@ public static class SystemPromptBuilder
             DefaultModel = runtime.DefaultModel,
             Shell = runtime.Shell,
             Channel = runtime.Channel,
-            Capabilities = runtime.Capabilities
+            Capabilities = runtime.Capabilities,
+            SessionId = runtime.SessionId,
+            SessionKey = runtime.SessionKey
         });
     }
 

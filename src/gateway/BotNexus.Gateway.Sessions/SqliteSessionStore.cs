@@ -1215,27 +1215,130 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// #1379 Finding 3: this is a diagnostics/counting endpoint, so it must NOT pay the
+    /// full list-everything cost. The previous implementation called <c>ListAsync</c>,
+    /// which materializes a <see cref="GatewaySession"/> per row through the N+1
+    /// <c>LoadSessionAsync</c> path (row + history JSONL) and then runs a cross-store
+    /// <c>HydrateAgentIdAsync</c> lookup per session — solely to produce three integer
+    /// histograms. Instead we compute counts with a single <c>GROUP BY</c> SQL aggregate
+    /// over the lightweight <c>sessions</c> table (no history, no domain objects), then
+    /// resolve <c>AgentId</c> once per distinct <c>conversation_id</c> via the
+    /// conversation store (cached in <c>_agentIdCache</c>). Cost drops from
+    /// O(sessions × (load + hydrate)) to O(1 aggregate query + distinct-conversation lookups).
+    /// <para>
+    /// Post-P9-I (#674) the <c>sessions.agent_id</c> column is dropped, so the agent
+    /// cannot be grouped purely in SQL — the authoritative owner is
+    /// <c>Conversation.AgentId</c>. We therefore group by <c>(status, conversation_id)</c>
+    /// and fold the conversation→agent mapping in memory. The optional <c>agentId</c>
+    /// filter is applied against that resolved agent, preserving the prior semantics.
+    /// </para>
+    /// </remarks>
     public async Task<SessionStats?> GetStatsAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
     {
-        var sessions = await ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
 
-        var byStatus = sessions
-            .GroupBy(s => s.Status.ToString())
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        var byAgent = sessions
-            .GroupBy(s => s.AgentId.Value)
-            .Select(g => new AgentSessionCount(g.Key, g.Count()))
-            .OrderByDescending(a => a.Count)
-            .ToList();
-
-        return new SessionStats
+        return await RetryOnTransientAsync(async () =>
         {
-            TotalSessions = sessions.Count,
-            ByStatus = byStatus,
-            ByAgent = byAgent,
-            Compaction = new CompactionStats(0, sessions.Count),
-            GeneratedAt = DateTimeOffset.UtcNow
-        };
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            // One aggregate query: per (status, conversation) session counts. Reading
+            // conversation_id lets us resolve the authoritative AgentId (Conversation.AgentId)
+            // without loading any GatewaySession or its history.
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT status, conversation_id, COUNT(*) AS cnt
+                FROM sessions
+                GROUP BY status, conversation_id
+                """;
+
+            var groups = new List<(string? Status, string? ConversationId, int Count)>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var status = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    var conversationId = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    var count = reader.GetInt32(2);
+                    groups.Add((status, conversationId, count));
+                }
+            }
+
+            var byStatus = new Dictionary<string, int>();
+            var byAgentCounts = new Dictionary<string, int>();
+            var total = 0;
+
+            foreach (var (status, conversationId, count) in groups)
+            {
+                var resolvedAgent = await ResolveAgentForConversationAsync(conversationId, cancellationToken).ConfigureAwait(false);
+
+                // Apply the optional agent filter against the authoritative owner.
+                if (agentId is not null && resolvedAgent != agentId.Value.Value)
+                {
+                    continue;
+                }
+
+                total += count;
+
+                // Normalize the raw status string through the same ParseStatus mapping the
+                // load path uses, so the dictionary keys are byte-for-byte equivalent to the
+                // previous s.Status.ToString() projection (e.g. legacy "closed" -> "Sealed",
+                // case-insensitive parse, null/unknown -> Active).
+                var statusKey = ParseStatus(status).ToString();
+                byStatus[statusKey] = byStatus.GetValueOrDefault(statusKey) + count;
+
+                if (resolvedAgent is not null)
+                {
+                    byAgentCounts[resolvedAgent] = byAgentCounts.GetValueOrDefault(resolvedAgent) + count;
+                }
+            }
+
+            var byAgent = byAgentCounts
+                .Select(kvp => new AgentSessionCount(kvp.Key, kvp.Value))
+                .OrderByDescending(a => a.Count)
+                .ToList();
+
+            return new SessionStats
+            {
+                TotalSessions = total,
+                ByStatus = byStatus,
+                ByAgent = byAgent,
+                Compaction = new CompactionStats(0, total),
+                GeneratedAt = DateTimeOffset.UtcNow
+            };
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resolves the authoritative <c>AgentId</c> string for a session's
+    /// <c>conversation_id</c> via the conversation store, caching the result in
+    /// <c>_agentIdCache</c> (shared with the per-session hydration path). Returns
+    /// <see langword="null"/> when the conversation_id is null/blank or the
+    /// conversation no longer exists (an orphaned session row) — stats must not throw
+    /// on a single orphan, so such rows are counted toward totals/status but contribute
+    /// no agent bucket.
+    /// </summary>
+    private async Task<string?> ResolveAgentForConversationAsync(string? conversationId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(conversationId))
+        {
+            return null;
+        }
+
+        var convId = ConversationId.From(conversationId);
+        if (_agentIdCache.TryGetValue(convId, out var cached))
+        {
+            return cached.Value;
+        }
+
+        var conversation = await _conversationStore.GetAsync(convId, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        _agentIdCache[convId] = conversation.AgentId;
+        return conversation.AgentId.Value;
     }
 }

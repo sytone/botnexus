@@ -5,6 +5,8 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -25,7 +27,7 @@ public sealed class ConversationRetentionHostedServiceTests
         notifier ??= Substitute.For<IConversationChangeNotifier>();
         return new ConversationRetentionHostedService(
             store,
-            notifier,
+            [notifier],
             registry,
             Options.Create(options),
             NullLogger<ConversationRetentionHostedService>.Instance);
@@ -170,16 +172,18 @@ public sealed class ConversationRetentionHostedServiceTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // ── Null notifier (not registered) ─────────────────────────────────────────────
+    // ── No notifiers registered (e.g. SignalR channel absent) ──────────────────────
 
     [Fact]
-    public async Task RunRetentionOnceAsync_WhenNotifierIsNull_ArchivesWithoutThrowing()
+    public async Task RunRetentionOnceAsync_WhenNoNotifiersRegistered_ArchivesWithoutThrowing()
     {
         var store = new InMemoryConversationStore();
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         await store.CreateAsync(CreateConversation("c-1", "a-1", inactiveDays: 31));
         var options = new ConversationRetentionOptions { AutoArchiveEnabled = true, AutoArchiveAfterDays = 30 };
 
+        // Mirrors the minimal/Docker config where no IConversationChangeNotifier is
+        // registered (#1360): the collection resolves empty, archive must still run.
         var svc = new ConversationRetentionHostedService(
             store,
             null,
@@ -209,5 +213,41 @@ public sealed class ConversationRetentionHostedServiceTests
 
         await notifier.Received(1).NotifyConversationChangedAsync(
             "archived", "a-1", "c-1", Arg.Any<CancellationToken>());
+    }
+
+    // ── DI resolution guard (#1360 / #1282 regression) ─────────────────────────
+    // The hosted service is validated by ValidateOnBuild at host startup. In the
+    // minimal/Docker config no IConversationChangeNotifier is registered (it ships
+    // only with the SignalR channel extension). A single non-IEnumerable nullable
+    // parameter is NOT satisfiable by DI without a default value, which crashed
+    // startup (exit 139) twice (#1282, then incompletely-fixed #1284). Using an
+    // IEnumerable<T> parameter makes the dependency always resolvable (empty set).
+
+    [Fact]
+    public void Constructor_ResolvesViaDI_WhenNoChangeNotifierRegistered()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConversationStore>(new InMemoryConversationStore());
+        services.AddSingleton<IAgentRegistry>(
+            new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
+        services.AddSingleton(Options.Create(new ConversationRetentionOptions()));
+        // Deliberately register NO IConversationChangeNotifier (minimal/Docker config).
+        services.AddHostedService<ConversationRetentionHostedService>();
+
+        // ValidateOnBuild is what fails at real startup; replicate it here so the
+        // #1282/#1360 regression cannot ship again unnoticed.
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+
+        var hosted = provider.GetServices<IHostedService>()
+            .OfType<ConversationRetentionHostedService>()
+            .SingleOrDefault();
+        hosted.ShouldNotBeNull(
+            "ConversationRetentionHostedService must be constructible by DI with no " +
+            "IConversationChangeNotifier registered (minimal/Docker config).");
     }
 }

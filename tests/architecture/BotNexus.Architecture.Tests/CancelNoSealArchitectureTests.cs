@@ -216,23 +216,28 @@ public sealed class CancelNoSealArchitectureTests
     }
 
     [Fact]
-    public void AgentExchangeService_HasAtLeastTwoSealWritingCatchAlls()
+    public void AgentExchangeService_HasAtLeastOneSealWritingCatchAll()
     {
-        // Counter-fence: AgentExchangeService has two seal-on-error catch sites — the
-        // local agent-agent path in ConverseAsync and the cross-world relay-out path.
-        // If a refactor collapses both behind a helper (no literal `Sealed` in either
-        // catch body), the per-catch fence silently passes; this test forces the author
-        // to either restore the literal or update the fence.
+        // Counter-fence: AgentExchangeService used to have two seal-on-error catch sites (the
+        // local agent-agent path in ConverseAsync and the cross-world relay-out path). As of
+        // #1384 both paths delegate to the shared RunExchangeLoopAsync, which owns the single
+        // seal-on-error catch-all — so there is now exactly one. The per-catch fence
+        // (`*_SealOnErrorCatch_PrecededByCallerCancellationRethrow`) still polices that one
+        // consolidated catch (it must be preceded by the `catch (OperationCanceledException)
+        // when (...)` rethrow). If a refactor collapses the seal behind a helper (no literal
+        // `Sealed` in the catch body), this test forces the author to either restore the
+        // literal or update the fence.
         var path = LocateFile("gateway", "BotNexus.Gateway", "Agents", "AgentExchangeService.cs");
         var source = File.ReadAllText(path);
 
         var count = CountSealWritingCatchAlls(source);
 
-        count.ShouldBeGreaterThanOrEqualTo(2,
-            $"Counter-fence: {Path.GetFileName(path)} must contain at least two " +
-            "`catch (Exception ...) {{ ... GatewaySessionStatus.Sealed ... }}` blocks (local " +
-            "agent-agent path + cross-world relay-out path). See the comment in " +
-            "CrossWorldFederationController_HasAtLeastOneSealWritingCatchAll for the rationale.");
+        count.ShouldBeGreaterThanOrEqualTo(1,
+            $"Counter-fence: {Path.GetFileName(path)} must contain at least one " +
+            "`catch (Exception ...) {{ ... GatewaySessionStatus.Sealed ... }}` block. Post-#1384 " +
+            "the local + cross-world seal-on-error logic is single-sourced in RunExchangeLoopAsync. " +
+            "See the comment in CrossWorldFederationController_HasAtLeastOneSealWritingCatchAll " +
+            "for the rationale.");
     }
 
     [Fact]

@@ -179,8 +179,11 @@ public static class ToolDescriptionFormatter
     private static string FormatDelay(JsonElement? args)
     {
         if (args is null) return "Delay";
-        if (args.Value.TryGetProperty("seconds", out var sec) && sec.ValueKind == JsonValueKind.Number)
-            return $"Delay {sec.GetInt32()}s";
+        if (args.Value.TryGetProperty("seconds", out var sec) && sec.ValueKind == JsonValueKind.Number
+            && sec.TryGetInt32(out var seconds))
+        {
+            return $"Delay {seconds}s";
+        }
         return "Delay";
     }
 

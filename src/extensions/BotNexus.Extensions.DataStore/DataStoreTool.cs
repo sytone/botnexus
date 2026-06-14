@@ -141,6 +141,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'. Use lowercase letters, digits, and underscores only.");
         if (string.IsNullOrWhiteSpace(set))   return DataStoreResult.Fail("'set' (JSON object of column=value pairs) is required for update.");
         if (string.IsNullOrWhiteSpace(where)) return DataStoreResult.Fail("'where' clause is required for update to prevent accidental full-table updates.");
+        if (ContainsStatementSeparator(where)) return DataStoreResult.Fail(WhereSeparatorError);
         return await backend.UpdateAsync(table, set, where, ct);
     }
 
@@ -151,6 +152,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         if (string.IsNullOrWhiteSpace(table)) return DataStoreResult.Fail("'table' is required for delete.");
         if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'. Use lowercase letters, digits, and underscores only.");
         if (string.IsNullOrWhiteSpace(where)) return DataStoreResult.Fail("'where' clause is required for delete to prevent accidental full-table wipe.");
+        if (ContainsStatementSeparator(where)) return DataStoreResult.Fail(WhereSeparatorError);
         return await backend.DeleteAsync(table, where, ct);
     }
 
@@ -160,6 +162,7 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         if (string.IsNullOrWhiteSpace(table)) return DataStoreResult.Fail("'table' is required for count.");
         if (!IsValidTableName(table)) return DataStoreResult.Fail($"Invalid table name '{table}'.");
         var where = GetString(args, "where");
+        if (ContainsStatementSeparator(where)) return DataStoreResult.Fail(WhereSeparatorError);
         return await backend.CountAsync(table, where, ct);
     }
 
@@ -215,13 +218,31 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
         var trimmed = sql.TrimStart();
         if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) return false;
 
-        // Walk the text tracking single-quote literal state. SQLite escapes an embedded
-        // quote by doubling it ('' inside '...'), which this scan handles naturally because
-        // the closing quote immediately toggles back open on the next character.
+        // A single SELECT must contain no statement separator beyond an optional trailing ';'.
+        return !ContainsStatementSeparator(sql);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="fragment"/> contains a SQL statement
+    /// separator (<c>;</c>) outside a single-quoted string literal, beyond a single optional
+    /// trailing <c>;</c> followed only by whitespace.
+    /// <para>
+    /// SQLite executes every statement in a batch, so a <c>where</c> fragment such as
+    /// <c>1=1; DROP TABLE secrets; --</c> would run the trailing statement. The naive non-empty
+    /// check used by <c>update</c>/<c>delete</c>/<c>count</c> is insufficient. Semicolons inside
+    /// single-quoted literals (e.g. <c>note = 'a; b'</c>) are not treated as separators; SQLite
+    /// escapes an embedded quote by doubling it ('' inside '...'), which this scan handles because
+    /// the closing quote immediately toggles the literal state back open on the next character.
+    /// </para>
+    /// </summary>
+    internal static bool ContainsStatementSeparator(string? fragment)
+    {
+        if (string.IsNullOrEmpty(fragment)) return false;
+
         bool inLiteral = false;
-        for (int i = 0; i < sql.Length; i++)
+        for (int i = 0; i < fragment.Length; i++)
         {
-            char c = sql[i];
+            char c = fragment[i];
             if (c == '\'')
             {
                 inLiteral = !inLiteral;
@@ -229,17 +250,21 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
             }
             if (inLiteral || c != ';') continue;
 
-            // Found a statement separator outside a literal. Everything after it must be
-            // whitespace for this to remain a single statement with a trailing semicolon.
-            for (int j = i + 1; j < sql.Length; j++)
+            // Found a separator outside a literal. Everything after it must be whitespace for the
+            // fragment to remain a single statement with a trailing semicolon.
+            for (int j = i + 1; j < fragment.Length; j++)
             {
-                if (!char.IsWhiteSpace(sql[j])) return false;
+                if (!char.IsWhiteSpace(fragment[j])) return true;
             }
-            return true;
+            return false;
         }
 
-        return true;
+        return false;
     }
+
+    private const string WhereSeparatorError =
+        "'where' must be a single boolean condition. " +
+        "Statement separators (';') outside a string literal are not permitted.";
 
     private static AgentToolResult TextResult(string text) =>
         new([new AgentToolContent(AgentToolContentType.Text, text)]);

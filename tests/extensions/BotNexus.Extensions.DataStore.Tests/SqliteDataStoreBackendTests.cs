@@ -145,6 +145,74 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
         result.RowCount.ShouldBe(2);
     }
 
+    // ── where-clause multi-statement defence-in-depth (delete / update / count) ─────
+
+    [Fact]
+    public async Task Delete_MultiStatementWhere_IsRejected_AndDoesNotMutate()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("events", """[{"id":1},{"id":2},{"id":3}]""");
+        await backend.IngestAsync("secrets", """[{"id":1}]""");
+
+        // The trailing DROP must not run: the backend rejects the multi-statement where.
+        var result = await backend.DeleteAsync("events", "id = 1; DROP TABLE secrets; --");
+        result.Success.ShouldBeFalse();
+
+        // No row deleted from events, and the secrets table still exists.
+        var count = await backend.CountAsync("events");
+        count.Success.ShouldBeTrue(count.Error);
+        count.RowCount.ShouldBe(3);
+        var schema = await backend.SchemaAsync("secrets");
+        schema.Success.ShouldBeTrue(schema.Error);
+    }
+
+    [Fact]
+    public async Task Update_MultiStatementWhere_IsRejected_AndDoesNotMutate()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("tasks", """[{"id":1,"status":"open"}]""");
+        await backend.IngestAsync("secrets", """[{"id":1}]""");
+
+        var result = await backend.UpdateAsync("tasks", """{"status":"done"}""", "id = 1; DROP TABLE secrets; --");
+        result.Success.ShouldBeFalse();
+
+        // The UPDATE must not have run -- the row is still open -- and secrets survives.
+        var check = await backend.QueryAsync("SELECT status FROM tasks WHERE id = 1");
+        check.Success.ShouldBeTrue(check.Error);
+        (check.Payload ?? string.Empty).ShouldContain("open");
+        var schema = await backend.SchemaAsync("secrets");
+        schema.Success.ShouldBeTrue(schema.Error);
+    }
+
+    [Fact]
+    public async Task Count_MultiStatementWhere_IsRejected_AndDoesNotMutate()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("items", """[{"id":1},{"id":2}]""");
+        await backend.IngestAsync("secrets", """[{"id":1}]""");
+
+        // 'count' is nominally read-only, but its where clause is interpolated -- guard it.
+        var result = await backend.CountAsync("items", "1=1; DELETE FROM secrets; --");
+        result.Success.ShouldBeFalse();
+
+        // The trailing DELETE must not have run.
+        var secretCount = await backend.CountAsync("secrets");
+        secretCount.Success.ShouldBeTrue(secretCount.Error);
+        secretCount.RowCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Count_SemicolonInsideLiteralWhere_StillExecutes()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("events", """[{"id":1,"note":"a; b"},{"id":2,"note":"x"}]""");
+
+        // A ';' inside a single-quoted literal is part of the value, not a separator.
+        var result = await backend.CountAsync("events", "note = 'a; b'");
+        result.Success.ShouldBeTrue(result.Error);
+        result.RowCount.ShouldBe(1);
+    }
+
     // ── Schema inference ─────────────────────────────────────────────────────
 
     [Fact]
