@@ -357,8 +357,16 @@ public sealed class DebugTool : IAgentTool
         if (string.IsNullOrWhiteSpace(sql))
             return TextResult("Error: 'sql' is required for raw_sql.");
 
-        if (!IsSelectOnly(sql))
+        if (!StartsWithReadKeyword(sql))
             return TextResult("Error: Only SELECT statements are permitted. The query must start with SELECT (after optional whitespace/comments).");
+
+        // Reject multiple statements. SQLite executes every statement in a batched command,
+        // so a payload such as "SELECT 1; PRAGMA database_list" would pass the keyword check
+        // yet still run the trailing statement — defeating the agent-scoping guards even under
+        // the read-only connection.
+        if (!IsSingleStatement(sql))
+            return TextResult("Error: Only a single statement is permitted. " +
+                "Multiple statements separated by ';' are not allowed.");
 
         var (_, limit) = GetPagination(args);
 
@@ -479,7 +487,24 @@ public sealed class DebugTool : IAgentTool
         return (offset, limit);
     }
 
-    internal static bool IsSelectOnly(string sql)
+    /// <summary>
+    /// Returns <see langword="true"/> only when <paramref name="sql"/> is a single read-only
+    /// statement: it must begin with an allowed read keyword (SELECT/WITH/EXPLAIN/PRAGMA) and
+    /// contain no statement separator beyond a single optional trailing semicolon.
+    /// <para>
+    /// A naive leading-keyword check is insufficient: SQLite executes every statement in a batch,
+    /// so a payload such as <c>SELECT 1; DELETE FROM t</c> would pass a prefix check yet still run
+    /// the trailing write. This combined gate guards both concerns.
+    /// </para>
+    /// </summary>
+    internal static bool IsSelectOnly(string sql) =>
+        StartsWithReadKeyword(sql) && IsSingleStatement(sql);
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the first significant keyword (after leading whitespace
+    /// and line/block comments) is one of the permitted read-only keywords.
+    /// </summary>
+    internal static bool StartsWithReadKeyword(string sql)
     {
         // Strip leading whitespace and line comments, then check first keyword
         var trimmed = sql.AsSpan().TrimStart();
@@ -507,6 +532,41 @@ public sealed class DebugTool : IAgentTool
             || trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("EXPLAIN", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("PRAGMA", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="sql"/> contains a single statement,
+    /// allowing a single optional trailing semicolon. Semicolons inside single-quoted string
+    /// literals are not treated as separators (SQLite escapes an embedded quote by doubling it,
+    /// which this scan handles naturally because the closing quote toggles the literal state
+    /// open again on the very next character).
+    /// </summary>
+    internal static bool IsSingleStatement(string? sql)
+    {
+        if (string.IsNullOrWhiteSpace(sql)) return false;
+
+        bool inLiteral = false;
+        for (int i = 0; i < sql.Length; i++)
+        {
+            char c = sql[i];
+            if (c == '\'')
+            {
+                inLiteral = !inLiteral;
+                continue;
+            }
+            if (inLiteral || c != ';') continue;
+
+            // Found a statement separator outside a literal. Everything after it must be
+            // whitespace for this to remain a single statement with a trailing semicolon.
+            for (int j = i + 1; j < sql.Length; j++)
+            {
+                if (!char.IsWhiteSpace(sql[j])) return false;
+            }
+            return true;
+        }
+
+        // No semicolon outside a literal — single statement.
+        return true;
     }
 
     private static AgentToolResult TextResult(string text) =>

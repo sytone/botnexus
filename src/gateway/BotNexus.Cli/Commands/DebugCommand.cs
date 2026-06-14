@@ -12,6 +12,7 @@ internal sealed class DebugCommand
     private readonly DebugDbCommand _db = new();
     private readonly DebugGatewayCommand _gateway = new();
     private readonly DebugLogsCommand _logs = new();
+    private readonly DebugMemoryCommand _memory = new();
     private readonly DebugSessionsCommand _sessions = new();
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
@@ -20,6 +21,7 @@ internal sealed class DebugCommand
         command.AddCommand(_db.Build(targetOption));
         command.AddCommand(_gateway.Build(targetOption));
         command.AddCommand(_logs.Build(targetOption));
+        command.AddCommand(_memory.Build(targetOption));
         command.AddCommand(_sessions.Build(targetOption));
         return command;
     }
