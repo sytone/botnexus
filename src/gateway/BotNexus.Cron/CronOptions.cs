@@ -8,6 +8,7 @@ public sealed class CronOptions
 
     public bool Enabled { get; set; } = true;
     public int TickIntervalSeconds { get; set; } = 60;
+    public int DefaultJobTimeoutSeconds { get; set; } = 3600;
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }

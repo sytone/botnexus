@@ -40,21 +40,45 @@ public sealed class ConfigHydrationService : IHostedService
 
         int addedKeys = 0;
 
-        await _writer.MutateAsync(root =>
+        // Config hydration is best-effort: a malformed config.json (JSON parse failure) or a
+        // read-only config mount (write failure) must never prevent the gateway from starting.
+        // The gateway already runs on defaults when config is unreadable; hydration just keeps
+        // the on-disk file in sync. Swallow and log so this hosted service can't crash the host.
+        try
         {
-            foreach (var contributor in contributorList)
+            await _writer.MutateAsync(root =>
             {
-                var defaults = contributor.GetDefaults();
-                if (defaults is null)
-                    continue;
+                foreach (var contributor in contributorList)
+                {
+                    var defaults = contributor.GetDefaults();
+                    if (defaults is null)
+                        continue;
 
-                var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
-                if (defaultsJson is not JsonObject defaultsObj)
-                    continue;
+                    var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
+                    if (defaultsJson is not JsonObject defaultsObj)
+                        continue;
 
-                addedKeys += MergeAtPath(root, contributor.SectionPath, defaultsObj);
-            }
-        }, "config-hydration", cancellationToken);
+                    addedKeys += MergeAtPath(root, contributor.SectionPath, defaultsObj);
+                }
+            }, "config-hydration", cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "Configuration hydration skipped — config.json is not valid JSON. " +
+                "The gateway will run on defaults; fix the JSON and restart to persist defaults.");
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Expected on read-only config mounts (Docker :ro). Log a concise message without the
+            // full stack trace — this is a normal, non-fatal degradation, not an error to triage.
+            _logger.LogInformation(
+                "Configuration hydration skipped — config.json is not writable " +
+                "(read-only mount or permission denied: {Reason}). The gateway will run on defaults.",
+                ex.Message);
+            return;
+        }
 
         if (addedKeys > 0)
             _logger.LogInformation("Configuration hydrated: {Count} new keys added", addedKeys);

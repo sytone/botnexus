@@ -41,6 +41,31 @@ public sealed class WhisperTranscriptionHandler : IMediaHandler, IAsyncDisposabl
         if (contentPart is not BinaryContentPart binary)
             return new MediaProcessingResult { ProcessedPart = contentPart };
 
+        // Reject oversized payloads before acquiring the concurrency slot or buffering into memory.
+        // Whisper buffers the whole payload and is CPU-bound, so an arbitrarily large attachment
+        // would otherwise pin the (often single) transcription slot for an unbounded duration.
+        if (_options.MaxAudioBytes > 0 && binary.Data.Length > _options.MaxAudioBytes)
+        {
+            _logger.LogWarning(
+                "Skipping transcription of {MimeType} audio ({Size} bytes) for session {SessionId}: "
+                + "exceeds MaxAudioBytes ({MaxBytes} bytes).",
+                binary.MimeType, binary.Data.Length, context.SessionId, _options.MaxAudioBytes);
+
+            return new MediaProcessingResult
+            {
+                ProcessedPart = contentPart,
+                WasTransformed = false,
+                Metadata = new Dictionary<string, object?>
+                {
+                    ["transcription.skipped"] = true,
+                    ["transcription.skip_reason"] = "audio_too_large",
+                    ["transcription.original_mime"] = binary.MimeType,
+                    ["transcription.original_size"] = binary.Data.Length,
+                    ["transcription.max_bytes"] = _options.MaxAudioBytes
+                }
+            };
+        }
+
         EnsureInitialized();
 
         await _concurrencyGate.WaitAsync(context.CancellationToken);

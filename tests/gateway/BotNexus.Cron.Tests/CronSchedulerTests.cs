@@ -763,4 +763,75 @@ public sealed class CronSchedulerTests
             Func<TState, Exception?, string> formatter)
             => Messages.Add(formatter(state, exception));
     }
+
+    // ── Job timeout tests ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunNow_TimesOut_RecordsTimedOutStatus()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new DelayedAction("test-action", TimeSpan.FromSeconds(10));
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 1 };
+        var scheduler = CreateScheduler(context.Store, [action], options);
+
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
+
+        run.Status.ShouldBe("timed_out");
+        run.Error!.ShouldContain("timeout");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
+        updated!.LastRunStatus.ShouldBe("timed_out");
+    }
+
+    [Fact]
+    public async Task RunNow_PerJobTimeout_OverridesDefault()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new DelayedAction("test-action", TimeSpan.FromSeconds(10));
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action") with
+        {
+            Metadata = new Dictionary<string, object?> { ["timeoutSeconds"] = 1 }
+        };
+        await context.Store.CreateAsync(job);
+        // Default is high but per-job override is low
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 600 };
+        var scheduler = CreateScheduler(context.Store, [action], options);
+
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
+
+        run.Status.ShouldBe("timed_out");
+    }
+
+    [Fact]
+    public async Task RunNow_CompletesBeforeTimeout_ReturnsOk()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new RecordingAction("test-action");
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 60 };
+        var scheduler = CreateScheduler(context.Store, [action], options);
+
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
+
+        run.Status.ShouldBe("ok");
+        action.ExecutionCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RunNow_TimeoutLogsWarning()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new DelayedAction("test-action", TimeSpan.FromSeconds(10));
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 1 };
+        var logger = new ListLogger<CronScheduler>();
+        var scheduler = CreateScheduler(context.Store, [action], options, logger);
+
+        await scheduler.RunNowAsync(JobId.From("job-1"));
+
+        logger.Messages.ShouldContain(m => m.Contains("timed out"));
+    }
 }

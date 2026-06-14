@@ -13,12 +13,16 @@ namespace BotNexus.Extensions.ProcessTool;
 public sealed class ProcessTool : IAgentTool
 {
     private readonly ProcessManager _manager;
+    private readonly ProcessToolOptions _options;
 
-    public ProcessTool() : this(ProcessManager.Instance) { }
+    public ProcessTool() : this(ProcessManager.Instance, ProcessToolOptions.Default) { }
 
-    internal ProcessTool(ProcessManager manager)
+    internal ProcessTool(ProcessManager manager) : this(manager, ProcessToolOptions.Default) { }
+
+    internal ProcessTool(ProcessManager manager, ProcessToolOptions options)
     {
         _manager = manager;
+        _options = options ?? ProcessToolOptions.Default;
     }
 
     public string Name => "process";
@@ -46,7 +50,7 @@ public sealed class ProcessTool : IAgentTool
                 },
                 "tail": {
                   "type": "integer",
-                  "description": "Number of lines from end of output (for output action). Default: 50."
+                  "description": "Number of lines from end of output (for output action). Default: 50. Values above the configured ceiling are clamped."
                 },
                 "timeout": {
                   "type": "integer",
@@ -143,7 +147,10 @@ public sealed class ProcessTool : IAgentTool
         if (process is null)
             return TextResult($"No tracked process with PID {pid}.");
 
-        var tail = ReadInt(arguments, "tail") ?? 50;
+        // Preserve the "tail <= 0 means full output" convention; only bound the upper end so a
+        // huge positive value cannot request more than the configured ceiling of trailing lines.
+        var requestedTail = ReadInt(arguments, "tail") ?? 50;
+        var tail = requestedTail > _options.MaxTail ? _options.MaxTail : requestedTail;
         var output = process.GetOutput(tail);
 
         return TextResult(string.IsNullOrEmpty(output)
@@ -215,14 +222,28 @@ public sealed class ProcessTool : IAgentTool
         if (!args.TryGetValue(key, out var value) || value is null) return null;
         return value switch
         {
-            JsonElement { ValueKind: JsonValueKind.Number } el => el.GetInt32(),
+            JsonElement { ValueKind: JsonValueKind.Number } el => ReadJsonNumber(el),
             JsonElement el when int.TryParse(el.ToString(), out var n) => n,
             int n => n,
-            long l => (int)l,
+            long l => ClampLong(l),
             _ when int.TryParse(value.ToString(), out var n) => n,
             _ => null
         };
     }
+
+    // Tolerate out-of-range JSON numbers (e.g. tail: 99999999999) instead of throwing from
+    // GetInt32(); the caller clamps the value, so saturating to int bounds is the safe behaviour.
+    private static int? ReadJsonNumber(JsonElement element)
+    {
+        if (element.TryGetInt32(out var i)) return i;
+        if (element.TryGetInt64(out var l)) return ClampLong(l);
+        if (element.TryGetDouble(out var d))
+            return (int)Math.Clamp(d, int.MinValue, (double)int.MaxValue);
+        return null;
+    }
+
+    private static int ClampLong(long value)
+        => (int)Math.Clamp(value, int.MinValue, int.MaxValue);
 
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);

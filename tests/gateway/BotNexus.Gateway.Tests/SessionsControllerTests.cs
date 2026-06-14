@@ -249,6 +249,70 @@ public sealed class SessionsControllerTests
         result.ShouldBeOfType<NoContentResult>();
     }
 
+    // ----- KillSubAgent: per-session caller authorization (#558 / #1366).
+    // Killing a sub-agent is a control-plane mutation and must enforce the same
+    // AuthorizeSessionCaller gate as Delete and Suspend. Without it, any caller able
+    // to name a valid (sessionId, subAgentId) pair could terminate another caller's
+    // sub-agent run.
+
+    [Fact]
+    public async Task KillSubAgent_WhenCallerIdentityDoesNotMatchSessionCaller_Returns403_AndDoesNotKill()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        await store.SaveAsync(session);
+        var subAgentManager = new Mock<ISubAgentManager>();
+
+        var controller = new SessionsController(store, subAgentManager.Object)
+        {
+            ControllerContext = CreateControllerContext("caller-b")
+        };
+        var result = await controller.KillSubAgent("s1", "sub-1", CancellationToken.None);
+
+        result.ShouldBeOfType<ObjectResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+        // Authorization must short-circuit before any sub-agent lookup or kill.
+        subAgentManager.Verify(
+            manager => manager.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        subAgentManager.Verify(
+            manager => manager.KillAsync(It.IsAny<string>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task KillSubAgent_WhenCallerIdentityMatchesSessionCaller_KillsAndReturnsNoContent()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.CallerId = "caller-a";
+        await store.SaveAsync(session);
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(manager => manager.GetAsync("sub-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SubAgentInfo
+            {
+                SubAgentId = "sub-1",
+                ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("s1"),
+                ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("s1::subagent::sub-1"),
+                Task = "task",
+                Status = SubAgentStatus.Running,
+                StartedAt = DateTimeOffset.UtcNow
+            });
+        subAgentManager
+            .Setup(manager => manager.KillAsync("sub-1", SessionId.From("s1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var controller = new SessionsController(store, subAgentManager.Object)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+        var result = await controller.KillSubAgent("s1", "sub-1", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+    }
+
     [Fact]
     public async Task GetHistory_WithDefaults_ReturnsPagedHistoryAndTotalCount()
     {
