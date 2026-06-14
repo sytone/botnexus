@@ -271,11 +271,27 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 _policyProvider.SetDynamicDenyList(childAgentId, effectiveDenyList);
         }
 
-        var timeoutSeconds = request.TimeoutSeconds > 0
-            ? request.TimeoutSeconds
-            : _options.CurrentValue.SubAgents.DefaultTimeoutSeconds;
-        if (timeoutSeconds <= 0)
-            timeoutSeconds = 1;
+        var subAgentOptions = _options.CurrentValue.SubAgents;
+
+        // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
+        // already bounded above; without this the timeout (the only budget wired to a real
+        // cancellation token) could be set arbitrarily high, letting a background sub-agent run
+        // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
+        var timeoutSeconds = subAgentOptions.ResolveTimeoutSeconds(request.TimeoutSeconds);
+
+        // Clamp the requested turn budget too. It is not yet wired to a live per-turn counter, but
+        // bounding it here keeps the request shape honest and prevents a latent runaway when it is.
+        var maxTurns = subAgentOptions.ResolveMaxTurns(request.MaxTurns);
+        if (request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns)
+        {
+            _logger.LogWarning(
+                "Sub-agent '{SubAgentId}' spawn budget clamped: timeoutSeconds {RequestedTimeout}->{ClampedTimeout}, maxTurns {RequestedMaxTurns}->{ClampedMaxTurns}.",
+                subAgentId,
+                request.TimeoutSeconds,
+                timeoutSeconds,
+                request.MaxTurns,
+                maxTurns);
+        }
 
         var timeoutCts = new CancellationTokenSource();
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
