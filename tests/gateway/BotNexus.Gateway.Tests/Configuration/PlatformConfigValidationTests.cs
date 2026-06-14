@@ -282,6 +282,145 @@ public sealed class PlatformConfigValidationTests
     }
 
     [Fact]
+    public Task Validate_ListenUrlBindingWildcardPlus_NoErrors()
+        => WithConfigFileAsync(
+            """
+            {
+              "gateway": {
+                "listenUrl": "http://+:5000"
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                // 'http://+:5000' is the canonical container listenUrl (tests/container/config.json)
+                // and a valid Kestrel binding wildcard, even though Uri.TryCreate rejects it.
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                var errors = PlatformConfigLoader.Validate(config);
+                errors.ShouldBeEmpty();
+                config.Gateway.ShouldNotBeNull();
+                config.Gateway!.ListenUrl.ShouldBe("http://+:5000");
+            });
+
+    [Fact]
+    public Task Validate_ListenUrlBindingWildcardStar_NoErrors()
+        => WithConfigFileAsync(
+            """
+            {
+              "gateway": {
+                "listenUrl": "http://*:8080"
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                // 'http://*:8080' is the Kestrel strong-binding wildcard form.
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                var errors = PlatformConfigLoader.Validate(config);
+                errors.ShouldBeEmpty();
+            });
+
+    [Fact]
+    public Task Validate_ListenUrlHttpsBindingWildcard_NoErrors()
+        => WithConfigFileAsync(
+            """
+            {
+              "gateway": {
+                "listenUrl": "https://+:5001"
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                // https wildcard is accepted (scheme is validated, wildcard host is allowed).
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                var errors = PlatformConfigLoader.Validate(config);
+                errors.ShouldBeEmpty();
+            });
+
+    [Fact]
+    public Task Validate_ListenUrlBindingWildcardNoPort_NoErrors()
+        => WithConfigFileAsync(
+            """
+            {
+              "gateway": {
+                "listenUrl": "http://+"
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                // A wildcard host without an explicit port is still a valid binding form.
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                var errors = PlatformConfigLoader.Validate(config);
+                errors.ShouldBeEmpty();
+            });
+
+    [Fact]
+    public async Task Validate_ListenUrlBindingWildcardInvalidScheme_ThrowsValidationError()
+    {
+        await WithConfigFileAsync(
+            """
+            {
+              "gateway": {
+                "listenUrl": "ftp://+:5000"
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                // The wildcard host is recognized, but a non-http(s) scheme is still rejected.
+                var ex = await Should.ThrowAsync<OptionsValidationException>(() => PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: true));
+                ex.Failures.ShouldContain("gateway.listenUrl must use http or https.");
+            });
+    }
+
+    [Fact]
     public Task Validate_SingleAgentMinimal_NoErrors()
         => WithConfigFileAsync(
             """
