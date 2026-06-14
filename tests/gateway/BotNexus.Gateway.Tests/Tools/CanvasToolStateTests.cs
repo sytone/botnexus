@@ -1,8 +1,10 @@
+using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
 using NSubstitute;
 using Shouldly;
@@ -55,6 +57,95 @@ public sealed class CanvasToolStateTests
         });
 
         result.Content.ShouldHaveSingleItem().Value.ShouldContain("conversation not found");
+    }
+
+    [Fact]
+    public async Task SetState_ValueExceedingMaxBytes_IsRejectedAndNotWritten()
+    {
+        var store = Substitute.For<IConversationStore>();
+        var options = new CanvasToolOptions { MaxValueBytes = 32 };
+        var tool = new CanvasTool(TestAgentId, TestConversationId, conversationStore: store, options: options);
+
+        // A JSON string whose serialised UTF-8 length comfortably exceeds 32 bytes.
+        var bigValue = JsonElement(new string('x', 200));
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = JsonElement("set_state"),
+            ["key"] = JsonElement("big"),
+            ["value"] = bigValue
+        });
+
+        result.Content.ShouldHaveSingleItem().Value.ShouldContain("exceeds");
+        store.ReceivedCalls()
+            .Any(c => c.GetMethodInfo().Name == nameof(IConversationStore.SetCanvasStateKeyAsync))
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SetState_ValueAtMaxBytes_IsAccepted()
+    {
+        var store = Substitute.For<IConversationStore>();
+        store.SetCanvasStateKeyAsync(TestConversationId, "k", Arg.Any<JsonElement>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        // Serialised value is exactly the configured limit ("..." => content + 2 quote chars).
+        var content = new string('y', 30);
+        var serializedLength = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(content));
+        var options = new CanvasToolOptions { MaxValueBytes = serializedLength };
+        var tool = new CanvasTool(TestAgentId, TestConversationId, conversationStore: store, options: options);
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = JsonElement("set_state"),
+            ["key"] = JsonElement("k"),
+            ["value"] = JsonElement(content)
+        });
+
+        result.Content.ShouldHaveSingleItem().Value.ShouldContain("set successfully");
+        await store.Received(1).SetCanvasStateKeyAsync(
+            TestConversationId, "k", Arg.Any<JsonElement>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetState_KeyExceedingMaxLength_IsRejectedAndNotWritten()
+    {
+        var store = Substitute.For<IConversationStore>();
+        var options = new CanvasToolOptions { MaxKeyLength = 8 };
+        var tool = new CanvasTool(TestAgentId, TestConversationId, conversationStore: store, options: options);
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = JsonElement("set_state"),
+            ["key"] = JsonElement(new string('k', 9)),
+            ["value"] = JsonElement("v")
+        });
+
+        result.Content.ShouldHaveSingleItem().Value.ShouldContain("key");
+        result.Content.ShouldHaveSingleItem().Value.ShouldContain("exceeds");
+        store.ReceivedCalls()
+            .Any(c => c.GetMethodInfo().Name == nameof(IConversationStore.SetCanvasStateKeyAsync))
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SetState_KeyAtMaxLength_IsAccepted()
+    {
+        var store = Substitute.For<IConversationStore>();
+        store.SetCanvasStateKeyAsync(TestConversationId, Arg.Any<string>(), Arg.Any<JsonElement>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+        var options = new CanvasToolOptions { MaxKeyLength = 8 };
+        var tool = new CanvasTool(TestAgentId, TestConversationId, conversationStore: store, options: options);
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = JsonElement("set_state"),
+            ["key"] = JsonElement(new string('k', 8)),
+            ["value"] = JsonElement("v")
+        });
+
+        result.Content.ShouldHaveSingleItem().Value.ShouldContain("set successfully");
+        await store.Received(1).SetCanvasStateKeyAsync(
+            TestConversationId, Arg.Any<string>(), Arg.Any<JsonElement>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
