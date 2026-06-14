@@ -3,11 +3,15 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Core;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Isolation;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
@@ -419,7 +423,8 @@ public sealed class InProcessIsolationStrategyTests
         messages.Count.ShouldBe(1);
         messages[0].ShouldBe(new AgentCoreUserMessage("hello"));
     }    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
-        IReadOnlyList<IAgentToolContributor>? contributors = null)
+        IReadOnlyList<IAgentToolContributor>? contributors = null,
+        IServiceProvider? serviceProvider = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -445,7 +450,7 @@ public sealed class InProcessIsolationStrategyTests
             contributors ?? Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new StubAgentMemoryFactory(),
-            new ServiceCollection().BuildServiceProvider(),
+            serviceProvider ?? new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }
 
@@ -617,6 +622,115 @@ public sealed class InProcessIsolationStrategyTests
         var options = GetAgentOptions(handle);
         options.GenerationSettings.CacheRetention.ShouldBe(CacheRetention.Short);
     }
+
+    // #1382 Finding 2 — the per-tool conversation-id resolution must happen ONCE per
+    // CreateAsync call, not once per conversation-aware tool. Before the fix the same
+    // store lookup ran up to four times (ConversationTool, AskUserTool, SubAgentSpawnTool,
+    // CanvasTool) with identical arguments, producing redundant DB round-trips on the hot
+    // agent-handle-creation path.
+
+    [Fact]
+    public async Task CreateAsync_WithConversationStore_ResolvesConversationIdOnce()
+    {
+        // Two conversation-aware tools fire for an all-tools descriptor when only the
+        // conversation store is registered: ConversationTool and CanvasTool. Both previously
+        // resolved the conversation id independently. The session store returns null for the
+        // session so resolution falls through to conversationStore.ListAsync — counting that
+        // call proves the resolution is memoised.
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("session-resolve-once");
+        var agentId = BotNexus.Domain.Primitives.AgentId.From("agent-a");
+        var inner = new InMemoryConversationStore();
+        await inner.CreateAsync(new Conversation
+        {
+            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-resolve-once"),
+            AgentId = agentId,
+            ActiveSessionId = sessionId
+        });
+        var counting = new CountingConversationStore(inner);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConversationStore>(counting);
+        services.AddSingleton<ISessionStore>(new InMemorySessionStore());
+        var provider = services.BuildServiceProvider();
+
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: provider);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = sessionId });
+
+        handle.ShouldNotBeNull();
+        // Exactly one resolution, even though ConversationTool and CanvasTool both need it.
+        counting.ListAsyncCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithConversationStore_BindsResolvedConversationIdToCanvasTool()
+    {
+        // Memoising the resolution must not change the value tools receive. The CanvasTool
+        // (which exposes its bound conversation id via a field) must still bind to the
+        // conversation resolved for this session.
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("session-resolve-correct");
+        var agentId = BotNexus.Domain.Primitives.AgentId.From("agent-a");
+        var conversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-resolve-correct");
+        var inner = new InMemoryConversationStore();
+        await inner.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = agentId,
+            ActiveSessionId = sessionId
+        });
+        var counting = new CountingConversationStore(inner);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConversationStore>(counting);
+        services.AddSingleton<ISessionStore>(new InMemorySessionStore());
+        var provider = services.BuildServiceProvider();
+
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: provider);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = sessionId });
+
+        var tools = GetTools(handle);
+        // Both conversation-aware tools are present (they shared the single resolution).
+        tools.ShouldContain(t => string.Equals(t.Name, "conversation", StringComparison.OrdinalIgnoreCase));
+        var canvasTool = tools.Single(t => string.Equals(t.Name, "canvas", StringComparison.OrdinalIgnoreCase));
+
+        GetPrivateConversationId(canvasTool).ShouldBe(conversationId);
+        // The single resolution returned the right value.
+        counting.ListAsyncCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutConversationStore_DoesNotResolve()
+    {
+        // When no conversation store is registered there is nothing to resolve; the strategy
+        // must not attempt a lookup. Registering only a session store keeps the resolution
+        // path inert.
+        var counting = new CountingConversationStore(new InMemoryConversationStore());
+        var services = new ServiceCollection();
+        services.AddSingleton<ISessionStore>(new InMemorySessionStore());
+        // Deliberately NOT registering IConversationStore.
+        var provider = services.BuildServiceProvider();
+
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: provider);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-no-store") });
+
+        handle.ShouldNotBeNull();
+        counting.ListAsyncCalls.ShouldBe(0);
+    }
+
+    private static BotNexus.Domain.Primitives.ConversationId? GetPrivateConversationId(IAgentTool tool)
+    {
+        var field = tool.GetType().GetField("_conversationId", BindingFlags.Instance | BindingFlags.NonPublic);
+        field.ShouldNotBeNull();
+        return (BotNexus.Domain.Primitives.ConversationId?)field!.GetValue(tool);
+    }
 }
 
 file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
@@ -624,4 +738,62 @@ file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
     public T CurrentValue => value;
     public T Get(string? name) => value;
     public IDisposable? OnChange(Action<T, string?> listener) => null;
+}
+
+/// <summary>
+/// Test decorator over a real <see cref="IConversationStore"/> that counts how many times
+/// <see cref="ListAsync"/> is invoked. Used by the #1382 Finding 2 tests to assert the
+/// per-tool conversation-id resolution is memoised to a single lookup per CreateAsync call.
+/// </summary>
+file sealed class CountingConversationStore(IConversationStore inner) : IConversationStore
+{
+    public int ListAsyncCalls { get; private set; }
+
+    public Task<BotNexus.Gateway.Abstractions.Models.Conversation?> GetAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
+        => inner.GetAsync(conversationId, ct);
+
+    public Task<IReadOnlyList<BotNexus.Gateway.Abstractions.Models.Conversation>> ListAsync(BotNexus.Domain.Primitives.AgentId? agentId = null, CancellationToken ct = default)
+    {
+        ListAsyncCalls++;
+        return inner.ListAsync(agentId, ct);
+    }
+
+    public Task<IReadOnlyList<BotNexus.Gateway.Abstractions.Models.Conversation>> ListForCitizenAsync(BotNexus.Domain.World.CitizenId citizen, CancellationToken ct = default)
+        => inner.ListForCitizenAsync(citizen, ct);
+
+    public Task AddParticipantsAsync(BotNexus.Domain.Primitives.ConversationId conversationId, IEnumerable<BotNexus.Domain.Primitives.SessionParticipant> participants, CancellationToken ct = default)
+        => inner.AddParticipantsAsync(conversationId, participants, ct);
+
+    public Task<BotNexus.Gateway.Abstractions.Models.Conversation> CreateAsync(BotNexus.Gateway.Abstractions.Models.Conversation conversation, CancellationToken ct = default)
+        => inner.CreateAsync(conversation, ct);
+
+    public Task SaveAsync(BotNexus.Gateway.Abstractions.Models.Conversation conversation, CancellationToken ct = default)
+        => inner.SaveAsync(conversation, ct);
+
+    public Task ArchiveAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
+        => inner.ArchiveAsync(conversationId, ct);
+
+    public Task<BotNexus.Gateway.Abstractions.Models.Conversation?> ResolveByBindingAsync(BotNexus.Domain.Primitives.AgentId agentId, BotNexus.Domain.Primitives.ChannelKey channelType, BotNexus.Domain.Primitives.ChannelAddress channelAddress, CancellationToken ct = default)
+        => inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
+
+    public Task TouchAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
+        => inner.TouchAsync(conversationId, ct);
+
+    public Task PinAsync(BotNexus.Domain.Primitives.ConversationId conversationId, bool pin, CancellationToken ct = default)
+        => inner.PinAsync(conversationId, pin, ct);
+
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
+        => inner.GetSummariesAsync(ct);
+
+    public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
+        => inner.GetCanvasStateAsync(conversationId, ct);
+
+    public Task<bool> SetCanvasStateKeyAsync(BotNexus.Domain.Primitives.ConversationId conversationId, string key, System.Text.Json.JsonElement value, CancellationToken ct = default)
+        => inner.SetCanvasStateKeyAsync(conversationId, key, value, ct);
+
+    public Task DeleteCanvasStateKeyAsync(BotNexus.Domain.Primitives.ConversationId conversationId, string key, CancellationToken ct = default)
+        => inner.DeleteCanvasStateKeyAsync(conversationId, key, ct);
+
+    public Task ClearCanvasStateAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
+        => inner.ClearCanvasStateAsync(conversationId, ct);
 }

@@ -44,39 +44,14 @@ public static class PlatformConfigLoader
         if (!fs.File.Exists(path))
             return new PlatformConfig();
 
-        PlatformConfig config;
         string rawJson;
-        try
+        using (var stream = fs.File.OpenRead(path))
+        using (var reader = new StreamReader(stream))
         {
-            using var stream = fs.File.OpenRead(path);
-            using var reader = new StreamReader(stream);
             rawJson = reader.ReadToEnd();
-            config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
-                ?? new PlatformConfig();
-            config = MigrateLegacyGatewaySettings(config, rawJson);
-            ExtractAgentDefaults(config, rawJson);
-        }
-        catch (JsonException ex)
-        {
-            throw new OptionsValidationException(
-                nameof(PlatformConfig),
-                typeof(PlatformConfig),
-                [$"Invalid JSON in '{path}'. {ex.Message}"]);
         }
 
-        if (!validateOnLoad)
-        {
-            EmitVersionWarning(config);
-            return config;
-        }
-
-        var errors = new List<string>(PlatformConfigSchema.ValidateObject(config));
-        errors.AddRange(Validate(config));
-        if (errors.Count > 0)
-            throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
-
-        EmitVersionWarning(config);
-        return config;
+        return FinishLoad(rawJson, path, validateOnLoad);
     }
 
     /// <summary>Loads config from disk and optionally validates it.</summary>
@@ -91,13 +66,31 @@ public static class PlatformConfigLoader
         if (!fs.File.Exists(path))
             return new PlatformConfig();
 
-        PlatformConfig config;
         string rawJson;
+        await using (var stream = fs.File.OpenRead(path))
+        using (var reader = new StreamReader(stream))
+        {
+            rawJson = await reader.ReadToEndAsync(cancellationToken);
+        }
+
+        return FinishLoad(rawJson, path, validateOnLoad);
+    }
+
+    /// <summary>
+    /// Shared post-read pipeline for <see cref="Load"/> and <see cref="LoadAsync"/>: deserialize,
+    /// migrate legacy schema, optionally validate, and emit the version warning.
+    /// </summary>
+    /// <remarks>
+    /// The sync and async loaders differ <em>only</em> in how they read <paramref name="rawJson"/>
+    /// (sync <c>ReadToEnd</c> vs <c>await ReadToEndAsync</c>). Centralising everything after the read
+    /// here removes the sync/async divergence hazard: a change to the load pipeline (a new validation
+    /// step, a migration reorder) now applies to both paths automatically.
+    /// </remarks>
+    private static PlatformConfig FinishLoad(string rawJson, string path, bool validateOnLoad)
+    {
+        PlatformConfig config;
         try
         {
-            await using var stream = fs.File.OpenRead(path);
-            using var reader = new StreamReader(stream);
-            rawJson = await reader.ReadToEndAsync(cancellationToken);
             config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
             config = MigrateLegacyGatewaySettings(config, rawJson);

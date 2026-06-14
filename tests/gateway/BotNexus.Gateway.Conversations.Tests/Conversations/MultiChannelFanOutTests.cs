@@ -251,7 +251,7 @@ public sealed class MultiChannelFanOutTests
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "legacy-broken" });
         await harness.Sessions.SaveAsync(session);
 
-        await InvokeFanOutAsync(harness.Host, harness.CreateMessage("hello", "telegram", "chat-100"), "legacy-session");
+        await InvokeFanOutAsync(harness.Host, harness.CreateMessage("hello", "telegram", "chat-100"), "legacy-session", "legacy-broken", conversation.ConversationId);
 
         harness.SignalR.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages.Count.ShouldBe(1);
@@ -502,10 +502,10 @@ public sealed class MultiChannelFanOutTests
         }
     }
 
-    private static Task InvokeFanOutAsync(GatewayHost host, InboundMessage message, string sessionId)
+    private static Task InvokeFanOutAsync(GatewayHost host, InboundMessage message, string sessionId, string? lastAssistantContent, BotNexus.Domain.Primitives.ConversationId conversationId)
     {
         var method = typeof(GatewayHost).GetMethod("FanOutResponseAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (Task)method.Invoke(host, [message, SessionId.From(sessionId), CancellationToken.None])!;
+        return (Task)method.Invoke(host, [message, SessionId.From(sessionId), lastAssistantContent, conversationId, CancellationToken.None])!;
     }
 
     private sealed class RecordingActivityBroadcaster : IActivityBroadcaster

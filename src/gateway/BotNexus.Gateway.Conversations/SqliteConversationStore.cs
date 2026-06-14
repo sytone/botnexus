@@ -60,28 +60,15 @@ public sealed class SqliteConversationStore : IConversationStore
         _worldContext = worldContext;
     }
 
-    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
-    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
-    // can hold the source world's id even when this gateway is the receiver. No-op when no
-    // world context is wired (e.g. test setups using the parameterless ctor).
+    // World-id stamping/back-fill is shared across all three conversation stores — see
+    // ConversationStoreShared (#1383). These forwarders thread this store's world context
+    // into the shared logic while keeping the existing call-site signatures unchanged.
+    // (Sqlite scopes ListForCitizen with a SQL predicate rather than the shared MatchesCitizen.)
     private void StampWorldId(Conversation conversation)
-    {
-        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-    }
+        => ConversationStoreShared.StampWorldId(conversation, _worldContext);
 
-    // Read-time projection: legacy rows persisted before #613 carry empty WorldId from the
-    // schema default. This projects them as belonging to the current world on the way out.
-    // The disk row itself is not rewritten — the next SaveAsync (or any in-place mutation
-    // that round-trips through SaveConversationAsync) will durably persist via StampWorldId.
-    // Treating backfill as projection-only avoids touching disk on every read and keeps
-    // ArchiveAsync's lighter "status-only" persistence path simple.
     private Conversation? BackfillWorldId(Conversation? conversation)
-    {
-        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-        return conversation;
-    }
+        => ConversationStoreShared.BackfillWorldId(conversation, _worldContext);
 
     /// <inheritdoc />
     public async Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)

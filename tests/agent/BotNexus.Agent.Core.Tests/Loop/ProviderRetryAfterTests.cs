@@ -12,6 +12,7 @@ using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 /// <summary>
 /// Tests for ProviderRateLimitException and Retry-After header handling in the agent loop.
 /// </summary>
+[Collection(ApiProviderRegistryCollection.Name)]
 public class ProviderRetryAfterTests
 {
     [Fact]
