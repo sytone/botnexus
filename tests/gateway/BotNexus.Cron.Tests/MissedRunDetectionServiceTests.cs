@@ -20,12 +20,16 @@ public sealed class MissedRunDetectionServiceTests
     [Fact]
     public void GetMissedRuns_NoMissedRuns_ReturnsEmpty()
     {
-        // Last ran 30 seconds ago, schedule is every minute — next run hasn't been missed yet
-        var now = DateTimeOffset.UtcNow;
+        // Last ran 30 seconds ago, schedule is every 5 minutes — next run hasn't been missed yet.
+        // Use a fixed time whose preceding 30-second window contains no 5-minute boundary
+        // (:00/:05/:10/...). Using DateTimeOffset.UtcNow here is flaky: when the live clock lands
+        // on a 5-minute boundary within the first 30 seconds, a scheduled occurrence falls inside
+        // (now-30s, now) and is reported as missed, failing the assertion ~6% of the time.
+        var now = new DateTimeOffset(2026, 6, 11, 12, 2, 30, TimeSpan.Zero);
         var job = CreateJob("j1") with
         {
             Schedule = "*/5 * * * *",
-            LastRunAt = now.AddSeconds(-30)
+            LastRunAt = now.AddSeconds(-30) // 12:02:00 — no */5 boundary in (12:02:00, 12:02:30)
         };
 
         var result = MissedRunDetectionService.GetMissedRuns(job, now);
