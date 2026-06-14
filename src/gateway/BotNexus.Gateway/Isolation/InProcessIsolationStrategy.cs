@@ -24,6 +24,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
@@ -481,7 +482,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             context.SessionId,
             _logger,
             tools,
-            extensionResourcesToDispose)
+            extensionResourcesToDispose,
+            _serviceProvider.GetService<IActivityTracker>())
         {
             RenderedSystemPrompt = enrichedSystemPrompt
         };
@@ -659,18 +661,29 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     private readonly IReadOnlyList<object> _disposableResources;
     private readonly IReadOnlyDictionary<string, IAgentTool> _toolsByName;
 
+    // Liveness: the handle is the single choke point through which every agent
+    // execution flows — interactive StreamAsync turns AND blocking PromptAsync
+    // runs (cron, soul, heartbeat, sub-agents). Recording activity here means the
+    // watchdog's "no activity" window reflects genuine in-flight work regardless
+    // of entry path, instead of only the arrival of a new inbound message at
+    // GatewayHost.ProcessAsync. Optional so unit tests can construct the handle
+    // without the gateway DI graph. (#1320)
+    private readonly IActivityTracker? _activityTracker;
+
     public InProcessAgentHandle(
         BotNexus.Agent.Core.Agent agent,
         AgentId agentId,
         SessionId sessionId,
         ILogger logger,
         IReadOnlyList<IAgentTool>? tools = null,
-        IReadOnlyList<object>? resourcesToDispose = null)
+        IReadOnlyList<object>? resourcesToDispose = null,
+        IActivityTracker? activityTracker = null)
     {
         _agent = agent;
         AgentId = agentId;
         SessionId = sessionId;
         _logger = logger;
+        _activityTracker = activityTracker;
         _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
             .Cast<object>()
@@ -782,6 +795,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         activity?.SetTag("botnexus.agent.id", AgentId);
         activity?.SetTag("botnexus.session.id", SessionId);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        // Liveness: blocking prompt path (cron / soul / heartbeat) bypasses the
+        // streaming dispatcher, so record at entry to keep the watchdog honest. (#1320)
+        _activityTracker?.RecordActivity();
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
@@ -813,6 +829,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         activity?.SetTag("botnexus.agent.id", AgentId);
         activity?.SetTag("botnexus.session.id", SessionId);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        // Liveness: blocking prompt path (cron / soul / heartbeat) bypasses the
+        // streaming dispatcher, so record at entry to keep the watchdog honest. (#1320)
+        _activityTracker?.RecordActivity();
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
@@ -860,6 +879,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
         using var subscription = _agent.Subscribe(async (agentEvent, cancellationToken) =>
         {
+            // Liveness: any agent event (content delta, tool start/end, message end)
+            // is proof the gateway is actively progressing this turn. (#1320)
+            _activityTracker?.RecordActivity();
             try
             {
                 var streamEvent = agentEvent switch
