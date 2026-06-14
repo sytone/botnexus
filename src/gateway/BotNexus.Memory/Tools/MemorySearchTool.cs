@@ -17,6 +17,7 @@ public sealed class MemorySearchTool : IAgentTool
     private readonly IAgentMemory _agentMemory;
     private readonly string _agentId;
     private readonly int _defaultTopK;
+    private readonly int _maxTopK;
     private readonly ISharedMemoryStoreRegistry? _sharedRegistry;
 
     public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null, ISharedMemoryStoreRegistry? sharedRegistry = null)
@@ -26,6 +27,7 @@ public sealed class MemorySearchTool : IAgentTool
             ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
             : agentId;
         _defaultTopK = Math.Max(1, config?.Search?.DefaultTopK ?? 10);
+        _maxTopK = Math.Max(_defaultTopK, config?.Search?.MaxTopK ?? 100);
         _sharedRegistry = sharedRegistry;
     }
 
@@ -46,7 +48,7 @@ public sealed class MemorySearchTool : IAgentTool
                 },
                 "topK": {
                   "type": "integer",
-                  "description": "Maximum number of results to return (default: 10)"
+                  "description": "Maximum number of results to return (default: 10). Values above the configured ceiling are clamped."
                 },
                 "scope": {
                   "type": "string",
@@ -119,7 +121,7 @@ public sealed class MemorySearchTool : IAgentTool
 
         var query = ToStringValue(arguments["query"]) ?? string.Empty;
         var topK = arguments.TryGetValue("topK", out var topKValue) && topKValue is not null
-            ? Math.Max(1, ToIntValue(topKValue, "topK"))
+            ? Math.Clamp(ToIntValue(topKValue, "topK"), 1, _maxTopK)
             : _defaultTopK;
         var scope = arguments.TryGetValue("scope", out var scopeValue) && scopeValue is not null
             ? ToStringValue(scopeValue) ?? "all"
