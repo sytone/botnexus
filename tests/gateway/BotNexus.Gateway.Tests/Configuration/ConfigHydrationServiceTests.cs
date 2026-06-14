@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
+using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace BotNexus.Gateway.Tests.Configuration;
@@ -180,5 +182,57 @@ public class ConfigHydrationServiceTests
 
         Assert.Equal("cron", contributor.SectionPath);
         Assert.NotNull(contributor.GetDefaults());
+    }
+
+    // --- Startup resilience (Docker / misconfiguration hardening) ---
+
+    [Fact]
+    public async Task StartAsync_DoesNotThrow_WhenConfigJsonIsMalformed()
+    {
+        // A malformed config.json must not crash the host. ConfigHydrationService runs as a
+        // hosted service on startup; an unhandled JsonException here would take the gateway down.
+        var dir = Path.Combine(Path.GetTempPath(), "botnexus-hydration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        await File.WriteAllTextAsync(configPath, "this is not json at all {{{");
+        try
+        {
+            var writer = new PlatformConfigWriter(configPath, new FileSystem());
+            var service = new ConfigHydrationService(
+                writer,
+                [new GatewaySchemaContributor()],
+                NullLogger<ConfigHydrationService>.Instance);
+
+            // Should swallow the JsonException and return without throwing.
+            var ex = await Record.ExceptionAsync(() => service.StartAsync(CancellationToken.None));
+            Assert.Null(ex);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_NoOps_WhenNoContributors()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "botnexus-hydration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        await File.WriteAllTextAsync(configPath, "{\"version\":1}");
+        try
+        {
+            var writer = new PlatformConfigWriter(configPath, new FileSystem());
+            var service = new ConfigHydrationService(writer, [], NullLogger<ConfigHydrationService>.Instance);
+
+            var ex = await Record.ExceptionAsync(() => service.StartAsync(CancellationToken.None));
+            Assert.Null(ex);
+            // File untouched when there are no contributors.
+            Assert.Equal("{\"version\":1}", await File.ReadAllTextAsync(configPath));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

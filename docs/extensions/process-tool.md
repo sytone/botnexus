@@ -25,7 +25,7 @@ The Process Tool enables agents to manage background processes that were started
 | `action` | string | Yes | Action to perform: `status`, `output`, `input`, `kill`, or `list`. |
 | `pid` | integer | Conditional | Process ID. Required for `status`, `output`, `input`, and `kill`. |
 | `content` | string | Conditional | Content to send to stdin (for `input` action). |
-| `tail` | integer | No | Number of lines from end of output (for `output` action). Default: 50. |
+| `tail` | integer | No | Number of lines from end of output (for `output` action). Default: 50. Values above the configured ceiling (`MaxTail`, default 10,000) are clamped; `tail <= 0` still returns the full captured buffer. |
 | `timeout` | integer | No | For `status` action: wait up to N ms for the process to produce output. Default: 0 (no wait). |
 
 ## Actions
@@ -53,6 +53,11 @@ Terminates a running process and its entire process tree.
 ## Configuration
 
 The Process Tool is enabled by default alongside the Exec Tool. No additional configuration is required.
+
+Captured output is bounded two ways:
+
+- The per-process output buffer is a circular buffer capped at 100 KB.
+- The `output` action's `tail` parameter is clamped to a configurable ceiling, `MaxTail` (default **10,000** lines), so a single read cannot request an unbounded number of trailing lines. A non-positive `tail` keeps its documented meaning of "return the full buffer".
 
 ## Usage Examples
 
