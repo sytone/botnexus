@@ -22,10 +22,22 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
 
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
-            PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
-            PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
-            PopulateVersionFromRawJson(config, rawJson);
-            PopulateJsonElementFields(config, rawJson);
+            // A malformed config.json must not crash IOptions resolution (which would take down
+            // the host the first time any service resolves IOptions<PlatformConfig>). The raw-JSON
+            // helpers below call JsonDocument.Parse and throw on invalid JSON; fall back to the
+            // already-bound config so the gateway can start on defaults.
+            try
+            {
+                PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
+                PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+                PopulateVersionFromRawJson(config, rawJson);
+                PopulateJsonElementFields(config, rawJson);
+            }
+            catch (JsonException)
+            {
+                // Invalid JSON — keep bound defaults. The startup config loader already logged the
+                // parse failure; here we just avoid re-throwing during options resolution.
+            }
         }
         else
         {

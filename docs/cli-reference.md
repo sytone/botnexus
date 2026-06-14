@@ -59,32 +59,33 @@ You should see the root command help listing all available subcommands.
 7. [agent list](#agent-list) — List configured agents
 8. [agent add](#agent-add) — Add an agent
 9. [agent remove](#agent-remove) — Remove an agent
-10. [config get](#config-get) — Read a config value
-11. [config set](#config-set) — Set a config value
-12. [config schema](#config-schema) — Generate JSON schema
-13. [gateway](#gateway) — Manage the gateway lifecycle
-14. [provider](#provider) — Show or set up providers
-15. [provider setup](#provider-setup) — Interactive provider setup wizard
-16. [provider list](#provider-list) — List configured providers
-17. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-18. [provider remove](#provider-remove) — Remove a provider non-interactively
-19. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-20. [prompt](#prompt) — Manage prompt templates
-21. [prompt list](#prompt-list) — List available prompt templates
-22. [prompt render](#prompt-render) — Render a prompt template
-23. [prompt run](#prompt-run) — Render and execute a prompt template
-24. [satellite](#satellite) — Manage satellite nodes
-25. [doctor](#doctor) — Diagnose configuration issues
-26. [locations](#locations) — Show resolved file paths
-27. [update](#update) — Check for and apply updates
-28. [memory](#memory) — Manage agent memory
-29. [cron](#cron-command) — Manage cron jobs from the CLI
-30. [debug sessions](#debug-sessions) — Inspect session SQLite database
-31. [debug logs](#debug-logs) — Inspect log files
-32. [debug db](#debug-db) — Inspect raw databases
-33. [debug gateway](#debug-gateway) — Live gateway diagnostics
-34. [debug cron](#debug-cron) — Cron scheduler diagnostics
-35. [Examples](#examples)
+10. [conversation](#conversation) — Manage conversations via the gateway REST API
+11. [config get](#config-get) — Read a config value
+12. [config set](#config-set) — Set a config value
+13. [config schema](#config-schema) — Generate JSON schema
+14. [gateway](#gateway) — Manage the gateway lifecycle
+15. [provider](#provider) — Show or set up providers
+16. [provider setup](#provider-setup) — Interactive provider setup wizard
+17. [provider list](#provider-list) — List configured providers
+18. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+19. [provider remove](#provider-remove) — Remove a provider non-interactively
+20. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+21. [prompt](#prompt) — Manage prompt templates
+22. [prompt list](#prompt-list) — List available prompt templates
+23. [prompt render](#prompt-render) — Render a prompt template
+24. [prompt run](#prompt-run) — Render and execute a prompt template
+25. [satellite](#satellite) — Manage satellite nodes
+26. [doctor](#doctor) — Diagnose configuration issues
+27. [locations](#locations) — Show resolved file paths
+28. [update](#update) — Check for and apply updates
+29. [memory](#memory) — Manage agent memory
+30. [cron](#cron-command) — Manage cron jobs from the CLI
+31. [debug sessions](#debug-sessions) — Inspect session SQLite database
+32. [debug logs](#debug-logs) — Inspect log files
+33. [debug db](#debug-db) — Inspect raw databases
+34. [debug gateway](#debug-gateway) — Live gateway diagnostics
+35. [debug cron](#debug-cron) — Cron scheduler diagnostics
+36. [Examples](#examples)
 
 ---
 
@@ -590,6 +591,80 @@ Output (warning):
 Warning: removing default agent 'assistant'. Update gateway.defaultAgentId if needed.
 Removed agent 'assistant'.
 ```
+
+---
+
+## conversation
+
+Manage conversations through a running gateway's REST API. Unlike the offline `debug` subcommands, these operations require a reachable gateway and make HTTP requests to its `/api/conversations` endpoints.
+
+### Usage
+
+```powershell
+botnexus conversation <COMMAND> [OPTIONS]
+```
+
+### Shared options
+
+These options apply to every `conversation` subcommand:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--url <URL>` | `http://localhost:5005` | Gateway base URL. |
+| `--format <FORMAT>` | `table` | Output format: `table` or `json`. |
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List conversations (optionally filtered by agent). |
+| `inspect <ID>` | Show metadata, participants, and bindings for a conversation. |
+| `archive <ID>` | Archive a conversation. |
+
+### conversation list
+
+List conversations known to the gateway. Pass `--agent` to restrict the list to a single agent.
+
+```powershell
+botnexus conversation list
+botnexus conversation list --agent assistant
+botnexus conversation list --format json
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--agent <ID>` | (all) | Filter conversations by agent ID. |
+
+Table output shows the (truncated) conversation ID, owning agent, title, and last-updated timestamp.
+
+### conversation inspect
+
+Show full details for one conversation, including status, timestamps, participants, and binding count.
+
+```powershell
+botnexus conversation inspect c_7d3196db3c8940959c8c1a19456cc1e4
+botnexus conversation inspect c_7d3196db3c8940959c8c1a19456cc1e4 --format json
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<ID>` | Conversation ID to inspect. |
+
+If the conversation does not exist, the command prints a warning and exits with code `1`.
+
+### conversation archive
+
+Archive a conversation. Archived conversations are removed from the active list but their history is preserved.
+
+```powershell
+botnexus conversation archive c_7d3196db3c8940959c8c1a19456cc1e4
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<ID>` | Conversation ID to archive. |
+
+Returns exit code `1` if the conversation is not found or the gateway is unreachable.
 
 ---
 
@@ -1774,17 +1849,27 @@ botnexus debug gateway <COMMAND> [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `status` | Show gateway health and uptime |
-| `sessions` | List active sessions |
-| `providers` | List configured providers and status |
-| `config` | Dump running configuration |
+| `status` | Show gateway health, thread-pool diagnostics, and last-activity info |
+| `sessions` | Show session statistics (totals and per-agent breakdown) |
+| `providers` | List registered providers and their model counts |
+| `config` | Dump resolved gateway configuration (secrets redacted) |
 
 ### Options
 
+These options apply to every `debug gateway` subcommand:
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--url <URL>` | `http://localhost:5000` | Gateway base URL |
+| `--url <URL>` | `http://localhost:5005` | Gateway base URL |
 | `--format` | `table` | Output format: `table` or `json` |
+
+**Per-subcommand options:**
+
+| Subcommand | Option | Default | Description |
+|------------|--------|---------|-------------|
+| `sessions` | `--agent <ID>` | (all) | Filter session stats by agent ID |
+| `sessions` | `--limit <N>` | `20` | Maximum sessions to return |
+| `config` | `--section <NAME>` | (all) | Filter output to a single config section |
 
 ### Examples
 
@@ -1792,11 +1877,17 @@ botnexus debug gateway <COMMAND> [OPTIONS]
 # Check if the gateway is reachable and healthy
 botnexus debug gateway status
 
-# List active sessions in JSON
+# Show session statistics in JSON
 botnexus debug gateway sessions --format json
 
+# Session stats for one agent
+botnexus debug gateway sessions --agent assistant
+
+# Dump only the gateway config section
+botnexus debug gateway config --section gateway
+
 # Query a remote gateway
-botnexus debug gateway providers --url http://192.168.1.100:5000
+botnexus debug gateway providers --url http://192.168.1.100:5005
 ```
 
 ---
