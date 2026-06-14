@@ -23,6 +23,21 @@ public sealed class TelegramBotConfig
     public string? WebhookUrl { get; set; }
 
     /// <summary>
+    /// Gets or sets the secret token used to authenticate inbound webhook requests.
+    /// </summary>
+    /// <remarks>
+    /// When webhook mode is active, this value is registered with Telegram via
+    /// <c>setWebhook</c>'s <c>secret_token</c> parameter; Telegram then echoes it back in the
+    /// <c>X-Telegram-Bot-Api-Secret-Token</c> header on every update POST. The receiver rejects
+    /// any request whose header does not match (constant-time comparison), which is the only thing
+    /// preventing an attacker who learns the public webhook URL from injecting forged updates.
+    /// When left null/empty the adapter generates a cryptographically strong token at startup, so
+    /// webhook mode is never silently unauthenticated. Allowed characters per the Bot API:
+    /// <c>A-Z</c>, <c>a-z</c>, <c>0-9</c>, <c>_</c> and <c>-</c>, length 1–256.
+    /// </remarks>
+    public string? WebhookSecretToken { get; set; }
+
+    /// <summary>
     /// Gets the allow-list of Telegram chat IDs that can interact with this bot.
     /// An empty list allows all chats.
     /// </summary>
