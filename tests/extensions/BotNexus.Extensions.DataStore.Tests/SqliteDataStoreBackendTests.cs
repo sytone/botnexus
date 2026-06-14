@@ -102,6 +102,49 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
         result.RowCount.ShouldBe(1);
     }
 
+    // ── Multi-statement defence-in-depth ────────────────────────────────────
+
+    [Fact]
+    public async Task Query_MultiStatementSelectThenDelete_IsRejectedAndDoesNotMutate()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("events", """[{"id":1},{"id":2},{"id":3}]""");
+
+        // A SELECT batched with a DELETE must be rejected by the backend, not executed.
+        var result = await backend.QueryAsync("SELECT 1; DELETE FROM events;");
+        result.Success.ShouldBeFalse();
+
+        // The DELETE must NOT have run -- all three rows remain.
+        var count = await backend.CountAsync("events");
+        count.Success.ShouldBeTrue(count.Error);
+        count.RowCount.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Query_MultiStatementSelectThenDrop_IsRejectedAndTableSurvives()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("events", """[{"id":1}]""");
+
+        var result = await backend.QueryAsync("SELECT * FROM events; DROP TABLE events");
+        result.Success.ShouldBeFalse();
+
+        // The table must still exist.
+        var schema = await backend.SchemaAsync("events");
+        schema.Success.ShouldBeTrue(schema.Error);
+    }
+
+    [Fact]
+    public async Task Query_TrailingSemicolon_StillExecutes()
+    {
+        var backend = CreateBackend();
+        await backend.IngestAsync("events", """[{"id":1},{"id":2}]""");
+
+        var result = await backend.QueryAsync("SELECT * FROM events;");
+        result.Success.ShouldBeTrue(result.Error);
+        result.RowCount.ShouldBe(2);
+    }
+
     // ── Schema inference ─────────────────────────────────────────────────────
 
     [Fact]
