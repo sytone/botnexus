@@ -153,44 +153,37 @@ public sealed class AgentExchangeService : IAgentExchangeService
         conversation.ActiveSessionId = sessionId;
         await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
-        var transcript = new List<AgentExchangeTranscriptEntry>();
-        var message = request.Message;
-        var finalResponse = string.Empty;
-        var exchangeFinished = false;
-        var singleShot = false;
-        string? finishReason = null;
-        string? finishSummary = null;
-        try
-        {
-            var targetHandle = await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, cancellationToken).ConfigureAwait(false);
-
-            for (var turn = 0; turn < request.MaxTurns; turn++)
+        // F-11 local turn: the completion gate is pinned per-turn (a fresh active-exchange id is
+        // saved BEFORE the prompt and the prior finish payload cleared), then consumed from the
+        // reloaded session after the prompt so a stale finishedAgentExchangeId can never replay.
+        // The target handle is created lazily on the first turn so a creation failure is caught by
+        // the shared loop's error arm and seals the session (the original behaviour).
+        IAgentHandle? targetHandle = null;
+        return await RunExchangeLoopAsync(
+            request,
+            conversation,
+            sessionId,
+            session,
+            sendTurnAsync: async (turn, message, ct) =>
             {
-                AddTurn(MessageRole.User, message, transcript, session);
+                targetHandle ??= await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, ct).ConfigureAwait(false);
 
-                // Phase 8 (F-11): pin a fresh active-exchange id BEFORE the turn and clear the
-                // previous finish payload, so a stale finishedAgentExchangeId from an earlier turn
-                // can never be replayed as a current-turn completion signal. The FinishAgentExchangeTool
-                // (registered when SessionType == AgentAgent) reads activeAgentExchangeId and writes
-                // finishedAgentExchangeId only if they match.
                 var exchangeId = Guid.NewGuid().ToString("N");
                 AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
-                await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+                await _sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
 
-                var response = await targetHandle.PromptAsync(message, cancellationToken).ConfigureAwait(false);
-                finalResponse = response.Content ?? string.Empty;
-                AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
+                var response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
+                var responseText = response.Content ?? string.Empty;
 
                 // Reload the session: the tool execution mutated Session.Metadata in the store via
                 // its own ISessionStore handle, so the in-memory copy here may be stale.
-                var refreshed = await _sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
+                var refreshed = await _sessionStore.GetAsync(sessionId, ct).ConfigureAwait(false)
                     ?? session;
 
-                if (AgentExchangeCompletionGate.TryConsume(response, refreshed.Metadata, exchangeId, out finishReason, out finishSummary))
+                if (AgentExchangeCompletionGate.TryConsume(response, refreshed.Metadata, exchangeId, out var finishReason, out var finishSummary))
                 {
-                    exchangeFinished = true;
                     // Mirror the consumed payload back onto the working session so the post-turn
-                    // SaveAsync below persists the canonical metadata view.
+                    // SaveAsync persists the canonical metadata view.
                     if (!ReferenceEquals(refreshed, session))
                     {
                         session.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = exchangeId;
@@ -198,63 +191,14 @@ public sealed class AgentExchangeService : IAgentExchangeService
                         if (!string.IsNullOrEmpty(finishSummary))
                             session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
                     }
-                    break;
+                    return new ExchangeTurnOutcome(responseText, Finished: true, finishReason, finishSummary);
                 }
 
-                // Single-shot semantic preserved from pre-Phase-8 behaviour: with no objective the
-                // caller is sending one prompt and taking one response — there is nothing to drive
-                // toward, so we exit after the first turn without forcing the target to invoke the
-                // finish tool. (Old behaviour: IsObjectiveMet(null, _) returned true unconditionally.)
-                if (string.IsNullOrWhiteSpace(request.Objective))
-                {
-                    singleShot = true;
-                    break;
-                }
-
-                if (turn == request.MaxTurns - 1)
-                    break;
-
-                message = BuildFollowUpMessage(request.Objective, finalResponse);
-            }
-
-            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
-            session.Status = GatewaySessionStatus.Sealed;
-            await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // #553: caller-initiated cancellation must NOT seal the session. See the matching
-            // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale —
-            // sealing here would poison the session for any caller retry.
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Agent conversation failed for session '{SessionId}'.", sessionId);
-            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
-            session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["error"] = ex.Message;
-            await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
-
-
-        // Record budget usage after successful exchange
-        _budgetTracker?.RecordExchangeComplete(request.InitiatorId, request.TargetId, transcript.Count);
-        return new AgentExchangeResult
-        {
-            SessionId = sessionId,
-            ConversationId = conversation.ConversationId,
-            Status = "sealed",
-            Turns = transcript.Count,
-            FinalResponse = finalResponse,
-            Transcript = transcript,
-            CompletionReason = ResolveCompletionReason(exchangeFinished, singleShot),
-            FinishReason = exchangeFinished ? finishReason : null,
-            FinishSummary = exchangeFinished ? finishSummary : null
-        };
+                return new ExchangeTurnOutcome(responseText, Finished: false, null, null);
+            },
+            beforeSeal: s => s.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey),
+            onSealSuccess: static _ => { },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AgentExchangeResult> ConverseCrossWorldAsync(
@@ -328,21 +272,18 @@ public sealed class AgentExchangeService : IAgentExchangeService
         conversation.ActiveSessionId = sessionId;
         await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
-        var transcript = new List<AgentExchangeTranscriptEntry>();
-        var message = request.Message;
-        var finalResponse = string.Empty;
-        var exchangeFinished = false;
-        var singleShot = false;
-        string? finishReason = null;
-        string? finishSummary = null;
+        // Cross-world turn: the remote receiver owns finish detection (the target agent runs in
+        // the remote process), so completion arrives as a CrossWorldRelayResponse flag rather than
+        // via the local completion gate. remoteSessionId is threaded across turns (captured below)
+        // so retries reuse the receiver's session, and stamped on the session at seal.
         string? remoteSessionId = null;
-
-        try
-        {
-            for (var turn = 0; turn < request.MaxTurns; turn++)
+        return await RunExchangeLoopAsync(
+            request,
+            conversation,
+            sessionId,
+            session,
+            sendTurnAsync: async (turn, message, ct) =>
             {
-                AddTurn(MessageRole.User, message, transcript, session);
-
                 // P9-C: tell the receiver this is the final relay turn so it archives its local
                 // conversation. Without this signal the receiver only archives when the target
                 // agent invokes finish_agent_exchange, which leaves the receiver-side conversation
@@ -376,26 +317,102 @@ public sealed class AgentExchangeService : IAgentExchangeService
                             ["turnId"] = turnId
                         }
                     },
-                    cancellationToken).ConfigureAwait(false);
+                    ct).ConfigureAwait(false);
 
-                finalResponse = relayResponse.Response ?? string.Empty;
+                var responseText = relayResponse.Response ?? string.Empty;
                 remoteSessionId = relayResponse.SessionId;
+
+                // Phase 8 (F-11) cross-world: the remote receiver propagates the finish-tool
+                // decision via CrossWorldRelayResponse.ExchangeFinished/FinishReason/FinishSummary.
+                return relayResponse.ExchangeFinished
+                    ? new ExchangeTurnOutcome(responseText, Finished: true, relayResponse.FinishReason, relayResponse.FinishSummary)
+                    : new ExchangeTurnOutcome(responseText, Finished: false, null, null);
+            },
+            beforeSeal: static _ => { },
+            onSealSuccess: s => s.Metadata["remoteSessionId"] = remoteSessionId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string ResolveCompletionReason(bool exchangeFinished, bool singleShot)
+    {
+        if (exchangeFinished) return "exchangeFinished";
+        if (singleShot) return "singleShot";
+        return "maxTurnsReached";
+    }
+
+    /// <summary>
+    /// Outcome of a single exchange turn: the assistant response text and whether the target
+    /// signalled completion (via the local completion gate or a cross-world relay flag).
+    /// </summary>
+    private readonly record struct ExchangeTurnOutcome(
+        string Response,
+        bool Finished,
+        string? FinishReason,
+        string? FinishSummary);
+
+    /// <summary>
+    /// Drives the shared agent-exchange turn loop and end-of-exchange lifecycle for both the
+    /// local (<see cref="ConverseAsync"/>) and cross-world (<see cref="ConverseCrossWorldAsync"/>)
+    /// paths. The only behavioural difference between the two is <em>how a single turn is sent
+    /// and how completion is detected</em>, which is supplied by <paramref name="sendTurnAsync"/>.
+    /// Everything else — transcript accumulation, single-shot / max-turns exits, follow-up message
+    /// construction, seal+archive, the #553 cancellation contract, the error catch arm, budget
+    /// recording, and the result projection — is single-sourced here so a fix to the turn loop is
+    /// made once, not twice (the duplicated #553 comment in both bodies was the live drift signal
+    /// that motivated this extraction). (#1384)
+    /// </summary>
+    /// <param name="sendTurnAsync">
+    /// Sends one turn given the zero-based turn index and the message to send, returning the
+    /// assistant response and completion decision. Implementations own their per-turn setup
+    /// (local: completion-gate pin/consume; cross-world: final-turn signalling + remote session id).
+    /// </param>
+    /// <param name="beforeSeal">
+    /// Per-path metadata cleanup applied immediately before the session is sealed, on BOTH the
+    /// success and error arms (local: removes the active-exchange id; cross-world: no-op).
+    /// </param>
+    /// <param name="onSealSuccess">
+    /// Per-path metadata stamped only on the successful seal (cross-world: remote session id;
+    /// local: no-op). Not applied on the error arm, matching the original behaviour.
+    /// </param>
+    private async Task<AgentExchangeResult> RunExchangeLoopAsync(
+        AgentExchangeRequest request,
+        Conversation conversation,
+        SessionId sessionId,
+        GatewaySession session,
+        Func<int, string, CancellationToken, Task<ExchangeTurnOutcome>> sendTurnAsync,
+        Action<GatewaySession> beforeSeal,
+        Action<GatewaySession> onSealSuccess,
+        CancellationToken cancellationToken)
+    {
+        var transcript = new List<AgentExchangeTranscriptEntry>();
+        var message = request.Message;
+        var finalResponse = string.Empty;
+        var exchangeFinished = false;
+        var singleShot = false;
+        string? finishReason = null;
+        string? finishSummary = null;
+        try
+        {
+            for (var turn = 0; turn < request.MaxTurns; turn++)
+            {
+                AddTurn(MessageRole.User, message, transcript, session);
+
+                var outcome = await sendTurnAsync(turn, message, cancellationToken).ConfigureAwait(false);
+                finalResponse = outcome.Response;
                 AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
 
-                // Phase 8 (F-11) cross-world: the remote receiver owns the finish-tool detection
-                // because the target agent runs in the remote process. The receiver propagates the
-                // decision via CrossWorldRelayResponse.ExchangeFinished/FinishReason/FinishSummary.
-                if (relayResponse.ExchangeFinished)
+                if (outcome.Finished)
                 {
                     exchangeFinished = true;
-                    finishReason = relayResponse.FinishReason;
-                    finishSummary = relayResponse.FinishSummary;
+                    finishReason = outcome.FinishReason;
+                    finishSummary = outcome.FinishSummary;
                     break;
                 }
 
-                // Single-shot preservation (matches local-path semantic). With no objective the
-                // caller takes one round-trip and exits without forcing the remote agent to invoke
-                // the finish tool.
+                // Single-shot semantic preserved from pre-Phase-8 behaviour: with no objective the
+                // caller is sending one prompt and taking one response — there is nothing to drive
+                // toward, so we exit after the first turn without forcing the target to invoke the
+                // finish tool.
                 if (string.IsNullOrWhiteSpace(request.Objective))
                 {
                     singleShot = true;
@@ -408,27 +425,29 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 message = BuildFollowUpMessage(request.Objective, finalResponse);
             }
 
+            beforeSeal(session);
             session.Status = GatewaySessionStatus.Sealed;
-            session.Metadata["remoteSessionId"] = remoteSessionId;
+            onSealSuccess(session);
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // #553: caller-initiated cancellation must NOT seal the session. See the matching
-            // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale.
+            // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale —
+            // sealing here would poison the session for any caller retry.
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Cross-world conversation failed for session '{SessionId}'.", sessionId);
+            _logger.LogWarning(ex, "Agent conversation failed for session '{SessionId}'.", sessionId);
+            beforeSeal(session);
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
-
 
         // Record budget usage after successful exchange
         _budgetTracker?.RecordExchangeComplete(request.InitiatorId, request.TargetId, transcript.Count);
@@ -444,13 +463,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
             FinishReason = exchangeFinished ? finishReason : null,
             FinishSummary = exchangeFinished ? finishSummary : null
         };
-    }
-
-    private static string ResolveCompletionReason(bool exchangeFinished, bool singleShot)
-    {
-        if (exchangeFinished) return "exchangeFinished";
-        if (singleShot) return "singleShot";
-        return "maxTurnsReached";
     }
 
     /// <summary>

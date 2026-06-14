@@ -515,6 +515,100 @@ public sealed class FileSessionStoreTests
     }
 
     [Fact]
+    public async Task ListByConversationAsync_AcrossReload_ScopesToConversation_WhenManyOtherSessionsExist()
+    {
+        // #1386: the sidecar-scan override must return the SAME conversation-scoped slice as
+        // the base default even when the store holds many sessions in OTHER conversations
+        // (the scenario where the old O(total) default would fully hydrate every one). A
+        // cold reload (empty cache) forces the meta-only candidate scan path.
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+        // 6 conversations owned by agent-x; only conv-3 is the target.
+        for (var c = 0; c < 6; c++)
+        {
+            await fixture.Conversations.CreateAsync(new Conversation
+            {
+                ConversationId = ConversationId.From($"conv-{c}"),
+                AgentId = AgentId.From("agent-x"),
+                CreatedAt = baseTime,
+                UpdatedAt = baseTime
+            });
+        }
+
+        var seedStore = fixture.CreateStore();
+        // 2 sessions per conversation → 12 total; the target conversation has exactly 2.
+        for (var c = 0; c < 6; c++)
+        {
+            for (var s = 0; s < 2; s++)
+            {
+                await seedStore.SaveAsync(new GatewaySession
+                {
+                    SessionId = SessionId.From($"s-{c}-{s}"),
+                    AgentId = AgentId.From("agent-x"),
+                    CreatedAt = baseTime.AddMinutes((c * 10) + s),
+                    Status = SessionStatus.Active,
+                    Session = { ConversationId = ConversationId.From($"conv-{c}") }
+                });
+            }
+        }
+
+        var reloaded = fixture.CreateStore();
+        var result = await reloaded.ListByConversationAsync(ConversationId.From("conv-3"));
+
+        result.Select(x => x.SessionId.Value)
+            .ShouldBe(new[] { "s-3-0", "s-3-1" }, ignoreOrder: false,
+                customMessage: "override must return only the target conversation's sessions, chronologically");
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_UsesCachedSession_WithoutReReadingSidecar()
+    {
+        // #1386: the override's fast path uses an already-hydrated cached session as the
+        // discriminator. After GetAsync warms the cache, ListByConversationAsync must still
+        // return the session (proving the cached-branch matches the same conversation).
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conv-cache"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            UpdatedAt = baseTime
+        });
+
+        var store = fixture.CreateStore();
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-cache"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(1),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = ConversationId.From("conv-cache") }
+        });
+
+        // Warm the in-memory cache on this SAME store instance.
+        (await store.GetAsync(SessionId.From("s-cache"))).ShouldNotBeNull();
+
+        var result = await store.ListByConversationAsync(ConversationId.From("conv-cache"));
+        result.Select(x => x.SessionId.Value).ShouldBe(new[] { "s-cache" });
+    }
+
+    [Fact]
+    public void ListByConversationAsync_OverridesBaseDefault_OnFileSessionStore()
+    {
+        // #1386 guard at the unit level: FileSessionStore must declare its own override of
+        // ListByConversationAsync rather than inherit the O(total) SessionStoreBase default.
+        var method = typeof(FileSessionStore).GetMethod(
+            nameof(FileSessionStore.ListByConversationAsync),
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        method.ShouldNotBeNull();
+        method!.DeclaringType.ShouldBe(typeof(FileSessionStore),
+            "FileSessionStore must override ListByConversationAsync (sidecar scan), not inherit the base full-scan default.");
+    }
+
+    [Fact]
     public async Task GetExistenceAsync_ReturnsOwnedAndParticipantSessions_WithFiltersApplied()
     {
         using var fixture = new StoreFixture();

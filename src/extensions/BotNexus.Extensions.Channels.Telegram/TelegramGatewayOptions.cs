@@ -39,6 +39,13 @@ public sealed class TelegramGatewayOptions
     public string? WebhookUrl { get; set; }
 
     /// <summary>
+    /// Secret token authenticating inbound webhook requests for a single-bot deployment.
+    /// Ignored when <see cref="Bots"/> is non-empty. When null/empty the adapter generates a
+    /// cryptographically strong token at startup so webhook mode is never unauthenticated.
+    /// </summary>
+    public string? WebhookSecretToken { get; set; }
+
+    /// <summary>
     /// Allow-list of chat IDs for a single-bot deployment.
     /// Ignored when <see cref="Bots"/> is non-empty.
     /// An empty list allows all chats.
@@ -111,6 +118,7 @@ public sealed class TelegramGatewayOptions
             BotToken = BotToken,
             AgentId = AgentId,
             WebhookUrl = WebhookUrl,
+            WebhookSecretToken = WebhookSecretToken,
             PollingTimeoutSeconds = PollingTimeoutSeconds,
             StreamingBufferMs = StreamingBufferMs,
             MaxMessageLength = MaxMessageLength,

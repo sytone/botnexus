@@ -56,7 +56,8 @@ DM your bot and it will respond via the configured agent.
       "streamingBufferMs": 500,
       "maxMessageLength": 4000,
       "processEditedMessages": false,
-      "webhookUrl": "string (optional)"
+      "webhookUrl": "string (optional)",
+      "webhookSecretToken": "string (optional)"
     }
   }
 }
@@ -73,6 +74,7 @@ DM your bot and it will respond via the configured agent.
 | `maxMessageLength` | int | `4000` | Characters before splitting long responses. |
 | `processEditedMessages` | bool | `false` | When `true`, edited messages are processed as new messages. |
 | `webhookUrl` | string | `null` | Set to enable webhook mode instead of polling (requires a public HTTPS URL). |
+| `webhookSecretToken` | string | `null` | Secret used to authenticate inbound webhook requests. When omitted in webhook mode, a strong token is generated automatically. Only used when `webhookUrl` is set. |
 
 ### Multiple bots
 
@@ -137,6 +139,7 @@ In a **group**, `chat.id` is the group's ID (a large negative number) and `from.
 | `from.id` in `allowedUserIds` | Inbound message is from an allowed sender |
 | `from` is non-null | Messages with no sender (channel posts) are rejected |
 | Edited messages | Ignored by default (`processEditedMessages: false`) |
+| Webhook secret token | In webhook mode, the `X-Telegram-Bot-Api-Secret-Token` header is validated (constant-time) before any update is processed; mismatches return HTTP 403 |
 
 ### Protecting your bot token
 
@@ -168,8 +171,39 @@ If the SignalR portal is also connected, messages from Telegram appear there too
 | Works behind NAT/VPN | Yes | Only with reverse proxy |
 | Latency | ~0.5s | ~0ms |
 | Setup complexity | None | Requires ingress config |
+| Inbound authentication | Bot token (held by gateway) | Secret token header (per request) |
 
 Long polling is the right default for self-hosted or home-lab setups. Set `webhookUrl` only if you already have a stable public HTTPS endpoint.
+
+### Webhook mode
+
+When `webhookUrl` is set, the adapter:
+
+1. Registers the URL with Telegram via `setWebhook`, including a **secret token**.
+2. Exposes a receiver endpoint at **`POST /telegram/webhook/{botName}`** (the `{botName}` segment is the key under `bots`, or `default` for a single-bot config).
+3. Validates the `X-Telegram-Bot-Api-Secret-Token` header on every inbound request (constant-time comparison) and rejects mismatches with HTTP 403 before any message is processed.
+
+Point `webhookUrl` at the public address of that receiver, e.g.:
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "botToken": "YOUR_BOT_TOKEN",
+      "agentId": "my-agent",
+      "allowedChatIds": [1234567890],
+      "allowedUserIds": [1234567890],
+      "webhookUrl": "https://your-host.example.com/telegram/webhook/default"
+    }
+  }
+}
+```
+
+The `webhookSecretToken` is optional — when omitted the adapter generates a cryptographically strong one at startup, so webhook mode is never unauthenticated. Set it explicitly only if you need a stable, known value (e.g. to coordinate with an external reverse proxy). Multi-bot configs append the bot name to the path: `/telegram/webhook/<botName>`.
+
+::: warning Webhook mode requires a public HTTPS endpoint
+The receiver must be reachable by Telegram over HTTPS with a valid certificate. The secret token authenticates that inbound requests genuinely came from Telegram; it does **not** replace the allow-lists, which are still enforced after the secret check exactly as in polling mode.
+:::
 
 ---
 

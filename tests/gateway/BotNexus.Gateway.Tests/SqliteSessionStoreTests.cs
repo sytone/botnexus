@@ -1002,6 +1002,141 @@ public sealed class SqliteSessionStoreTests
             .ShouldBe(new[] { "s-a", "s-z" }, ignoreOrder: false);
     }
 
+    [Fact]
+    public async Task GetStatsAsync_EmptyStore_ReturnsZeroTotals()
+    {
+        using var fixture = new StoreFixture();
+
+        var stats = await fixture.CreateStore().GetStatsAsync();
+
+        stats.ShouldNotBeNull();
+        stats!.TotalSessions.ShouldBe(0);
+        stats.ByStatus.ShouldBeEmpty();
+        stats.ByAgent.ShouldBeEmpty();
+        stats.Compaction.UncompactedSessions.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_CountsByStatus_NormalizesEnumNames()
+    {
+        using var fixture = new StoreFixture();
+        await SeedSessionAsync(fixture, "s-active-1", "agent-a", "conv-a", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "s-active-2", "agent-a", "conv-a", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "s-sealed-1", "agent-a", "conv-a", SessionStatus.Sealed);
+        await SeedSessionAsync(fixture, "s-suspended-1", "agent-a", "conv-a", SessionStatus.Suspended);
+
+        var stats = await fixture.CreateStore().GetStatsAsync();
+
+        stats.ShouldNotBeNull();
+        stats!.TotalSessions.ShouldBe(4);
+        stats.ByStatus["Active"].ShouldBe(2);
+        stats.ByStatus["Sealed"].ShouldBe(1);
+        stats.ByStatus["Suspended"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_GroupsByAgent_ResolvedFromConversationStore()
+    {
+        using var fixture = new StoreFixture();
+        // agent-a owns conv-a (3 sessions), agent-b owns conv-b (1 session).
+        await SeedSessionAsync(fixture, "a1", "agent-a", "conv-a", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "a2", "agent-a", "conv-a", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "a3", "agent-a", "conv-a", SessionStatus.Sealed);
+        await SeedSessionAsync(fixture, "b1", "agent-b", "conv-b", SessionStatus.Active);
+
+        var stats = await fixture.CreateStore().GetStatsAsync();
+
+        stats.ShouldNotBeNull();
+        stats!.TotalSessions.ShouldBe(4);
+        // Ordered by count descending — agent-a (3) first, agent-b (1) second.
+        stats.ByAgent.Count.ShouldBe(2);
+        stats.ByAgent[0].AgentId.ShouldBe("agent-a");
+        stats.ByAgent[0].Count.ShouldBe(3);
+        stats.ByAgent[1].AgentId.ShouldBe("agent-b");
+        stats.ByAgent[1].Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_AgentFilter_OnlyCountsThatAgentsSessions()
+    {
+        using var fixture = new StoreFixture();
+        await SeedSessionAsync(fixture, "a1", "agent-a", "conv-a", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "a2", "agent-a", "conv-a", SessionStatus.Sealed);
+        await SeedSessionAsync(fixture, "b1", "agent-b", "conv-b", SessionStatus.Active);
+        await SeedSessionAsync(fixture, "b2", "agent-b", "conv-b", SessionStatus.Active);
+
+        var stats = await fixture.CreateStore().GetStatsAsync(AgentId.From("agent-b"));
+
+        stats.ShouldNotBeNull();
+        stats!.TotalSessions.ShouldBe(2);
+        stats.ByAgent.ShouldHaveSingleItem();
+        stats.ByAgent[0].AgentId.ShouldBe("agent-b");
+        stats.ByAgent[0].Count.ShouldBe(2);
+        stats.ByStatus["Active"].ShouldBe(2);
+        stats.ByStatus.ShouldNotContainKey("Sealed"); // agent-a's sealed session is filtered out
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_OrphanedSession_CountsTowardTotalsButNoAgentBucket()
+    {
+        using var fixture = new StoreFixture();
+        // Seed a normal session for agent-a, then write a session whose conversation
+        // does not exist in the conversation store (an orphan). Stats must not throw
+        // and must count the orphan toward totals/status but contribute no agent bucket.
+        await SeedSessionAsync(fixture, "a1", "agent-a", "conv-a", SessionStatus.Active);
+
+        // Write the orphan row directly with a conversation_id that was never created.
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                "INSERT INTO sessions (id, status, created_at, updated_at, conversation_id) " +
+                "VALUES ($id, $status, $ts, $ts, $conv)";
+            cmd.Parameters.AddWithValue("$id", "orphan-1");
+            cmd.Parameters.AddWithValue("$status", SessionStatus.Active.ToString());
+            cmd.Parameters.AddWithValue("$ts", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.Parameters.AddWithValue("$conv", "conv-missing");
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var stats = await fixture.CreateStore().GetStatsAsync();
+
+        stats.ShouldNotBeNull();
+        stats!.TotalSessions.ShouldBe(2);          // both the real and the orphan are counted
+        stats.ByStatus["Active"].ShouldBe(2);
+        stats.ByAgent.ShouldHaveSingleItem();        // only agent-a gets a bucket
+        stats.ByAgent[0].AgentId.ShouldBe("agent-a");
+        stats.ByAgent[0].Count.ShouldBe(1);
+    }
+
+    private static async Task SeedSessionAsync(
+        StoreFixture fixture, string sessionId, string agentId, string conversationId, SessionStatus status)
+    {
+        var convId = ConversationId.From(conversationId);
+        if (await fixture.Conversations.GetAsync(convId) is null)
+        {
+            var now = DateTimeOffset.UtcNow;
+            await fixture.Conversations.CreateAsync(new Conversation
+            {
+                ConversationId = convId,
+                AgentId = AgentId.From(agentId),
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+
+        var store = fixture.CreateStore();
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(agentId),
+            CreatedAt = DateTimeOffset.UtcNow,
+            Status = status,
+            Session = { ConversationId = convId }
+        });
+    }
+
     private sealed class StoreFixture : IDisposable
     {
         public StoreFixture()
