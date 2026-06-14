@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -5,6 +6,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -17,7 +19,8 @@ public sealed class CanvasTool(
     AgentId agentId,
     ConversationId? conversationId,
     IConversationStore? conversationStore = null,
-    IReadOnlyList<IAgentCanvasNotifier>? canvasNotifiers = null) : IAgentTool
+    IReadOnlyList<IAgentCanvasNotifier>? canvasNotifiers = null,
+    CanvasToolOptions? options = null) : IAgentTool
 {
     private static readonly JsonElement ToolSchema = JsonDocument.Parse("""
         {
@@ -48,6 +51,7 @@ public sealed class CanvasTool(
     private readonly ConversationId? _conversationId = conversationId;
     private readonly IConversationStore? _conversationStore = conversationStore;
     private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers = canvasNotifiers ?? [];
+    private readonly CanvasToolOptions _options = options ?? new CanvasToolOptions();
 
     public string Name => "canvas";
     public string Label => "Canvas";
@@ -148,6 +152,25 @@ public sealed class CanvasTool(
 
         var key = ReadRequiredString(arguments, "key");
         var value = GetJsonValue(arguments, "value");
+
+        // Bound key length and value size at the tool boundary so an agent (or canvas JS writing
+        // through the same store path) cannot bloat the conversation store with an oversized value
+        // or unbounded distinct keys. Reject without writing, consistent with the other failure paths.
+        if (_options.MaxKeyLength > 0 && key.Length > _options.MaxKeyLength)
+        {
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text,
+                $"Failed to set state: key length {key.Length} exceeds the maximum of {_options.MaxKeyLength} characters.")]);
+        }
+
+        if (_options.MaxValueBytes > 0)
+        {
+            var valueByteCount = Encoding.UTF8.GetByteCount(value.GetRawText());
+            if (valueByteCount > _options.MaxValueBytes)
+            {
+                return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text,
+                    $"Failed to set state key '{key}': value size {valueByteCount} bytes exceeds the maximum of {_options.MaxValueBytes} bytes.")]);
+            }
+        }
 
         var success = await _conversationStore.SetCanvasStateKeyAsync(_conversationId.Value, key, value, cancellationToken)
             .ConfigureAwait(false);

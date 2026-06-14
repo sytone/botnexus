@@ -42,6 +42,20 @@ public sealed class MemorySearchAgentConfig
     public int DefaultTopK { get; set; } = 10;
 
     /// <summary>
+    /// Gets or sets the maximum number of results an agent-supplied <c>topK</c> can request.
+    /// Caller-provided values above this ceiling are clamped so a single search cannot fan out
+    /// over the entire store; protects against runaway embedding fetches and oversized tool results.
+    /// </summary>
+    public int MaxTopK { get; set; } = 100;
+
+    /// <summary>
+    /// Gets or sets the maximum number of entries a <c>memory_get</c> session listing can return.
+    /// Caller-provided <c>limit</c> values above this ceiling are clamped to bound the fetch and
+    /// the resulting serialized payload.
+    /// </summary>
+    public int MaxLimit { get; set; } = 100;
+
+    /// <summary>
     /// Gets or sets the temporal decay.
     /// </summary>
     public TemporalDecayAgentConfig? TemporalDecay { get; set; }
