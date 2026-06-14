@@ -268,77 +268,22 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             using var getOrCreateActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
             getOrCreateActivity?.SetTag("botnexus.session.id", sessionId);
             getOrCreateActivity?.SetTag("botnexus.agent.id", agentId);
-            var resolvedSource = new ChannelSource(
-                message.ChannelType,
-                message.ChannelAddress,
-                message.SenderId,
-                message.BindingId,
-                DisplayPrefix: null);
-            ConversationSessionResolution? resolution = null;
-            var isInternalWakeMessage =
-                message.ChannelType.Equals(ChannelKey.From("internal"));
 
-            if (isInternalWakeMessage)
-            {
-                // Internal sub-agent wake-ups target an already-known parent session.
-                // Routing them through conversation resolution creates synthetic internal
-                // conversations and can misroute the user-visible response stream.
-                var internalTargetSessionId = requestedSessionIdValue
-                    ?? message.ChannelAddress.Value;
-
-                if (!string.IsNullOrWhiteSpace(internalTargetSessionId))
-                    sessionId = internalTargetSessionId;
-            }
-            else if (_conversationDispatcher is not null)
-            {
-                var dispatchResult = await _conversationDispatcher.DispatchAsync(
-                    InboundMessageContext.FromInboundMessage(typedAgentId, message),
-                    cancellationToken);
-                sessionId = dispatchResult.Resolution.SessionId.Value;
-                resolution = dispatchResult.Resolution;
-                resolvedSource = dispatchResult.Source;
-                message = message with
-                {
-                    BindingId = message.BindingId ?? resolvedSource.BindingId
-                };
-                dispatches.Add(dispatchResult);
-            }
-            else if (_conversationRouter is not null)
-            {
-                // Back-compat path while runtime callers migrate to dispatcher injection.
-                var routingResult = await _conversationRouter.ResolveInboundAsync(
-                    typedAgentId,
-                    message.ChannelType,
-                    message.ChannelAddress,
-                    conversationId: hints.RequestedConversationId?.Value,
-                    cancellationToken,
-                    initiator: message.Sender);
-                sessionId = routingResult.SessionId.Value;
-                var originatingBinding = routingResult.OriginatingBinding;
-                resolvedSource = originatingBinding is null
-                    ? resolvedSource
-                    : resolvedSource with
-                    {
-                        BindingId = originatingBinding.BindingId,
-                        DisplayPrefix = originatingBinding.DisplayPrefix
-                    };
-                resolution = new ConversationSessionResolution(
-                    routingResult.Conversation.ConversationId,
-                    routingResult.SessionId,
-                    IsNewConversation: false,
-                    IsNewSession: routingResult.IsNewSession,
-                    OriginatingBindingId: resolvedSource.BindingId,
-                    DisplayPrefix: resolvedSource.DisplayPrefix);
-                message = message with
-                {
-                    BindingId = message.BindingId ?? resolvedSource.BindingId
-                };
-                // Synthesise a DispatchResult for the back-compat router path so
-                // the orchestrator's InboundDispatchResult uniformly reflects
-                // EVERY routed agent regardless of which resolver branch ran.
-                var routerContext = InboundMessageContext.FromInboundMessage(typedAgentId, message);
-                dispatches.Add(new DispatchResult(routerContext, resolvedSource, resolution));
-            }
+            // #1381 (increment 1): the 3-branch conversation/session resolution
+            // (internal-wake vs dispatcher vs back-compat router) is extracted into
+            // ResolveConversationSessionAsync so ProcessAsync no longer inlines it. The
+            // method is a pure transform of the resolution inputs into
+            // (sessionId, resolution, resolvedSource, possibly-rewritten message, an
+            // optional DispatchResult); applying those outputs here preserves the exact
+            // prior control flow and mutation order.
+            var resolved = await ResolveConversationSessionAsync(
+                message, typedAgentId, requestedSessionIdValue, hints, sessionId, cancellationToken);
+            sessionId = resolved.SessionId;
+            var resolution = resolved.Resolution;
+            var resolvedSource = resolved.ResolvedSource;
+            message = resolved.Message;
+            if (resolved.Dispatch is not null)
+                dispatches.Add(resolved.Dispatch);
 
             var typedSessionId = SessionId.From(sessionId);
 
@@ -843,6 +788,121 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
         return new InboundProcessingOutcome(dispatches, shouldClosePerSessionQueue);
     }
+
+    /// <summary>
+    /// Resolves the conversation/session routing for a single target agent. This is the
+    /// 3-branch resolution lifted out of <see cref="ProcessAsync"/> (#1381 increment 1):
+    /// <list type="number">
+    /// <item>internal sub-agent wake-ups target an already-known parent session and bypass
+    ///       conversation resolution (routing them through it creates synthetic internal
+    ///       conversations and can misroute the user-visible response stream);</item>
+    /// <item>the conversation dispatcher (preferred runtime path) resolves a full
+    ///       <see cref="DispatchResult"/>;</item>
+    /// <item>the back-compat conversation router (used while runtime callers migrate to
+    ///       dispatcher injection) resolves an inbound and synthesises an equivalent
+    ///       <see cref="DispatchResult"/> so the orchestrator outcome uniformly reflects
+    ///       every routed agent regardless of branch.</item>
+    /// </list>
+    /// It performs no session mutation and no I/O beyond the resolver call — it is a pure
+    /// transform of the inputs into the resolution outputs the caller then applies, so the
+    /// extraction preserves the exact prior behaviour and mutation order.
+    /// </summary>
+    private async Task<ResolvedConversationSession> ResolveConversationSessionAsync(
+        InboundMessage message,
+        AgentId typedAgentId,
+        string? requestedSessionIdValue,
+        InboundMessageRoutingHints hints,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var resolvedSource = new ChannelSource(
+            message.ChannelType,
+            message.ChannelAddress,
+            message.SenderId,
+            message.BindingId,
+            DisplayPrefix: null);
+        ConversationSessionResolution? resolution = null;
+        DispatchResult? dispatch = null;
+        var isInternalWakeMessage =
+            message.ChannelType.Equals(ChannelKey.From("internal"));
+
+        if (isInternalWakeMessage)
+        {
+            // Internal sub-agent wake-ups target an already-known parent session.
+            // Routing them through conversation resolution creates synthetic internal
+            // conversations and can misroute the user-visible response stream.
+            var internalTargetSessionId = requestedSessionIdValue
+                ?? message.ChannelAddress.Value;
+
+            if (!string.IsNullOrWhiteSpace(internalTargetSessionId))
+                sessionId = internalTargetSessionId;
+        }
+        else if (_conversationDispatcher is not null)
+        {
+            var dispatchResult = await _conversationDispatcher.DispatchAsync(
+                InboundMessageContext.FromInboundMessage(typedAgentId, message),
+                cancellationToken);
+            sessionId = dispatchResult.Resolution.SessionId.Value;
+            resolution = dispatchResult.Resolution;
+            resolvedSource = dispatchResult.Source;
+            message = message with
+            {
+                BindingId = message.BindingId ?? resolvedSource.BindingId
+            };
+            dispatch = dispatchResult;
+        }
+        else if (_conversationRouter is not null)
+        {
+            // Back-compat path while runtime callers migrate to dispatcher injection.
+            var routingResult = await _conversationRouter.ResolveInboundAsync(
+                typedAgentId,
+                message.ChannelType,
+                message.ChannelAddress,
+                conversationId: hints.RequestedConversationId?.Value,
+                cancellationToken,
+                initiator: message.Sender);
+            sessionId = routingResult.SessionId.Value;
+            var originatingBinding = routingResult.OriginatingBinding;
+            resolvedSource = originatingBinding is null
+                ? resolvedSource
+                : resolvedSource with
+                {
+                    BindingId = originatingBinding.BindingId,
+                    DisplayPrefix = originatingBinding.DisplayPrefix
+                };
+            resolution = new ConversationSessionResolution(
+                routingResult.Conversation.ConversationId,
+                routingResult.SessionId,
+                IsNewConversation: false,
+                IsNewSession: routingResult.IsNewSession,
+                OriginatingBindingId: resolvedSource.BindingId,
+                DisplayPrefix: resolvedSource.DisplayPrefix);
+            message = message with
+            {
+                BindingId = message.BindingId ?? resolvedSource.BindingId
+            };
+            // Synthesise a DispatchResult for the back-compat router path so
+            // the orchestrator's InboundDispatchResult uniformly reflects
+            // EVERY routed agent regardless of which resolver branch ran.
+            var routerContext = InboundMessageContext.FromInboundMessage(typedAgentId, message);
+            dispatch = new DispatchResult(routerContext, resolvedSource, resolution);
+        }
+
+        return new ResolvedConversationSession(sessionId, resolution, resolvedSource, message, dispatch);
+    }
+
+    /// <summary>
+    /// Outputs of <see cref="ResolveConversationSessionAsync"/>: the resolved session id,
+    /// the (nullable) conversation resolution, the resolved channel source, the
+    /// possibly-rewritten inbound message (binding id back-filled), and an optional
+    /// <see cref="DispatchResult"/> the caller appends to the dispatch list.
+    /// </summary>
+    private readonly record struct ResolvedConversationSession(
+        string SessionId,
+        ConversationSessionResolution? Resolution,
+        ChannelSource ResolvedSource,
+        InboundMessage Message,
+        DispatchResult? Dispatch);
 
     private async Task SendSessionStatusRejectedAsync(
         InboundMessage message,
