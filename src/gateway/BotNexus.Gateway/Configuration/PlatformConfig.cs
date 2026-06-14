@@ -114,6 +114,8 @@ public sealed class GatewaySettingsConfig
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>
     public RateLimitConfig? RateLimit { get; set; }
+    /// <summary>Explicit SignalR hub transport limits (frame size, parallel invocations, stream buffer).</summary>
+    public SignalRConfig? SignalR { get; set; }
     /// <summary>Logging level override.</summary>
     public string? LogLevel { get; set; }
     /// <summary>Multi-tenant API keys keyed by key ID.</summary>
@@ -341,6 +343,34 @@ public sealed class RateLimitConfig
 
     /// <summary>Window size in seconds used for request counting.</summary>
     public int WindowSeconds { get; set; } = 60;
+}
+
+/// <summary>
+/// Explicit SignalR hub transport limits. When this section is absent, secure defaults are
+/// applied (see <c>SignalRHubLimits</c>) rather than the framework's implicit values, so the
+/// gateway always bounds inbound frame size and per-connection concurrency intentionally.
+/// </summary>
+public sealed class SignalRConfig
+{
+    /// <summary>
+    /// Maximum size, in bytes, of a single inbound hub message. Must accommodate base64-encoded
+    /// inline media (which exceeds the framework's 32 KB default) while bounding runaway frames.
+    /// Non-positive values fall back to the secure default.
+    /// </summary>
+    public long? MaximumReceiveMessageSizeBytes { get; set; }
+
+    /// <summary>
+    /// Maximum number of hub method invocations a single connection may run in parallel.
+    /// Bounds concurrent work a client can force on the server. Non-positive values fall back to
+    /// the secure default.
+    /// </summary>
+    public int? MaximumParallelInvocationsPerClient { get; set; }
+
+    /// <summary>
+    /// Maximum number of items buffered for client upload streams before processing blocks.
+    /// Non-positive values fall back to the secure default.
+    /// </summary>
+    public int? StreamBufferCapacity { get; set; }
 }
 
 /// <summary>Cron scheduler configuration.</summary>
