@@ -80,6 +80,8 @@ Heartbeat context
 ## Subagent Context
 Sub-agent context
 <runtime>
+INTERNAL_RUNTIME_CONTEXT_BEGIN
 Runtime: agent=agent-a | host=host-a | os=Windows (x64) | provider=openai | model=gpt-5 | shell=pwsh | channel=signalr | capabilities=reactions
 Reasoning: off (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.
+INTERNAL_RUNTIME_CONTEXT_END
 </runtime>

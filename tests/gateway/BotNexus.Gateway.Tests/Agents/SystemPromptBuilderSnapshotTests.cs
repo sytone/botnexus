@@ -119,6 +119,91 @@ public sealed class SystemPromptBuilderSnapshotTests
     }
 
     [Fact]
+    public void Build_FullMode_WrapsRuntimeContextInDelimiters()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read"],
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "agent-a",
+                Host = "host-a",
+                Channel = "signalr"
+            },
+            ReasoningLevel = "medium"
+        });
+
+        var beginIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_BEGIN", StringComparison.Ordinal);
+        var runtimeLineIndex = prompt.IndexOf("Runtime: agent=agent-a", StringComparison.Ordinal);
+        var reasoningIndex = prompt.IndexOf("Reasoning: medium", StringComparison.Ordinal);
+        var endIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_END", StringComparison.Ordinal);
+
+        beginIndex.ShouldBeGreaterThanOrEqualTo(0);
+        endIndex.ShouldBeGreaterThan(beginIndex);
+        runtimeLineIndex.ShouldBeGreaterThan(beginIndex);
+        runtimeLineIndex.ShouldBeLessThan(endIndex);
+        reasoningIndex.ShouldBeGreaterThan(beginIndex);
+        reasoningIndex.ShouldBeLessThan(endIndex);
+    }
+
+    [Fact]
+    public void Build_MinimalMode_WrapsRuntimeContextInDelimiters()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read"],
+            PromptMode = PromptMode.Minimal,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "agent-a",
+                Channel = "signalr"
+            }
+        });
+
+        var beginIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_BEGIN", StringComparison.Ordinal);
+        var endIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_END", StringComparison.Ordinal);
+        var runtimeLineIndex = prompt.IndexOf("Runtime: agent=agent-a", StringComparison.Ordinal);
+
+        beginIndex.ShouldBeGreaterThanOrEqualTo(0);
+        endIndex.ShouldBeGreaterThan(beginIndex);
+        runtimeLineIndex.ShouldBeGreaterThan(beginIndex);
+        runtimeLineIndex.ShouldBeLessThan(endIndex);
+    }
+
+    [Fact]
+    public void Build_RuntimeContextEndDelimiter_ClosesRuntimeContextBody()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read"],
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "agent-a",
+                Channel = "signalr"
+            }
+        });
+
+        var lines = prompt
+            .Replace("\r\n", "\n")
+            .Split('\n')
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        var reasoningIndex = lines.FindIndex(static line => line.StartsWith("Reasoning:", StringComparison.Ordinal));
+        var endIndex = lines.FindIndex(static line => string.Equals(line, "INTERNAL_RUNTIME_CONTEXT_END", StringComparison.Ordinal));
+
+        // The END delimiter must close the runtime-context body: it comes immediately after the
+        // last body line (the Reasoning line) and bounds the block models see.
+        reasoningIndex.ShouldBeGreaterThanOrEqualTo(0);
+        endIndex.ShouldBe(reasoningIndex + 1);
+    }
+
+    [Fact]
     public void Build_FullMode_MatchesSnapshot()
     {
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams

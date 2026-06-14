@@ -6,6 +6,19 @@ namespace BotNexus.Gateway.Prompts;
 public static class RuntimeLineFormatter
 {
     /// <summary>
+    /// Delimiter line that marks the start of the hidden runtime-context block in the system prompt.
+    /// Models see this as a bounded block; an outbound strip routine can target these markers to redact
+    /// the runtime context from user-visible replies (see follow-up work for the strip half).
+    /// </summary>
+    public const string RuntimeContextBeginDelimiter = "INTERNAL_RUNTIME_CONTEXT_BEGIN";
+
+    /// <summary>
+    /// Delimiter line that marks the end of the hidden runtime-context block in the system prompt.
+    /// Pairs with <see cref="RuntimeContextBeginDelimiter"/> to bracket the runtime-context body.
+    /// </summary>
+    public const string RuntimeContextEndDelimiter = "INTERNAL_RUNTIME_CONTEXT_END";
+
+    /// <summary>
     /// Executes build runtime line.
     /// </summary>
     /// <param name="runtime">The runtime.</param>
