@@ -133,11 +133,30 @@ internal sealed class MockHttpServer : IDisposable
 
     public MockHttpServer()
     {
-        var port = FindFreePort();
-        BaseUrl = $"http://localhost:{port}";
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://localhost:{port}/");
-        _listener.Start();
+        // Bind the listener directly and retry on a fresh port if the chosen one is
+        // already taken. Probing a TcpListener for a "free" port and then handing it to
+        // HttpListener leaves a TOCTOU gap where a parallel test (or the OS) can grab the
+        // port between probe and bind, producing intermittent "Address already in use"
+        // failures. Letting HttpListener own bind+start, with retry, closes that gap.
+        const int maxAttempts = 25;
+        for (var attempt = 1; ; attempt++)
+        {
+            var port = FindFreePort();
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://localhost:{port}/");
+            try
+            {
+                listener.Start();
+                _listener = listener;
+                BaseUrl = $"http://localhost:{port}";
+                break;
+            }
+            catch (HttpListenerException) when (attempt < maxAttempts)
+            {
+                ((IDisposable)listener).Dispose();
+            }
+        }
+
         _listenTask = Task.Run(ListenLoop);
     }
 
@@ -186,8 +205,13 @@ internal sealed class MockHttpServer : IDisposable
     public void Dispose()
     {
         _cts.Cancel();
-        _listener.Stop();
-        _listener.Close();
+        // The managed HttpListener on Linux can throw "Address already in use" from
+        // Stop()/Close() during teardown (it re-enters the endpoint manager while the
+        // socket is still in TIME_WAIT). The server has already served the test by this
+        // point, so these teardown faults are harmless noise — swallow them rather than
+        // failing an otherwise-passing test.
+        try { _listener.Stop(); } catch (HttpListenerException) { } catch (ObjectDisposedException) { }
+        try { _listener.Close(); } catch (HttpListenerException) { } catch (ObjectDisposedException) { }
         try { _listenTask.Wait(TimeSpan.FromSeconds(2)); } catch { }
         _cts.Dispose();
     }
