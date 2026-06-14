@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
@@ -222,6 +223,7 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>()));
         services.AddHostedService<SessionCleanupService>();
+        services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
@@ -365,8 +367,19 @@ public static class GatewayServiceCollectionExtensions
         var rawJson = TryReadConfigFile(resolvedConfigPath, fileSystem);
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
-            PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
-            PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+            // A malformed config.json must not abort registration. Program.cs already guards the
+            // IConfiguration pipeline, but the legacy-migration and agent-defaults extraction below
+            // re-parse the raw file directly and would throw on invalid JSON. Fall back to the
+            // already-bound config (defaults + any valid IConfiguration sources) on parse failure.
+            try
+            {
+                PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
+                PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+            }
+            catch (JsonException)
+            {
+                // Invalid JSON — keep the bound config and let the gateway start on defaults.
+            }
         }
 
         return config;
@@ -424,6 +437,12 @@ public static class GatewayServiceCollectionExtensions
                 ? "File"
                 : "Sqlite"; // Default to SQLite — InMemory loses all data on restart
 
+        // Writable runtime-state directory. Honors BOTNEXUS_DATA_DIR (set in the container image)
+        // so the SQLite/File session store lands on a writable volume even when the config
+        // directory is mounted read-only. Falls back to the config directory for local installs
+        // where the two are the same.
+        var dataDirectory = BotNexusHome.ResolveDataPath() ?? configDirectory;
+
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             // Phase 9 / P9-B (#615): thread the conversation store so save-time legacy
@@ -442,7 +461,9 @@ public static class GatewayServiceCollectionExtensions
             if (string.IsNullOrWhiteSpace(configuredPath))
                 throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.filePath is required when gateway.sessionStore.type is 'File'."]);
 
-            var sessionsPath = ResolveConfiguredPath(configDirectory, configuredPath);
+            // Resolve relative paths against the writable data directory so the default lands on
+            // a writable volume; absolute user-configured paths are honored as-is.
+            var sessionsPath = ResolveConfiguredPath(dataDirectory, configuredPath);
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
             {
                 var fs = serviceProvider.GetRequiredService<IFileSystem>();
@@ -459,10 +480,11 @@ public static class GatewayServiceCollectionExtensions
 
         if (resolvedType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
-            // Use explicit connection string, or default to sessions.sqlite in the config directory
+            // Use explicit connection string, or default to sessions.sqlite in the writable data
+            // directory (BOTNEXUS_DATA_DIR) so it works even when the config dir is read-only.
             var connectionString = !string.IsNullOrWhiteSpace(sessionStore?.ConnectionString)
                 ? sessionStore!.ConnectionString!
-                : $"Data Source={Path.Combine(configDirectory, "sessions.sqlite")}";
+                : $"Data Source={Path.Combine(dataDirectory, "sessions.sqlite")}";
 
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
                 new SqliteSessionStore(
@@ -486,6 +508,10 @@ public static class GatewayServiceCollectionExtensions
                 ? "File"
                 : "Sqlite"; // Default to SQLite — InMemory loses all data on restart
 
+        // Writable runtime-state directory (BOTNEXUS_DATA_DIR), mirroring ConfigureSessionStore,
+        // so conversation persistence survives a read-only config mount.
+        var dataDirectory = BotNexusHome.ResolveDataPath() ?? configDirectory;
+
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
@@ -498,7 +524,7 @@ public static class GatewayServiceCollectionExtensions
             if (string.IsNullOrWhiteSpace(configuredPath))
                 throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.filePath is required when gateway.sessionStore.type is 'File'."]);
 
-            var conversationsPath = Path.Combine(ResolveConfiguredPath(configDirectory, configuredPath), "conversations");
+            var conversationsPath = Path.Combine(ResolveConfiguredPath(dataDirectory, configuredPath), "conversations");
             services.Replace(ServiceDescriptor.Singleton<IConversationStore>(serviceProvider =>
             {
                 var fs = serviceProvider.GetRequiredService<IFileSystem>();
@@ -516,7 +542,7 @@ public static class GatewayServiceCollectionExtensions
         {
             var connectionString = !string.IsNullOrWhiteSpace(sessionStore?.ConnectionString)
                 ? sessionStore!.ConnectionString!
-                : $"Data Source={Path.Combine(configDirectory, "sessions.sqlite")}";
+                : $"Data Source={Path.Combine(dataDirectory, "sessions.sqlite")}";
 
             services.Replace(ServiceDescriptor.Singleton<IConversationStore>(serviceProvider =>
                 new SqliteConversationStore(

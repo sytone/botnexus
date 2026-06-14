@@ -43,6 +43,11 @@ public static class CronServiceCollectionExtensions
     {
         var homeType = Type.GetType("BotNexus.Gateway.Configuration.BotNexusHome, BotNexus.Gateway");
         var home = homeType is null ? null : services.GetService(homeType);
+        // Prefer the writable data directory (BOTNEXUS_DATA_DIR) so cron.sqlite works even when
+        // the config directory (RootPath) is mounted read-only; fall back to RootPath locally.
+        var dataPath = homeType?.GetProperty("DataPath")?.GetValue(home) as string;
+        if (!string.IsNullOrWhiteSpace(dataPath))
+            return dataPath;
         var rootPath = homeType?.GetProperty("RootPath")?.GetValue(home) as string;
         if (!string.IsNullOrWhiteSpace(rootPath))
             return rootPath;
