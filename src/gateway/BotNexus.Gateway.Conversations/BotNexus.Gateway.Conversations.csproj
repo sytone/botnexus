@@ -16,4 +16,9 @@
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Exposes internal helpers (e.g. ConversationStoreShared) to the store test project. -->
+    <InternalsVisibleTo Include="BotNexus.Gateway.Conversations.Tests" />
+  </ItemGroup>
+
 </Project>

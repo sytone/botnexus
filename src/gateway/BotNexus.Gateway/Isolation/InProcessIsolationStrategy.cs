@@ -136,6 +136,31 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             .Concat(extensionTools.Where(tool => !workspaceToolNames.Contains(tool.Name)))
             .ToList();
 
+        // #1382 Finding 2 — resolve the conversation id at most once per CreateAsync call.
+        // Several conversation-aware tools (conversation, ask_user, spawn_subagent, canvas)
+        // need the conversation bound to this session, and each previously performed an
+        // identical store lookup. The lookup is a read-only function of (store, sessionStore,
+        // agentId, sessionId) — all fixed for the duration of this call — so the result is
+        // safe to memoise. This collapses up to four redundant DB round-trips into one on the
+        // hot agent-handle-creation path. The first invocation runs the resolution; later
+        // invocations return the cached value (which may legitimately be null).
+        var conversationIdResolved = false;
+        ConversationId? resolvedConversationId = null;
+        async Task<ConversationId?> GetConversationIdAsync(IConversationStore store, ISessionStore? sessionStoreForResolve)
+        {
+            if (conversationIdResolved)
+                return resolvedConversationId;
+
+            resolvedConversationId = await ResolveConversationIdAsync(
+                store,
+                sessionStoreForResolve,
+                descriptor.AgentId,
+                context.SessionId,
+                cancellationToken).ConfigureAwait(false);
+            conversationIdResolved = true;
+            return resolvedConversationId;
+        }
+
         _logger.LogInformation(
             "Tool setup for '{AgentId}': workspace={WorkspaceCount} extension={ExtCount} total={Total} toolIds={ToolIdCount} workspace={WorkspacePath}",
             descriptor.AgentId, workspaceTools.Count, extensionTools.Count(), tools.Count,
@@ -178,7 +203,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var conversationStore = _serviceProvider.GetService<IConversationStore>();
         if (conversationStore is not null)
         {
-            var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+            var conversationId = await GetConversationIdAsync(conversationStore, sessionStore)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
             var conversationChangeNotifier = _serviceProvider.GetService<IConversationChangeNotifier>();
@@ -200,7 +225,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (includeAskUser && askUserRegistry is not null)
         {
             var askUserConversationId = conversationStore is not null
-                ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false)
+                ? await GetConversationIdAsync(conversationStore, sessionStore).ConfigureAwait(false)
                 : null;
             tools.Add(new AskUserTool(
                 askUserRegistry,
@@ -269,7 +294,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             if (includeSpawn)
             {
                 var spawnConversationId = conversationStore is not null
-                    ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false)
+                    ? await GetConversationIdAsync(conversationStore, sessionStore).ConfigureAwait(false)
                     : null;
                 if (spawnConversationId is { } resolvedSpawnConversationId)
                 {
@@ -356,7 +381,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var canvasConvStore = _serviceProvider.GetService<IConversationStore>();
             if (canvasConvStore is not null)
             {
-                canvasConversationId = await ResolveConversationIdAsync(canvasConvStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+                canvasConversationId = await GetConversationIdAsync(canvasConvStore, sessionStore)
                     .ConfigureAwait(false);
             }
             tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasConvStore, canvasNotifiers));

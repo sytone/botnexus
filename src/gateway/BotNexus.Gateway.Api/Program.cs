@@ -198,7 +198,8 @@ static string? ResolveCronModel(CronJobConfig config)
 }
 
 builder.Services.AddExtensionLoading();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+    SignalRHubLimits.Apply(options, startupPlatformConfig.Gateway?.SignalR));
 builder.Services.AddBotNexusGatewayApi();
 builder.Services.AddCors(options =>
 {

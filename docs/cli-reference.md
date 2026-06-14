@@ -76,16 +76,18 @@ You should see the root command help listing all available subcommands.
 24. [prompt run](#prompt-run) — Render and execute a prompt template
 25. [satellite](#satellite) — Manage satellite nodes
 26. [doctor](#doctor) — Diagnose configuration issues
-27. [locations](#locations) — Show resolved file paths
-28. [update](#update) — Check for and apply updates
-29. [memory](#memory) — Manage agent memory
-30. [cron](#cron-command) — Manage cron jobs from the CLI
-31. [debug sessions](#debug-sessions) — Inspect session SQLite database
-32. [debug logs](#debug-logs) — Inspect log files
-33. [debug db](#debug-db) — Inspect raw databases
-34. [debug gateway](#debug-gateway) — Live gateway diagnostics
-35. [debug cron](#debug-cron) — Cron scheduler diagnostics
-36. [Examples](#examples)
+27. [doctor config](#doctor-config) — Guided config migration
+28. [locations](#locations) — Show resolved file paths
+29. [update](#update) — Check for and apply updates
+30. [memory](#memory) — Manage agent memory
+31. [cron](#cron-command) — Manage cron jobs from the CLI
+32. [debug sessions](#debug-sessions) — Inspect session SQLite database
+33. [debug logs](#debug-logs) — Inspect log files
+34. [debug memory](#debug-memory) — Inspect agent memory directories
+35. [debug db](#debug-db) — Inspect raw databases
+36. [debug gateway](#debug-gateway) — Live gateway diagnostics
+37. [debug cron](#debug-cron) — Cron scheduler diagnostics
+38. [Examples](#examples)
 
 ---
 
@@ -1537,6 +1539,13 @@ botnexus doctor [OPTIONS]
 | `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
 | `--verbose` | Show detailed check output. |
 
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `locations` | Check that every resolved BotNexus location (config, logs, sessions, agents) is accessible. |
+| `config` | Guided config migration — detect and optionally apply missing settings. See [doctor config](#doctor-config). |
+
 ### Examples
 
 ```powershell
@@ -1545,9 +1554,50 @@ botnexus doctor
 
 # Check a specific instance
 botnexus doctor --target /opt/botnexus-prod
+
+# Verify location accessibility
+botnexus doctor locations
 ```
 
 Checks include: config validity, provider reachability, directory permissions, extension loading, and port availability.
+
+---
+
+## doctor config
+
+Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
+
+Current checks include: the `extensions` block, the Skills world default, cron configuration, the memory agent default, and the compaction model settings.
+
+### Usage
+
+```powershell
+botnexus doctor config [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--yes` | Apply all applicable fixes without prompting. |
+| `--dry-run` | Report what would change but do not write anything. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show detailed output for each check. |
+
+> Without `--yes` or `--dry-run`, the command prompts before applying each fix. The config file is only modified when a fix is applied.
+
+### Examples
+
+```powershell
+# Detect gaps and prompt before each fix
+botnexus doctor config
+
+# Preview changes without writing
+botnexus doctor config --dry-run
+
+# Apply every applicable fix non-interactively
+botnexus doctor config --yes
+```
 
 ---
 
@@ -1790,6 +1840,41 @@ botnexus debug logs search --query "timeout"
 
 # Filter by session
 botnexus debug logs session --id "session-abc123"
+```
+
+---
+
+## debug memory
+
+Inspect agent memory directories — daily notes, the consolidated `MEMORY.md`, and on-disk usage — without requiring a running gateway. Reads each agent's `workspace/memory/` folder and `workspace/MEMORY.md` file directly.
+
+### Usage
+
+```powershell
+botnexus debug memory [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
+| `--agent <ID>` | (all) | Show a detailed view for a single agent, including a per-file daily-note breakdown |
+| `--format` | `table` | Output format: `table` or `json` |
+
+The summary view lists every agent that has a memory directory or `MEMORY.md`, with the `MEMORY.md` size, daily-note count, most recent note, and total size. Passing `--agent` switches to a detailed per-agent view.
+
+### Examples
+
+```powershell
+# Summary of memory usage across all agents
+botnexus debug memory
+
+# Detailed view for a single agent
+botnexus debug memory --agent assistant
+
+# JSON output for scripting
+botnexus debug memory --format json
 ```
 
 ---
