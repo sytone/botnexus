@@ -74,6 +74,34 @@ docker logs -f botnexus-gateway
 docker stop botnexus-gateway && docker rm botnexus-gateway
 ```
 
+## Container Health Probe
+
+The `Dockerfile` declares a Docker `HEALTHCHECK` that probes `GET /health` with `curl`.
+The `mcr.microsoft.com/dotnet/aspnet` runtime base image ships **neither `curl` nor `wget`**
+(only `dotnet`), so the runtime stage explicitly installs `curl`:
+
+```dockerfile
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+Without this step the probe exits `1` on every interval and the container is reported
+`unhealthy` forever — even though the gateway is fully up and `GET /health` returns `200`.
+Orchestrators that gate on container health (`depends_on: condition: service_healthy`,
+swarm, k8s readiness via the docker health status) then treat a working gateway as never-ready.
+
+Verify the container reaches `healthy` after boot:
+
+```bash
+docker inspect -f '{{.State.Health.Status}}' botnexus-gateway   # -> healthy
+```
+
+This is guarded by `DockerHealthcheckArchitectureTests` (a Docker-free static fitness
+function): if the `Dockerfile` or `docker-compose.yml` HEALTHCHECK depends on `curl`/`wget`,
+the `Dockerfile` must install that binary. A future switch to a dotnet-native probe (no
+external binary) would satisfy the guard without the apt layer.
+
 ## Supplying Provider Credentials
 
 Credentials are resolved in this order:
