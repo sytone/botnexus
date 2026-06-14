@@ -1,8 +1,8 @@
 {
   "id": "botnexus-telegram",
   "name": "Telegram Channel",
-  "description": "Telegram Bot API channel adapter - long polling, DMs and group topics",
-  "version": "1.0.0",
+  "description": "Telegram Bot API channel adapter - long polling or secure webhook, DMs and group topics",
+  "version": "1.1.0",
   "entryAssembly": "BotNexus.Extensions.Channels.Telegram.dll",
   "extensionTypes": ["channel"],
   "enabled": true,
@@ -27,6 +27,13 @@
       "required": false,
       "sensitive": false,
       "description": "Webhook URL for webhook mode. When absent, the adapter uses long polling."
+    },
+    {
+      "id": "webhookSecretToken",
+      "type": "string",
+      "required": false,
+      "sensitive": true,
+      "description": "Secret token authenticating inbound webhook requests (validated against the X-Telegram-Bot-Api-Secret-Token header). When absent in webhook mode, a cryptographically strong token is generated automatically."
     },
     {
       "id": "pollingTimeoutSeconds",

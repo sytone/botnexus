@@ -90,9 +90,9 @@ public sealed class TelegramChannelAdapter(
         {
             if (!string.IsNullOrWhiteSpace(runtime.Config.WebhookUrl))
             {
-                await runtime.ApiClient.SetWebhookAsync(runtime.Config.WebhookUrl, cancellationToken);
+                await runtime.ApiClient.SetWebhookAsync(runtime.Config.WebhookUrl, runtime.WebhookSecret, cancellationToken);
                 _logger.LogInformation(
-                    "{DisplayName} bot '{BotName}' configured webhook mode at {WebhookUrl}",
+                    "{DisplayName} bot '{BotName}' configured webhook mode at {WebhookUrl} (secret-token authentication enabled)",
                     DisplayName,
                     runtime.BotName,
                     runtime.Config.WebhookUrl);
@@ -407,6 +407,75 @@ public sealed class TelegramChannelAdapter(
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Result of attempting to handle an inbound Telegram webhook update.
+    /// Lets the HTTP receiver map outcomes to status codes without leaking detail to callers.
+    /// </summary>
+    public enum WebhookHandleResult
+    {
+        /// <summary>The update was accepted and dispatched (or intentionally ignored as non-actionable).</summary>
+        Accepted,
+
+        /// <summary>The supplied secret token did not match the bot's registered secret. Map to 403.</summary>
+        SecretMismatch,
+
+        /// <summary>No bot with the supplied name is configured, or it is not in webhook mode. Map to 404.</summary>
+        UnknownBot,
+    }
+
+    /// <summary>
+    /// Handles a single inbound Telegram update delivered to the webhook receiver for
+    /// <paramref name="botName"/>. The supplied secret token is validated in constant time against
+    /// the secret registered with Telegram before the update is routed through the same allow-list
+    /// and dispatch path used by long polling.
+    /// </summary>
+    /// <param name="botName">Logical bot name from the webhook route.</param>
+    /// <param name="update">The deserialized Telegram update.</param>
+    /// <param name="providedSecret">Raw <c>X-Telegram-Bot-Api-Secret-Token</c> header value (may be null).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An outcome the receiver maps to an HTTP status code.</returns>
+    public async Task<WebhookHandleResult> HandleWebhookUpdateAsync(
+        string botName,
+        TelegramUpdate update,
+        string? providedSecret,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureBotsInitialized();
+
+        if (string.IsNullOrWhiteSpace(botName) || !_bots.TryGetValue(botName, out var runtime))
+            return WebhookHandleResult.UnknownBot;
+
+        // Webhook delivery is only meaningful for bots configured in webhook mode. A bot in polling
+        // mode has no registered secret; treating it as unknown avoids an unauthenticated code path.
+        if (string.IsNullOrWhiteSpace(runtime.Config.WebhookUrl))
+            return WebhookHandleResult.UnknownBot;
+
+        if (!TelegramWebhookSecret.Matches(runtime.WebhookSecret, providedSecret))
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' rejected webhook update with invalid secret token",
+                DisplayName,
+                runtime.BotName);
+            return WebhookHandleResult.SecretMismatch;
+        }
+
+        await HandleUpdateAsync(runtime, update, cancellationToken);
+        return WebhookHandleResult.Accepted;
+    }
+
+    /// <summary>
+    /// Returns the logical names of all configured bots running in webhook mode.
+    /// Used by the HTTP receiver to map a route per webhook bot.
+    /// </summary>
+    public IReadOnlyCollection<string> GetWebhookBotNames()
+    {
+        EnsureBotsInitialized();
+        return _bots.Values
+            .Where(r => !string.IsNullOrWhiteSpace(r.Config.WebhookUrl))
+            .Select(r => r.BotName)
+            .ToArray();
+    }
+
     private async Task FlushStreamingStateAsync(BotRuntime runtime, StreamingState state, bool force, CancellationToken cancellationToken)
     {
         if (state.Buffer.Length == 0)
@@ -471,7 +540,27 @@ public sealed class TelegramChannelAdapter(
                 config.BotToken,
                 NullLogger<TelegramBotApiClient>.Instance);
 
-            _bots.TryAdd(botName, new BotRuntime(botName, config, client));
+            // Resolve the webhook secret once, only for bots in webhook mode. A configured secret is
+            // used when syntactically valid; otherwise a cryptographically strong one is generated so
+            // webhook mode is never registered without authentication. Polling bots get no secret.
+            var webhookSecret = string.Empty;
+            if (!string.IsNullOrWhiteSpace(config.WebhookUrl))
+            {
+                webhookSecret = TelegramWebhookSecret.IsValid(config.WebhookSecretToken)
+                    ? config.WebhookSecretToken!
+                    : TelegramWebhookSecret.Generate();
+
+                if (!TelegramWebhookSecret.IsValid(config.WebhookSecretToken)
+                    && !string.IsNullOrEmpty(config.WebhookSecretToken))
+                {
+                    _logger.LogWarning(
+                        "{DisplayName} bot '{BotName}' configured webhookSecretToken is invalid (allowed: A-Z a-z 0-9 _ -, length 1-256); generated a replacement",
+                        DisplayName,
+                        botName);
+                }
+            }
+
+            _bots.TryAdd(botName, new BotRuntime(botName, config, client, webhookSecret));
         }
     }
 
@@ -640,11 +729,18 @@ public sealed class TelegramChannelAdapter(
         }
     }
 
-    private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient)
+    private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient, string webhookSecret)
     {
         public string BotName { get; } = botName;
         public TelegramBotConfig Config { get; } = config;
         public TelegramBotApiClient ApiClient { get; } = apiClient;
+
+        /// <summary>
+        /// Secret token registered with Telegram for this bot's webhook, validated against the
+        /// <c>X-Telegram-Bot-Api-Secret-Token</c> header on each inbound update. Empty for polling bots.
+        /// </summary>
+        public string WebhookSecret { get; } = webhookSecret;
+
         public ConcurrentDictionary<string, StreamingState> StreamingStates { get; } = new(StringComparer.Ordinal);
         public ConcurrentDictionary<long, DateTimeOffset> LastErrorReplyUtcByChat { get; } = new();
         public CancellationTokenSource? PollingCancellation { get; set; }

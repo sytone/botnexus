@@ -215,6 +215,30 @@ public sealed class ToolDescriptionFormatterTests
     }
 
     [Fact]
+    public void Delay_WithFractionalSeconds_FallsBackWithoutThrowing()
+    {
+        // GetInt32() throws FormatException on a fractional JSON number; that is not a
+        // JsonException, so the formatter's parse guard would not catch it. It must degrade.
+        var result = ToolDescriptionFormatter.FormatDescription("delay", """{"seconds": 1.5}""");
+        Assert.Equal("⏳ Delay", result);
+    }
+
+    [Fact]
+    public void Delay_WithOutOfRangeSeconds_FallsBackWithoutThrowing()
+    {
+        // 9999999999 is a valid JSON number but out of Int32 range; GetInt32() would throw.
+        var result = ToolDescriptionFormatter.FormatDescription("delay", """{"seconds": 9999999999}""");
+        Assert.Equal("⏳ Delay", result);
+    }
+
+    [Fact]
+    public void Delay_WithNonNumberSeconds_FallsBack()
+    {
+        var result = ToolDescriptionFormatter.FormatDescription("delay", """{"seconds": "soon"}""");
+        Assert.Equal("⏳ Delay", result);
+    }
+
+    [Fact]
     public void GetDatetime_ShowsDescription()
     {
         var result = ToolDescriptionFormatter.FormatDescription("get_datetime", """{}""");

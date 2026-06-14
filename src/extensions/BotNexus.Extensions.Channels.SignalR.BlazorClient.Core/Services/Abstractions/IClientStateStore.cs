@@ -304,5 +304,21 @@ public sealed class ConversationStreamState
     /// Use this instead of IsStreaming to keep Steer/Abort controls visible
     /// between the end of an LLM generation and the start of the next one while tools run.</summary>
     public bool IsTurnActive => IsStreaming || ActiveToolCalls.Count > 0;
+
+    /// <summary>
+    /// Clears the streaming buffers and the <see cref="IsStreaming"/> flag atomically.
+    /// Every terminal handler (message-end, error, turn-interrupted, turn-end, session-reset,
+    /// reconnect) MUST call this rather than clearing the three fields by hand -- the portal
+    /// must never get stuck in a perpetual streaming indicator if one field is forgotten
+    /// (recurring regression class: #456, #668, #759). Centralising the reset makes that
+    /// invariant a single method a future handler cannot half-apply. Active tool calls are
+    /// intentionally left untouched so <see cref="IsTurnActive"/> stays accurate while tools run.
+    /// </summary>
+    public void Reset()
+    {
+        IsStreaming = false;
+        Buffer = "";
+        ThinkingBuffer = "";
+    }
 }
 

@@ -903,4 +903,71 @@ public sealed class GatewayEventHandlerTests
         // And the message should still be in the list (not lost)
         Assert.Contains(conv.Messages, m => m.Content == "response text");
     }
+
+    // ---- StreamState.Reset() single-enforcement-point tests (issue #1390 / #456 / #668 / #759) ----
+
+    [Fact]
+    public void ConversationStreamState_Reset_clears_all_three_stream_fields()
+    {
+        // The reset must atomically clear Buffer, ThinkingBuffer, and IsStreaming so a
+        // terminal handler can never leave the portal stuck in a perpetual streaming
+        // indicator by forgetting one field (the recurring #456/#668/#759 bug class).
+        var state = new ConversationStreamState
+        {
+            IsStreaming = true,
+            Buffer = "partial",
+            ThinkingBuffer = "plan"
+        };
+
+        state.Reset();
+
+        Assert.False(state.IsStreaming);
+        Assert.Equal(string.Empty, state.Buffer);
+        Assert.Equal(string.Empty, state.ThinkingBuffer);
+    }
+
+    [Fact]
+    public void ConversationStreamState_Reset_preserves_active_tool_calls()
+    {
+        // Reset clears the streaming buffers but must NOT drop in-flight tool calls --
+        // IsTurnActive has to stay true while tools run between LLM generations.
+        var state = new ConversationStreamState { IsStreaming = true };
+        state.ActiveToolCalls["tool-1"] = new ActiveToolCall
+        {
+            ToolCallId = "tool-1",
+            ToolName = "search",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "msg-1"
+        };
+
+        state.Reset();
+
+        Assert.False(state.IsStreaming);
+        Assert.Single(state.ActiveToolCalls);
+        Assert.True(state.IsTurnActive); // still active because a tool call remains
+    }
+
+    [Fact]
+    public void HandleTurnInterrupted_clears_streaming_state_via_reset()
+    {
+        // A gateway restart mid-turn must clear the streaming indicator (the terminal-handler
+        // invariant now enforced through the single StreamState.Reset() call).
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        agent.ProcessingStage = "Generating";
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "partial";
+        conv.StreamState.ThinkingBuffer = "thinking";
+
+        _handler.HandleTurnInterrupted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+
+        Assert.False(agent.IsStreaming);
+        Assert.Null(agent.ProcessingStage);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Equal(string.Empty, conv.StreamState.Buffer);
+        Assert.Equal(string.Empty, conv.StreamState.ThinkingBuffer);
+        // A notification message about the interruption is surfaced to the user.
+        Assert.Contains(conv.Messages, m => m.Role == "Notification");
+    }
 }

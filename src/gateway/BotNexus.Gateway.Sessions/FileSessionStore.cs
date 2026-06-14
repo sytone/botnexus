@@ -238,6 +238,113 @@ public sealed class FileSessionStore : SessionStoreBase
     }
 
     /// <summary>
+    /// Indexed-by-sidecar override of <see cref="SessionStoreBase.ListByConversationAsync"/>.
+    /// The base default enumerates (and fully hydrates the history JSONL of) <em>every</em>
+    /// session in the store and filters in memory — O(total sessions) with per-session file
+    /// I/O. Here we read only the lightweight <c>.meta.json</c> sidecars (which carry
+    /// <see cref="SessionMeta.ConversationId"/>) to pick the matching session ids first, and
+    /// fully load <em>only</em> the matches. That turns the full-history reads from N (every
+    /// session) into M (sessions in this conversation), removing the asymptotic cliff while
+    /// preserving identical results and ordering to the base implementation (#1386).
+    /// </summary>
+    /// <remarks>
+    /// Runs <see cref="EnsureMigratedAsync"/> first so pre-Phase-9 orphan sidecars have been
+    /// stamped with their legacy conversation (and rewritten) — after migration the sidecar
+    /// <c>ConversationId</c> is authoritative. A residual orphan with no persisted
+    /// <c>ConversationId</c> but a recorded <c>AgentId</c> is still treated as a candidate and
+    /// routed through the full load path, where legacy-orphan recovery stamps and matches it
+    /// exactly as the base path would — so a query for a <c>legacy:{agentId}</c> conversation
+    /// is not silently dropped. AgentId filtering uses the load-time <em>hydrated</em> AgentId
+    /// (Conversation.AgentId), identical to the base.
+    /// </remarks>
+    public override async Task<IReadOnlyList<GatewaySession>> ListByConversationAsync(
+        ConversationId conversationId,
+        AgentId? agentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Phase 1: cheap sidecar scan — pick candidate session ids without reading any
+            // history JSONL. meta.ConversationId is authoritative post-migration; a
+            // null-conversation-but-has-AgentId orphan is kept as a candidate so the full
+            // load path's legacy-orphan recovery can stamp + match it (base parity).
+            var candidateIds = new List<SessionId>();
+            foreach (var metaFile in _fileSystem.Directory.GetFiles(_storePath, "*.meta.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var sessionId = SessionId.From(
+                    Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(metaFile)));
+
+                // A cached (already-hydrated) session is the cheapest discriminator.
+                if (_cache.TryGetValue(sessionId, out var cached))
+                {
+                    if (cached.ConversationId.IsInitialized() && cached.ConversationId == conversationId)
+                        candidateIds.Add(sessionId);
+                    continue;
+                }
+
+                SessionMeta? meta;
+                try
+                {
+                    meta = await SessionMetadataSidecar.ReadAsync<SessionMeta>(
+                        _fileSystem,
+                        metaFile,
+                        JsonOptions,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException)
+                {
+                    // Unreadable sidecar — let the full load path surface it (mirrors
+                    // EnumerateSessionsAsync, which routes everything through LoadFromFileAsync).
+                    candidateIds.Add(sessionId);
+                    continue;
+                }
+
+                if (meta is null)
+                    continue;
+
+                if (meta.ConversationId is { } convId && convId == conversationId)
+                {
+                    candidateIds.Add(sessionId);
+                }
+                else if (meta.ConversationId is null && meta.AgentId is not null)
+                {
+                    // Residual orphan: legacy-stamp happens on full load. Defer the match
+                    // decision to LoadFromFileAsync so we never silently drop a legacy hit.
+                    candidateIds.Add(sessionId);
+                }
+            }
+
+            // Phase 2: full-load only the candidates (history + AgentId hydration), then
+            // apply the exact base contract: keep only sessions whose hydrated ConversationId
+            // matches, optionally narrow to the owning agent, ordered chronologically.
+            var matched = new List<GatewaySession>(candidateIds.Count);
+            foreach (var sessionId in candidateIds)
+            {
+                var session = _cache.GetValueOrDefault(sessionId)
+                    ?? await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                if (session is null)
+                    continue;
+                if (!session.ConversationId.IsInitialized() || session.ConversationId != conversationId)
+                    continue;
+                if (agentId is not null && session.AgentId != agentId)
+                    continue;
+                matched.Add(session);
+            }
+
+            return matched
+                .OrderBy(session => session.CreatedAt)
+                .ThenBy(session => session.SessionId.Value, StringComparer.Ordinal)
+                .ToList();
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <summary>
     /// One-time eager sweep that mirrors <c>SqliteSessionStore.MigrateOrphanedSessionsAsync</c>:
     /// every pre-Phase-9 sidecar on disk with no <c>ConversationId</c> is grouped by agent,
     /// linked to that agent's <c>legacy:{agentId}</c> conversation via

@@ -224,6 +224,15 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         return false;
     }
 
+    /// <summary>
+    /// Resolves a single path token (an optional named member followed by an optional list
+    /// index) against the current node. This composes two focused helpers:
+    /// <see cref="ResolveMember"/> (dictionary-keyed or property nodes) and
+    /// <see cref="ResolveIndex"/> (list-index nodes). Splitting the resolution this way keeps
+    /// the side-effecting <paramref name="createMissing"/> instantiation paths in named,
+    /// individually testable methods rather than buried inside one deeply-nested method
+    /// (the historic source of "config set created the wrong node" bugs).
+    /// </summary>
     private static bool TryResolveToken(
         object? current,
         Type currentType,
@@ -245,144 +254,197 @@ public sealed class ConfigPathResolver : IConfigPathResolver
             return false;
         }
 
-        object? child = current;
-        Type childType = currentType;
-        Action<object?>? childAssign = null;
+        var node = new ResolvedNode(current, currentType, null);
 
         if (!string.IsNullOrWhiteSpace(token.Name))
         {
-            if (TryGetDictionaryValueType(currentType, out var dictionaryValueType))
-            {
-                if (current is not IDictionary dictionary)
-                {
-                    error = $"Expected dictionary while resolving '{token.Name}'.";
-                    return false;
-                }
-
-                var key = FindOrCreateDictionaryKey(dictionary, token.Name);
-                var existing = dictionary[key];
-                if (existing is null && createMissing && !token.IsTerminalListOnly
-                    && !IsLeafType(dictionaryValueType))
-                {
-                    if (!TryCreateInstance(dictionaryValueType, out existing, out error))
-                        return false;
-
-                    dictionary[key] = existing;
-                }
-
-                child = existing;
-                childType = dictionaryValueType;
-                childAssign = value => dictionary[key] = value;
-            }
-            else
-            {
-                var property = FindProperty(currentType, token.Name);
-                if (property is null)
-                {
-                    error = $"Property '{token.Name}' does not exist on '{currentType.Name}'.";
-                    return false;
-                }
-
-                if (!property.CanRead)
-                {
-                    error = $"Property '{property.Name}' is not readable.";
-                    return false;
-                }
-
-                var existing = property.GetValue(current);
-                if (existing is null && createMissing && !token.IsTerminalListOnly
-                    && !IsLeafType(property.PropertyType))
-                {
-                    if (!TryCreateInstance(property.PropertyType, out existing, out error))
-                        return false;
-
-                    if (!property.CanWrite)
-                    {
-                        error = $"Property '{property.Name}' is read-only.";
-                        return false;
-                    }
-
-                    property.SetValue(current, existing);
-                }
-
-                child = existing;
-                childType = property.PropertyType;
-                childAssign = property.CanWrite ? value => property.SetValue(current, value) : null;
-            }
+            if (!ResolveMember(node, token, createMissing, out node, out error))
+                return false;
         }
 
         if (token.Index is not null)
         {
-            if (!TryGetListElementType(childType, out var elementType))
+            if (!ResolveIndex(node, token, createMissing, out node, out error))
+                return false;
+        }
+
+        resolvedValue = node.Value;
+        resolvedType = node.Type;
+        assign = node.Assign;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the named-member portion of a token against <paramref name="node"/>, handling
+    /// both dictionary-keyed nodes and CLR property nodes. When <paramref name="createMissing"/>
+    /// is set and the member is a null, non-leaf, non-terminal-list value, the intermediate
+    /// instance is created and written back so subsequent tokens can resolve against it.
+    /// </summary>
+    private static bool ResolveMember(
+        ResolvedNode node,
+        PathToken token,
+        bool createMissing,
+        out ResolvedNode resolved,
+        out string error)
+    {
+        error = string.Empty;
+        resolved = node;
+
+        var current = node.Value;
+        var currentType = node.Type;
+
+        if (TryGetDictionaryValueType(currentType, out var dictionaryValueType))
+        {
+            if (current is not IDictionary dictionary)
             {
-                error = $"Segment '{token.Raw}' cannot be indexed because '{childType.Name}' is not a list.";
+                error = $"Expected dictionary while resolving '{token.Name}'.";
                 return false;
             }
 
-            if (child is null)
+            var key = FindOrCreateDictionaryKey(dictionary, token.Name);
+            var existing = dictionary[key];
+            if (existing is null && createMissing && !token.IsTerminalListOnly
+                && !IsLeafType(dictionaryValueType))
             {
-                if (!createMissing)
-                {
-                    error = $"Segment '{token.Raw}' is null.";
+                if (!TryCreateInstance(dictionaryValueType, out existing, out error))
                     return false;
-                }
 
-                if (!TryCreateListInstance(childType, out child, out error))
-                    return false;
-                childAssign?.Invoke(child);
+                dictionary[key] = existing;
             }
 
-            if (child is not IList list)
+            resolved = new ResolvedNode(existing, dictionaryValueType, value => dictionary[key] = value);
+            return true;
+        }
+
+        var property = FindProperty(currentType, token.Name);
+        if (property is null)
+        {
+            error = $"Property '{token.Name}' does not exist on '{currentType.Name}'.";
+            return false;
+        }
+
+        if (!property.CanRead)
+        {
+            error = $"Property '{property.Name}' is not readable.";
+            return false;
+        }
+
+        var propertyValue = property.GetValue(current);
+        if (propertyValue is null && createMissing && !token.IsTerminalListOnly
+            && !IsLeafType(property.PropertyType))
+        {
+            if (!TryCreateInstance(property.PropertyType, out propertyValue, out error))
+                return false;
+
+            if (!property.CanWrite)
             {
-                error = $"Segment '{token.Raw}' resolved to a non-list value.";
+                error = $"Property '{property.Name}' is read-only.";
                 return false;
             }
 
-            if (token.Index.Value < 0)
+            property.SetValue(current, propertyValue);
+        }
+
+        var assign = property.CanWrite
+            ? new Action<object?>(value => property.SetValue(current, value))
+            : null;
+        resolved = new ResolvedNode(propertyValue, property.PropertyType, assign);
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the list-index portion of a token against <paramref name="node"/>. When
+    /// <paramref name="createMissing"/> is set the backing list (and any missing elements up
+    /// to the index) are instantiated and written back through the parent node's assign hook.
+    /// </summary>
+    private static bool ResolveIndex(
+        ResolvedNode node,
+        PathToken token,
+        bool createMissing,
+        out ResolvedNode resolved,
+        out string error)
+    {
+        error = string.Empty;
+        resolved = node;
+
+        var child = node.Value;
+        var childType = node.Type;
+        var parentAssign = node.Assign;
+
+        if (!TryGetListElementType(childType, out var elementType))
+        {
+            error = $"Segment '{token.Raw}' cannot be indexed because '{childType.Name}' is not a list.";
+            return false;
+        }
+
+        if (child is null)
+        {
+            if (!createMissing)
             {
-                error = $"Index {token.Index.Value} must be >= 0.";
+                error = $"Segment '{token.Raw}' is null.";
                 return false;
             }
 
-            if (token.Index.Value >= list.Count)
-            {
-                if (!createMissing)
-                {
-                    error = $"Index {token.Index.Value} is out of range for '{token.Raw}'.";
-                    return false;
-                }
+            if (!TryCreateListInstance(childType, out child, out error))
+                return false;
+            parentAssign?.Invoke(child);
+        }
 
-                while (list.Count <= token.Index.Value)
-                {
-                    if (!TryCreateInstance(elementType, out var elementInstance, out error))
-                        return false;
-                    list.Add(elementInstance);
-                }
+        if (child is not IList list)
+        {
+            error = $"Segment '{token.Raw}' resolved to a non-list value.";
+            return false;
+        }
+
+        if (token.Index!.Value < 0)
+        {
+            error = $"Index {token.Index.Value} must be >= 0.";
+            return false;
+        }
+
+        if (token.Index.Value >= list.Count)
+        {
+            if (!createMissing)
+            {
+                error = $"Index {token.Index.Value} is out of range for '{token.Raw}'.";
+                return false;
             }
 
-            var index = token.Index.Value;
-            child = list[index];
-            if (child is null && createMissing)
+            while (list.Count <= token.Index.Value)
             {
-                if (!TryCreateInstance(elementType, out child, out error))
+                if (!TryCreateInstance(elementType, out var elementInstance, out error))
                     return false;
-                list[index] = child;
+                list.Add(elementInstance);
             }
+        }
 
-            childType = elementType;
-            childAssign = value =>
+        var index = token.Index.Value;
+        var element = list[index];
+        if (element is null && createMissing)
+        {
+            if (!TryCreateInstance(elementType, out element, out error))
+                return false;
+            list[index] = element;
+        }
+
+        resolved = new ResolvedNode(
+            element,
+            elementType,
+            value =>
             {
                 while (list.Count <= index)
                     list.Add(null);
                 list[index] = value;
-            };
-        }
-
-        resolvedValue = child;
-        resolvedType = childType;
-        assign = childAssign;
+            });
         return true;
     }
+
+    /// <summary>
+    /// A resolved configuration node: the current value, its declared type, and an optional
+    /// assign hook that writes a new value back into the parent container (dictionary entry,
+    /// property, or list slot). A null <see cref="Assign"/> means the node is read-only.
+    /// </summary>
+    private readonly record struct ResolvedNode(object? Value, Type Type, Action<object?>? Assign);
 
     private static bool TryCreateListInstance(Type targetType, out object? instance, out string error)
     {

@@ -114,12 +114,21 @@ public sealed class TelegramBotApiClient(
     }
 
     /// <summary>
-    /// Registers a webhook URL with Telegram.
+    /// Registers a webhook URL with Telegram, including the secret token Telegram will echo back
+    /// in the <c>X-Telegram-Bot-Api-Secret-Token</c> header on every update POST.
     /// </summary>
-    public Task SetWebhookAsync(string url, CancellationToken cancellationToken = default)
+    /// <param name="url">Public HTTPS endpoint Telegram delivers updates to.</param>
+    /// <param name="secretToken">
+    /// 1–256 character token (<c>A-Z</c>, <c>a-z</c>, <c>0-9</c>, <c>_</c>, <c>-</c>) used to
+    /// authenticate inbound requests. When null/empty no secret is registered (not recommended).
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public Task SetWebhookAsync(string url, string? secretToken, CancellationToken cancellationToken = default)
         => PostForResultAsync<bool>(
             "setWebhook",
-            new { url },
+            string.IsNullOrEmpty(secretToken)
+                ? new { url, allowed_updates = AllowedUpdateTypes }
+                : (object)new { url, secret_token = secretToken, allowed_updates = AllowedUpdateTypes },
             cancellationToken,
             allowMarkdownFallback: false);
 

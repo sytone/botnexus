@@ -33,6 +33,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IConversationResetService? _resetService;
     private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers;
     private readonly IConversationAuditLog? _auditLog;
+    private readonly IConversationHistoryAssembler _historyAssembler;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -48,6 +49,8 @@ public sealed class ConversationsController : ControllerBase
     /// directly without DI.</param>
     /// <param name="canvasNotifiers">Optional notifiers that broadcast canvas state changes to connected clients.</param>
     /// <param name="auditLog">Optional audit log for recording conversation mutations.</param>
+    /// <param name="historyAssembler">Assembles cross-session conversation history. When omitted (legacy
+    /// test harnesses constructing the controller directly), a default instance over the same stores is used.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -56,7 +59,8 @@ public sealed class ConversationsController : ControllerBase
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
         IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null,
-        IConversationAuditLog? auditLog = null)
+        IConversationAuditLog? auditLog = null,
+        IConversationHistoryAssembler? historyAssembler = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -66,6 +70,10 @@ public sealed class ConversationsController : ControllerBase
         _resetService = resetService;
         _canvasNotifiers = canvasNotifiers?.ToArray() ?? [];
         _auditLog = auditLog;
+        // When DI omits the assembler (legacy test harnesses that construct the controller
+        // directly), fall back to the default implementation over the same stores so the
+        // history endpoint keeps working without an explicit registration.
+        _historyAssembler = historyAssembler ?? new ConversationHistoryAssembler(conversations, sessions);
     }
 
     /// <summary>
@@ -384,107 +392,17 @@ public sealed class ConversationsController : ControllerBase
 
         var boundedLimit = Math.Min(limit, 200);
 
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null)
-            return NotFound();
+        // History assembly (cross-session listing, #732 fallback, boundary markers, NO_REPLY/fold
+        // filtering, compaction projection, newest-first paging) lives in the assembler so it can
+        // be unit-tested in isolation and reused by the SignalR/portal path. The controller's job
+        // here is validate -> delegate -> map.
+        var result = await _historyAssembler.AssembleAsync(
+            ConversationId.From(conversationId),
+            boundedLimit,
+            offset,
+            cancellationToken);
 
-        // Get all sessions belonging to this conversation, ordered by CreatedAt ascending.
-        // ListByConversationAsync guarantees Active+Sealed inclusion + the ordering contract,
-        // and goes through the indexed Sqlite path -- no full-table scan (F-7).
-        var convId = ConversationId.From(conversationId);
-        var linkedSessions = await _sessions.ListByConversationAsync(convId, cancellationToken: cancellationToken);
-
-        // Fallback for #732: cron sessions and sessions created before the conversation-linkage
-        // migration may have conversation_id = NULL in the sessions table. ListByConversationAsync
-        // filters on that column and returns nothing, leaving the history endpoint empty even
-        // though the conversation has messages. When the indexed query returns no sessions,
-        // fall back to loading conversation.ActiveSessionId directly — provided it is not already
-        // included in the linked set (dedup guard).
-        if (linkedSessions.Count == 0 && conversation.ActiveSessionId is { } fallbackSessionId)
-        {
-            var fallbackSession = await _sessions.GetAsync(fallbackSessionId, cancellationToken);
-            if (fallbackSession is not null)
-                linkedSessions = [fallbackSession];
-        }
-
-        // Assemble flat list of history entries with boundary markers between sessions
-        var allEntries = new List<ConversationHistoryEntry>();
-
-        for (var i = 0; i < linkedSessions.Count; i++)
-        {
-            var session = linkedSessions[i];
-
-            // Insert boundary marker before each session except the first
-            if (i > 0)
-            {
-                var previousSession = linkedSessions[i - 1];
-                allEntries.Add(new ConversationHistoryEntry
-                {
-                    Kind = "boundary",
-                    SessionId = previousSession.SessionId.Value,
-                    AgentId = previousSession.AgentId.Value,
-                    Timestamp = previousSession.UpdatedAt,
-                    Reason = "session_end"
-                });
-            }
-
-            // Append all history entries from this session.
-            // Skip assistant entries whose content is exactly "NO_REPLY" (optionally padded with whitespace).
-            // These are deliberate cron no-ops that produced no user-facing output; including them in
-            // history would show blank turns in the portal for every cron wakeup that had nothing to say (#773).
-            var snapshot = session.GetHistorySnapshot();
-            foreach (var entry in snapshot)
-            {
-                // Skip folded entries that have been superseded by compaction summaries.
-                if (entry.IsHistory)
-                    continue;
-
-                if (entry.Role == MessageRole.Assistant &&
-                    string.Equals(entry.Content?.Trim(), "NO_REPLY", StringComparison.Ordinal))
-                    continue;
-
-                // Emit compaction summaries as distinct boundary markers so the portal
-                // can render them as separators rather than normal system messages.
-                if (entry.IsCompactionSummary)
-                {
-                    allEntries.Add(new ConversationHistoryEntry
-                    {
-                        Kind = "compaction",
-                        SessionId = session.SessionId.Value,
-                        AgentId = session.AgentId.Value,
-                        Timestamp = entry.Timestamp,
-                        Reason = "compaction",
-                        Content = entry.Content
-                    });
-                    continue;
-                }
-
-                allEntries.Add(new ConversationHistoryEntry
-                {
-                    Kind = "message",
-                    SessionId = session.SessionId.Value,
-                    AgentId = session.AgentId.Value,
-                    Role = entry.Role.ToString().ToLowerInvariant(),
-                    Content = entry.Content,
-                    Timestamp = entry.Timestamp,
-                    ToolName = entry.ToolName,
-                    ToolCallId = entry.ToolCallId,
-                    ToolArgs = entry.ToolArgs,
-                    ToolIsError = entry.ToolIsError,
-                    ThinkingContent = entry.ThinkingContent
-                });
-            }
-        }
-
-        var totalCount = allEntries.Count;
-        var page = PageFromNewest(allEntries, boundedLimit, offset);
-
-        return Ok(new ConversationHistoryResponse(
-            ConversationId: conversationId,
-            TotalCount: totalCount,
-            Offset: offset,
-            Limit: boundedLimit,
-            Entries: page));
+        return result is null ? NotFound() : Ok(result);
     }
 
     /// <summary>
@@ -634,24 +552,6 @@ public sealed class ConversationsController : ControllerBase
         await _sessions.SaveAsync(session, cancellationToken);
     }
 
-    private static List<ConversationHistoryEntry> PageFromNewest(
-        IReadOnlyList<ConversationHistoryEntry> allEntries,
-        int limit,
-        int offset)
-    {
-        var totalCount = allEntries.Count;
-        if (offset >= totalCount)
-            return [];
-
-        // Page from newest entries so refreshes include the latest turns even when
-        // conversations have more than one page of history.
-        var take = Math.Min(limit, totalCount - offset);
-        var startIndex = Math.Max(0, totalCount - offset - take);
-        return allEntries
-            .Skip(startIndex)
-            .Take(take)
-            .ToList();
-    }
     /// <summary>Gets the current canvas HTML for a conversation.</summary>
     [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
@@ -839,4 +739,3 @@ public sealed class ConversationsController : ControllerBase
         => value is null ? null : value.Length <= maxLength ? value : value[..maxLength];
 
 }
-

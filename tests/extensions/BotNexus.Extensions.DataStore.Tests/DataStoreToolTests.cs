@@ -333,6 +333,54 @@ public sealed class DataStoreToolTests
         backend.LastAction.ShouldBe("count");
     }
 
+    // ── where-clause multi-statement guard (delete / update / count) ────────────────────
+
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("update")]
+    [InlineData("count")]
+    public async Task ExecuteAsync_WhereWithStatementSeparator_IsRejected_AndBackendNotCalled(string action)
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        var args    = action == "update"
+            ? Args(action, ("table", "events"), ("set", "{\"x\":1}"), ("where", "1=1; DROP TABLE secrets; --"))
+            : Args(action, ("table", "events"), ("where", "1=1; DROP TABLE secrets; --"));
+
+        var result = await tool.ExecuteAsync("tc1", args);
+
+        IsError(result).ShouldBeTrue();
+        TextOf(result).ShouldContain("where");
+        // The guard runs at the tool boundary -- the backend must never be invoked.
+        backend.LastAction.ShouldBeNull($"'{action}' should be rejected before reaching the backend");
+    }
+
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("count")]
+    public async Task ExecuteAsync_WhereWithSemicolonInsideLiteral_IsAccepted(string action)
+    {
+        var backend = new FakeDataStoreBackend();
+        var tool    = CreateTool(backend);
+        // A semicolon inside a single-quoted literal is part of the value, not a separator.
+        var result  = await tool.ExecuteAsync("tc1", Args(action, ("table", "events"), ("where", "note = 'a; b'")));
+
+        IsError(result).ShouldBeFalse();
+        backend.LastAction.ShouldBe(action);
+    }
+
+    [Theory]
+    [InlineData("1=1; DROP TABLE t", true)]
+    [InlineData("id = 1;DELETE FROM other", true)]
+    [InlineData("id = 1", false)]
+    [InlineData("id = 1;", false)]                 // single optional trailing ';'
+    [InlineData("id = 1;   ", false)]              // trailing ';' + whitespace
+    [InlineData("note = 'a; b'", false)]           // ';' inside a literal
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ContainsStatementSeparator_DetectsSeparatorsOutsideLiterals(string? where, bool expected) =>
+        DataStoreTool.ContainsStatementSeparator(where).ShouldBe(expected, where ?? "<null>");
+
     // ── schema ────────────────────────────────────────────────────────────────
 
     [Fact]

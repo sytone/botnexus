@@ -203,6 +203,69 @@ public sealed class CanvasStateTests
         await store.ClearCanvasStateAsync(conv.ConversationId);
     }
 
+    // ── Existence-probe semantics (issue #1387) ───────────────────────────
+    //
+    // The canvas get/set existence guard was changed from a full conversation
+    // hydrate (GetAsync -> 3 queries) to a cheap `SELECT 1 ... LIMIT 1` probe.
+    // These tests pin the existence semantics so the perf optimisation cannot
+    // silently change behaviour: a conversation that exists in the table must
+    // be writable/readable, and one that does not must return false/null —
+    // independent of any participants/bindings/cache state.
+
+    [Fact]
+    public async Task SetCanvasStateKeyAsync_Succeeds_ForExistingConversationWithoutCacheWarmup()
+    {
+        using var fixture = new StoreFixture();
+        var conv = MakeConversation();
+
+        // Create with one store instance, then operate with a *fresh* instance so
+        // the in-memory cache is cold. Existence must be resolved from the DB by
+        // the cheap probe, not from a cached hydrate.
+        var writer = fixture.CreateStore();
+        await writer.CreateAsync(conv);
+
+        var store = fixture.CreateStore();
+        var result = await store.SetCanvasStateKeyAsync(
+            conv.ConversationId, "k", JsonDocument.Parse("1").RootElement);
+
+        result.ShouldBeTrue();
+        var state = await store.GetCanvasStateAsync(conv.ConversationId);
+        state.ShouldNotBeNull();
+        state!["k"].GetInt32().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task GetCanvasStateAsync_ReturnsNull_ForUnknownConversation_AfterOtherConversationsExist()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        // Populate the table with a real conversation + canvas state so the
+        // probe runs against a non-empty conversations table.
+        var existing = MakeConversation();
+        await store.CreateAsync(existing);
+        await store.SetCanvasStateKeyAsync(existing.ConversationId, "k", JsonDocument.Parse("1").RootElement);
+
+        // A different, never-created id must probe to "not found" -> null.
+        var state = await store.GetCanvasStateAsync(ConversationId.From(Guid.NewGuid().ToString()));
+        state.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task SetCanvasStateKeyAsync_ReturnsFalse_ForUnknownConversation_AfterOtherConversationsExist()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var existing = MakeConversation();
+        await store.CreateAsync(existing);
+
+        var result = await store.SetCanvasStateKeyAsync(
+            ConversationId.From(Guid.NewGuid().ToString()), "k", JsonDocument.Parse("1").RootElement);
+
+        result.ShouldBeFalse();
+    }
+
     // ── State isolation ────────────────────────────────────────────────────
 
     [Fact]
