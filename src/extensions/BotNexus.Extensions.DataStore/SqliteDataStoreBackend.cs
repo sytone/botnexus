@@ -87,6 +87,12 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 
     public async Task<DataStoreResult> QueryAsync(string sql, CancellationToken ct = default)
     {
+        // Defence-in-depth: even though DataStoreTool guards this, reject multi-statement or
+        // non-SELECT SQL here too so a direct backend caller cannot smuggle a trailing write
+        // past the read-only contract (SQLite executes every batched statement).
+        if (!DataStoreTool.IsSingleSelectStatement(sql))
+            return DataStoreResult.Fail(
+                "Only a single SELECT statement is permitted in 'query'.");
         try
         {
             await _lock.WaitAsync(ct).ConfigureAwait(false);

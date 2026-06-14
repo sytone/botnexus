@@ -277,10 +277,10 @@ public class WebFetchToolTests
 
     [Fact]
     [Trait("Category", "Security")]
-    public async Task ExecuteAsync_WithRedirectResponse_ReturnsHttpStatus()
+    public async Task ExecuteAsync_RedirectToPrivateAddress_IsBlocked()
     {
-        // Redirect following is blocked at the HttpClient level (no AutoRedirect).
-        // The non-success 302 response is returned as-is.
+        // A safe public URL that 302-redirects to a loopback address must be blocked,
+        // not followed -- this is the redirect-based SSRF bypass guard.
         var handler = new MockHttpMessageHandler();
         handler.EnqueueResponse(System.Net.HttpStatusCode.Redirect, string.Empty, "text/plain", headers: new Dictionary<string, string>
         {
@@ -291,7 +291,128 @@ public class WebFetchToolTests
 
         var result = await tool.ExecuteAsync("call-1", args);
 
-        result.Content[0].Value.ShouldContain("HTTP 302");
+        result.Content[0].Value.ShouldContain("blocked");
+        // The request to the private host must never have been issued.
+        handler.Requests.Count.ShouldBe(1);
+        handler.Requests[0].RequestUri!.Host.ShouldBe("example.com");
+    }
+
+    [Theory]
+    [InlineData("http://169.254.169.254/latest/meta-data/")]
+    [InlineData("http://localhost/secret")]
+    [InlineData("http://10.0.0.5/internal")]
+    [InlineData("http://[::1]/")]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_RedirectToVariousInternalTargets_IsBlocked(string redirectTarget)
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.MovedPermanently, string.Empty, "text/plain", headers: new Dictionary<string, string>
+        {
+            ["Location"] = redirectTarget
+        });
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/start" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("blocked");
+        handler.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_RedirectToPublicUrl_IsFollowed()
+    {
+        // A redirect to another safe public URL should be followed transparently.
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.Redirect, string.Empty, "text/plain", headers: new Dictionary<string, string>
+        {
+            ["Location"] = "https://example.org/final"
+        });
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>redirected content</body></html>", "text/html");
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/redirect" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("redirected content");
+        handler.Requests.Count.ShouldBe(2);
+        handler.Requests[1].RequestUri!.ToString().ShouldBe("https://example.org/final");
+    }
+
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_RedirectLoop_IsBoundedAndBlocked()
+    {
+        // Every response is a redirect back to a public URL -- the hop limit must stop the loop.
+        var handler = new MockHttpMessageHandler();
+        handler.SetResponder((req, _) =>
+        {
+            var resp = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Redirect);
+            resp.Headers.TryAddWithoutValidation("Location", "https://example.com/loop");
+            return Task.FromResult(resp);
+        });
+        using var tool = CreateTool(handler);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/loop" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("Too many redirects");
+    }
+
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_RedirectToPrivate_AllowPrivateNetworks_IsFollowed()
+    {
+        // When private networks are explicitly permitted, a redirect to a private address
+        // is followed (parity with the initial-URL behaviour).
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.Redirect, string.Empty, "text/plain", headers: new Dictionary<string, string>
+        {
+            ["Location"] = "http://10.0.0.5/internal"
+        });
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>internal content</body></html>", "text/html");
+        var httpClient = new HttpClient(handler);
+        var config = new WebFetchConfig
+        {
+            MaxLengthChars = 20_000,
+            TimeoutSeconds = 5,
+            AllowPrivateNetworks = true
+        };
+        using var tool = new WebFetchTool(config, httpClient);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/redirect" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("internal content");
+        handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_RedirectToBlockedHost_AllowPrivateNetworks_IsStillBlocked()
+    {
+        // AdditionalBlockedHosts is honoured even when AllowPrivateNetworks is true.
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.Redirect, string.Empty, "text/plain", headers: new Dictionary<string, string>
+        {
+            ["Location"] = "https://blocked.corp.example/secret"
+        });
+        var httpClient = new HttpClient(handler);
+        var config = new WebFetchConfig
+        {
+            MaxLengthChars = 20_000,
+            TimeoutSeconds = 5,
+            AllowPrivateNetworks = true,
+            AdditionalBlockedHosts = ["blocked.corp.example"]
+        };
+        using var tool = new WebFetchTool(config, httpClient);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/redirect" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("blocked");
+        handler.Requests.Count.ShouldBe(1);
     }
 
     [Fact]
