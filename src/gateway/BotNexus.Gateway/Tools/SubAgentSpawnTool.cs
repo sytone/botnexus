@@ -35,7 +35,7 @@ public sealed class SubAgentSpawnTool(
                 },
                 "systemPrompt": { "type": "string", "description": "Optional system prompt override." },
                 "maxTurns": { "type": "integer", "minimum": 1, "description": "Optional max turn budget." },
-                "timeoutSeconds": { "type": "integer", "minimum": 1, "description": "Optional timeout in seconds." }
+                "timeoutSeconds": { "type": "integer", "minimum": 1, "description": "Optional timeout in seconds. Values above the configured ceiling are clamped down." }
                 ,
                 "archetype": {
                   "type": "string",

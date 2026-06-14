@@ -257,7 +257,9 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 |---|---|---|---|
 | `maxConcurrentPerSession` | int | `5` | Maximum number of sub-agents a single session can run simultaneously |
 | `defaultMaxTurns` | int | `30` | Default turn limit for sub-agents (overridable per spawn) |
+| `maxTurnsCeiling` | int | `30` | Hard upper bound for a spawn-supplied `maxTurns`. Requests above this are clamped down. `0` disables the ceiling |
 | `defaultTimeoutSeconds` | int | `600` | Default timeout in seconds (overridable per spawn) |
+| `maxTimeoutSeconds` | int | `1800` | Hard upper bound for a spawn-supplied `timeoutSeconds`. Requests above this are clamped down. `0` disables the ceiling |
 | `maxDepth` | int | `1` | Maximum nesting depth. `1` = sub-agents cannot spawn sub-agents |
 | `defaultModel` | string | `""` | Default model for sub-agents. Empty string means inherit parent's model |
 
@@ -269,7 +271,9 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
     "subAgents": {
       "maxConcurrentPerSession": 5,
       "defaultMaxTurns": 30,
+      "maxTurnsCeiling": 30,
       "defaultTimeoutSeconds": 600,
+      "maxTimeoutSeconds": 1800,
       "maxDepth": 1,
       "defaultModel": ""
     }
@@ -280,6 +284,8 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 ### Overriding Defaults at Spawn Time
 
 The `maxTurns` and `timeoutSeconds` parameters on `spawn_subagent` override `defaultMaxTurns` and `defaultTimeoutSeconds` respectively. If not specified at spawn time, the configured defaults apply.
+
+Both are bounded by hard ceilings: a spawn-supplied `maxTurns` is clamped to at most `maxTurnsCeiling` (default `30`) and `timeoutSeconds` to at most `maxTimeoutSeconds` (default `1800`). This prevents a single `spawn_subagent` call from requesting a runaway turn budget or an effectively unbounded wall-clock timeout. Set a ceiling to `0` to disable it. When a request is clamped, the manager logs a warning recording the requested and effective values.
 
 The `model` parameter at spawn time overrides `defaultModel`. If neither is set, the sub-agent inherits the parent agent's model.
 
