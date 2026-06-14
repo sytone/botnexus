@@ -152,7 +152,9 @@ public sealed class SubAgentModelsTests
 
         options.MaxConcurrentPerSession.ShouldBe(5);
         options.DefaultMaxTurns.ShouldBe(30);
+        options.MaxTurnsCeiling.ShouldBe(30);
         options.DefaultTimeoutSeconds.ShouldBe(600);
+        options.MaxTimeoutSeconds.ShouldBe(1800);
         options.MaxDepth.ShouldBe(1);
         options.DefaultModel.ShouldBeEmpty();
     }
@@ -174,5 +176,92 @@ public sealed class SubAgentModelsTests
         options.DefaultTimeoutSeconds.ShouldBe(120);
         options.MaxDepth.ShouldBe(3);
         options.DefaultModel.ShouldBe("gpt-5-mini");
+    }
+
+    // --- ResolveMaxTurns ---
+
+    [Fact]
+    public void ResolveMaxTurns_AboveCeiling_ClampsToCeiling()
+    {
+        var options = new SubAgentOptions { MaxTurnsCeiling = 30 };
+
+        options.ResolveMaxTurns(1_000_000).ShouldBe(30);
+    }
+
+    [Fact]
+    public void ResolveMaxTurns_InRange_PassesThroughUnchanged()
+    {
+        var options = new SubAgentOptions { MaxTurnsCeiling = 30, DefaultMaxTurns = 30 };
+
+        options.ResolveMaxTurns(12).ShouldBe(12);
+    }
+
+    [Fact]
+    public void ResolveMaxTurns_NonPositive_FallsBackToDefault()
+    {
+        var options = new SubAgentOptions { DefaultMaxTurns = 17, MaxTurnsCeiling = 50 };
+
+        options.ResolveMaxTurns(0).ShouldBe(17);
+        options.ResolveMaxTurns(-5).ShouldBe(17);
+    }
+
+    [Fact]
+    public void ResolveMaxTurns_CeilingDisabled_DoesNotClamp()
+    {
+        var options = new SubAgentOptions { MaxTurnsCeiling = 0, DefaultMaxTurns = 30 };
+
+        options.ResolveMaxTurns(1_000_000).ShouldBe(1_000_000);
+    }
+
+    [Fact]
+    public void ResolveMaxTurns_DefaultAboveCeiling_StillClamped()
+    {
+        // A misconfigured default larger than the ceiling must not slip through when the request omits the value.
+        var options = new SubAgentOptions { DefaultMaxTurns = 500, MaxTurnsCeiling = 30 };
+
+        options.ResolveMaxTurns(0).ShouldBe(30);
+    }
+
+    // --- ResolveTimeoutSeconds ---
+
+    [Fact]
+    public void ResolveTimeoutSeconds_AboveMax_ClampsToMax()
+    {
+        var options = new SubAgentOptions { MaxTimeoutSeconds = 1800 };
+
+        options.ResolveTimeoutSeconds(999_999_999).ShouldBe(1800);
+    }
+
+    [Fact]
+    public void ResolveTimeoutSeconds_InRange_PassesThroughUnchanged()
+    {
+        var options = new SubAgentOptions { MaxTimeoutSeconds = 1800, DefaultTimeoutSeconds = 600 };
+
+        options.ResolveTimeoutSeconds(900).ShouldBe(900);
+    }
+
+    [Fact]
+    public void ResolveTimeoutSeconds_NonPositive_FallsBackToDefault()
+    {
+        var options = new SubAgentOptions { DefaultTimeoutSeconds = 600, MaxTimeoutSeconds = 1800 };
+
+        options.ResolveTimeoutSeconds(0).ShouldBe(600);
+        options.ResolveTimeoutSeconds(-1).ShouldBe(600);
+    }
+
+    [Fact]
+    public void ResolveTimeoutSeconds_MaxDisabled_DoesNotClamp()
+    {
+        var options = new SubAgentOptions { MaxTimeoutSeconds = 0, DefaultTimeoutSeconds = 600 };
+
+        options.ResolveTimeoutSeconds(999_999_999).ShouldBe(999_999_999);
+    }
+
+    [Fact]
+    public void ResolveTimeoutSeconds_DefaultAboveMax_StillClamped()
+    {
+        var options = new SubAgentOptions { DefaultTimeoutSeconds = 100_000, MaxTimeoutSeconds = 1800 };
+
+        options.ResolveTimeoutSeconds(0).ShouldBe(1800);
     }
 }
