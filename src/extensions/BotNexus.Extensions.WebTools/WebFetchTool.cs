@@ -16,6 +16,12 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
 
+    /// <summary>
+    /// Maximum number of redirects the tool will follow before giving up. Each hop is
+    /// re-validated against the SSRF policy, so a bounded count also caps redirect loops.
+    /// </summary>
+    private const int MaxRedirects = 5;
+
     private static readonly JsonSerializerOptions MetadataJsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
@@ -32,7 +38,11 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         }
         else
         {
-            _httpClient = new HttpClient
+            // Disable automatic redirect following: the tool follows redirects itself so it
+            // can re-validate every hop against the SSRF policy. Auto-redirect would let a
+            // safe public URL bounce to a private/IMDS address with no further checks.
+            var handler = new HttpClientHandler { AllowAutoRedirect = false };
+            _httpClient = new HttpClient(handler)
             {
                 Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds)
             };
@@ -94,18 +104,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         }
 
         // SSRF guard: block private/loopback/IMDS addresses and additional blocked hosts
-        if (!_config.AllowPrivateNetworks)
-            SsrfValidator.AssertSafe(uri, _config.AdditionalBlockedHosts);
-        else if (_config.AdditionalBlockedHosts.Count > 0)
-        {
-            // Even when AllowPrivateNetworks = true, check additional blocked hosts
-            foreach (var blocked in _config.AdditionalBlockedHosts)
-            {
-                if (uri.Host.Equals(blocked, StringComparison.OrdinalIgnoreCase))
-                    throw new ArgumentException(
-                        $"URL host '{uri.Host}' is blocked by configuration (SSRF prevention).");
-            }
-        }
+        ValidateUrlOrThrow(uri);
 
         var maxLength = ReadOptionalInt(arguments, "max_length") ?? 5000;
         if (maxLength < 1 || maxLength > _config.MaxLengthChars)
@@ -139,6 +138,30 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         SsrfValidator.AssertSafe(uri);
     }
 
+    /// <summary>
+    /// Applies the configured SSRF policy to <paramref name="uri"/> and throws
+    /// <see cref="ArgumentException"/> when the target is blocked. Used for both the
+    /// initial URL and every redirect hop so a redirect cannot smuggle a request to an
+    /// internal address. When <see cref="WebFetchConfig.AllowPrivateNetworks"/> is set,
+    /// only the explicit <see cref="WebFetchConfig.AdditionalBlockedHosts"/> list is enforced.
+    /// </summary>
+    private void ValidateUrlOrThrow(Uri uri)
+    {
+        if (!_config.AllowPrivateNetworks)
+        {
+            SsrfValidator.AssertSafe(uri, _config.AdditionalBlockedHosts);
+            return;
+        }
+
+        // Even when private networks are permitted, honour the explicit block list.
+        foreach (var blocked in _config.AdditionalBlockedHosts)
+        {
+            if (uri.Host.Equals(blocked, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"URL host '{uri.Host}' is blocked by configuration (SSRF prevention).");
+        }
+    }
+
 
     /// <inheritdoc />
     public async Task<AgentToolResult> ExecuteAsync(
@@ -154,7 +177,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
 
         try
         {
-            var response = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            var response = await SendWithRedirectsAsync(url, cancellationToken).ConfigureAwait(false);
             var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
             var statusCode = (int)response.StatusCode;
             var contentType = response.Content.Headers.ContentType?.ToString();
@@ -222,11 +245,77 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         {
             return TextResult("Request cancelled.");
         }
+        catch (RedirectBlockedException ex)
+        {
+            return TextResult(ex.Message);
+        }
         catch (Exception ex)
         {
             return TextResult($"Error fetching URL: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Issues a GET for <paramref name="url"/> and follows redirects manually, re-validating
+    /// every hop against the SSRF policy. Returns the first non-redirect response (or the final
+    /// redirect response if the hop budget is exhausted on a non-redirect). Throws
+    /// <see cref="RedirectBlockedException"/> when a redirect target is blocked or the hop limit
+    /// is reached.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithRedirectsAsync(string url, CancellationToken ct)
+    {
+        var currentUri = new Uri(url, UriKind.Absolute);
+
+        for (int hop = 0; ; hop++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+            var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+
+            if (!IsRedirect(response.StatusCode))
+                return response;
+
+            // It is a redirect. Pull the target, validate, and continue.
+            var location = response.Headers.Location;
+            if (location is null)
+            {
+                // Malformed redirect with no Location -- treat as a terminal response so the
+                // caller surfaces the status code rather than looping.
+                return response;
+            }
+
+            // Resolve relative redirects against the current absolute URL.
+            var nextUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+            response.Dispose();
+
+            if (hop >= MaxRedirects)
+                throw new RedirectBlockedException(
+                    $"Too many redirects (>{MaxRedirects}) when fetching {url}.");
+
+            if (nextUri.Scheme != Uri.UriSchemeHttp && nextUri.Scheme != Uri.UriSchemeHttps)
+                throw new RedirectBlockedException(
+                    $"Redirect to non-HTTP(S) scheme '{nextUri.Scheme}' was blocked (SSRF prevention).");
+
+            try
+            {
+                ValidateUrlOrThrow(nextUri);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new RedirectBlockedException(
+                    $"Redirect to '{nextUri}' was blocked: {ex.Message}");
+            }
+
+            currentUri = nextUri;
+        }
+    }
+
+    private static bool IsRedirect(System.Net.HttpStatusCode status) => (int)status switch
+    {
+        301 or 302 or 303 or 307 or 308 => true,
+        _ => false
+    };
 
     #region Argument Helpers
 
@@ -283,3 +372,10 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             _httpClient.Dispose();
     }
 }
+
+/// <summary>
+/// Raised when a redirect target is blocked by the SSRF policy or the redirect hop limit is
+/// exceeded. Caught inside <see cref="WebFetchTool.ExecuteAsync"/> and surfaced to the agent as a
+/// clear, non-fatal tool result rather than a generic fetch error.
+/// </summary>
+internal sealed class RedirectBlockedException(string message) : Exception(message);
