@@ -548,8 +548,10 @@ public static class SystemPromptBuilder
         var data = GetGatewayData(context);
         return
         [
+            RuntimeLineFormatter.RuntimeContextBeginDelimiter,
             buildRuntimeLine(data.Parameters.Runtime),
-            $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
+            $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.",
+            RuntimeLineFormatter.RuntimeContextEndDelimiter
         ];
     }
 

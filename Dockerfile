@@ -15,6 +15,14 @@ RUN dotnet publish src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# The aspnet:10.0 base image ships neither curl nor wget (only dotnet), so the
+# HEALTHCHECK below needs curl installed explicitly. Without it the probe exits 1
+# on every interval and the container is reported unhealthy forever even though
+# GET /health returns 200. See issue #1432.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
 
 # BOTNEXUS_HOME is the config directory; mount a volume here with your config.json (and optionally auth.json).
