@@ -256,9 +256,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             });
         }
 
-        conv.StreamState.Buffer = "";
-        conv.StreamState.ThinkingBuffer = "";
-        conv.StreamState.IsStreaming = false;
+        conv.StreamState.Reset();
         agent.IsStreaming = false;
         agent.ProcessingStage = null;
 
@@ -293,9 +291,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             conv.Messages.Add(new ChatMessage("Error", evt.ErrorMessage ?? "An unknown error occurred.", DateTimeOffset.UtcNow));
-            conv.StreamState.Buffer = "";
-            conv.StreamState.ThinkingBuffer = "";
-            conv.StreamState.IsStreaming = false;
+            conv.StreamState.Reset();
             _store.ClearPendingAskUser(convId);
         }
 
@@ -327,9 +323,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             conv.Messages.Add(new ChatMessage("Notification",
                 evt.ErrorMessage ?? "The gateway was restarted while your last message was being processed.",
                 DateTimeOffset.UtcNow));
-            conv.StreamState.Buffer = "";
-            conv.StreamState.ThinkingBuffer = "";
-            conv.StreamState.IsStreaming = false;
+            conv.StreamState.Reset();
         }
 
         if (agent is not null)
@@ -360,9 +354,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         {
             // A tool-only turn may have buffered content (e.g. a partial NO_REPLY).
             // Clear it without adding a message -- the turn produced no user-visible output.
-            conv.StreamState.Buffer = "";
-            conv.StreamState.ThinkingBuffer = "";
-            conv.StreamState.IsStreaming = false;
+            conv.StreamState.Reset();
         }
 
         agent.IsStreaming = false;
@@ -404,9 +396,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (agent.ActiveConversationId is not null &&
             agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
         {
-            conv.StreamState.Buffer = "";
-            conv.StreamState.ThinkingBuffer = "";
-            conv.StreamState.IsStreaming = false;
+            conv.StreamState.Reset();
             conv.StreamState.ActiveToolCalls.Clear();
             // Do NOT clear conv.Messages or set HistoryLoaded=false.
             // Session reset clears the agent's context window — it does not
@@ -649,9 +639,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 if (agent.ActiveConversationId is not null &&
                     agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
                 {
-                    conv.StreamState.Buffer = "";
-                    conv.StreamState.ThinkingBuffer = "";
-                    conv.StreamState.IsStreaming = false;
+                    conv.StreamState.Reset();
                     // Force history reload so the UI fetches server-persisted state.
                     // HandleMessageEnd never committed the buffer to Messages (#759).
                     conv.HistoryLoaded = false;
