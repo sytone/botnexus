@@ -27,6 +27,12 @@ public sealed class QmdConfig
     public List<QmdStoreConfig> Stores { get; set; } = [];
 
     /// <summary>
+    /// When true, shared memory stores are exposed as virtual QMD collections
+    /// (prefixed with "memory:") alongside file-based stores.
+    /// </summary>
+    public bool IncludeMemoryStores { get; set; }
+
+    /// <summary>
     /// When set, restricts this agent to only see the listed store names.
     /// Null or empty means the agent can see ALL configured stores.
     /// </summary>
