@@ -123,4 +123,18 @@ public sealed class RuntimeLineFormatterTests
         line.ShouldContain("channel=signalr");
         line.ShouldContain("session=sess-42");
     }
+
+    [Fact]
+    public void RuntimeContextDelimiters_AreInternalRuntimeContextMarkers()
+    {
+        RuntimeLineFormatter.RuntimeContextBeginDelimiter.ShouldBe("INTERNAL_RUNTIME_CONTEXT_BEGIN");
+        RuntimeLineFormatter.RuntimeContextEndDelimiter.ShouldBe("INTERNAL_RUNTIME_CONTEXT_END");
+    }
+
+    [Fact]
+    public void RuntimeContextDelimiters_BeginAndEndDiffer()
+    {
+        RuntimeLineFormatter.RuntimeContextBeginDelimiter
+            .ShouldNotBe(RuntimeLineFormatter.RuntimeContextEndDelimiter);
+    }
 }

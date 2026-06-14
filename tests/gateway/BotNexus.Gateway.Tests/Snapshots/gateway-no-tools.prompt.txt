@@ -87,6 +87,8 @@ Use NO_REPLY ONLY when no user-visible reply is required.
 <!-- BOTNEXUS_CACHE_BOUNDARY -->
 
 <runtime>
+INTERNAL_RUNTIME_CONTEXT_BEGIN
 Runtime: agent=agent-a | channel=signalr | capabilities=none
 Reasoning: off (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.
+INTERNAL_RUNTIME_CONTEXT_END
 </runtime>
