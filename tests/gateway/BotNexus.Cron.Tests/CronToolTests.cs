@@ -620,6 +620,100 @@ public sealed class CronToolTests
         store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 100, It.IsAny<CancellationToken>()), Times.Once());
     }
 
+    [Fact]
+    public async Task ExecuteAsync_History_ClampsNegativeLimitToOne()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = -5
+        });
+
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 1, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_OutOfRangeJsonNumber_DoesNotThrow_ClampsToMax()
+    {
+        // limit greater than Int32.MaxValue used to throw FormatException out of JsonElement.GetInt32().
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        // A JSON number larger than Int32.MaxValue, as the agent would supply it.
+        var limitElement = JsonDocument.Parse("9999999999").RootElement;
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = limitElement
+        });
+
+        await act.ShouldNotThrowAsync();
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 100, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_NonIntegerJsonNumber_DoesNotThrow_Truncates()
+    {
+        // limit as a fractional JSON number used to throw InvalidOperationException out of JsonElement.GetInt32().
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        var limitElement = JsonDocument.Parse("7.9").RootElement;
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = limitElement
+        });
+
+        await act.ShouldNotThrowAsync();
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 7, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_History_GarbageLimit_FallsBackToDefault()
+    {
+        // A non-numeric value should fall back to the default (20), not throw.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
+        store.Setup(value => value.GetRunHistoryAsync(JobId.From("job-1"), 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "history",
+            ["jobId"] = "job-1",
+            ["limit"] = "not-a-number"
+        });
+
+        store.Verify(s => s.GetRunHistoryAsync(JobId.From("job-1"), 20, It.IsAny<CancellationToken>()), Times.Once());
+    }
+
     private static CronScheduler CreateScheduler()
     {
         var store = new Mock<ICronStore>().Object;
