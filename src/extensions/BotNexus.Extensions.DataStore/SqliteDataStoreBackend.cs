@@ -162,6 +162,10 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 
     public async Task<DataStoreResult> DeleteAsync(string table, string where, CancellationToken ct = default)
     {
+        // Defence-in-depth: reject a multi-statement 'where' here too so a direct backend caller
+        // cannot smuggle a trailing statement past the tool-level guard (SQLite batches statements).
+        if (DataStoreTool.ContainsStatementSeparator(where))
+            return DataStoreResult.Fail("'where' must not contain a statement separator (';') outside a string literal.");
         try
         {
             await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -181,6 +185,11 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 
     public async Task<DataStoreResult> UpdateAsync(string table, string set, string where, CancellationToken ct = default)
     {
+        // Defence-in-depth: the SET values are parameterized, but the WHERE fragment is interpolated.
+        // Reject a multi-statement 'where' here too so a direct backend caller cannot smuggle a
+        // trailing statement past the tool-level guard (SQLite batches statements).
+        if (DataStoreTool.ContainsStatementSeparator(where))
+            return DataStoreResult.Fail("'where' must not contain a statement separator (';') outside a string literal.");
         try
         {
             await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -271,6 +280,10 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 
     public async Task<DataStoreResult> CountAsync(string table, string? where = null, CancellationToken ct = default)
     {
+        // Defence-in-depth: an empty 'where' counts the whole table, but a non-empty one is
+        // interpolated. Reject a multi-statement 'where' so 'count' cannot become a write vector.
+        if (DataStoreTool.ContainsStatementSeparator(where))
+            return DataStoreResult.Fail("'where' must not contain a statement separator (';') outside a string literal.");
         try
         {
             await _lock.WaitAsync(ct).ConfigureAwait(false);
