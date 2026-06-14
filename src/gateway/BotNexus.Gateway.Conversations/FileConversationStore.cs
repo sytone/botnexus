@@ -101,21 +101,9 @@ public sealed class FileConversationStore : IConversationStore
         finally { _lock.Release(); }
     }
 
+    // Citizen scoping is shared across all three conversation stores — see ConversationStoreShared (#1383).
     private static bool MatchesCitizen(Conversation conversation, CitizenId citizen)
-    {
-        if (conversation.Initiator is { IsValid: true } init && init == citizen)
-            return true;
-
-        if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
-            return true;
-
-        // Participant-match (P9-F): the conversation includes this citizen in its
-        // participant set persisted in the JSON sidecar.
-        if (conversation.Participants.Any(p => p.CitizenId == citizen))
-            return true;
-
-        return false;
-    }
+        => ConversationStoreShared.MatchesCitizen(conversation, citizen);
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
@@ -362,27 +350,14 @@ public sealed class FileConversationStore : IConversationStore
     private string GetPath(AgentId agentId, ConversationId conversationId)
         => Path.Combine(_rootPath, agentId.Value, $"{conversationId.Value}.json");
 
-    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
-    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
-    // can hold the source world's id even when this gateway is the receiver. No-op when no
-    // world context is wired (e.g. test setups using the parameterless ctor).
+    // World-id stamping/back-fill is shared across all three conversation stores — see
+    // ConversationStoreShared (#1383). These forwarders thread this store's world context
+    // into the shared logic while keeping the existing call-site signatures unchanged.
     private void StampWorldId(Conversation conversation)
-    {
-        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-    }
+        => ConversationStoreShared.StampWorldId(conversation, _worldContext);
 
-    // Read-time projection: legacy JSON sidecars persisted before #613 deserialise with an
-    // empty WorldId. This projects them to the current world on the way out. The file on
-    // disk is not rewritten — the next SaveAsync round-trip will durably persist via
-    // StampWorldId. Treating backfill as projection-only keeps the read path single-pass
-    // and avoids touching disk on every Get/List.
     private Conversation? BackfillWorldId(Conversation? conversation)
-    {
-        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-        return conversation;
-    }
+        => ConversationStoreShared.BackfillWorldId(conversation, _worldContext);
 
     private static ConversationSummary ToSummary(Conversation c) =>
         new(

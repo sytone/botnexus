@@ -63,22 +63,9 @@ public sealed class InMemoryConversationStore : IConversationStore
         return Task.FromResult(results);
     }
 
+    // Citizen scoping is shared across all three conversation stores — see ConversationStoreShared (#1383).
     private static bool MatchesCitizen(Conversation conversation, CitizenId citizen)
-    {
-        if (conversation.Initiator is { IsValid: true } init && init == citizen)
-            return true;
-
-        // Owner-match: only agent-species citizens own conversations.
-        if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
-            return true;
-
-        // Participant-match (P9-F): the conversation includes this citizen in its
-        // participant set.
-        if (conversation.Participants.Any(p => p.CitizenId == citizen))
-            return true;
-
-        return false;
-    }
+        => ConversationStoreShared.MatchesCitizen(conversation, citizen);
 
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
@@ -210,27 +197,14 @@ public sealed class InMemoryConversationStore : IConversationStore
         return Task.FromResult(summaries);
     }
 
-    // Stamps the current world id onto a conversation being persisted (Create/Save). Only
-    // fills an empty WorldId — explicit non-empty values are preserved so cross-world relays
-    // can hold the source world's id even when this gateway is the receiver. No-op when no
-    // world context is wired (e.g. test setups using the parameterless ctor).
+    // World-id stamping/back-fill is shared across all three conversation stores — see
+    // ConversationStoreShared (#1383). These forwarders thread this store's world context
+    // into the shared logic while keeping the existing call-site signatures unchanged.
     private void StampWorldId(Conversation conversation)
-    {
-        if (string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-    }
+        => ConversationStoreShared.StampWorldId(conversation, _worldContext);
 
-    // Read-time projection: any conversation stored before the world context was wired
-    // (e.g. via the parameterless ctor) carries an empty WorldId. This projects it to the
-    // current world on the way out. The in-memory dictionary itself is not mutated to
-    // "repair" the value — kept identical to the Sqlite/File semantics so the three stores
-    // behave the same way under tests and under the lazy upgrade path.
     private Conversation? BackfillWorldId(Conversation? conversation)
-    {
-        if (conversation is not null && string.IsNullOrEmpty(conversation.WorldId) && _worldContext is not null)
-            conversation.WorldId = _worldContext.CurrentWorldId;
-        return conversation;
-    }
+        => ConversationStoreShared.BackfillWorldId(conversation, _worldContext);
 
     private static ConversationSummary ToSummary(Conversation c) =>
         new(
