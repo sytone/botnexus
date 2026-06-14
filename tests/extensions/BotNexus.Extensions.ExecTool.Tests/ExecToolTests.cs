@@ -8,6 +8,7 @@ using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Extensions.ExecTool.Tests;
 
+[Collection(ExecToolBackgroundRegistryCollection.Name)]
 public class ExecToolTests : IDisposable
 {
     private readonly ExecTool _tool = new(fileSystem: new MockFileSystem());
