@@ -35,11 +35,15 @@ public sealed class DefaultSubAgentManagerActivityTests
         var manager = CreateManager(CreateSuccessfulHandle(), out _, out var activity);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
+        // Wait on the lifecycle event, not on Status == Completed — the status can flip before
+        // the "subagent_completed" activity is published (see the failure test for the same
+        // window).
         await WaitUntilAsync(
-            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
+            () => activity.Activities.Any(HasLifecycleEvent("subagent_completed")),
             TimeSpan.FromSeconds(2));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_completed")).ShouldBeTrue();
+        (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Completed);
     }
 
     [Fact]
@@ -48,11 +52,17 @@ public sealed class DefaultSubAgentManagerActivityTests
         var manager = CreateManager(CreateFailingHandle(), out _, out var activity);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
+        // Wait on the lifecycle event itself, not on Status == Failed. The manager flips the
+        // status to Failed in the catch block *before* OnCompletedAsync publishes the
+        // "subagent_failed" activity, so polling on status can return while the event is still
+        // in flight — an intermittent failure. Polling on the event (as the spawned/killed
+        // tests do) removes that window.
         await WaitUntilAsync(
-            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Failed,
+            () => activity.Activities.Any(HasLifecycleEvent("subagent_failed")),
             TimeSpan.FromSeconds(2));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_failed")).ShouldBeTrue();
+        (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Failed);
     }
 
     [Fact]
@@ -182,20 +192,6 @@ public sealed class DefaultSubAgentManagerActivityTests
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (condition())
-                return;
-
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException("Condition was not met before timeout.");
-    }
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (await condition())
                 return;
 
             await Task.Delay(25);
