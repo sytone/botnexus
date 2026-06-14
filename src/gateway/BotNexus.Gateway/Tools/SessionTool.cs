@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Providers.Core.Models;
 
@@ -29,7 +30,7 @@ public sealed class SessionTool(
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["list", "get", "search", "history"],
+                  "enum": ["list", "get", "search", "history", "delete"],
                   "description": "Action to perform."
                 },
                 "sessionId": {
@@ -66,7 +67,8 @@ public sealed class SessionTool(
         if (!action.Equals("list", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("get", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("search", StringComparison.OrdinalIgnoreCase) &&
-            !action.Equals("history", StringComparison.OrdinalIgnoreCase))
+            !action.Equals("history", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("delete", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"Unsupported session action '{action}'.");
 
         return Task.FromResult(arguments);
@@ -85,6 +87,7 @@ public sealed class SessionTool(
             "get" => await GetAsync(arguments, cancellationToken),
             "search" => await SearchAsync(arguments, cancellationToken),
             "history" => await HistoryAsync(arguments, cancellationToken),
+            "delete" => await DeleteAsync(arguments, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported session action '{action}'.")
         };
     }
@@ -212,6 +215,33 @@ public sealed class SessionTool(
         };
 
         return TextResult(JsonSerializer.Serialize(result, JsonOptions));
+    }
+
+    private async Task<AgentToolResult> DeleteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
+    {
+        var sessionId = ReadString(arguments, "sessionId")
+            ?? throw new ArgumentException("Missing required argument: sessionId.");
+
+        var session = await sessionStore.GetAsync(SessionId.From(sessionId), ct)
+            ?? throw new KeyNotFoundException($"Session '{sessionId}' not found.");
+
+        EnsureCanAccess(session.AgentId);
+
+        if (session.Status is SessionStatus.Active or SessionStatus.Suspended)
+            throw new InvalidOperationException(
+                $"Cannot delete session '{sessionId}' with status '{session.Status}'. Only expired or sealed sessions can be deleted.");
+
+        await sessionStore.DeleteAsync(SessionId.From(sessionId), ct);
+
+        var confirmation = new
+        {
+            status = "deleted",
+            session.SessionId,
+            session.AgentId,
+            session.CreatedAt
+        };
+
+        return TextResult(JsonSerializer.Serialize(confirmation, JsonOptions));
     }
 
     private void EnsureCanAccess(AgentId targetAgentId)
