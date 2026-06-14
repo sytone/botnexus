@@ -15,20 +15,28 @@ public sealed class LivenessWatchdogOptions
     public TimeSpan CheckInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Duration of inactivity after which a warning is logged. Default: 5 minutes.
+    /// Duration of inactivity after which a warning is logged. Default: 15 minutes.
     /// </summary>
-    public TimeSpan WarningThreshold { get; set; } = TimeSpan.FromMinutes(5);
+    public TimeSpan WarningThreshold { get; set; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// Duration of inactivity after which a critical alert is logged. Default: 10 minutes.
+    /// Duration of inactivity after which a critical alert is logged. Default: 30 minutes.
+    /// Previously 10 minutes, which caused excessive false positives during normal quiet periods
+    /// (overnight, between cron jobs). Increased to 30 minutes per #1320.
     /// </summary>
-    public TimeSpan CriticalThreshold { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan CriticalThreshold { get; set; } = TimeSpan.FromMinutes(30);
 }
 
 /// <summary>
 /// Background service that monitors gateway activity and logs warnings when the process
 /// appears unresponsive. Detects the scenario where the gateway is alive (port open)
 /// but unable to schedule work (deadlock/threadpool exhaustion).
+///
+/// "Activity" is recorded by <see cref="IActivityTracker"/> from the agent execution
+/// choke point (<c>InProcessAgentHandle</c>) on every streamed agent event and on the
+/// blocking prompt path, plus at inbound dispatch entry. This means a long-running turn
+/// or a cron/soul run keeps the tracker fresh, so crossing a threshold reflects a genuine
+/// stall rather than a normal quiet period or an in-flight turn (#1320).
 /// </summary>
 public sealed class LivenessWatchdogService(
     IActivityTracker activityTracker,
