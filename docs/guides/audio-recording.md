@@ -50,6 +50,7 @@ The Whisper extension supports the following configuration options:
 | `ModelPath` | *(required)* | Full path to the GGML model file |
 | `Language` | `en` | Language code for transcription |
 | `MaxConcurrency` | `1` | Maximum parallel transcription operations |
+| `MaxAudioBytes` | `26214400` (25 MB) | Maximum audio payload size, in bytes. Larger attachments are skipped before transcription. `0` disables the limit |
 | `SupportedMimeTypes` | see below | Audio formats the handler accepts |
 
 **Default supported formats:** `audio/wav`, `audio/mpeg`, `audio/mp3`, `audio/ogg`, `audio/webm`, `audio/flac`

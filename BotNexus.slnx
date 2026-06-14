@@ -52,7 +52,9 @@
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
+  <Folder Name="/tests/">
+    <Project Path="tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/agent/">
     <Project Path="tests/agent/BotNexus.Agent.Core.Tests/BotNexus.Agent.Core.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.Anthropic.Tests/BotNexus.Agent.Providers.Anthropic.Tests.csproj" />
@@ -86,6 +88,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Qmd.Tests/BotNexus.Extensions.Qmd.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.AudioTranscription.Tests/BotNexus.Extensions.AudioTranscription.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />

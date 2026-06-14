@@ -119,9 +119,36 @@ public sealed class KnowledgeSearchTool(IQmdBackend backend, QmdConfig config) :
     {
         if (!args.TryGetValue(key, out var val) || val is null) return null;
         if (val is int i) return i;
-        if (val is long l) return (int)l;
-        if (val is JsonElement je && je.ValueKind == JsonValueKind.Number) return je.GetInt32();
+        if (val is long l) return SaturateToInt32(l);
+        if (val is JsonElement je && je.ValueKind == JsonValueKind.Number) return ReadNumberElement(je);
         if (int.TryParse(val.ToString(), out var parsed)) return parsed;
         return null;
+    }
+
+    /// <summary>
+    /// Reads a JSON number element without throwing on values that overflow <see cref="int"/>
+    /// or carry a fractional component. Out-of-range and non-integer numbers (e.g.
+    /// <c>9999999999</c> or <c>1.5</c>) saturate/truncate to a representable <see cref="int"/>
+    /// instead of propagating a <see cref="FormatException"/>/<see cref="InvalidOperationException"/>
+    /// out of the tool call. The caller still clamps the result to the configured <c>[1, 50]</c> range,
+    /// so saturating here lets a too-large value resolve to the clamped maximum rather than crashing.
+    /// </summary>
+    private static int? ReadNumberElement(JsonElement je)
+    {
+        if (je.TryGetInt32(out var i)) return i;
+        if (je.TryGetInt64(out var l)) return SaturateToInt32(l);
+        if (je.TryGetDouble(out var d)) return SaturateToInt32(d);
+        return null;
+    }
+
+    private static int SaturateToInt32(long value) =>
+        value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
+
+    private static int SaturateToInt32(double value)
+    {
+        if (double.IsNaN(value)) return 0;
+        if (value >= int.MaxValue) return int.MaxValue;
+        if (value <= int.MinValue) return int.MinValue;
+        return (int)value;
     }
 }

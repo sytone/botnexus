@@ -191,6 +191,8 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `memory.path` | string | `memory` | Memory root directory relative to agent workspace. Daily notes (`YYYY-MM-DD.md`) are written here |
 | `memory.indexing` | string | `auto` | Memory indexing mode |
 | `memory.search.defaultTopK` | int | `10` | Default number of search results |
+| `memory.search.maxTopK` | int | `100` | Upper bound for the `memory_search` `topK` argument. Caller-supplied values above this are clamped (floored at `defaultTopK`) to bound the search fan-out and tool-result size |
+| `memory.search.maxLimit` | int | `100` | Upper bound for the `memory_get` session-listing `limit` argument. Caller-supplied values above this are clamped |
 | `soul.enabled` | bool | `false` | Enable soul session (persistent agent identity) |
 | `soul.idleTimeoutMinutes` | int | `30` | Idle timeout for soul sessions |
 | `sessionAccess.level` | string | `own` | Session access: `own`, `allowlist`, or `all` |
