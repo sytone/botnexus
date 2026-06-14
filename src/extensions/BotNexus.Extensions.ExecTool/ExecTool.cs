@@ -19,6 +19,14 @@ public sealed class ExecTool : IAgentTool
     private const int DefaultTimeoutMs = 120_000;
     private const int MaxOutputBytes = 100 * 1024;
 
+    /// <summary>
+    /// Upper bound on the number of background-process entries retained in <see cref="BackgroundProcesses"/>.
+    /// When a new background process is registered, dead entries are pruned first; if the map is still
+    /// over this cap, the oldest entries (by start time) are evicted. This keeps the static registry
+    /// bounded so a long-running gateway does not accumulate stale PIDs indefinitely.
+    /// </summary>
+    internal const int MaxBackgroundProcesses = 256;
+
     private static readonly ConcurrentDictionary<int, ProcessInfo> BackgroundProcesses = new();
 
     private readonly string? _workingDirectory;
@@ -192,6 +200,9 @@ public sealed class ExecTool : IAgentTool
             var pid = process.Id;
             BackgroundProcesses[pid] = new ProcessInfo(pid, command[0], DateTime.UtcNow);
 
+            // Keep the static registry bounded: drop dead PIDs and cap the retained count.
+            PruneBackgroundProcesses();
+
             // Write stdin if provided, then detach
             if (input is not null)
             {
@@ -318,6 +329,91 @@ public sealed class ExecTool : IAgentTool
     /// Clears the background process tracking dictionary. For testing only.
     /// </summary>
     internal static void ClearBackgroundProcesses() => BackgroundProcesses.Clear();
+
+    /// <summary>
+    /// Bounds the background-process registry using the default <see cref="MaxBackgroundProcesses"/> cap.
+    /// Drops dead PIDs and evicts the oldest entries when over the cap. Called after each background launch.
+    /// </summary>
+    internal static void PruneBackgroundProcesses()
+    {
+        PruneBackgroundProcesses(MaxBackgroundProcesses);
+    }
+
+    /// <summary>
+    /// Bounds the background-process registry against an explicit cap. First removes entries whose
+    /// underlying OS process is no longer alive (PID not found, or found but already exited). If the
+    /// map is still larger than <paramref name="maxRetained"/>, evicts the oldest remaining entries
+    /// (by start time) until it is within the cap. Safe to call concurrently. Exposed internally for tests.
+    /// </summary>
+    /// <param name="maxRetained">Maximum number of entries to retain after pruning dead PIDs.</param>
+    internal static void PruneBackgroundProcesses(int maxRetained)
+    {
+        // Phase 1: remove dead PIDs.
+        foreach (var kvp in BackgroundProcesses)
+        {
+            if (!IsPidAlive(kvp.Key))
+            {
+                BackgroundProcesses.TryRemove(kvp.Key, out _);
+            }
+        }
+
+        // Phase 2: enforce the size cap, oldest-first.
+        EvictOldestBackgroundProcesses(maxRetained);
+    }
+
+    /// <summary>
+    /// Evicts the oldest background-process entries (by start time) until the registry holds at most
+    /// <paramref name="maxRetained"/> entries. Does not perform liveness checks. Exposed internally so
+    /// the cap behaviour can be tested deterministically with seeded entries.
+    /// </summary>
+    internal static void EvictOldestBackgroundProcesses(int maxRetained)
+    {
+        var overflow = BackgroundProcesses.Count - maxRetained;
+        if (overflow <= 0)
+        {
+            return;
+        }
+
+        var oldest = BackgroundProcesses.Values
+            .OrderBy(p => p.StartedUtc)
+            .Take(overflow)
+            .ToList();
+
+        foreach (var info in oldest)
+        {
+            BackgroundProcesses.TryRemove(info.Pid, out _);
+        }
+    }
+
+    /// <summary>
+    /// Seeds a background-process entry directly. For testing only — lets tests populate the registry
+    /// (e.g. with synthetic or already-dead PIDs) without spawning real processes.
+    /// </summary>
+    internal static void RegisterBackgroundForTest(int pid, string command, DateTime startedUtc)
+        => BackgroundProcesses[pid] = new ProcessInfo(pid, command, startedUtc);
+
+    /// <summary>
+    /// Returns true when a process with the given PID is currently running. A PID that cannot be found,
+    /// or that is found but has already exited, is treated as not alive.
+    /// </summary>
+    private static bool IsPidAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            // No process with that PID is running.
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            // Process has already exited / terminated.
+            return false;
+        }
+    }
 
     private static string FormatOutput(string output)
     {
