@@ -43,18 +43,34 @@ public enum ShellPreference
 /// Output is capped at 50 * 1024 (51,200) bytes to protect downstream token budgets and prevent
 /// runaway responses from large command streams while preserving tail errors.
 /// </para>
+/// <para>
+/// The per-call <c>timeout</c> argument is clamped to <see cref="DefaultMaxTimeoutSeconds"/>
+/// (overridable via the constructor). Without a ceiling an agent — or a poisoned cron prompt —
+/// could pass an absurd value (e.g. <c>86400</c>) and hold a process slot / OS handle for hours.
+/// Over-ceiling requests are clamped down (not rejected) and a warning is prepended to the output,
+/// mirroring the configurable-max pattern used by FileWatcherTool and DelayTool.
+/// </para>
 /// </remarks>
 public sealed class ShellTool : IAgentTool
 {
     private const int MaxOutputBytes = 50 * 1024;
     private const int MaxOutputLines = 2000;
+
+    /// <summary>
+    /// Default upper bound applied to the per-call <c>timeout</c> argument when no explicit
+    /// ceiling is supplied to the constructor. One hour comfortably covers legitimate long
+    /// shell operations while preventing multi-hour zombie processes from runaway timeout values.
+    /// </summary>
+    public const int DefaultMaxTimeoutSeconds = 3600;
+
     private static readonly Lazy<string?> WindowsBashPath = new(FindBashExecutable);
     private readonly string? _workingDirectory;
     private readonly int? _defaultTimeoutSeconds;
+    private readonly int _maxTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
 
-    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null)
+    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
@@ -65,7 +81,17 @@ public sealed class ShellTool : IAgentTool
             throw new ArgumentOutOfRangeException(nameof(defaultTimeoutSeconds), "defaultTimeoutSeconds must be >= 1 second when set.");
         }
 
+        if (maxTimeoutSeconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxTimeoutSeconds), "maxTimeoutSeconds must be >= 1 second.");
+        }
+
         _defaultTimeoutSeconds = defaultTimeoutSeconds;
+        // Ensure the ceiling never sits below the configured default, otherwise the default itself
+        // would be silently clamped on every call with no per-call argument.
+        _maxTimeoutSeconds = defaultTimeoutSeconds.HasValue
+            ? Math.Max(maxTimeoutSeconds, defaultTimeoutSeconds.Value)
+            : maxTimeoutSeconds;
         _shellPreference = shellPreference;
         _shellCommand = shellCommand is { Length: >= 2 } ? shellCommand : null;
     }
@@ -122,6 +148,7 @@ public sealed class ShellTool : IAgentTool
         {
             timeoutSeconds = ReadInt(rawTimeout, "timeout");
             ValidateTimeoutSeconds(timeoutSeconds, nameof(arguments));
+            timeoutSeconds = ClampTimeoutSeconds(timeoutSeconds, _maxTimeoutSeconds, out _);
         }
 
         IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -149,10 +176,17 @@ public sealed class ShellTool : IAgentTool
             throw new ArgumentException($"Command exceeds maximum allowed length of {MaxCommandLength} characters.");
         }
         int? timeoutSeconds = null;
+        var clampWarning = (string?)null;
         if (arguments.TryGetValue("timeout", out var timeoutObj) && timeoutObj is not null)
         {
             timeoutSeconds = ReadInt(timeoutObj, "timeout");
             ValidateTimeoutSeconds(timeoutSeconds, nameof(arguments));
+            var requestedTimeout = timeoutSeconds;
+            timeoutSeconds = ClampTimeoutSeconds(timeoutSeconds, _maxTimeoutSeconds, out var wasClamped);
+            if (wasClamped)
+            {
+                clampWarning = $"[warning: requested timeout {requestedTimeout}s exceeds the maximum of {_maxTimeoutSeconds}s \u2014 clamped to {timeoutSeconds}s]\n";
+            }
         }
         else
         {
@@ -160,6 +194,9 @@ public sealed class ShellTool : IAgentTool
         }
 
         var invocation = BuildShellInvocation(command, _shellPreference, _shellCommand);
+        // Combine the clamp warning (if any) with the shell-detection warning so both surface
+        // on the tool result without threading two prefixes through every output build site.
+        var warningPrefix = string.Concat(clampWarning, invocation.WarningPrefix);
         var startInfo = new ProcessStartInfo
         {
             FileName = invocation.FileName,
@@ -231,7 +268,7 @@ public sealed class ShellTool : IAgentTool
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested != true)
         {
             var cancelledOutput = BuildOutput(outputBuffer, includeTruncationNotes: true);
-            cancelledOutput = PrependWarning(cancelledOutput, invocation.WarningPrefix);
+            cancelledOutput = PrependWarning(cancelledOutput, warningPrefix);
             TryKill(process);
             var cancelledMessage = string.IsNullOrWhiteSpace(cancelledOutput)
                 ? "Command cancelled."
@@ -243,7 +280,7 @@ public sealed class ShellTool : IAgentTool
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
         {
             var timeoutOutput = BuildOutput(outputBuffer, includeTruncationNotes: true);
-            timeoutOutput = PrependWarning(timeoutOutput, invocation.WarningPrefix);
+            timeoutOutput = PrependWarning(timeoutOutput, warningPrefix);
             TryKill(process);
             var timeoutMessage = string.IsNullOrWhiteSpace(timeoutOutput)
                 ? $"Command timed out after {timeoutSeconds} seconds."
@@ -259,7 +296,7 @@ public sealed class ShellTool : IAgentTool
         }
 
         var output = BuildOutput(outputBuffer, includeTruncationNotes: true);
-        output = PrependWarning(output, invocation.WarningPrefix);
+        output = PrependWarning(output, warningPrefix);
         if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(output))
         {
             output = $"{output}{Environment.NewLine}{Environment.NewLine}[command exited with code {process.ExitCode}]";
@@ -570,6 +607,34 @@ public sealed class ShellTool : IAgentTool
         {
             throw new ArgumentOutOfRangeException(parameterName, "timeout must be >= 1 second.");
         }
+    }
+
+    /// <summary>
+    /// Clamps a requested timeout to the configured ceiling. The lower bound is assumed to have
+    /// already been validated by <see cref="ValidateTimeoutSeconds"/>; this only enforces the
+    /// upper bound so a runaway value (e.g. <c>86400</c>) cannot hold a process slot for hours.
+    /// A <see langword="null"/> request (no per-call timeout) is returned unchanged.
+    /// </summary>
+    /// <param name="requestedSeconds">The requested timeout, or <see langword="null"/> to leave unbounded.</param>
+    /// <param name="maxSeconds">The inclusive upper bound to clamp to.</param>
+    /// <param name="wasClamped"><see langword="true"/> when the request exceeded the ceiling and was reduced.</param>
+    /// <returns>The clamped timeout value.</returns>
+    private static int? ClampTimeoutSeconds(int? requestedSeconds, int maxSeconds, out bool wasClamped)
+    {
+        if (requestedSeconds is not { } requested)
+        {
+            wasClamped = false;
+            return requestedSeconds;
+        }
+
+        if (requested > maxSeconds)
+        {
+            wasClamped = true;
+            return maxSeconds;
+        }
+
+        wasClamped = false;
+        return requested;
     }
 
     /// <summary>

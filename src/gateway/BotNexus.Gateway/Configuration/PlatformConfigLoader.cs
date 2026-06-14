@@ -200,7 +200,20 @@ public static class PlatformConfigLoader
             return;
         }
 
-        fs.Directory.CreateDirectory(configDir);
+        // Tolerate a read-only config directory (e.g. Docker `:ro` mount). When the directory
+        // already exists we don't need to create it; when the filesystem is read-only we let the
+        // gateway continue and rely on BOTNEXUS_DATA_DIR for writable runtime state.
+        if (fs.Directory.Exists(configDir))
+            return;
+
+        try
+        {
+            fs.Directory.CreateDirectory(configDir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Read-only or permission-denied config directory — continue without creating it.
+        }
     }
 
     /// <summary>
@@ -711,9 +724,7 @@ public static class PlatformConfigLoader
 
         if (configuredType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
-            if (string.IsNullOrWhiteSpace(sessionStore.ConnectionString))
-                errors.Add("gateway.sessionStore.connectionString is required when gateway.sessionStore.type is 'Sqlite'.");
-
+            // connectionString is optional — defaults to sessions.sqlite in config directory
             return;
         }
 
