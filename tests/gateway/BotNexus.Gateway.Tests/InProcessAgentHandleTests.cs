@@ -3,6 +3,7 @@ using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -131,8 +132,53 @@ public sealed class InProcessAgentHandleTests
         imageBlock!.Data.ShouldBe("https://example.com/diagram.png");
     }
 
+    [Fact]
+    public async Task PromptAsync_RecordsActivity_OnBlockingPath()
+    {
+        // Regression for #1320: the cron / soul / heartbeat path runs through the
+        // blocking PromptAsync overload, which bypasses GatewayHost.ProcessAsync.
+        // Before the fix, that path never updated the activity tracker, so the
+        // liveness watchdog logged false FATAL "possible deadlock" alerts while
+        // cron jobs were actively executing. PromptAsync must record activity.
+        var tracker = new ActivityTracker();
+        var (_, handle) = CreateHandle(provider: null, activityTracker: tracker);
+
+        // Rewind the tracker so we can prove RecordActivity() moved it forward.
+        var before = tracker.LastActivityUtc;
+        await Task.Delay(15);
+
+        await handle.PromptAsync("hello");
+
+        tracker.LastActivityUtc.ShouldBeGreaterThan(before);
+    }
+
+    [Fact]
+    public async Task StreamAsync_RecordsActivity_PerAgentEvent()
+    {
+        // The interactive path streams agent events; each one is proof of liveness.
+        // The handle's event subscription must record activity so a long-running
+        // turn keeps the watchdog's "no activity" window fresh (#1320).
+        var tracker = new ActivityTracker();
+        var (_, handle) = CreateHandle(provider: null, activityTracker: tracker);
+
+        var before = tracker.LastActivityUtc;
+        await Task.Delay(15);
+
+        await foreach (var _ in handle.StreamAsync("hello"))
+        {
+            // drain the stream; the subscription records activity per event
+        }
+
+        tracker.LastActivityUtc.ShouldBeGreaterThan(before);
+    }
+
     private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
         IApiProvider? provider = null)
+        => CreateHandle(provider, activityTracker: null);
+
+    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
+        IApiProvider? provider,
+        IActivityTracker? activityTracker)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -169,7 +215,14 @@ public sealed class InProcessAgentHandleTests
             SessionId: "session-1");
 
         var agent = new BotNexus.Agent.Core.Agent(options);
-        var handle = new InProcessAgentHandle(agent, AgentId.From("agent-a"), SessionId.From("session-1"), NullLogger.Instance);
+        var handle = new InProcessAgentHandle(
+            agent,
+            AgentId.From("agent-a"),
+            SessionId.From("session-1"),
+            NullLogger.Instance,
+            tools: null,
+            resourcesToDispose: null,
+            activityTracker: activityTracker);
         return (agent, handle);
     }
 
