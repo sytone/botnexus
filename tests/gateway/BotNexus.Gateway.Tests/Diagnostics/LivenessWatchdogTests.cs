@@ -135,4 +135,18 @@ public sealed class LivenessWatchdogServiceTests
         service.CheckLiveness();
         service.CheckLiveness();
     }
+
+    [Fact]
+    public void DefaultOptions_WarningThreshold_Is15Minutes()
+    {
+        var options = new LivenessWatchdogOptions();
+        options.WarningThreshold.ShouldBe(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
+    public void DefaultOptions_CriticalThreshold_Is30Minutes()
+    {
+        var options = new LivenessWatchdogOptions();
+        options.CriticalThreshold.ShouldBe(TimeSpan.FromMinutes(30));
+    }
 }
