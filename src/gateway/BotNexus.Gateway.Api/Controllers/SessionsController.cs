@@ -248,6 +248,30 @@ public sealed class SessionsController : ControllerBase
     }
 
     /// <summary>
+    /// Exports the session history as a markdown transcript document.
+    /// </summary>
+    /// <param name="sessionId">Session identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Markdown transcript as a downloadable file.</returns>
+    [HttpGet("{sessionId}/export/markdown")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> ExportMarkdown(string sessionId, CancellationToken cancellationToken = default)
+    {
+        var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        var markdown = BotNexus.Gateway.Sessions.SessionTranscriptRenderer.RenderMarkdown(session, session.AgentId.Value);
+        if (markdown is null)
+            return NoContent();
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(markdown);
+        return File(bytes, "text/markdown", $"session-{sessionId}.md");
+    }
+
+    /// <summary>
     /// Gets debug information for a specific session: system prompt, paginated history, and metadata.
     /// </summary>
     /// <param name="sessionId">Session identifier.</param>
