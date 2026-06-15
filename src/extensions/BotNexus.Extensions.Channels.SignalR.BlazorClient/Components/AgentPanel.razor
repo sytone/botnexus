@@ -5,8 +5,12 @@
 <div class="agent-panel" data-testid="agent-panel">
     <header class="agent-panel-header">
         <div class="agent-panel-avatar" aria-hidden="true">🤖</div>
-        <div class="agent-panel-meta">
+        <div class="agent-panel-meta" title="@AgentId">
             <h2 class="agent-panel-title">@DisplayName</h2>
+            @if (!string.IsNullOrWhiteSpace(Description))
+            {
+                <span class="agent-panel-description">@Description</span>
+            }
             <span class="agent-panel-id">@AgentId</span>
         </div>
         <span class="agent-panel-status @StatusCssClass" role="status" aria-live="polite">@StatusLabel</span>
@@ -73,6 +77,7 @@
 
     private AgentState? Agent => Store.GetAgent(AgentId);
     private string DisplayName => Agent?.DisplayName ?? AgentId;
+    private string? Description => Agent?.Description;
     private string StatusLabel => Agent?.IsConnected != true ? "Offline" : Agent?.IsStreaming == true ? "Running" : "Idle";
     private string StatusCssClass => Agent?.IsConnected != true ? "offline" : Agent?.IsStreaming == true ? "running" : "idle";
 
