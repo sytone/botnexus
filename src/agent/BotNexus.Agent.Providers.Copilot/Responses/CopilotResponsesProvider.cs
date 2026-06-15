@@ -1,12 +1,8 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using BotNexus.Agent.Providers.Copilot.Headers;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
-using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
@@ -17,6 +13,15 @@ namespace BotNexus.Agent.Providers.Copilot.Responses;
 /// <summary>
 /// GitHub Copilot Responses API provider. Carved out of <see cref="BotNexus.Agent.Providers.OpenAI.OpenAIResponsesProvider"/> so the Copilot transport has no cross-provider dependency on the OpenAI project. Always applies Copilot dynamic headers and omits the non-Copilot reasoning fallback.
 /// See <c>tests/.../CopilotResponsesProviderParityTests</c> for the byte-identical-body proof against the legacy OpenAI-with-Copilot-auth path.
+/// <para>
+/// Thin shell over the shared <see cref="ResponsesStreamEngine"/> (step 6/6 of #1377): this class
+/// supplies only the Copilot transport deltas via a <see cref="ResponsesTransportProfile"/> — its
+/// project-internal <see cref="CopilotResponsesRequestBuilder"/> / <see cref="CopilotResponsesStreamParser"/>,
+/// unconditional dynamic-header decoration with resolved interaction id, a response-header telemetry
+/// hook, and the <c>ProviderHttpErrorHelper</c> error projection. The reasoning <c>effort:none</c>
+/// fallback omission lives in <see cref="CopilotResponsesRequestBuilder"/>. The request loop,
+/// message/tool conversion, and emit shapes are shared with the OpenAI Responses provider.
+/// </para>
 /// </summary>
 public sealed class CopilotResponsesProvider(
     HttpClient httpClient,
@@ -25,37 +30,7 @@ public sealed class CopilotResponsesProvider(
     public string Api => "github-copilot-responses";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
-    {
-        var stream = new LlmStream();
-        var ct = options?.CancellationToken ?? CancellationToken.None;
-
-        _ = Task.Run(async () =>
-        {
-            using var activity = ProviderDiagnostics.Source.StartActivity("provider.copilot-responses.stream", ActivityKind.Client);
-            activity?.SetTag("botnexus.provider.name", model.Provider);
-            activity?.SetTag("botnexus.model", model.Id);
-            activity?.SetTag("botnexus.model.api", model.Api);
-
-            try
-            {
-                await StreamCoreAsync(stream, model, context, options, ct);
-                activity?.SetStatus(ActivityStatusCode.Ok);
-            }
-            catch (OperationCanceledException)
-            {
-                EmitAborted(stream, model);
-                activity?.SetStatus(ActivityStatusCode.Error, "Operation canceled");
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Copilot responses stream failed for model {Model}", model.Id);
-                EmitError(stream, model, ex.Message);
-                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            }
-        }, ct);
-
-        return stream;
-    }
+        => ResponsesStreamEngine.StreamAsync(BuildProfile(logger), httpClient, logger, model, context, options);
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
@@ -82,291 +57,29 @@ public sealed class CopilotResponsesProvider(
         return Stream(model, context, responsesOptions);
     }
 
-    private async Task StreamCoreAsync(
-        LlmStream stream,
-        LlmModel model,
-        Context context,
-        StreamOptions? options,
-        CancellationToken ct)
-    {
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
-        if (string.IsNullOrWhiteSpace(apiKey))
+    private static ResponsesTransportProfile BuildProfile(ILogger logger) => new(
+        Api: "github-copilot-responses",
+        ActivityName: "provider.copilot-responses.stream",
+        BuildPayload: static (model, systemPrompt, messages, tools, options) =>
+            CopilotResponsesRequestBuilder.Build(
+                model, systemPrompt, messages, tools, options,
+                ResponsesMessageConverter.ConvertMessages, ResponsesMessageConverter.ConvertTools),
+        Parse: (stream, reader, model, options, api, emitError, ct) =>
+            CopilotResponsesStreamParser.ParseAsync(stream, reader, model, options, api, logger, emitError, ct),
+        DecorateHeaders: static (request, _, messages, options) =>
         {
-            throw new InvalidOperationException(
-                $"No API key for {model.Provider}. Set credentials before using model '{model.Id}'.");
-        }
-
-        var messages = MessageTransformer.TransformMessages(context.Messages, model);
-        var payload = CopilotResponsesRequestBuilder.Build(
-            model, context.SystemPrompt, messages, context.Tools, options,
-            ConvertMessages, ConvertTools);
-
-        if (options?.OnPayload is not null)
-        {
-            var modified = await options.OnPayload(payload, model);
-            if (modified is JsonObject obj)
-                payload = obj;
-        }
-
-        var url = $"{model.BaseUrl.TrimEnd('/')}/responses";
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-
-        if (model.Headers is not null)
-        {
-            foreach (var (key, value) in model.Headers)
+            // Copilot transport always applies the dynamic vision/intent headers —
+            // this provider only handles Copilot-routed models, so the runtime check
+            // present in the OpenAI parent is unnecessary.
+            var copilotHasImages = CopilotHeaders.HasVisionInput(messages);
+            var copilotHeaderOptions = CopilotInteractionId.WithResolvedInteractionId(
+                (options as CopilotResponsesOptions)?.HeaderOptions);
+            foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, copilotHasImages, copilotHeaderOptions))
                 request.Headers.TryAddWithoutValidation(key, value);
-        }
-
-        // Copilot transport always applies the dynamic vision/intent headers —
-        // this provider only handles Copilot-routed models, so the runtime check
-        // present in the OpenAI parent is unnecessary.
-        var copilotHasImages = CopilotHeaders.HasVisionInput(context.Messages);
-        var copilotHeaderOptions = Headers.CopilotInteractionId.WithResolvedInteractionId(
-            (options as CopilotResponsesOptions)?.HeaderOptions);
-        foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(context.Messages, copilotHasImages, copilotHeaderOptions))
-            request.Headers.TryAddWithoutValidation(key, value);
-
-        if (options?.Headers is not null)
-        {
-            foreach (var (key, value) in options.Headers)
-                request.Headers.TryAddWithoutValidation(key, value);
-        }
-
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        Headers.CopilotResponseHeaders.EmitToActivity(response, Activity.Current);
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses");
-        }
-
-        using var responseStream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(responseStream, Encoding.UTF8);
-        await CopilotResponsesStreamParser.ParseAsync(stream, reader, model, options, Api, logger, EmitError, ct);
-    }
-
-    private static JsonArray ConvertMessages(IReadOnlyList<Message> messages, LlmModel model)
-    {
-        var result = new JsonArray();
-
-        foreach (var message in messages)
-        {
-            switch (message)
-            {
-                case UserMessage user:
-                    result.Add(ConvertUserMessage(user, model));
-                    break;
-
-                case AssistantMessage assistant:
-                    foreach (var item in ConvertAssistantMessage(assistant, model))
-                        result.Add(item);
-                    break;
-
-                case ToolResultMessage toolResult:
-                    result.Add(ConvertToolResultMessage(toolResult, model));
-                    break;
-            }
-        }
-
-        return result;
-    }
-
-    private static JsonObject ConvertUserMessage(UserMessage user, LlmModel model)
-    {
-        if (user.Content.IsText)
-        {
-            return new JsonObject
-            {
-                ["type"] = "message",
-                ["role"] = "user",
-                ["content"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["type"] = "input_text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(user.Content.Text ?? "")
-                    }
-                }
-            };
-        }
-
-        var contentArray = new JsonArray();
-        foreach (var block in user.Content.Blocks ?? [])
-        {
-            switch (block)
-            {
-                case TextContent text:
-                    contentArray.Add(new JsonObject
-                    {
-                        ["type"] = "input_text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
-                    });
-                    break;
-
-                case ImageContent image when model.Input.Contains("image"):
-                    contentArray.Add(new JsonObject
-                    {
-                        ["type"] = "input_image",
-                        ["detail"] = "auto",
-                        ["image_url"] = $"data:{image.MimeType};base64,{image.Data}"
-                    });
-                    break;
-            }
-        }
-
-        return new JsonObject
-        {
-            ["type"] = "message",
-            ["role"] = "user",
-            ["content"] = contentArray
-        };
-    }
-
-    private static IReadOnlyList<JsonObject> ConvertAssistantMessage(AssistantMessage assistant, LlmModel model)
-    {
-        var items = new List<JsonObject>();
-        var isDifferentModel = !string.Equals(assistant.ModelId, model.Id, StringComparison.Ordinal) &&
-                               string.Equals(assistant.Provider, model.Provider, StringComparison.Ordinal) &&
-                               string.Equals(assistant.Api, model.Api, StringComparison.Ordinal);
-        var msgIndex = 0;
-
-        foreach (var block in assistant.Content)
-        {
-            switch (block)
-            {
-                case TextContent textBlock:
-                    var parsedSignature = ParseTextSignature(textBlock.TextSignature);
-                    var msgId = parsedSignature?.Id;
-                    if (string.IsNullOrWhiteSpace(msgId))
-                    {
-                        msgId = $"msg_{msgIndex}";
-                    }
-                    else if (msgId.Length > 64)
-                    {
-                        msgId = $"msg_{ShortHash(msgId)}";
-                    }
-
-                    var textItem = new JsonObject
-                    {
-                        ["type"] = "message",
-                        ["role"] = "assistant",
-                        ["content"] = new JsonArray
-                        {
-                            new JsonObject
-                            {
-                                ["type"] = "output_text",
-                                ["text"] = UnicodeSanitizer.SanitizeSurrogates(textBlock.Text),
-                                ["annotations"] = new JsonArray()
-                            }
-                        },
-                        ["status"] = "completed",
-                        ["id"] = msgId
-                    };
-                    if (parsedSignature?.Phase is not null)
-                        textItem["phase"] = parsedSignature.Phase;
-                    items.Add(textItem);
-                    msgIndex++;
-                    break;
-
-                case ThinkingContent thinking:
-                    if (!string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
-                    {
-                        try
-                        {
-                            var parsed = JsonNode.Parse(thinking.ThinkingSignature);
-                            if (parsed is JsonObject reasoningItem)
-                                items.Add(reasoningItem);
-                        }
-                        catch (JsonException)
-                        {
-                        }
-                    }
-                    break;
-
-                case ToolCallContent toolCall:
-                    var (callId, itemId) = SplitToolCallId(toolCall.Id);
-                    if (isDifferentModel && itemId?.StartsWith("fc_", StringComparison.Ordinal) == true)
-                        itemId = null;
-                    items.Add(new JsonObject
-                    {
-                        ["type"] = "function_call",
-                        ["call_id"] = callId,
-                        ["id"] = itemId,
-                        ["name"] = toolCall.Name,
-                        ["arguments"] = JsonSerializer.Serialize(toolCall.Arguments)
-                    });
-                    break;
-            }
-        }
-
-        return items;
-    }
-
-    private static JsonObject ConvertToolResultMessage(ToolResultMessage toolResult, LlmModel model)
-    {
-        var (callId, _) = SplitToolCallId(toolResult.ToolCallId);
-        var textResult = string.Join("\n", toolResult.Content.OfType<TextContent>().Select(t => t.Text));
-        var hasImages = toolResult.Content.Any(c => c is ImageContent) && model.Input.Contains("image");
-        JsonNode output;
-
-        if (hasImages)
-        {
-            var outputParts = new JsonArray();
-            if (!string.IsNullOrWhiteSpace(textResult))
-            {
-                outputParts.Add(new JsonObject
-                {
-                    ["type"] = "input_text",
-                    ["text"] = UnicodeSanitizer.SanitizeSurrogates(textResult)
-                });
-            }
-
-            foreach (var image in toolResult.Content.OfType<ImageContent>())
-            {
-                outputParts.Add(new JsonObject
-                {
-                    ["type"] = "input_image",
-                    ["detail"] = "auto",
-                    ["image_url"] = $"data:{image.MimeType};base64,{image.Data}"
-                });
-            }
-
-            output = outputParts;
-        }
-        else
-        {
-            output = JsonValue.Create(UnicodeSanitizer.SanitizeSurrogates(
-                string.IsNullOrWhiteSpace(textResult) ? "(see attached image)" : textResult))!;
-        }
-
-        return new JsonObject
-        {
-            ["type"] = "function_call_output",
-            ["call_id"] = callId,
-            ["output"] = output
-        };
-    }
-
-    private static JsonArray ConvertTools(IReadOnlyList<Tool> tools)
-    {
-        var result = new JsonArray();
-        foreach (var tool in tools)
-        {
-            result.Add(new JsonObject
-            {
-                ["type"] = "function",
-                ["name"] = tool.Name,
-                ["description"] = tool.Description,
-                ["parameters"] = JsonNode.Parse(tool.Parameters.GetRawText()),
-                ["strict"] = false
-            });
-        }
-
-        return result;
-    }
+        },
+        ThrowForError: static (response, errorBody) =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses"),
+        OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current));
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {
@@ -377,99 +90,4 @@ public sealed class CopilotResponsesProvider(
         ThinkingLevel.ExtraHigh => "xhigh",
         _ => "medium"
     };
-
-    private sealed record ParsedTextSignature(string Id, string? Phase);
-
-    private static ParsedTextSignature? ParseTextSignature(string? signature)
-    {
-        if (string.IsNullOrWhiteSpace(signature))
-            return null;
-
-        if (signature.StartsWith("{", StringComparison.Ordinal))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(signature);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("v", out var version) &&
-                    version.ValueKind == JsonValueKind.Number &&
-                    version.GetInt32() == 1 &&
-                    root.TryGetProperty("id", out var idProp) &&
-                    idProp.ValueKind == JsonValueKind.String)
-                {
-                    var id = idProp.GetString()!;
-                    var phase = root.TryGetProperty("phase", out var phaseProp) &&
-                                phaseProp.ValueKind == JsonValueKind.String
-                        ? phaseProp.GetString()
-                        : null;
-                    if (phase is not ("commentary" or "final_answer"))
-                        phase = null;
-                    return new ParsedTextSignature(id, phase);
-                }
-            }
-            catch (JsonException)
-            {
-            }
-        }
-
-        return new ParsedTextSignature(signature, null);
-    }
-
-    private static string ShortHash(string value)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return Convert.ToHexString(bytes)[..8].ToLowerInvariant();
-    }
-
-    private static string? GetString(JsonElement element, string propertyName)
-    {
-        if (element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String)
-            return value.GetString();
-        return null;
-    }
-
-    private static (string CallId, string? ItemId) SplitToolCallId(string id)
-    {
-        if (!id.Contains('|')) return (id, null);
-        var parts = id.Split('|', 2);
-        return (parts[0], parts[1]);
-    }
-
-    private void EmitError(
-        LlmStream stream,
-        LlmModel model,
-        string errorMessage,
-        IReadOnlyList<ContentBlock>? partialContent = null)
-    {
-        var message = new AssistantMessage(
-            Content: partialContent?.ToList() ?? [],
-            Api: Api,
-            Provider: model.Provider,
-            ModelId: model.Id,
-            Usage: Usage.Empty(),
-            StopReason: StopReason.Error,
-            ErrorMessage: errorMessage,
-            ResponseId: null,
-            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-
-        stream.Push(new ErrorEvent(StopReason.Error, message));
-        stream.End(message);
-    }
-
-    private void EmitAborted(LlmStream stream, LlmModel model)
-    {
-        var message = new AssistantMessage(
-            Content: [],
-            Api: Api,
-            Provider: model.Provider,
-            ModelId: model.Id,
-            Usage: Usage.Empty(),
-            StopReason: StopReason.Aborted,
-            ErrorMessage: "Request was cancelled",
-            ResponseId: null,
-            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-
-        stream.Push(new DoneEvent(StopReason.Aborted, message));
-        stream.End(message);
-    }
 }
