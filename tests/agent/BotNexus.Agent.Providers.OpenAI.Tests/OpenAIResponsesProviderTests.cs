@@ -195,6 +195,95 @@ public class OpenAIResponsesProviderTests
         handler.LastRequestHeaders["Openai-Intent"].ShouldContain("custom-intent");
     }
 
+    [Fact]
+    public async Task Stream_ParsesResponsesSse_AssemblesTextAndToolCall()
+    {
+        // Drives a multi-event Responses SSE stream end-to-end through the provider, which now flows
+        // through the extracted OpenAIResponsesStreamParser (#1404). Asserts the parser assembles
+        // streamed text + a function call into the final message and emits the expected event types.
+        // The OpenAI Responses API frames each event with an `event:` line whose value is the event
+        // type, followed by a `data:` JSON payload -- the parser dispatches on that `event:` value
+        // (the JSON `type` field is informational). The fixture below mirrors that wire shape, the
+        // same way CopilotResponsesProviderParityTests does.
+        var sse = string.Join("\n\n", new[]
+        {
+            "event: response.created\n" +
+            """data: {"type":"response.created","response":{"id":"resp_42"}}""",
+            "event: response.output_item.added\n" +
+            """data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}""",
+            "event: response.output_text.delta\n" +
+            """data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Hello"}""",
+            "event: response.output_text.delta\n" +
+            """data: {"type":"response.output_text.delta","item_id":"msg_1","delta":" world"}""",
+            "event: response.output_item.done\n" +
+            """data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","phase":"final_answer"}}""",
+            "event: response.output_item.added\n" +
+            """data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":""}}""",
+            "event: response.function_call_arguments.delta\n" +
+            """data: {"type":"response.function_call_arguments.delta","call_id":"call_1","delta":"{\"city\":\"Paris\"}"}""",
+            "event: response.function_call_arguments.done\n" +
+            """data: {"type":"response.function_call_arguments.done","call_id":"call_1","arguments":"{\"city\":\"Paris\"}"}""",
+            "event: response.output_item.done\n" +
+            """data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}""",
+            "event: response.completed\n" +
+            """data: {"type":"response.completed","response":{"id":"resp_42","status":"completed","usage":{"input_tokens":5,"output_tokens":7,"total_tokens":12}}}""",
+            "data: [DONE]"
+        });
+
+        var handler = new FixedSseHandler(sse);
+        var provider = new OpenAIResponsesProvider(
+            new HttpClient(handler), NullLogger<OpenAIResponsesProvider>.Instance);
+        var model = TestHelpers.MakeModel(id: "gpt-5.4", api: "openai-responses", reasoning: true);
+        var context = TestHelpers.MakeContext();
+
+        var stream = provider.Stream(model, context, new OpenAIResponsesOptions { ApiKey = "test-key" });
+
+        var eventTypes = new List<string>();
+        await foreach (var evt in stream.WithCancellation(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token))
+            eventTypes.Add(evt.Type);
+
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        eventTypes.ShouldContain("start");
+        eventTypes.ShouldContain("text_delta");
+        eventTypes.ShouldContain("toolcall_end");
+        eventTypes.ShouldContain("done");
+
+        var text = result.Content.OfType<BotNexus.Agent.Providers.Core.Models.TextContent>().Single();
+        text.Text.ShouldBe("Hello world");
+
+        var toolCall = result.Content.OfType<BotNexus.Agent.Providers.Core.Models.ToolCallContent>().Single();
+        toolCall.Name.ShouldBe("get_weather");
+        toolCall.Arguments["city"]!.ToString().ShouldBe("Paris");
+
+        result.StopReason.ShouldBe(BotNexus.Agent.Providers.Core.Models.StopReason.ToolUse);
+        result.ResponseId.ShouldBe("resp_42");
+        result.Usage.Output.ShouldBe(7);
+    }
+
+    [Fact]
+    public async Task Stream_ParsesResponsesSseError_EmitsErrorMessage()
+    {
+        // The error event path also lives in the extracted parser (via the emitError callback).
+        var sse = string.Join("\n", new[]
+        {
+            "event: error",
+            """data: {"message":"upstream exploded"}"""
+        });
+
+        var handler = new FixedSseHandler(sse);
+        var provider = new OpenAIResponsesProvider(
+            new HttpClient(handler), NullLogger<OpenAIResponsesProvider>.Instance);
+        var model = TestHelpers.MakeModel(id: "gpt-5.4", api: "openai-responses", reasoning: true);
+        var context = TestHelpers.MakeContext();
+
+        var stream = provider.Stream(model, context, new OpenAIResponsesOptions { ApiKey = "test-key" });
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.StopReason.ShouldBe(BotNexus.Agent.Providers.Core.Models.StopReason.Error);
+        result.ErrorMessage.ShouldNotBeNull();
+    }
+
     private static HttpResponseMessage SseResponse(string payload) =>
         new(HttpStatusCode.OK)
         {
@@ -218,5 +307,11 @@ public class OpenAIResponsesProviderTests
                 data: [DONE]
                 """);
         }
+    }
+
+    private sealed class FixedSseHandler(string ssePayload) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(SseResponse(ssePayload));
     }
 }

@@ -233,7 +233,24 @@ public sealed class SqliteWebhookRegistrationStore(
         }
     }
 
-    private SqliteConnection CreateConnection() => new(_connectionString);
+    private SqliteConnection CreateConnection()
+    {
+        var connection = new SqliteConnection(_connectionString);
+        // busy_timeout is per-connection and resets to 0 on every open, so it must be applied on
+        // EVERY connection (operations open a fresh connection each time) - not just at init like
+        // the database-level journal_mode=WAL. Without it a concurrent cross-process writer hits
+        // SQLITE_BUSY immediately instead of waiting briefly for the lock to clear (#1450).
+        connection.StateChange += (_, e) =>
+        {
+            if (e.CurrentState == System.Data.ConnectionState.Open)
+            {
+                using var pragma = connection.CreateCommand();
+                pragma.CommandText = "PRAGMA busy_timeout=5000;";
+                pragma.ExecuteNonQuery();
+            }
+        };
+        return connection;
+    }
 
     private static void BindRegistration(SqliteCommand cmd, WebhookRegistration r)
     {

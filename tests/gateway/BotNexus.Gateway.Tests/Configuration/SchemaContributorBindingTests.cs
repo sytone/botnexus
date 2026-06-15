@@ -100,6 +100,32 @@ public class SchemaContributorBindingTests
         config.Gateway!.Auxiliary!.Titling!.TimeoutSeconds.ShouldBe(45);
     }
 
+    [Fact]
+    public void GatewaySchemaContributor_DoesNotContribute_ListenUrlDefault()
+    {
+        // Regression guard for #1440: hydrating a minimal config through the built-in contributors
+        // must NOT inject a `listenUrl` into config.json. Persisting a default loopback listen URL
+        // (http://localhost:5005) into an operator-mounted config rewrote it in place and made the
+        // container bind to loopback on the next restart — unreachable through the published port
+        // map. The listen address is owned by the host binding layer, not the persisted config.
+        var root = new JsonObject();
+
+        foreach (var contributor in BuiltInContributors())
+        {
+            var defaults = contributor.GetDefaults();
+            var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
+            ConfigHydrationService.MergeAtPath(root, contributor.SectionPath, (JsonObject)defaultsJson!);
+        }
+
+        var gateway = root["gateway"]!.AsObject();
+        gateway.ContainsKey("listenUrl").ShouldBeFalse(
+            "hydration must not persist a default listenUrl into config.json (#1440)");
+
+        // Sanity: the contributor still hydrates its other behavioral defaults.
+        gateway["logLevel"]!.GetValue<string>().ShouldBe("Information");
+        gateway["shellPreference"]!.GetValue<string>().ShouldBe("auto");
+    }
+
     private static PlatformConfig BindToPlatformConfig(JsonObject root)
     {
         // Reproduces the production binding path (GatewayServiceCollectionExtensions:

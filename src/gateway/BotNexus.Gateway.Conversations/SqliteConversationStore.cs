@@ -514,11 +514,13 @@ public sealed class SqliteConversationStore : IConversationStore
             """;
 
         var summaries = new List<ConversationSummary>();
+        var rosters = await LoadActiveParticipantRostersAsync(connection, ct).ConfigureAwait(false);
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
+            var conversationId = reader.GetString(0);
             summaries.Add(new ConversationSummary(
-                reader.GetString(0),
+                conversationId,
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt64(4) != 0,
@@ -532,10 +534,54 @@ public sealed class SqliteConversationStore : IConversationStore
                     ? reader.GetString(11)
                     : ConversationKind.HumanAgent.ToString(),
                 reader.FieldCount > 12 && !reader.IsDBNull(12) && reader.GetInt64(12) != 0,
-                reader.FieldCount > 13 && !reader.IsDBNull(13) ? ParseTimestamp(reader.GetString(13)) : null));
+                reader.FieldCount > 13 && !reader.IsDBNull(13) ? ParseTimestamp(reader.GetString(13)) : null,
+                // #1427: attach the participant roster so SQLite-backed listings match the
+                // InMemory reference shape. Resolved once via a single batch query above to
+                // avoid an N+1 per-conversation participant lookup.
+                rosters.TryGetValue(conversationId, out var roster) ? roster : []));
         }
 
         return summaries;
+    }
+
+    /// <summary>
+    /// Loads the participant rosters for every active conversation in a single query so
+    /// <see cref="GetSummariesAsync"/> can attach them without an N+1 per-conversation lookup.
+    /// Returns a map of conversation id to its ordered <see cref="ParticipantSummary"/> list.
+    /// </summary>
+    private static async Task<Dictionary<string, IReadOnlyList<ParticipantSummary>>> LoadActiveParticipantRostersAsync(
+        SqliteConnection connection,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT p.conversation_id, p.citizen_kind, p.citizen_id, p.role
+            FROM conversation_participants p
+            INNER JOIN conversations c ON c.id = p.conversation_id
+            WHERE c.status = 'Active'
+            ORDER BY p.citizen_kind ASC, p.citizen_id ASC
+            """;
+
+        var rosters = new Dictionary<string, List<ParticipantSummary>>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var conversationId = reader.GetString(0);
+            var kind = reader.GetString(1);
+            var id = reader.GetString(2);
+            var role = reader.IsDBNull(3) ? null : reader.GetString(3);
+            if (!rosters.TryGetValue(conversationId, out var list))
+            {
+                list = [];
+                rosters[conversationId] = list;
+            }
+            list.Add(new ParticipantSummary(kind, id, role));
+        }
+
+        return rosters.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (IReadOnlyList<ParticipantSummary>)kvp.Value,
+            StringComparer.Ordinal);
     }
 
     private async Task EnsureCreatedAsync(CancellationToken ct)

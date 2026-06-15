@@ -134,6 +134,65 @@ public sealed class ConversationStoreParticipantsContractTests
 
     [Theory]
     [MemberData(nameof(StoreHarnesses))]
+    public async Task GetSummariesAsync_IncludesParticipantRoster_ForEveryStore(
+        string _,
+        Func<IStoreHarness> create)
+    {
+        // #1427: the participant roster (avatar-chip list the portal renders) must be
+        // populated in ConversationSummary by ALL three stores, not just InMemory.
+        // FileConversationStore.ToSummary and SqliteConversationStore.GetSummariesAsync
+        // previously omitted the Participants argument (=> null) while InMemory populated it.
+        using var harness = create();
+        var store = harness.Store;
+        var convoId = ConversationId.Create();
+        await store.CreateAsync(NewConversation(convoId, AgentId.From("owner")));
+
+        await store.AddParticipantsAsync(convoId,
+        [
+            new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-alpha")), Role = "peer" },
+            new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("user-1")) }
+        ]);
+
+        var summaries = await store.GetSummariesAsync();
+        var summary = summaries.SingleOrDefault(s => s.ConversationId == convoId.Value);
+        summary.ShouldNotBeNull();
+        summary!.Participants.ShouldNotBeNull(
+            "#1427: every store must populate the participant roster in ConversationSummary.");
+        summary.Participants!.Count.ShouldBe(2);
+
+        var agent = summary.Participants.SingleOrDefault(p => p.Id == "agent-alpha");
+        agent.ShouldNotBeNull();
+        agent!.Kind.ShouldBe(CitizenKind.Agent.ToString());
+        agent.Role.ShouldBe("peer");
+
+        var user = summary.Participants.SingleOrDefault(p => p.Id == "user-1");
+        user.ShouldNotBeNull();
+        user!.Kind.ShouldBe(CitizenKind.User.ToString());
+    }
+
+    [Theory]
+    [MemberData(nameof(StoreHarnesses))]
+    public async Task GetSummariesAsync_ReturnsEmptyRoster_WhenNoParticipantsAdded(
+        string _,
+        Func<IStoreHarness> create)
+    {
+        // A conversation with no explicit participants must still expose a (possibly empty)
+        // roster rather than diverging across stores. The roster is never null for an
+        // existing conversation summary post-#1427.
+        using var harness = create();
+        var store = harness.Store;
+        var convoId = ConversationId.Create();
+        await store.CreateAsync(NewConversation(convoId, AgentId.From("owner")));
+
+        var summaries = await store.GetSummariesAsync();
+        var summary = summaries.SingleOrDefault(s => s.ConversationId == convoId.Value);
+        summary.ShouldNotBeNull();
+        summary!.Participants.ShouldNotBeNull();
+        summary.Participants!.Count.ShouldBe(0);
+    }
+
+    [Theory]
+    [MemberData(nameof(StoreHarnesses))]
     public async Task AddParticipantsAsync_ConcurrentCalls_ProduceUnion_NotRaceSubset(
         string _,
         Func<IStoreHarness> create)
