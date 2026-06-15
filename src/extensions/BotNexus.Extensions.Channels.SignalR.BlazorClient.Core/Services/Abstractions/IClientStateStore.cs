@@ -291,6 +291,21 @@ public sealed class ConversationStreamState
     /// <summary>Whether the conversation is currently receiving a streaming response.</summary>
     public bool IsStreaming { get; set; }
 
+    /// <summary>
+    /// Whether the agent run loop is active for this conversation. Set <see langword="true"/> on the
+    /// <c>RunStarted</c> event and <see langword="false"/> on <c>RunEnded</c> — the authoritative
+    /// signal that brackets the ENTIRE loop (all turns, tool cycles, follow-up continuations).
+    /// </summary>
+    /// <remarks>
+    /// This is the primary driver of <see cref="IsTurnActive"/>. Unlike <see cref="IsStreaming"/> and
+    /// <see cref="ActiveToolCalls"/> (which only cover individual steps and drop to a quiescent state
+    /// in the gaps between message-end/tool-start, tool-end/tool-start, and tool-end/next-message-start),
+    /// <c>IsRunActive</c> stays asserted across those gaps so steer/follow-up/stop controls don't flicker.
+    /// The streaming/tool fields are retained as a defensive fallback for clients that miss the
+    /// RunStarted/RunEnded bracket (e.g. an older gateway, or a reconnect mid-run).
+    /// </remarks>
+    public bool IsRunActive { get; set; }
+
     /// <summary>Accumulated content delta buffer during streaming.</summary>
     public string Buffer { get; set; } = "";
 
@@ -300,10 +315,11 @@ public sealed class ConversationStreamState
     /// <summary>In-progress tool calls for this conversation keyed by tool-call ID.</summary>
     public Dictionary<string, ActiveToolCall> ActiveToolCalls { get; } = new();
 
-    /// <summary>Whether the agent turn is still active -- either streaming or awaiting tool results.
-    /// Use this instead of IsStreaming to keep Steer/Abort controls visible
-    /// between the end of an LLM generation and the start of the next one while tools run.</summary>
-    public bool IsTurnActive => IsStreaming || ActiveToolCalls.Count > 0;
+    /// <summary>Whether the agent turn is still active -- the run loop is executing, streaming, or
+    /// awaiting tool results. Use this instead of IsStreaming to keep Steer/Follow Up/Stop controls
+    /// visible across the whole loop, including the gaps between the end of an LLM generation, tool
+    /// execution, and the next generation.</summary>
+    public bool IsTurnActive => IsRunActive || IsStreaming || ActiveToolCalls.Count > 0;
 
     /// <summary>
     /// Clears the streaming buffers and the <see cref="IsStreaming"/> flag atomically.
@@ -319,6 +335,21 @@ public sealed class ConversationStreamState
         IsStreaming = false;
         Buffer = "";
         ThinkingBuffer = "";
+    }
+
+    /// <summary>
+    /// Clears ALL run state for a genuinely terminal event: the streaming buffers, the
+    /// <see cref="IsRunActive"/> bracket, and any lingering <see cref="ActiveToolCalls"/>. Call this
+    /// (not <see cref="Reset"/>) only when the entire run loop is over — <c>RunEnded</c>, or a
+    /// truly terminal fallback (error, turn-interrupted, session-reset, reconnect). Per-turn terminal
+    /// events (message-end, turn-end) must call <see cref="Reset"/> instead, because the loop may
+    /// continue with more turns/tools and <see cref="IsRunActive"/> must stay asserted across them.
+    /// </summary>
+    public void EndRun()
+    {
+        Reset();
+        IsRunActive = false;
+        ActiveToolCalls.Clear();
     }
 }
 

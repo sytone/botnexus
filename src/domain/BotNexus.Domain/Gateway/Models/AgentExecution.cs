@@ -96,6 +96,19 @@ public sealed record AgentStreamEvent
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AgentStreamEventType
 {
+    /// <summary>
+    /// The agent run loop has started. Emitted once at the very beginning of a run, before any
+    /// turn, message, or tool events. Pairs with <see cref="RunEnded"/> to bracket the entire
+    /// loop (all turns, tool cycles, and follow-up continuations).
+    /// </summary>
+    /// <remarks>
+    /// This is the authoritative "agent is busy" signal for clients. Unlike <see cref="MessageStart"/>
+    /// and <see cref="ToolStart"/>, which only cover individual steps, <c>RunStarted</c>/<c>RunEnded</c>
+    /// stay asserted across the inter-step gaps (message-end -> tool-start, tool-end -> tool-start,
+    /// tool-end -> next message-start) where the loop is still running but no single step is active.
+    /// </remarks>
+    RunStarted,
+
     /// <summary>Agent has started processing.</summary>
     MessageStart,
     /// <summary>Incremental content from the agent.</summary>
@@ -115,5 +128,17 @@ public enum AgentStreamEventType
     /// <summary>Agent execution is paused while awaiting interactive user input.</summary>
     UserInputRequired,
     /// <summary>The gateway restarted mid-turn; the interrupted session has been flagged and the user notified.</summary>
-    TurnInterrupted
+    TurnInterrupted,
+
+    /// <summary>
+    /// The agent run loop has fully settled. Emitted exactly once when the entire loop completes,
+    /// aborts, or errors out — after the final turn, the last tool result, and any follow-up
+    /// continuations. Pairs with <see cref="RunStarted"/>.
+    /// </summary>
+    /// <remarks>
+    /// Clients should treat the agent as idle only after this event. Because it brackets the whole
+    /// loop, it is the reliable signal for steer/follow-up/stop control visibility — it does not
+    /// flicker between turns or tools the way <see cref="MessageEnd"/>/<see cref="ToolEnd"/> do.
+    /// </remarks>
+    RunEnded
 }

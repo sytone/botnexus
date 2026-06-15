@@ -905,6 +905,14 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     internal static AgentStreamEvent? MapAgentEvent(AgentEvent agentEvent, string messageId)
         => agentEvent switch
         {
+            // RunStarted/RunEnded bracket the ENTIRE loop (all turns, tool cycles, follow-up
+            // continuations). They are the authoritative "agent busy" signal for clients, staying
+            // asserted across the inter-step gaps (message-end -> tool-start, tool-end -> tool-start,
+            // tool-end -> next message-start) that individual MessageStart/ToolStart events leave open.
+            AgentStartEvent
+                => new AgentStreamEvent { Type = AgentStreamEventType.RunStarted, MessageId = messageId },
+            AgentEndEvent
+                => new AgentStreamEvent { Type = AgentStreamEventType.RunEnded, MessageId = messageId },
             MessageStartEvent start when start.Message is AssistantAgentMessage
                 => new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = messageId },
             MessageUpdateEvent update when update.ContentDelta is not null => update.IsThinking

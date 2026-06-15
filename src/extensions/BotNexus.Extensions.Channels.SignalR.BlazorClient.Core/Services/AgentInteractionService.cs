@@ -263,12 +263,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
 
         // Fix #789: if the conversation was streaming when the user navigated away, a
-        // terminal SignalR event (MessageEnd/Error/TurnInterrupted) may have been missed.
-        // Reset stale streaming state and force a history reload so the UI reflects the
+        // terminal SignalR event (MessageEnd/Error/TurnInterrupted/RunEnded) may have been missed.
+        // Reset stale streaming/run state and force a history reload so the UI reflects the
         // actual server-side turn result rather than a perpetual in-progress spinner.
-        if (conv is not null && conv.StreamState.IsStreaming)
+        if (conv is not null && conv.StreamState.IsTurnActive)
         {
-            conv.StreamState.IsStreaming = false;
+            conv.StreamState.EndRun();
             conv.HistoryLoaded = false; // force reload below
         }
 
