@@ -57,12 +57,31 @@ public sealed class MobileCanvasPanelTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Canvas_button_hidden_when_no_canvas_content()
+    public void Canvas_button_always_visible_even_with_no_canvas_content()
+    {
+        // Issue: on mobile the Canvas menu item used to be hidden until the agent
+        // had already published canvas HTML, leaving no affordance to open the
+        // (empty-state) canvas. The button must now always be present so the panel
+        // can be opened at any time, matching the desktop always-visible panel.
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+
+        // Need to open the overflow menu first.
+        cut.Find(".overflow-btn").Click();
+
+        var canvasBtn = cut.Find("[data-testid='canvas-toggle-btn']");
+        Assert.NotNull(canvasBtn);
+    }
+
+    [Fact]
+    public void Canvas_content_dot_absent_when_no_canvas_content()
     {
         var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
 
-        var btn = cut.FindAll("[data-testid='canvas-toggle-btn']");
-        Assert.Empty(btn);
+        cut.Find(".overflow-btn").Click();
+
+        // The button is present but the "has content" indicator dot is not.
+        Assert.NotNull(cut.Find("[data-testid='canvas-toggle-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='canvas-content-dot']"));
     }
 
     [Fact]
@@ -79,6 +98,8 @@ public sealed class MobileCanvasPanelTests : IDisposable
 
         var canvasBtn = cut.Find("[data-testid='canvas-toggle-btn']");
         Assert.NotNull(canvasBtn);
+        // Live content present -> indicator dot is shown.
+        Assert.NotNull(cut.Find("[data-testid='canvas-content-dot']"));
     }
 
     [Fact]
@@ -94,6 +115,8 @@ public sealed class MobileCanvasPanelTests : IDisposable
 
         var canvasBtn = cut.Find("[data-testid='canvas-toggle-btn']");
         Assert.NotNull(canvasBtn);
+        // Conversation-level content also lights the indicator dot.
+        Assert.NotNull(cut.Find("[data-testid='canvas-content-dot']"));
     }
 
     [Fact]

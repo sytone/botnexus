@@ -9,6 +9,13 @@ Canvas provides two complementary capabilities:
 1. **HTML Rendering** — Agents can push arbitrary HTML to a visual panel (dashboards, charts, interactive UIs)
 2. **State Management** — Persistent key-value store scoped to each conversation, accessible from both agent-side tools and client-side JavaScript
 
+## Viewing the Canvas
+
+How you open the canvas depends on the portal layout:
+
+- **Desktop portal**: the canvas is a dedicated panel that is always visible alongside the conversation. When the agent has not published any HTML yet, the panel shows an empty-state placeholder.
+- **Mobile portal**: open the overflow menu (the **⋯** button in the top bar) and choose **Canvas**. The action is always available so you can open the canvas at any time — it shows the same empty-state placeholder until the agent publishes HTML. A small dot next to **Canvas** indicates that the current conversation already has canvas content.
+
 ## Canvas Tool
 
 Agents interact with canvas through the built-in `canvas` tool.
