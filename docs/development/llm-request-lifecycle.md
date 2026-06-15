@@ -253,7 +253,29 @@ For session resumption after a gateway restart, the system needs to reconstruct 
 
 ## Retry and Error Handling
 
-`AgentLoopRunner.ExecuteWithRetryAsync` handles transient failures:
+Retry happens at two layers:
+
+### Transport-level retry (`TransientHttpRetryHandler`)
+
+A `DelegatingHandler` on the shared provider `HttpClient` (wired in `Program.cs`) retries transient
+transport failures **before** a failed response is converted into an exception or an empty
+`ErrorEvent`. It applies to *every* provider call that flows through the shared client — including
+paths that bypass the agent loop, such as the session-compaction summary call.
+
+- **`421 Misdirected Request`** (seen intermittently from GitHub Copilot endpoints): per RFC 7540
+  §9.1.2 this is a connection-coalescing artefact. The handler retries on a **fresh connection**
+  (sets `Connection: close` so the misdirected pooled connection is not reused).
+- **`408` / `502` / `503` / `504`** and transient socket faults (connection reset/abort/timeout, IO
+  errors): retried with a short linear backoff, up to 3 attempts.
+- **`429`** is deliberately **not** retried here — it is owned upstream by `ProviderHttpErrorHelper`
+  / `ProviderRateLimitException` with server-provided `Retry-After` handling.
+
+This layer is why a single transient 421 on the compaction call no longer aborts compaction (which
+previously tripped the per-session circuit breaker and left the session unable to shed context).
+
+### Agent-loop retry (`AgentLoopRunner.ExecuteWithRetryAsync`)
+
+Sitting above the transport, the loop handles failures that survive transport retry:
 
 - **Transient errors** (rate limits, timeouts, 429/502/503/504): Exponential backoff, up to 4 attempts
 - **Context overflow**: Emergency compaction (keep last 1/3 of messages), then retry once
