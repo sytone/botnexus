@@ -10,6 +10,8 @@ export default defineConfig({
   ignoreDeadLinks: [
     // Source code links (referenced in dev docs but not part of docs build)
     /\/src\//,
+    // Training pages are srcExclude'd from the build but referenced as related reading
+    /\/training\//,
     // localhost links (expected in setup guides)
     /localhost/,
   ],
@@ -93,6 +95,7 @@ export default defineConfig({
           { text: 'OpenAI', link: '/providers/openai' },
           { text: 'OpenAI-Compatible', link: '/providers/openai-compatible' },
           { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+          { text: 'GitHub Models', link: '/providers/github-models' },
           { text: 'Ollama', link: '/providers/ollama' },
         ],
       },
