@@ -143,17 +143,29 @@ public static class PlatformConfigLoader
         ArgumentNullException.ThrowIfNull(config);
 
         List<string> errors = [];
-        Uri? listenUri = null;
         var listenUrl = config.Gateway?.ListenUrl;
 
-        if (!string.IsNullOrWhiteSpace(listenUrl) &&
-            !Uri.TryCreate(listenUrl, UriKind.Absolute, out listenUri))
+        if (!string.IsNullOrWhiteSpace(listenUrl))
         {
-            errors.Add("gateway.listenUrl must be a valid absolute URL (example: http://localhost:5005).");
-        }
-        else if (listenUri is not null && !(listenUri.Scheme == Uri.UriSchemeHttp || listenUri.Scheme == Uri.UriSchemeHttps))
-        {
-            errors.Add("gateway.listenUrl must use http or https.");
+            // ASP.NET/Kestrel binding wildcards (http://+:5000, http://*:5000) are valid
+            // listen URLs for app.Urls.Add, but Uri.TryCreate rejects '+' and '*' as hosts.
+            // Accept them explicitly (validating only the scheme) so the canonical container
+            // config 'http://+:5000' does not crash startup with a validation error.
+            if (TryParseBindingWildcard(listenUrl, out var wildcardScheme))
+            {
+                if (!(wildcardScheme == Uri.UriSchemeHttp || wildcardScheme == Uri.UriSchemeHttps))
+                {
+                    errors.Add("gateway.listenUrl must use http or https.");
+                }
+            }
+            else if (!Uri.TryCreate(listenUrl, UriKind.Absolute, out var listenUri))
+            {
+                errors.Add("gateway.listenUrl must be a valid absolute URL (example: http://localhost:5005).");
+            }
+            else if (!(listenUri.Scheme == Uri.UriSchemeHttp || listenUri.Scheme == Uri.UriSchemeHttps))
+            {
+                errors.Add("gateway.listenUrl must use http or https.");
+            }
         }
 
         ValidatePath(config.Gateway?.AgentsDirectory, "gateway.agentsDirectory", errors);
@@ -305,6 +317,44 @@ public static class PlatformConfigLoader
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Recognizes ASP.NET/Kestrel binding-wildcard listen URLs (<c>http://+:5000</c>,
+    /// <c>http://*:5000</c>, with or without a port). These are valid for <c>app.Urls.Add</c>
+    /// but are rejected by <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> because
+    /// <c>+</c> and <c>*</c> are not valid URI hosts. Returns <see langword="true"/> and the
+    /// parsed scheme when the value is such a wildcard so the caller can validate the scheme.
+    /// </summary>
+    private static bool TryParseBindingWildcard(string listenUrl, out string scheme)
+    {
+        scheme = string.Empty;
+
+        var schemeSeparatorIndex = listenUrl.IndexOf("://", StringComparison.Ordinal);
+        if (schemeSeparatorIndex <= 0)
+            return false;
+
+        var candidateScheme = listenUrl[..schemeSeparatorIndex];
+        var remainder = listenUrl[(schemeSeparatorIndex + 3)..];
+        if (remainder.Length == 0)
+            return false;
+
+        // Host is everything up to an optional ':<port>'. The wildcard hosts are exactly
+        // '+' or '*'. Any path/query after the authority means it is not a bare wildcard.
+        var colonIndex = remainder.IndexOf(':');
+        var host = colonIndex >= 0 ? remainder[..colonIndex] : remainder;
+        if (host != "+" && host != "*")
+            return false;
+
+        if (colonIndex >= 0)
+        {
+            var port = remainder[(colonIndex + 1)..];
+            if (port.Length == 0 || !port.All(char.IsAsciiDigit))
+                return false;
+        }
+
+        scheme = candidateScheme.ToLowerInvariant();
+        return true;
     }
 
     private static void ValidatePath(string? path, string fieldName, List<string> errors)
