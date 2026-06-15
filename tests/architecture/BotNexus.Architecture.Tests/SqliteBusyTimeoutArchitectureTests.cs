@@ -20,16 +20,17 @@ namespace BotNexus.Architecture.Tests;
 /// <c>busy_timeout</c> is per-connection and awkward to assert reliably across the differing store
 /// connection shapes at runtime.
 ///
-/// The one store deliberately excluded is <see cref="SqliteConversationStore"/> - it is owned by an
-/// in-flight PR (#1442) and is wired separately in #1437 once that lands. See #1435/#1436 for the
-/// shared-helper consolidation that will eventually replace these inline PRAGMAs.
+/// All nine SQLite stores are covered: the eight wired by #1450/#1451 plus
+/// <see cref="SqliteConversationStore"/>, which was added in #1437 once PR #1442 unlocked the file.
+/// See #1435/#1436 for the shared-helper consolidation that will eventually replace these inline
+/// PRAGMAs.
 /// </summary>
 public sealed class SqliteBusyTimeoutArchitectureTests
 {
     private static string RepoRoot => FindRepoRoot();
 
     // The SQLite store source files that #1450 covers (relative to repo root).
-    // SqliteConversationStore.cs is intentionally NOT here - owned by PR #1442, wired in #1437.
+    // SqliteConversationStore.cs was added in #1437 once PR #1442 unlocked the file.
     private static readonly string[] StoreFiles =
     {
         "src/gateway/BotNexus.Cron/SqliteCronStore.cs",
@@ -39,6 +40,7 @@ public sealed class SqliteBusyTimeoutArchitectureTests
         "src/gateway/BotNexus.Gateway.Webhooks/SqliteWebhookRegistrationStore.cs",
         "src/gateway/BotNexus.Gateway.Webhooks/SqliteWebhookRunStore.cs",
         "src/extensions/BotNexus.Extensions.DataStore/SqliteDataStoreBackend.cs",
+        "src/gateway/BotNexus.Gateway.Conversations/SqliteConversationStore.cs",
     };
 
     private static readonly Regex BusyTimeoutPragma =
