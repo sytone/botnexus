@@ -361,14 +361,20 @@
                     <button class="steer-btn" data-testid="chat-steer-btn"
                             @onclick="SteerAgent"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                            title="Redirect the agent's response (Shift+Enter for newline)">
+                            title="Steer: inject this guidance at the next turn boundary (Enter)">
                         🔀 Steer
                     </button>
-                    <button class="interrupt-steer-btn"
+                    <button class="interrupt-steer-btn" data-testid="chat-redirect-btn"
                             @onclick="InterruptAndSteer"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                            title="Abort current turn and redirect with input message">
+                            title="Redirect: stop the current step and steer with this message right away">
                         Redirect
+                    </button>
+                    <button class="followup-btn" data-testid="chat-followup-btn"
+                            @onclick="FollowUpAgent"
+                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                            title="Follow Up: queue this message to run after the agent finishes the whole loop">
+                        ➕ Follow Up
                     </button>
                     <button class="abort-btn" data-testid="chat-abort-btn"
                             @onclick="AbortAgent"
@@ -852,6 +858,17 @@ private bool IsStreaming =>
 
         _inputText = "";
         await Interaction.SteerAsync(AgentId, text);
+    }
+
+    private async Task FollowUpAgent()
+    {
+        var text = _inputText?.Trim();
+        if (string.IsNullOrEmpty(text) || !IsConnected)
+            return;
+
+        _inputText = "";
+        UpdateCommandPalette();
+        await Interaction.FollowUpAsync(AgentId, text);
     }
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);

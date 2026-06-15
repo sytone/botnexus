@@ -72,6 +72,32 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         await _interaction.Received(1).SendMessageAsync("agent-1", "Hello from test!");
     }
 
+    // ── ChatPanel: Follow Up button queues via IAgentInteractionService.FollowUpAsync ──
+
+    [Fact]
+    public async Task ChatPanel_FollowUpButton_CallsFollowUpAsync()
+    {
+        SeedConnectedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        // Mark the run active so the run controls (incl. Follow Up) render instead of Send.
+        _store.GetStreamState("conv-1").IsRunActive = true;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var textarea = cut.Find(".chat-input");
+        await cut.InvokeAsync(() => textarea.Input("Next, write the tests."));
+
+        var followUpBtn = cut.Find("[data-testid='chat-followup-btn']");
+        await cut.InvokeAsync(() => followUpBtn.Click());
+
+        // Follow Up must route to FollowUpAsync (queue after loop), NOT SteerAsync or SendMessageAsync.
+        await _interaction.Received(1).FollowUpAsync("agent-1", "Next, write the tests.");
+        await _interaction.DidNotReceive().SteerAsync("agent-1", Arg.Any<string>());
+        await _interaction.DidNotReceive().SendMessageAsync("agent-1", Arg.Any<string>());
+    }
+
     [Fact]
     public void ChatPanel_InputPlaceholder_IncludesPromptsCommandHint()
     {
