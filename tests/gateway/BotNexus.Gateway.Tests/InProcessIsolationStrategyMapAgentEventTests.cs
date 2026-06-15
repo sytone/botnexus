@@ -248,4 +248,30 @@ public sealed class InProcessIsolationStrategyMapAgentEventTests
         result!.Type.ShouldBe(AgentStreamEventType.TurnEnd);
         result.MessageId.ShouldBe(MessageId);
     }
+
+    [Fact]
+    public void MapAgentEvent_AgentStart_MapsToRunStarted()
+    {
+        // AgentStartEvent brackets the whole loop -> RunStarted (the authoritative "busy" signal).
+        var evt = new AgentStartEvent(Now);
+
+        var result = InProcessAgentHandle.MapAgentEvent(evt, MessageId);
+
+        result.ShouldNotBeNull();
+        result!.Type.ShouldBe(AgentStreamEventType.RunStarted);
+        result.MessageId.ShouldBe(MessageId);
+    }
+
+    [Fact]
+    public void MapAgentEvent_AgentEnd_MapsToRunEnded()
+    {
+        // AgentEndEvent fires once when the entire loop settles -> RunEnded (the authoritative idle signal).
+        var evt = new AgentEndEvent(new List<AgentMessage>(), null, Now);
+
+        var result = InProcessAgentHandle.MapAgentEvent(evt, MessageId);
+
+        result.ShouldNotBeNull();
+        result!.Type.ShouldBe(AgentStreamEventType.RunEnded);
+        result.MessageId.ShouldBe(MessageId);
+    }
 }

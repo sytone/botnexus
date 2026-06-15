@@ -567,6 +567,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         var handlers = new Dictionary<string, TaskCompletionSource<AgentStreamEvent>>(StringComparer.Ordinal)
         {
+            ["RunStarted"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["MessageStart"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["ContentDelta"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["ThinkingDelta"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -575,11 +576,13 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             ["MessageEnd"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["Error"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["UserInputRequired"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
-            ["TurnInterrupted"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
+            ["TurnInterrupted"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            ["RunEnded"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
         };
 
         var subscriptions = new List<IDisposable>
         {
+            connection.On<AgentStreamEvent>("RunStarted", payload => handlers["RunStarted"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("MessageStart", payload => handlers["MessageStart"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("ContentDelta", payload => handlers["ContentDelta"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("ThinkingDelta", payload => handlers["ThinkingDelta"].TrySetResult(payload)),
@@ -588,7 +591,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             connection.On<AgentStreamEvent>("MessageEnd", payload => handlers["MessageEnd"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("Error", payload => handlers["Error"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("UserInputRequired", payload => handlers["UserInputRequired"].TrySetResult(payload)),
-            connection.On<AgentStreamEvent>("TurnInterrupted", payload => handlers["TurnInterrupted"].TrySetResult(payload))
+            connection.On<AgentStreamEvent>("TurnInterrupted", payload => handlers["TurnInterrupted"].TrySetResult(payload)),
+            connection.On<AgentStreamEvent>("RunEnded", payload => handlers["RunEnded"].TrySetResult(payload))
         };
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
@@ -620,6 +624,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         {
             var method = expected switch
             {
+                AgentStreamEventType.RunStarted => "RunStarted",
                 AgentStreamEventType.MessageStart => "MessageStart",
                 AgentStreamEventType.ContentDelta => "ContentDelta",
                 AgentStreamEventType.ThinkingDelta => "ThinkingDelta",
@@ -630,6 +635,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.UserInputRequired => "UserInputRequired",
                 AgentStreamEventType.TurnInterrupted => "TurnInterrupted",
                 AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
+                AgentStreamEventType.RunEnded => "RunEnded",
                 _ => throw new ArgumentOutOfRangeException()
             };
 
