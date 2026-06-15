@@ -11,9 +11,16 @@ public sealed class GatewaySchemaContributor : IConfigSchemaContributor
 {
     public string SectionPath => "gateway";
 
+    // NOTE: deliberately does NOT contribute a default `listenUrl`. The listen address is a
+    // deployment-specific binding owned by the host (ASPNETCORE_URLS / app.Urls / the binding
+    // layer), not a behavioral setting that should be persisted into an operator-provided
+    // config.json. Hydrating a default `http://localhost:5005` here (see #1440) rewrote minimal
+    // mounted configs in place and, on the next restart, made the container bind to loopback
+    // inside the container — unreachable through the published port map, leaving the container
+    // stuck in `health: starting`. Leave listenUrl absent unless the operator sets it explicitly;
+    // the gateway already falls back to its built-in listen URL when the key is missing.
     public object GetDefaults() => new
     {
-        listenUrl = "http://localhost:5005",
         logLevel = "Information",
         enableProviderRequestLogging = false,
         shellPreference = "auto"
