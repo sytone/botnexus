@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Agent.Providers.Core.Logging;
+using BotNexus.Agent.Providers.Core.Resilience;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Copilot.Responses;
@@ -251,7 +252,15 @@ builder.Services.AddTransient<ProviderLoggingHandler>();
 builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
-}).AddHttpMessageHandler(sp =>
+})
+.AddHttpMessageHandler(sp =>
+    // Outermost handler: retry transient provider transport failures (notably HTTP 421
+    // Misdirected Request from Copilot endpoints) on a fresh connection before they are
+    // converted into exceptions/empty responses. Benefits every provider that flows through
+    // the shared provider HttpClient, including the session compaction summary call.
+    new TransientHttpRetryHandler(
+        sp.GetService<ILoggerFactory>()?.CreateLogger<TransientHttpRetryHandler>()))
+.AddHttpMessageHandler(sp =>
 {
     // Conditionally attach the logging handler based on gateway config.
     // The handler checks IsEnabled(Debug) internally — no log entries emitted when debug is off.
