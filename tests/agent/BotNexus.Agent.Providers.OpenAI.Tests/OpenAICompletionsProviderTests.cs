@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -41,21 +42,17 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertTools_SetsStrictToFalse()
     {
-        var convertTools = typeof(OpenAICompletionsProvider).GetMethod(
-            "ConvertTools",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        convertTools.ShouldNotBeNull();
-
+        // #1408: ConvertTools moved to the shared CompletionsStreamEngine in Providers.Core.
         var tool = new Tool(
             "read_file",
             "Read file",
             JsonDocument.Parse("""{"type":"object","properties":{"path":{"type":"string"}}}""").RootElement.Clone());
         var compat = new OpenAICompletionsCompat { SupportsStrictMode = true };
 
-        var converted = convertTools!.Invoke(null, [new List<Tool> { tool }, compat]) as JsonArray;
+        var converted = CompletionsStreamEngine.ConvertTools([tool], compat);
 
         converted.ShouldNotBeNull();
-        converted![0]!["function"]!["strict"]!.GetValue<bool>().ShouldBeFalse();
+        converted[0]!["function"]!["strict"]!.GetValue<bool>().ShouldBeFalse();
     }
 
     [Fact]
@@ -113,12 +110,8 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void MapStopReason_ContentFilter_MapsToErrorWithMessage()
     {
-        var mapStopReason = typeof(OpenAICompletionsProvider).GetMethod(
-            "MapStopReason",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        mapStopReason.ShouldNotBeNull();
-
-        var mapped = ((StopReason StopReason, string? ErrorMessage))mapStopReason!.Invoke(null, ["content_filter"])!;
+        // #1408: MapStopReason moved to the shared CompletionsStreamEngine in Providers.Core.
+        var mapped = CompletionsStreamEngine.MapStopReason("content_filter");
 
         mapped.StopReason.ShouldBe(StopReason.Error);
         mapped.ErrorMessage.ShouldBe("Content filtered by provider");
