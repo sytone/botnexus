@@ -231,6 +231,68 @@ public sealed class DataTestIdAttributeTests : IDisposable
     }
 
     [Fact]
+    public void ChatPanel_has_chat_followup_btn_testid_when_streaming()
+    {
+        var agent = new AgentState
+        {
+            AgentId = "stream-agent",
+            DisplayName = "Stream Agent",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Active",
+            IsDefault = true
+        };
+        agent.ActiveConversationId = "conv-1";
+        _store.UpsertAgent(agent);
+        _store.ActiveAgentId = "stream-agent";
+
+        var streamState = _store.GetStreamState("conv-1");
+        streamState.IsStreaming = true;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "stream-agent"));
+        cut.Find("[data-testid='chat-followup-btn']");
+    }
+
+    [Fact]
+    public void ChatPanel_shows_run_controls_in_the_between_tools_gap_when_run_active()
+    {
+        // End-to-end UI proof of the flicker fix: the run is active (RunStarted seen) but no text
+        // is streaming and no tool is in flight -- the gap between two sequential tools. The chat
+        // composer must still show the run controls (steer/redirect/follow-up/stop), NOT Send.
+        var agent = new AgentState
+        {
+            AgentId = "stream-agent",
+            DisplayName = "Stream Agent",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Active",
+            IsDefault = true
+        };
+        agent.ActiveConversationId = "conv-1";
+        _store.UpsertAgent(agent);
+        _store.ActiveAgentId = "stream-agent";
+
+        var streamState = _store.GetStreamState("conv-1");
+        streamState.IsRunActive = true;   // RunStarted seen, RunEnded not yet
+        streamState.IsStreaming = false;  // between an LLM generation and the next
+        // ActiveToolCalls empty -- between two sequential tools
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "stream-agent"));
+
+        // Run controls present, Send absent.
+        cut.Find("[data-testid='chat-steer-btn']");
+        cut.Find("[data-testid='chat-followup-btn']");
+        cut.Find("[data-testid='chat-abort-btn']");
+        Assert.Empty(cut.FindAll("[data-testid='chat-send']"));
+    }
+
+    [Fact]
     public void ChatPanel_has_streaming_badge_testid_when_streaming()
     {
         var agent = new AgentState
