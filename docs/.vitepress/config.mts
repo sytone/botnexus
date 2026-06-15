@@ -12,6 +12,9 @@ export default defineConfig({
     /\/src\//,
     // localhost links (expected in setup guides)
     /localhost/,
+    // srcExclude'd content directories: referenced as related reading but not
+    // part of the deployed docs build (kept in repo, see srcExclude below)
+    /\/training\//,
   ],
   srcExclude: [
     '**/planning/**',
