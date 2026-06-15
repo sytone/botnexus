@@ -341,10 +341,13 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
         _connection = new SqliteConnection($"Data Source={_dbPath}");
         await _connection.OpenAsync(ct).ConfigureAwait(false);
 
-        // Enable WAL for better concurrent read performance
-        using var wal = _connection.CreateCommand();
-        wal.CommandText = "PRAGMA journal_mode=WAL";
-        await wal.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        // busy_timeout MUST be set before WAL negotiation and on every open. This connection is
+        // cached and reused for the lifetime of the backend, so applying it here once covers every
+        // operation. busy_timeout lets a concurrent cross-process writer wait briefly for the lock
+        // instead of failing immediately with SQLITE_BUSY (#1450).
+        using var pragmas = _connection.CreateCommand();
+        pragmas.CommandText = "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;";
+        await pragmas.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         return _connection;
     }
