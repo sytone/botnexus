@@ -30,10 +30,20 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     /// <summary>
     /// Tracks consecutive compaction failures per session for circuit breaker logic.
-    /// After <see cref="MaxConsecutiveFailures"/> consecutive failures, compaction is
-    /// skipped for that session until the gateway restarts.
+    /// After <see cref="MaxConsecutiveFailures"/> consecutive failures the breaker opens for that
+    /// session, but only for a bounded cooldown window (see <see cref="BreakerState"/> and
+    /// <see cref="CompactionOptions.CircuitBreakerCooldownSeconds"/>) rather than permanently — a
+    /// transient provider outage must not wedge a session until the gateway restarts.
     /// </summary>
-    private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new();
+    private readonly ConcurrentDictionary<string, BreakerState> _breaker = new();
+
+    /// <summary>
+    /// Per-session circuit-breaker bookkeeping: how many consecutive failures have occurred and when
+    /// the most recent one happened. The breaker is considered open once
+    /// <see cref="Count"/> reaches <see cref="MaxConsecutiveFailures"/>, and stays open until the
+    /// cooldown window elapses past <see cref="LastFailureUtc"/>, after which it auto-resets.
+    /// </summary>
+    private sealed record BreakerState(int Count, DateTimeOffset LastFailureUtc);
 
     /// <summary>
     /// Maximum consecutive compaction failures before the circuit breaker opens.
@@ -88,26 +98,42 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        // Circuit breaker: skip compaction if this session has failed too many times.
+        // Circuit breaker: skip compaction if this session has failed too many times *recently*.
+        // The breaker opens after MaxConsecutiveFailures but auto-resets once the cooldown window has
+        // elapsed, so a transient provider outage (e.g. a burst of HTTP 421s) cannot wedge a session
+        // until the gateway restarts.
         var sessionKey = session.SessionId.Value;
-        var failures = _consecutiveFailures.GetValueOrDefault(sessionKey, 0);
-        if (failures >= MaxConsecutiveFailures)
+        var cooldown = TimeSpan.FromSeconds(
+            options.CircuitBreakerCooldownSeconds > 0 ? options.CircuitBreakerCooldownSeconds : 600);
+        if (_breaker.TryGetValue(sessionKey, out var breakerState) &&
+            breakerState.Count >= MaxConsecutiveFailures)
         {
-            _logger.LogWarning(
-                "Compaction circuit breaker OPEN for session {SessionId}: " +
-                "{Failures} consecutive failures. Skipping until gateway restart.",
-                sessionKey, failures);
-            return new CompactionResult
+            var elapsed = DateTimeOffset.UtcNow - breakerState.LastFailureUtc;
+            if (elapsed < cooldown)
             {
-                Summary = string.Empty,
-                Succeeded = false,
-                EntriesSummarized = 0,
-                EntriesPreserved = 0,
-                TokensBefore = 0,
-                TokensAfter = 0,
-                SnapshotDestructiveVersion = 0,
-                SnapshotHistoryCount = 0
-            };
+                _logger.LogWarning(
+                    "Compaction circuit breaker OPEN for session {SessionId}: " +
+                    "{Failures} consecutive failures. Cooling down for {Remaining:0}s more before retrying.",
+                    sessionKey, breakerState.Count, (cooldown - elapsed).TotalSeconds);
+                return new CompactionResult
+                {
+                    Summary = string.Empty,
+                    Succeeded = false,
+                    EntriesSummarized = 0,
+                    EntriesPreserved = 0,
+                    TokensBefore = 0,
+                    TokensAfter = 0,
+                    SnapshotDestructiveVersion = 0,
+                    SnapshotHistoryCount = 0
+                };
+            }
+
+            // Cooldown elapsed: clear the breaker and allow this attempt through.
+            _breaker.TryRemove(sessionKey, out _);
+            _logger.LogInformation(
+                "Compaction circuit breaker cooldown elapsed for session {SessionId} after {Elapsed:0}s. " +
+                "Retrying compaction.",
+                sessionKey, elapsed.TotalSeconds);
         }
 
         // Atomic snapshot: history copy + destructive-mutation version + count, all
@@ -166,13 +192,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // Timeout fired (not caller cancellation) — treat as a provider stall.
-            _consecutiveFailures.AddOrUpdate(sessionKey, 1, (_, count) => count + 1);
+            var newCount = RecordFailure(sessionKey);
             _logger.LogWarning(
                 "Compaction timed out for session {SessionId} after {Timeout}s. " +
                 "History is unchanged. Consecutive failures: {Failures}/{Max}",
                 session.SessionId,
                 effectiveOptions.TimeoutSeconds,
-                _consecutiveFailures.GetValueOrDefault(sessionKey, 1),
+                newCount,
                 MaxConsecutiveFailures);
 
             return new CompactionResult
@@ -191,14 +217,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
         if (string.IsNullOrWhiteSpace(summary))
         {
-            _consecutiveFailures.AddOrUpdate(sessionKey, 1, (_, count) => count + 1);
+            var newCount = RecordFailure(sessionKey);
             _logger.LogWarning(
                 "Compaction aborted for session {SessionId}: LLM returned an empty summary. " +
                 "History is unchanged. Summarized {Count} entries would have been marked as historical. " +
                 "Consecutive failures: {Failures}/{Max}",
                 session.SessionId,
                 toSummarize.Count,
-                _consecutiveFailures.GetValueOrDefault(sessionKey, 1),
+                newCount,
                 MaxConsecutiveFailures);
 
             return new CompactionResult
@@ -277,7 +303,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             tokensBefore - tokensAfter);
 
         // Reset circuit breaker on success.
-        _consecutiveFailures.TryRemove(sessionKey, out _);
+        _breaker.TryRemove(sessionKey, out _);
 
         return new CompactionResult
         {
@@ -291,6 +317,20 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             SnapshotDestructiveVersion = snap.DestructiveVersion,
             SnapshotHistoryCount = snap.Count
         };
+    }
+
+    /// <summary>
+    /// Records a compaction failure for the circuit breaker: increments the consecutive-failure
+    /// count and stamps the failure time (used by the cooldown check in <see cref="CompactAsync"/>).
+    /// Returns the new consecutive-failure count for logging.
+    /// </summary>
+    private int RecordFailure(string sessionKey)
+    {
+        var updated = _breaker.AddOrUpdate(
+            sessionKey,
+            _ => new BreakerState(1, DateTimeOffset.UtcNow),
+            (_, existing) => existing with { Count = existing.Count + 1, LastFailureUtc = DateTimeOffset.UtcNow });
+        return updated.Count;
     }
 
     private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve) SplitHistory(
@@ -448,13 +488,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         CompactionOptions options,
         CancellationToken cancellationToken)
     {
-        var model = ResolveModel(options.SummarizationModel, options.SummarizationProvider);
-
-        // Bug 3: log the resolved model so failures are diagnosable.
-        _logger.LogDebug(
-            "Requesting compaction summary via model {ModelId} (provider {Provider})",
-            model.Id,
-            model.Provider);
+        var candidates = BuildCandidateModels(options.SummarizationModel, options.SummarizationProvider);
 
         var context = new Context(
             SystemPrompt: null,
@@ -463,6 +497,60 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 new UserMessage(new UserMessageContent(summaryPrompt), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             ]);
 
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var model = candidates[i];
+
+            // Caller cancellation (not a per-attempt timeout) ends the whole chain.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Bug 3: log the resolved model so failures are diagnosable.
+            _logger.LogDebug(
+                "Requesting compaction summary via model {ModelId} (provider {Provider}) [candidate {Index}/{Total}]",
+                model.Id, model.Provider, i + 1, candidates.Count);
+
+            var (result, transientFailure) =
+                await TryCallModelAsync(model, context, options, cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(result))
+            {
+                if (i > 0)
+                {
+                    _logger.LogInformation(
+                        "Compaction summary succeeded on fallback model {ModelId} (candidate {Index}/{Total}).",
+                        model.Id, i + 1, candidates.Count);
+                }
+                return result;
+            }
+
+            // Empty/failed result. If more candidates remain, fall through to the next model so a
+            // single model's transient outage (e.g. an HTTP 421 burst) does not abort compaction.
+            if (i < candidates.Count - 1)
+            {
+                _logger.LogWarning(
+                    "Compaction summary model {ModelId} returned no usable result ({Reason}). " +
+                    "Falling back to next candidate model.",
+                    model.Id, transientFailure ? "transient failure" : "empty response");
+            }
+        }
+
+        // All candidates exhausted with no usable summary. Returning empty lets the caller abort
+        // without mutating history (and increments the circuit breaker).
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Attempts a single summarization call against one model. Returns the trimmed summary text (or
+    /// empty if none) and whether the attempt failed transiently (timeout / provider error). A
+    /// per-attempt timeout is treated as a transient failure of <em>this</em> model, not a caller
+    /// cancellation, so the surrounding fallback loop can try the next candidate.
+    /// </summary>
+    private async Task<(string Result, bool TransientFailure)> TryCallModelAsync(
+        LlmModel model,
+        Context context,
+        CompactionOptions options,
+        CancellationToken cancellationToken)
+    {
         // Resolve API key from GatewayAuthManager (OAuth token from auth.json).
         // Without this, the provider falls back to environment variables which
         // are not set in the gateway process — resulting in auth failures that
@@ -484,10 +572,23 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
 
-        var completion = await _llmClient
-            .CompleteSimpleAsync(model, context, streamOptions)
-            .WaitAsync(timeoutCts.Token)
-            .ConfigureAwait(false);
+        AssistantMessage completion;
+        try
+        {
+            completion = await _llmClient
+                .CompleteSimpleAsync(model, context, streamOptions)
+                .WaitAsync(timeoutCts.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Per-attempt timeout fired (not caller cancellation). Treat as a transient failure of
+            // this model so the fallback loop can try the next candidate.
+            _logger.LogWarning(
+                "Compaction summary model {ModelId} timed out after {Timeout}s.",
+                model.Id, options.TimeoutSeconds);
+            return (string.Empty, true);
+        }
 
         // Bug 3: log what actually came back before filtering.
         _logger.LogDebug(
@@ -511,9 +612,49 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 string.Join(", ", completion.Content.Select(c => c.GetType().Name)),
                 completion.StopReason,
                 completion.ErrorMessage ?? "(none)");
+            // An error StopReason (e.g. the HTTP 421 the provider surfaced) is a transient failure;
+            // a clean-but-empty response is not, but both are treated the same for fallback purposes.
+            var transient = completion.StopReason == StopReason.Error;
+            return (string.Empty, transient);
         }
 
-        return result;
+        return (result, false);
+    }
+
+    /// <summary>
+    /// Builds the ordered, de-duplicated list of candidate models to try for summarization.
+    /// The primary (explicitly requested or session) model is tried first; if it fails transiently,
+    /// the cheaper default summary models are tried in turn. This means one model's transient
+    /// routing/outage problem cannot wedge a session — a different model can still produce the
+    /// summary that lets the session shed context.
+    /// </summary>
+    internal IReadOnlyList<LlmModel> BuildCandidateModels(string? requestedModelId, string? preferredProvider)
+    {
+        var candidates = new List<LlmModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(LlmModel? model)
+        {
+            if (model is null) return;
+            // De-dupe on provider+id so we don't retry the identical endpoint.
+            var key = $"{model.Provider}::{model.Id}";
+            if (seen.Add(key))
+                candidates.Add(model);
+        }
+
+        // 1. Primary: the explicitly requested/aux model (throws if a requested model is unregistered,
+        //    preserving existing behaviour), otherwise the default waterfall's first hit.
+        Add(ResolveModel(requestedModelId, preferredProvider));
+
+        // 2. Fallbacks: the remaining default summary models (cheap, broadly available), in order.
+        foreach (var modelId in DefaultSummaryModelIds)
+        {
+            if (!string.IsNullOrWhiteSpace(preferredProvider))
+                Add(_llmClient.Models.GetModel(preferredProvider, modelId));
+            Add(FindModel(modelId));
+        }
+
+        return candidates;
     }
 
     private LlmModel ResolveModel(string? requestedModelId, string? preferredProvider = null)

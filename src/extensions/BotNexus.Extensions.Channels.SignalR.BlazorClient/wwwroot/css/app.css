@@ -632,10 +632,38 @@ html, body, #app {
     text-overflow: ellipsis;
 }
 
+.agent-panel-description {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/*
+ * The agent id is shown on hover instead of permanently below the name.
+ * It is visually hidden by default (but kept in the DOM so it remains
+ * available to assistive tech and tests) and revealed when the header is
+ * hovered. When an id is revealed it replaces the description in the layout.
+ */
 .agent-panel-id {
     font-size: 0.68rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: none;
+}
+
+.agent-panel-meta:hover .agent-panel-description,
+.agent-panel-header:hover .agent-panel-description {
+    display: none;
+}
+
+.agent-panel-meta:hover .agent-panel-id,
+.agent-panel-header:hover .agent-panel-id {
+    display: block;
 }
 
 .agent-panel-status {
@@ -1725,6 +1753,28 @@ html, body, #app {
 }
 
 .interrupt-steer-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.followup-btn {
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--success, #2e9e5b);
+    border-radius: var(--radius);
+    background: rgba(46, 158, 91, 0.12);
+    color: var(--success, #2e9e5b);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    align-self: flex-end;
+    white-space: nowrap;
+}
+
+.followup-btn:hover:not(:disabled) {
+    background: rgba(46, 158, 91, 0.25);
+}
+
+.followup-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
 }

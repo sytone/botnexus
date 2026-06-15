@@ -33,6 +33,16 @@ public sealed record CompactionOptions
     /// </summary>
     public int TimeoutSeconds { get; init; } = 90;
 
+    /// <summary>
+    /// How long (seconds) the per-session compaction circuit breaker stays open after
+    /// <c>MaxConsecutiveFailures</c> consecutive failures, before it auto-resets and compaction is
+    /// attempted again (default: 600 = 10 minutes). The previous behaviour kept the breaker open
+    /// until the gateway restarted, which let a transient provider outage permanently wedge a
+    /// session (it could no longer shed context). A bounded cooldown lets the session recover on
+    /// its own once the provider issue clears. Values &lt;= 0 fall back to the default.
+    /// </summary>
+    public int CircuitBreakerCooldownSeconds { get; init; } = 600;
+
     /// <summary>Pre-compaction memory flush configuration.</summary>
     public MemoryFlushOptions MemoryFlush { get; init; } = new();
 }

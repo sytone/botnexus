@@ -95,7 +95,8 @@ public static class GatewayServiceCollectionExtensions
                     TokenThresholdRatio = ParseDouble(compactionSection["tokenThresholdRatio"], new CompactionOptions().TokenThresholdRatio),
                     ContextWindowTokens = ParseInt(compactionSection["contextWindowTokens"], new CompactionOptions().ContextWindowTokens),
                     SummarizationModel = ParseString(compactionSection["summarizationModel"], new CompactionOptions().SummarizationModel),
-                    SummarizationProvider = ParseString(compactionSection["summarizationProvider"], new CompactionOptions().SummarizationProvider)
+                    SummarizationProvider = ParseString(compactionSection["summarizationProvider"], new CompactionOptions().SummarizationProvider),
+                    CircuitBreakerCooldownSeconds = ParseInt(compactionSection["circuitBreakerCooldownSeconds"], new CompactionOptions().CircuitBreakerCooldownSeconds)
                 };
                 services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(configuredCompaction));
                 services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(

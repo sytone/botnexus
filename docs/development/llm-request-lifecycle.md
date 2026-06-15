@@ -163,6 +163,15 @@ After compaction (LLM-visible projection):
 
 On the next compaction cycle the previous `summary` entry is itself folded into the new summary and marked `IsHistory = true` — only the latest summary is ever sent to the LLM, but the chain of summaries (and every original turn) stays in the store.
 
+#### Resilience: model fallback and the circuit breaker
+
+The summary call can fail transiently (e.g. an intermittent HTTP 421 from the Copilot endpoint, or a timeout). Two mechanisms keep a single failure from permanently wedging a session:
+
+- **Model fallback** — the compactor tries the configured/primary summary model first, then falls through the cheaper default summary models (`gpt-4.1-mini`, `gpt-5-mini`, `claude-haiku-4.5`, `gpt-4.1`) in order, stopping at the first that returns a usable summary. A transient outage on one model therefore does not abort the whole compaction. (The transport layer also retries 421 on a fresh connection first — see [Retry and Error Handling](#retry-and-error-handling).)
+- **Time-based circuit breaker** — after `MaxConsecutiveFailures` (3) consecutive failures the breaker opens for that session, but **only for a cooldown window** (`gateway:compaction:circuitBreakerCooldownSeconds`, default 600s) rather than until the gateway restarts. Once the cooldown elapses the breaker auto-resets and compaction is attempted again, so a session recovers on its own when the provider issue clears. A successful compaction resets the breaker immediately.
+
+When the LLM ultimately returns no usable summary, compaction **aborts without mutating history** — the session is left intact and retried later rather than corrupted.
+
 ### 1a. Concurrent additions during the LLM summary window (`HistoryReplaceOutcome`)
 
 The summary LLM call runs **outside** the runtime lock — otherwise every new inbound message would block waiting for compaction to finish. To stay safe under concurrent `AddEntry` (a new user/assistant turn) or `RemoveCrashSentinels` (post-restart cleanup) calls that land while the summary is in flight, the compactor uses optimistic concurrency:

@@ -103,6 +103,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
 
         return streamEvent.Type switch
         {
+            AgentStreamEventType.RunStarted => client.RunStarted(enrichedEvent),
             AgentStreamEventType.MessageStart => client.MessageStart(enrichedEvent),
             AgentStreamEventType.ThinkingDelta => client.ThinkingDelta(enrichedEvent),
             AgentStreamEventType.ContentDelta => client.ContentDelta(enrichedEvent),
@@ -116,6 +117,10 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
             // where no MessageEnd is sent). Without this, the portal never clears IsStreaming
             // for tool-only cron or background turns, leaving a permanent spinner (#668).
             AgentStreamEventType.TurnEnd => client.TurnEnd(enrichedEvent),
+            // RunStarted/RunEnded bracket the whole loop (across every turn and tool boundary).
+            // RunEnded is the authoritative idle signal; clients drive steer/follow-up/stop control
+            // visibility from it so the controls don't flicker in the gaps between turns and tools.
+            AgentStreamEventType.RunEnded => client.RunEnded(enrichedEvent),
             _ => Task.CompletedTask
         };
     }

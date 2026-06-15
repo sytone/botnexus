@@ -211,6 +211,119 @@ public sealed class GatewayEventHandlerTests
         Assert.False(conv.StreamState.IsTurnActive);
     }
 
+    // ---- RunStarted/RunEnded authoritative bracket tests (steering flicker, full fix) ----
+
+    [Fact]
+    public void HandleRunStarted_marks_run_active_and_streaming()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+        Assert.True(agent.IsStreaming);
+    }
+
+    [Fact]
+    public void IsTurnActive_stays_true_across_message_end_to_tool_start_gap_while_run_active()
+    {
+        // The gap the inference signal could not bridge: MessageEnd fires (IsStreaming=false) but
+        // ToolStart has not arrived yet (ActiveToolCalls empty). With RunStarted asserted, the
+        // controls must stay visible.
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        // No tool tracked yet, not streaming -- the old inference would say idle here.
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        // But the run bracket keeps it active.
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void IsTurnActive_stays_true_across_tool_end_to_tool_start_gap_while_run_active()
+    {
+        // Jon's case: in Sequential mode the runner emits ToolStart(A) -> ToolEnd(A) ->
+        // ToolStart(B). Between ToolEnd(A) and ToolStart(B) ActiveToolCalls momentarily empties
+        // while IsStreaming is already false. Without the run bracket this flickers to Send.
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-a", ToolName = "read" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolEnd(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-a", ToolName = "read", ToolResult = "ok" });
+
+        // Tool A done, none in flight, not streaming -- the between-tools gap.
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        // The run is still active, so controls stay visible across the gap.
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        // Next tool starts -- still active, no flicker.
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-b", ToolName = "grep" });
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void HandleRunEnded_clears_run_active_streaming_and_tools()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read" });
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1" });
+
+        // RunEnded is the only event that should flip the conversation back to idle.
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+        Assert.Null(agent.ProcessingStage);
+    }
+
+    [Fact]
+    public void Run_stays_active_across_a_full_two_tool_turn_until_run_ended()
+    {
+        // End-to-end: RunStarted ... (assistant + two sequential tools + a second assistant turn)
+        // ... RunEnded. IsTurnActive must be true at every step until RunEnded.
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "t1", ToolName = "read" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        _handler.HandleToolEnd(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "t1", ToolName = "read", ToolResult = "a" });
+        Assert.True(conv.StreamState.IsTurnActive); // ToolEnd -> next ToolStart gap
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "t2", ToolName = "grep" });
+        _handler.HandleToolEnd(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "t2", ToolName = "grep", ToolResult = "b" });
+        Assert.True(conv.StreamState.IsTurnActive); // ToolEnd -> next MessageStart gap
+
+        // Second assistant turn (the model responds to the tool results).
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "All done." });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        Assert.True(conv.StreamState.IsTurnActive); // loop not yet settled
+
+        // Only RunEnded ends it.
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1" });
+        Assert.False(conv.StreamState.IsTurnActive);
+    }
+
     [Fact]
     public void HandleError_appends_error_and_clears_buffers()
     {

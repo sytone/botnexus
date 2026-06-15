@@ -19,6 +19,10 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when a session is reset server-side.</summary>
     public event Action<SessionResetPayload>? OnSessionReset;
 
+    /// <summary>Raised when the agent run loop starts. Brackets the whole loop with <see cref="OnRunEnded"/>;
+    /// the authoritative "agent busy" signal that does not flicker between turns or tools.</summary>
+    public event Action<AgentStreamEvent>? OnRunStarted;
+
     /// <summary>Raised at the start of an agent response.</summary>
     public event Action<AgentStreamEvent>? OnMessageStart;
 
@@ -48,6 +52,10 @@ public sealed class GatewayHubConnection : IAsyncDisposable
 
     /// <summary>Raised when the agent turn has fully completed (including tool-only turns that produce no MessageEnd).</summary>
     public event Action<AgentStreamEvent>? OnTurnEnd;
+
+    /// <summary>Raised when the agent run loop fully settles (all turns, tools, and follow-up
+    /// continuations done). The authoritative idle signal; brackets the run with <see cref="OnRunStarted"/>.</summary>
+    public event Action<AgentStreamEvent>? OnRunEnded;
 
     /// <summary>Raised when a sub-agent is spawned.</summary>
     public event Action<SubAgentEventPayload>? OnSubAgentSpawned;
@@ -115,6 +123,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         // Register server → client event handlers matching IGatewayHubClient
         _connection.On<ConnectedPayload>("Connected", p => OnConnected?.Invoke(p));
         _connection.On<SessionResetPayload>("SessionReset", p => OnSessionReset?.Invoke(p));
+        _connection.On<AgentStreamEvent>("RunStarted", e => OnRunStarted?.Invoke(e));
         _connection.On<AgentStreamEvent>("MessageStart", e => OnMessageStart?.Invoke(e));
         _connection.On<AgentStreamEvent>("ContentDelta", e => OnContentDelta?.Invoke(e));
         _connection.On<AgentStreamEvent>("ThinkingDelta", e => OnThinkingDelta?.Invoke(e));
@@ -125,6 +134,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<AgentStreamEvent>("UserInputRequired", e => OnUserInputRequired?.Invoke(e));
         _connection.On<AgentStreamEvent>("TurnInterrupted", e => OnTurnInterrupted?.Invoke(e));
         _connection.On<AgentStreamEvent>("TurnEnd", e => OnTurnEnd?.Invoke(e));
+        _connection.On<AgentStreamEvent>("RunEnded", e => OnRunEnded?.Invoke(e));
         _connection.On<SubAgentEventPayload>("SubAgentSpawned", p => OnSubAgentSpawned?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentCompleted", p => OnSubAgentCompleted?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));

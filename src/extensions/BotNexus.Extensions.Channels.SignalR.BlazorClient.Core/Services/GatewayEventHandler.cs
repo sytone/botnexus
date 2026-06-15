@@ -31,6 +31,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub = hub;
 
         _hub.OnConnected += HandleConnected;
+        _hub.OnRunStarted += HandleRunStarted;
         _hub.OnMessageStart += HandleMessageStart;
         _hub.OnContentDelta += HandleContentDelta;
         _hub.OnThinkingDelta += HandleThinkingDelta;
@@ -41,6 +42,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnUserInputRequired += HandleUserInputRequired;
         _hub.OnTurnInterrupted += HandleTurnInterrupted;
         _hub.OnTurnEnd += HandleTurnEnd;
+        _hub.OnRunEnded += HandleRunEnded;
         _hub.OnSessionReset += HandleSessionReset;
         _hub.OnSubAgentSpawned += HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted += HandleSubAgentCompleted;
@@ -82,6 +84,51 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         _store.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Handles a <c>RunStarted</c> event: the agent run loop has begun. Marks the conversation's
+    /// run as active — the authoritative signal that keeps Steer/Follow Up/Stop controls visible
+    /// across the entire loop, including the gaps between turns and tools where per-step events
+    /// (message-end/tool-start, tool-end/tool-start, tool-end/next-message-start) leave a window.
+    /// </summary>
+    public void HandleRunStarted(AgentStreamEvent evt)
+    {
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        if (convId is null) return;
+
+        var conv = agent!.Conversations.GetValueOrDefault(convId);
+        if (conv is null) return;
+
+        conv.StreamState.IsRunActive = true;
+        agent.IsStreaming = true;
+        if (string.IsNullOrEmpty(agent.ProcessingStage))
+            agent.ProcessingStage = "\U0001F916 Agent is working\u2026";
+        _store.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Handles a <c>RunEnded</c> event: the agent run loop has fully settled (final turn, last tool
+    /// result, and any follow-up continuations are all done). Clears the run-active bracket and all
+    /// residual streaming/tool state. This is the authoritative idle signal — unlike MessageEnd and
+    /// TurnEnd, it does not flicker between turns or tools.
+    /// </summary>
+    public void HandleRunEnded(AgentStreamEvent evt)
+    {
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
+        {
+            conv.StreamState.EndRun();
+        }
+
+        agent!.IsStreaming = false;
+        agent.ProcessingStage = null;
+        _store.NotifyChanged();
+
+        // Drain any conversation-list refreshes deferred during the run (same as the MessageEnd/TurnEnd paths).
+        DrainPendingConversationRefreshes(agentId!);
     }
 
     public void HandleMessageStart(AgentStreamEvent evt)
@@ -291,7 +338,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             conv.Messages.Add(new ChatMessage("Error", evt.ErrorMessage ?? "An unknown error occurred.", DateTimeOffset.UtcNow));
-            conv.StreamState.Reset();
+            // An error is terminal for the loop (the runner emits RunEnded right after), so clear the
+            // whole run bracket defensively in case the RunEnded event is missed.
+            conv.StreamState.EndRun();
             _store.ClearPendingAskUser(convId);
         }
 
@@ -323,7 +372,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             conv.Messages.Add(new ChatMessage("Notification",
                 evt.ErrorMessage ?? "The gateway was restarted while your last message was being processed.",
                 DateTimeOffset.UtcNow));
-            conv.StreamState.Reset();
+            // A gateway restart terminates the run; clear the whole run bracket (no RunEnded will arrive).
+            conv.StreamState.EndRun();
         }
 
         if (agent is not null)
@@ -396,8 +446,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (agent.ActiveConversationId is not null &&
             agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
         {
-            conv.StreamState.Reset();
-            conv.StreamState.ActiveToolCalls.Clear();
+            conv.StreamState.EndRun();
             // Do NOT clear conv.Messages or set HistoryLoaded=false.
             // Session reset clears the agent's context window — it does not
             // erase conversation history. The portal should keep showing all
@@ -923,6 +972,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void Dispose()
     {
         _hub.OnConnected -= HandleConnected;
+        _hub.OnRunStarted -= HandleRunStarted;
         _hub.OnMessageStart -= HandleMessageStart;
         _hub.OnContentDelta -= HandleContentDelta;
         _hub.OnThinkingDelta -= HandleThinkingDelta;
@@ -933,6 +983,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnUserInputRequired -= HandleUserInputRequired;
         _hub.OnTurnInterrupted -= HandleTurnInterrupted;
         _hub.OnTurnEnd -= HandleTurnEnd;
+        _hub.OnRunEnded -= HandleRunEnded;
         _hub.OnSessionReset -= HandleSessionReset;
         _hub.OnSubAgentSpawned -= HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted -= HandleSubAgentCompleted;
