@@ -61,8 +61,13 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_SkipsEmptyAssistantWithoutToolCalls()
     {
-        var convertMessages = typeof(OpenAICompletionsProvider).GetMethod(
-            "ConvertMessages",
+        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
+        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
+        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
+            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
+        converterType.ShouldNotBeNull();
+        var convertMessages = converterType!.GetMethod(
+            "Convert",
             BindingFlags.NonPublic | BindingFlags.Static);
         convertMessages.ShouldNotBeNull();
 
@@ -122,8 +127,13 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_NonVisionModel_FiltersImageOnlyUserMessage()
     {
-        var convertMessages = typeof(OpenAICompletionsProvider).GetMethod(
-            "ConvertMessages",
+        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
+        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
+        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
+            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
+        converterType.ShouldNotBeNull();
+        var convertMessages = converterType!.GetMethod(
+            "Convert",
             BindingFlags.NonPublic | BindingFlags.Static);
         convertMessages.ShouldNotBeNull();
 
@@ -154,8 +164,13 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_SanitizesSystemUserAndToolResultText()
     {
-        var convertMessages = typeof(OpenAICompletionsProvider).GetMethod(
-            "ConvertMessages",
+        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
+        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
+        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
+            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
+        converterType.ShouldNotBeNull();
+        var convertMessages = converterType!.GetMethod(
+            "Convert",
             BindingFlags.NonPublic | BindingFlags.Static);
         convertMessages.ShouldNotBeNull();
 
@@ -192,3 +207,4 @@ public class OpenAICompletionsProviderTests
         converted[2]!["content"]!.GetValue<string>().ShouldBe("tool  output");
     }
 }
+
