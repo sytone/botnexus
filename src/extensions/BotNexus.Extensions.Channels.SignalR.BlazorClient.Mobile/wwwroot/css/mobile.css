@@ -147,6 +147,19 @@ body {
 
 .menu-action:hover { background: rgba(100, 160, 220, 0.08); }
 
+/* Small "has content" indicator dot shown next to the Canvas menu action when
+   the active agent/conversation currently has published canvas HTML. The Canvas
+   action itself is always visible so the panel can be opened at any time. */
+.menu-action-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-left: 7px;
+    border-radius: 50%;
+    background: #4caf50;
+    vertical-align: middle;
+}
+
 /* ── Message stream ───────────────────────────────────────────────────────── */
 .message-stream {
     flex: 1;
