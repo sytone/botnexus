@@ -122,6 +122,32 @@ public sealed class PortalLoadServiceTests
         }
     }
 
+    /// <summary>
+    /// Regression for the agent-description-not-showing bug: the REST seed path in
+    /// <see cref="PortalLoadService.InitializeAsync(string, System.Threading.CancellationToken)"/>
+    /// must copy <c>Description</c> from the agent summary into <c>AgentState</c>. The
+    /// agent panel header renders <c>AgentState.Description</c>, and the initial portal
+    /// load seeds from REST (not the SignalR broadcast), so omitting it left the header
+    /// description blank even when the agent had one in config.
+    /// </summary>
+    [Fact]
+    public async Task InitializeAsync_SeedsAgentDescriptionFromRestSummary()
+    {
+        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>())
+            .Returns([new AgentSummary("agent-1", "Beacon", Emoji: "\U0001F4E1", Description: "Signals and situational awareness", IsBuiltIn: false)]);
+        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(new List<ConversationSummaryDto>());
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<SessionSummary>());
+
+        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
+
+        var agent = _store.GetAgent("agent-1");
+        Assert.NotNull(agent);
+        Assert.Equal("Signals and situational awareness", agent.Description);
+        Assert.True(agent.IsBuiltIn == false);
+    }
+
     [Fact]
     public async Task InitializeAsync_RefreshesStoreFromApiInsteadOfUsingPreexistingConversationState()
     {

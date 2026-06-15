@@ -57,6 +57,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    Description = agent.Description,
                     IsBuiltIn = agent.IsBuiltIn,
                     IsConnected = true
                 });
@@ -235,6 +236,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    Description = agent.Description,
                     IsBuiltIn = agent.IsBuiltIn,
                     IsConnected = true
                 });
