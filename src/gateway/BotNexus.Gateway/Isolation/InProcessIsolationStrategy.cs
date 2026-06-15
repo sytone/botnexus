@@ -892,6 +892,74 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
         => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
 
+    /// <summary>
+    /// Maps a raw <see cref="AgentEvent"/> to the gateway-facing <see cref="AgentStreamEvent"/>, or
+    /// <see langword="null"/> when the event has no client-visible representation.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <see cref="StreamCoreAsync"/> as a pure function (#1382) so the agent-event
+    /// translation can be unit-tested directly without driving a live agent subscription/channel
+    /// pipeline. <paramref name="messageId"/> is the stable per-turn correlation id stamped onto
+    /// every emitted event.
+    /// </remarks>
+    internal static AgentStreamEvent? MapAgentEvent(AgentEvent agentEvent, string messageId)
+        => agentEvent switch
+        {
+            MessageStartEvent start when start.Message is AssistantAgentMessage
+                => new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = messageId },
+            MessageUpdateEvent update when update.ContentDelta is not null => update.IsThinking
+                ? new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ThinkingDelta,
+                    ThinkingContent = update.ContentDelta,
+                    MessageId = messageId
+                }
+                : new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ContentDelta,
+                    ContentDelta = update.ContentDelta,
+                    MessageId = messageId
+                },
+            ToolExecutionStartEvent toolStart => new AgentStreamEvent
+            {
+                Type = AgentStreamEventType.ToolStart,
+                ToolCallId = toolStart.ToolCallId,
+                ToolName = toolStart.ToolName,
+                ToolArgs = toolStart.Args,
+                MessageId = messageId
+            },
+            ToolExecutionEndEvent toolEnd => new AgentStreamEvent
+            {
+                Type = AgentStreamEventType.ToolEnd,
+                ToolCallId = toolEnd.ToolCallId,
+                ToolName = toolEnd.ToolName,
+                ToolResult = toolEnd.Result.Content.FirstOrDefault()?.ToString(),
+                ToolIsError = toolEnd.IsError,
+                MessageId = messageId
+            },
+            MessageEndEvent end when end.Message is AssistantAgentMessage assistant
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.MessageEnd,
+                    MessageId = messageId,
+                    Usage = assistant.Usage is null ? null : new AgentResponseUsage(
+                        InputTokens: assistant.Usage.InputTokens,
+                        OutputTokens: assistant.Usage.OutputTokens,
+                        CacheRead: assistant.Usage.CacheRead,
+                        CacheWrite: assistant.Usage.CacheWrite)
+                },
+            ToolExecutionUpdateEvent { PartialResult.Details: AskUserRequest askUserRequest }
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.UserInputRequired,
+                    UserInputRequest = askUserRequest,
+                    MessageId = messageId
+                },
+            TurnEndEvent
+                => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
+            _ => null
+        };
+
     private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
         Func<CancellationToken, Task> runPrompt,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -912,62 +980,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             _activityTracker?.RecordActivity();
             try
             {
-                var streamEvent = agentEvent switch
-                {
-                    MessageStartEvent start when start.Message is AssistantAgentMessage
-                        => new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = messageId },
-                    MessageUpdateEvent update when update.ContentDelta is not null => update.IsThinking
-                        ? new AgentStreamEvent
-                        {
-                            Type = AgentStreamEventType.ThinkingDelta,
-                            ThinkingContent = update.ContentDelta,
-                            MessageId = messageId
-                        }
-                        : new AgentStreamEvent
-                        {
-                            Type = AgentStreamEventType.ContentDelta,
-                            ContentDelta = update.ContentDelta,
-                            MessageId = messageId
-                        },
-                    ToolExecutionStartEvent toolStart => new AgentStreamEvent
-                    {
-                        Type = AgentStreamEventType.ToolStart,
-                        ToolCallId = toolStart.ToolCallId,
-                        ToolName = toolStart.ToolName,
-                        ToolArgs = toolStart.Args,
-                        MessageId = messageId
-                    },
-                    ToolExecutionEndEvent toolEnd => new AgentStreamEvent
-                    {
-                        Type = AgentStreamEventType.ToolEnd,
-                        ToolCallId = toolEnd.ToolCallId,
-                        ToolName = toolEnd.ToolName,
-                        ToolResult = toolEnd.Result.Content.FirstOrDefault()?.ToString(),
-                        ToolIsError = toolEnd.IsError,
-                        MessageId = messageId
-                    },
-                    MessageEndEvent end when end.Message is AssistantAgentMessage assistant
-                        => new AgentStreamEvent
-                        {
-                            Type = AgentStreamEventType.MessageEnd,
-                            MessageId = messageId,
-                            Usage = assistant.Usage is null ? null : new AgentResponseUsage(
-                                InputTokens: assistant.Usage.InputTokens,
-                                OutputTokens: assistant.Usage.OutputTokens,
-                                CacheRead: assistant.Usage.CacheRead,
-                                CacheWrite: assistant.Usage.CacheWrite)
-                        },
-                    ToolExecutionUpdateEvent { PartialResult.Details: AskUserRequest askUserRequest }
-                        => new AgentStreamEvent
-                        {
-                            Type = AgentStreamEventType.UserInputRequired,
-                            UserInputRequest = askUserRequest,
-                            MessageId = messageId
-                        },
-                    TurnEndEvent
-                        => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
-                    _ => null
-                };
+                var streamEvent = MapAgentEvent(agentEvent, messageId);
 
                 if (streamEvent is not null)
                     await events.Writer.WriteAsync(streamEvent, cancellationToken);
