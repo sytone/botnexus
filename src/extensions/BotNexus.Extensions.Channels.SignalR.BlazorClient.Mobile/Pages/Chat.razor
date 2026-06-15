@@ -69,10 +69,16 @@ else
                         </div>
                         <button class="menu-action" data-testid="new-session-btn" @onclick="NewSession">New session</button>
                         <button class="menu-action" data-testid="new-conversation-btn" @onclick="NewConversation">New conversation</button>
-                        @if (HasCanvasContent(activeAgent))
-                        {
-                            <button class="menu-action" data-testid="canvas-toggle-btn" @onclick="ToggleCanvas">Canvas</button>
-                        }
+                        @* Canvas is always available so it can be opened before the agent
+                           publishes any HTML; the panel shows an empty-state placeholder until
+                           content arrives. A dot indicates when live canvas content exists. *@
+                        <button class="menu-action" data-testid="canvas-toggle-btn" @onclick="ToggleCanvas">
+                            Canvas
+                            @if (HasCanvasContent(activeAgent))
+                            {
+                                <span class="menu-action-dot" data-testid="canvas-content-dot" title="Canvas has content" aria-label="Canvas has content"></span>
+                            }
+                        </button>
                     </div>
                 }
             </div>
