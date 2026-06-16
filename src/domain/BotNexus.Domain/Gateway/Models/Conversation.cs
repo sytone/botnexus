@@ -78,6 +78,16 @@ public sealed record Conversation
     public string? Instructions { get; set; }
 
     /// <summary>
+    /// Gets or sets the per-conversation todo list state as an opaque JSON string, persisted on the
+    /// conversation row alongside <see cref="CanvasHtml"/> and <see cref="Instructions"/>. Used by the
+    /// <c>todo</c> tool to externalize a multi-step plan into structured state that survives sessions and
+    /// compaction (see issue #1464). <c>null</c> means no todo state has been set. The concrete JSON shape
+    /// (an <c>items</c> array of <c>{ id, text, status, createdAt, updatedAt }</c>) is owned by the todo
+    /// tool that reads and writes it; the store treats this field as opaque text.
+    /// </summary>
+    public string? TodoJson { get; set; }
+
+    /// <summary>
     /// Gets or sets the citizen that opened this conversation — the user who sent the first
     /// inbound message, or the agent that programmatically created it (via <c>conversation_new</c>
     /// tool calls, heartbeats, cron triggers, etc.). Set by the router on creation and treated as
