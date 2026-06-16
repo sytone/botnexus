@@ -79,6 +79,14 @@ else
                                 <span class="menu-action-dot" data-testid="canvas-content-dot" title="Canvas has content" aria-label="Canvas has content"></span>
                             }
                         </button>
+                        @* Archive (or close, for virtual cron sessions) the active conversation.
+                           Hidden when no conversation is selected since there is nothing to archive. *@
+                        @if (ActiveConversation(activeAgent) is { } activeConv)
+                        {
+                            <button class="menu-action menu-action-archive" data-testid="archive-conversation-btn" @onclick="() => Archive(activeConv)">
+                                @(activeConv.IsVirtualSession ? "Close conversation" : "Archive conversation")
+                            </button>
+                        }
                     </div>
                 }
             </div>
@@ -110,7 +118,7 @@ else
                 else
                 {
                     <div class="message @GetMessageClass(msg)">
-                        @if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                        @if (ShouldRenderAsMarkdown(msg.Role) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                         {
                             <div class="message-content">@((MarkupString)rendered)</div>
                         }
@@ -154,6 +162,30 @@ else
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" @onclick="CancelNewSession">Cancel</button>
                     <button class="confirm-btn" data-testid="new-session-confirm-btn" @onclick="DoNewSession">New session</button>
+                </div>
+            </div>
+        </div>
+    }
+    <!-- ARCHIVE CONVERSATION CONFIRM OVERLAY -->
+    @if (_archiveTarget is { } archiveTarget)
+    {
+        <div class="reset-confirm-overlay" @onclick="CancelArchive">
+            <div class="reset-confirm-box" @onclick:stopPropagation="true">
+                <p>
+                    @if (archiveTarget.IsVirtualSession)
+                    {
+                        @($"Close “{archiveTarget.Title}”? It will reopen when the next cron trigger fires.")
+                    }
+                    else
+                    {
+                        @($"Archive “{archiveTarget.Title}”? It will be hidden from the conversation list.")
+                    }
+                </p>
+                <div class="reset-confirm-actions">
+                    <button class="cancel-btn" data-testid="archive-cancel-btn" @onclick="CancelArchive">Cancel</button>
+                    <button class="confirm-btn" data-testid="archive-confirm-btn" @onclick="DoArchive">
+                        @(archiveTarget.IsVirtualSession ? "Close" : "Archive")
+                    </button>
                 </div>
             </div>
         </div>
@@ -209,8 +241,15 @@ else
     private bool _isRefreshing;
     private bool _menuOpen;
     private bool _showNewSessionConfirm;
+    private ConversationState? _archiveTarget;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
+
+    // #1475: user and assistant messages both render through the Markdown pipeline.
+    // Platform-generated roles (System, Tool, Error, Notification) stay on raw text rendering.
+    private static bool ShouldRenderAsMarkdown(string? role) =>
+        string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "user", StringComparison.OrdinalIgnoreCase);
     private ChatMessage? _modalToolMessage;
     private DotNetObjectReference<Chat>? _dotNetRef;
     private bool _appResumeListenerRegistered;
@@ -497,6 +536,36 @@ else
         _showNewSessionConfirm = false;
     }
 
+    /// <summary>
+    /// Returns the active conversation for the menu's archive action, or null when
+    /// no conversation is selected (nothing to archive).
+    /// </summary>
+    private static ConversationState? ActiveConversation(AgentState? agent)
+    {
+        if (agent?.ActiveConversationId is not { } convId)
+            return null;
+        return agent.Conversations.TryGetValue(convId, out var conv) ? conv : null;
+    }
+
+    private void Archive(ConversationState conversation)
+    {
+        _archiveTarget = conversation;
+        _menuOpen = false;
+    }
+
+    private async Task DoArchive()
+    {
+        var target = _archiveTarget;
+        _archiveTarget = null;
+        if (target is null || Store.ActiveAgentId is null) return;
+        await Interaction.ArchiveConversationAsync(Store.ActiveAgentId, target.ConversationId);
+    }
+
+    private void CancelArchive()
+    {
+        _archiveTarget = null;
+    }
+
     private void ToggleCanvas()
     {
         _canvasOpen = !_canvasOpen;
@@ -548,7 +617,7 @@ else
         var needsRender = false;
         foreach (var msg in Store.GetMessages(activeConvId))
         {
-            if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && !_markdownCache.ContainsKey(msg.Id))
+            if (ShouldRenderAsMarkdown(msg.Role) && !string.IsNullOrEmpty(msg.Content) && !_markdownCache.ContainsKey(msg.Id))
             {
                 try
                 {

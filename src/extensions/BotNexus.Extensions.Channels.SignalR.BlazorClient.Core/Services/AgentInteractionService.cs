@@ -288,6 +288,23 @@ public sealed class AgentInteractionService : IAgentInteractionService
             catch { /* canvas fetch is best-effort */ }
         }
 
+        // Fetch todo state from REST if not already loaded (#1464 step 5). Mirrors canvas hydration
+        // so the Todo panel shows the persisted plan immediately when the conversation is opened.
+        if (conv is not null && conv.TodoJson is null)
+        {
+            try
+            {
+                var todoJson = await _restClient.GetConversationTodoAsync(agentId, conversationId);
+                if (todoJson is not null)
+                {
+                    conv.TodoJson = todoJson;
+                    conv.TodoUpdatedAt = DateTimeOffset.UtcNow;
+                    _store.NotifyChanged();
+                }
+            }
+            catch { /* todo fetch is best-effort */ }
+        }
+
         // Fix #789: if the conversation was streaming when the user navigated away, a
         // terminal SignalR event (MessageEnd/Error/TurnInterrupted/RunEnded) may have been missed.
         // Reset stale streaming/run state and force a history reload so the UI reflects the

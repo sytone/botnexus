@@ -277,7 +277,7 @@
                                 <span class="token-stat token-stat-cache-write" data-testid="token-stat-cache-write" title="Cache write tokens">&#128204; @(msg.CacheWrite.Value.ToString("N0"))</span>
                             }
                         </div>
-                    }                    @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                    }                    @if (ShouldRenderAsMarkdown(msg.Role) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
                         <div class="msg-content">@((MarkupString)rendered)</div>
                     }
@@ -468,6 +468,12 @@ private bool IsStreaming =>
     private bool _editingTitle;
     private string _titleDraft = "";
     private readonly Dictionary<string, string> _markdownCache = new();
+
+    // #1475: user and assistant messages both render through the Markdown pipeline.
+    // Platform-generated roles (System, Tool, Error, Notification) stay on raw text rendering.
+    private static bool ShouldRenderAsMarkdown(string? role) =>
+        string.Equals(role, "Assistant", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "User", StringComparison.OrdinalIgnoreCase);
     private readonly HashSet<string> _expandedTools = new();
     private bool _showCommandPalette;
     private string _selectedCommand = "";
@@ -752,7 +758,7 @@ private bool IsStreaming =>
             var needsRender = false;
             foreach (var msg in Messages.ToList())
             {
-                if (msg.Role == "Assistant" && !_markdownCache.ContainsKey(msg.Id))
+                if (ShouldRenderAsMarkdown(msg.Role) && !string.IsNullOrEmpty(msg.Content) && !_markdownCache.ContainsKey(msg.Id))
                 {
                     var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
                     _markdownCache[msg.Id] = html;

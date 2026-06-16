@@ -274,6 +274,18 @@ public sealed class ConversationState
     /// <summary>When the latest canvas payload was published to this conversation.</summary>
     public DateTimeOffset? CanvasUpdatedAt { get; set; }
 
+    // ── Todo ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Latest persisted todo state for this conversation (the raw <c>TodoJson</c> document, or null
+    /// when there is no plan). Drives the Todo panel; hydrated from REST and refreshed live via the
+    /// <c>TodoUpdated</c> SignalR event (#1464 step 5).
+    /// </summary>
+    public string? TodoJson { get; set; }
+
+    /// <summary>When the latest todo payload was applied to this conversation.</summary>
+    public DateTimeOffset? TodoUpdatedAt { get; set; }
+
     // ── History flags ────────────────────────────────────────────────────────
 
     /// <summary>Whether the latest page of history has been loaded.</summary>
