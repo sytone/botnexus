@@ -358,6 +358,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         AgentId = agent.AgentId,
                         DisplayName = agent.DisplayName,
                         Emoji = agent.Emoji,
+                        Description = agent.Description,
+                        IsBuiltIn = agent.IsBuiltIn,
                         IsConnected = true
                     });
                 }
