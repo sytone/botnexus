@@ -206,4 +206,65 @@ public abstract class ConversationStoreContractTests
         // Should not throw
         await store.TouchAsync(NewId());
     }
+
+    // ── TodoJson (issue #1464 Step 1/6) ───────────────────────────────────
+
+    [Fact]
+    public async Task TodoJson_RoundTrips_AcrossSaveAndReload()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        const string todo = "{\"items\":[{\"id\":\"a\",\"text\":\"first\",\"status\":\"pending\"}]}";
+        conv = conv with { TodoJson = todo };
+
+        await store.CreateAsync(conv);
+        var loaded = await store.GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBe(todo);
+    }
+
+    [Fact]
+    public async Task TodoJson_DefaultsToNull_WhenNeverSet()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+
+        await store.CreateAsync(conv);
+        var loaded = await store.GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TodoJson_PersistsUpdate_OnExistingConversation()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        await store.CreateAsync(conv);
+
+        const string updated = "{\"items\":[{\"id\":\"a\",\"text\":\"done it\",\"status\":\"done\"}]}";
+        conv = conv with { TodoJson = updated };
+        await store.SaveAsync(conv);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBe(updated);
+    }
+
+    [Fact]
+    public async Task TodoJson_CanBeClearedBackToNull()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation() with { TodoJson = "{\"items\":[]}" };
+        await store.CreateAsync(conv);
+
+        conv = conv with { TodoJson = null };
+        await store.SaveAsync(conv);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBeNull();
+    }
 }

@@ -390,24 +390,60 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         //
         // SteerAsync works regardless of IsRunning: if running, the steer is drained
         // at the next turn boundary; if idle, it's drained at the start of the next run.
-        IAgentHandle handle;
-        try
+        //
+        // Dead-letter guard: a steer only makes sense against a RUNNING turn. Previously this
+        // always called GetOrCreateAsync, which would conjure a fresh idle handle for a session
+        // with no live run and "inject" a steer that never drains (the agent loop already ended,
+        // so its PendingMessageQueue is never read again). Combined with a client-side session
+        // mis-route, that silently swallowed the user's steer into an unrelated, idle session.
+        //
+        // First try GetHandle (no phantom creation). If there's no live handle, fall back to a
+        // single GetOrCreateAsync to win the race against an in-flight SendMessage that may still
+        // be routing/registering the handle (the original #-rationale for GetOrCreate). After that,
+        // if the resolved handle still isn't running, treat it as a non-delivery rather than
+        // dead-lettering the message.
+        IAgentHandle? handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
+        if (handle is null || !handle.IsRunning)
         {
-            handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, Context.ConnectionAborted);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to resolve agent handle for steering: agent {AgentId} session {SessionId}",
-                typedAgentId.Value, typedSessionId.Value);
+            try
+            {
+                handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, Context.ConnectionAborted);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resolve agent handle for steering: agent {AgentId} session {SessionId}",
+                    typedAgentId.Value, typedSessionId.Value);
 
+                await _activity.PublishAsync(new GatewayActivity
+                {
+                    Type = GatewayActivityType.Error,
+                    AgentId = typedAgentId.Value,
+                    SessionId = typedSessionId.Value,
+                    ConversationId = conversationId,
+                    Message = $"Steering failed: {ex.Message}"
+                }, Context.ConnectionAborted);
+
+                return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
+            }
+        }
+
+        // If the agent isn't running, there is no in-flight turn to steer. Do NOT persist the
+        // message into the session or inject it into an idle handle's queue (it would never drain).
+        // Surface a clear, user-visible signal so the steer isn't silently lost.
+        if (!handle.IsRunning)
+        {
             await _activity.PublishAsync(new GatewayActivity
             {
                 Type = GatewayActivityType.Error,
                 AgentId = typedAgentId.Value,
                 SessionId = typedSessionId.Value,
                 ConversationId = conversationId,
-                Message = $"Steering failed: {ex.Message}"
+                Message = "Steering not applied: the agent isn't currently running in this conversation. Send the message instead to start a new turn."
             }, Context.ConnectionAborted);
+
+            _logger.LogInformation(
+                "Steering skipped (agent not running) for agent {AgentId} session {SessionId}",
+                typedAgentId.Value, typedSessionId.Value);
 
             return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
         }
