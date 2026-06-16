@@ -123,7 +123,10 @@
                                         .ToList();
                                     var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
                                     var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
-                                    var normalConversations = allUserConversations.Where(c => !IsPinnedConversation(c) && !IsCronConversation(c)).ToList();
+                                    var normalConversations = allUserConversations
+                                        .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c))
+                                        .Where(MatchesActivityFilter)
+                                        .ToList();
 
                                     @if (pinnedConversations.Count > 0)
                                     {
@@ -139,9 +142,30 @@
                                     }
 
                                     <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
-                                        <div class="conversation-group-header">
-                                            <span class="conversation-group-label">Conversations</span>
+                                        <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
+                                            <button type="button"
+                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
+                                                    data-testid="conversation-filter-none"
+                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
+                                                    title="Show all conversations"
+                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
+                                            <button type="button"
+                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
+                                                    data-testid="conversation-filter-today"
+                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
+                                                    title="Conversations updated today"
+                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
+                                            <button type="button"
+                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
+                                                    data-testid="conversation-filter-week"
+                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
+                                                    title="Conversations updated in the last 7 days"
+                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
                                         </div>
+                                        @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
+                                        {
+                                            <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
+                                        }
                                         @foreach (var conversation in normalConversations)
                                         {
                                             @RenderConversationItem(activeAgent, conversation)
@@ -312,6 +336,9 @@
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
 
+    private ConversationActivityFilter _activityFilter = ConversationActivityFilter.None;
+    private const string ActivityFilterKey = "botnexus-conversation-activity-filter";
+
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
     private List<Announcement> _announcements = [];
@@ -341,6 +368,9 @@
             _sidebarOpen = stored == "true";
             var cronStored = await JS.InvokeAsync<string?>("localStorage.getItem", CronCollapsedKey);
             _cronGroupCollapsed = cronStored != "false";
+            var filterStored = await JS.InvokeAsync<string?>("localStorage.getItem", ActivityFilterKey);
+            if (Enum.TryParse<ConversationActivityFilter>(filterStored, out var storedFilter))
+                _activityFilter = storedFilter;
             _isMobile = await JS.InvokeAsync<bool>("chatScroll.isMobileView");
             await Prefs.LoadAsync();
             // Re-render immediately after mobile detection so layout responds without waiting for gateway load.
@@ -517,6 +547,38 @@
     {
         _cronGroupCollapsed = !_cronGroupCollapsed;
         await JS.InvokeVoidAsync("localStorage.setItem", CronCollapsedKey, _cronGroupCollapsed ? "true" : "false");
+    }
+
+    /// <summary>
+    /// Recent-activity filter applied to the normal (non-pinned, non-scheduled) conversation list.
+    /// Lets the user narrow the drawer to conversations touched today or in the last week without
+    /// hiding pinned or scheduled groups, which carry their own intent.
+    /// </summary>
+    private enum ConversationActivityFilter
+    {
+        None,
+        Today,
+        ThisWeek
+    }
+
+    /// <summary>
+    /// True when the conversation's last activity falls inside the active filter window. <see cref="ConversationActivityFilter.None"/>
+    /// always matches so the default view is unfiltered. "Today" uses the local calendar day; "This Week" uses a
+    /// rolling 7-day window, both compared against <c>UpdatedAt</c>.
+    /// </summary>
+    private bool MatchesActivityFilter(ConversationState conversation) => _activityFilter switch
+    {
+        ConversationActivityFilter.Today => conversation.UpdatedAt.ToLocalTime().Date == DateTimeOffset.Now.Date,
+        ConversationActivityFilter.ThisWeek => conversation.UpdatedAt >= DateTimeOffset.UtcNow.AddDays(-7),
+        _ => true
+    };
+
+    private async Task SetActivityFilterAsync(ConversationActivityFilter filter)
+    {
+        if (_activityFilter == filter)
+            return;
+        _activityFilter = filter;
+        await JS.InvokeVoidAsync("localStorage.setItem", ActivityFilterKey, filter.ToString());
     }
 
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>

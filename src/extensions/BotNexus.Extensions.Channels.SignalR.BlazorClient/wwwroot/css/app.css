@@ -3793,6 +3793,42 @@ details[open] > .thinking-summary::before {
     opacity: 1;
 }
 
+/* ── Conversation Activity Filter ─────────────────────────────────────────── */
+
+.conversation-filter-bar {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem 0.75rem 0.375rem;
+}
+
+.conversation-filter-btn {
+    flex: 1;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--text-muted, #888);
+    background: none;
+    border: 1px solid var(--border, #333);
+    border-radius: 0.3rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.conversation-filter-btn:hover {
+    color: var(--text, #ccc);
+    border-color: var(--accent, #00b4d8);
+}
+
+.conversation-filter-btn.active {
+    color: var(--accent, #00b4d8);
+    border-color: var(--accent, #00b4d8);
+    background: rgba(0, 180, 216, 0.08);
+}
+
 /* ── Session Boundary Divider ─────────────────────────────────────────────── */
 
 .session-boundary {
