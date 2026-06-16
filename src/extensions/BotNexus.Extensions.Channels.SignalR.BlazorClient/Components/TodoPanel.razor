@@ -24,6 +24,17 @@
         <div class="todo-progress" data-testid="todo-progress">
             <span class="todo-progress-count">@DoneCount(items) / @items.Count</span> done
         </div>
+        @if (ShowCloseoutWarning(items))
+        {
+            var inProgress = InProgressCount(items);
+            <div class="todo-closeout-warning" data-testid="todo-closeout-warning" role="status">
+                <span class="todo-closeout-icon" aria-hidden="true">⚠</span>
+                <span class="todo-closeout-text">
+                    The run ended with <strong>@inProgress</strong>
+                    @(inProgress == 1 ? "item" : "items") still in progress.
+                </span>
+            </div>
+        }
         <ul class="todo-list" data-testid="todo-list">
             @foreach (var item in items)
             {
@@ -51,6 +62,21 @@
     };
 
     private IReadOnlyList<TodoItemView> ParsedItems => Parse(TodoJson);
+
+    /// <summary>
+    /// True when the run loop has fully settled (idle) for this conversation. Drives the close-out
+    /// warning: in_progress items are expected DURING a run, so only flag them once the run ends.
+    /// Mirrors the authoritative <c>RunStarted</c>/<c>RunEnded</c> bracket (#1458) via the store.
+    /// </summary>
+    private bool IsRunIdle
+    {
+        get
+        {
+            if (ConversationId is null)
+                return false;
+            return !Store.GetStreamState(ConversationId).IsTurnActive;
+        }
+    }
 
     private string? TodoJson
     {
@@ -113,6 +139,25 @@
         }
         return count;
     }
+
+    private static int InProgressCount(IReadOnlyList<TodoItemView> items)
+    {
+        var count = 0;
+        foreach (var item in items)
+        {
+            if (item.Status == "in_progress")
+                count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Warn-only close-out gate (#1470): surface a non-fatal indicator when the run has ended
+    /// (<see cref="IsRunIdle"/>) but the plan still has <c>in_progress</c> items — the signal that the
+    /// run stopped mid-plan. Never hard-blocks; empty / fully-resolved lists produce no warning.
+    /// </summary>
+    private bool ShowCloseoutWarning(IReadOnlyList<TodoItemView> items)
+        => IsRunIdle && InProgressCount(items) > 0;
 
     private static string StatusBox(string status) => status switch
     {
