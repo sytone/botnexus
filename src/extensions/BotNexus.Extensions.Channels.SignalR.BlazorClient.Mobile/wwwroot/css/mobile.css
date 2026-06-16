@@ -160,6 +160,15 @@ body {
     vertical-align: middle;
 }
 
+/* Archive/close conversation action -- subtle danger tint to mark it as a
+   destructive action distinct from the neutral menu items above it. */
+.menu-action-archive {
+    color: #e0a0a0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.menu-action-archive:hover { background: rgba(220, 90, 90, 0.12); }
+
 /* ── Message stream ───────────────────────────────────────────────────────── */
 .message-stream {
     flex: 1;

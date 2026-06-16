@@ -192,7 +192,12 @@ Created ──► Active ──► Archived
 - **Active** — accepts new sessions and messages
 - **Archived** — read-only history, no new sessions
 
-Archiving is currently manual. Archived conversations do not appear in fan-out and cannot receive new messages.
+Archiving is manual. Archived conversations do not appear in fan-out and cannot receive new messages.
+
+- **Desktop portal** — hover a conversation in the sidebar and click the archive (✕) button.
+- **Mobile portal** — open the overflow menu (the **⋯** button in the top bar) and choose **Archive conversation**, then confirm.
+
+For a virtual cron conversation the action is labelled **Close conversation** instead — closing hides the row from the list, and it reopens automatically when the cron job next fires.
 
 ---
 
