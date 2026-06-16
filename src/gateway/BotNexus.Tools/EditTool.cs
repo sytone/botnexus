@@ -139,7 +139,10 @@ public sealed class EditTool : IAgentTool
         {
             var originalBytes = _fileSystem.File.ReadAllBytes(fullPath);
             var hasUtf8Bom = HasUtf8Bom(originalBytes);
-            var original = Encoding.UTF8.GetString(originalBytes);
+            // UTF-8 first with a system-code-page fallback so editing a legacy windows-1252 / shift_jis
+            // file matches against readable text (not mojibake). DecodeBytes already strips a leading
+            // BOM; the guard below stays as defence in depth.
+            var original = TextDecoder.DecodeBytes(originalBytes);
             if (hasUtf8Bom && original.StartsWith('\uFEFF'))
             {
                 original = original[1..];
