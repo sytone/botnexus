@@ -121,6 +121,31 @@ public sealed class ToolEnforcementSectionTests
         lines.ShouldContain(l => l.Contains("Do not ask for confirmation"));
     }
 
+    // #1468 (Step 4/6 of #1464): couple a todo `done` transition to a same-turn tool result.
+    [Fact]
+    public void Build_StatesTodoDoneRequiresSameTurnToolResult()
+    {
+        var lines = ToolEnforcementSection.Create().Build(DefaultContext);
+
+        lines.ShouldContain(
+            l => l.Contains("todo", StringComparison.OrdinalIgnoreCase)
+                 && l.Contains("done", StringComparison.OrdinalIgnoreCase)
+                 && l.Contains("tool result", StringComparison.OrdinalIgnoreCase),
+            "the tool-use enforcement section must couple a todo 'done' transition to a same-turn tool result");
+    }
+
+    [Fact]
+    public void Build_TodoDoneRuleFramesBareFlipAsFabrication()
+    {
+        var lines = ToolEnforcementSection.Create().Build(DefaultContext);
+
+        // The todo coupling must frame a prose-only `done` flip as fabrication, mirroring the #1463 trip-wire.
+        lines.ShouldContain(
+            l => l.Contains("todo", StringComparison.OrdinalIgnoreCase)
+                 && (l.Contains("fabricat", StringComparison.OrdinalIgnoreCase)
+                     || l.Contains("prose", StringComparison.OrdinalIgnoreCase)));
+    }
+
     [Fact]
     public void Create_OrderIsBeforeSafety()
     {
