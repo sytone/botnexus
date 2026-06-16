@@ -741,6 +741,24 @@ public sealed class CronSchedulerTests
         }
     }
 
+    /// <summary>
+    /// Action that signals when it begins executing and then blocks until the supplied token is
+    /// cancelled, at which point it throws <see cref="OperationCanceledException"/>. Lets a test
+    /// abort an in-flight run via the host token (distinct from the per-job timeout).
+    /// </summary>
+    private sealed class AbortableAction(string actionType) : ICronAction
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string ActionType => actionType;
+
+        public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            // Block until cancelled; Task.Delay observes the linked token and throws on cancel.
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
     {
         public T CurrentValue { get; } = currentValue;
@@ -833,5 +851,65 @@ public sealed class CronSchedulerTests
         await scheduler.RunNowAsync(JobId.From("job-1"));
 
         logger.Messages.ShouldContain(m => m.Contains("timed out"));
+    }
+
+    // ── Run abort (host cancellation) tests #1501 ───────────────────────────────
+
+    [Fact]
+    public async Task RunNow_AbortedViaHostToken_RecordsErrorNotStuckRunning()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new AbortableAction("test-action");
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        // High timeout so the per-job timeout never fires - the abort must come from the host token.
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 600 };
+        var scheduler = CreateScheduler(context.Store, [action], options);
+
+        using var cts = new CancellationTokenSource();
+        var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
+
+        // Wait until the action is actually executing, then abort via the host token.
+        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+
+        // Cancellation semantics are preserved: the abort propagates to the caller.
+        await Should.ThrowAsync<OperationCanceledException>(async () => await runTask);
+
+        // ...but the run must be recorded as a failure, not left stuck in "running".
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
+        var entry = history.ShouldHaveSingleItem();
+        entry.Status.ShouldBe("error");
+        entry.Status.ShouldNotBe("running");
+        entry.Status.ShouldNotBe("ok");
+        entry.Error.ShouldNotBeNull();
+        entry.Error.ShouldContain("aborted");
+
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
+        updated!.LastRunStatus.ShouldBe("error");
+        updated.LastRunError.ShouldNotBeNull();
+        updated.LastRunError.ShouldContain("aborted");
+    }
+
+    [Fact]
+    public async Task RunNow_AbortedViaHostToken_LogsWarning()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new AbortableAction("test-action");
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 600 };
+        var logger = new ListLogger<CronScheduler>();
+        var scheduler = CreateScheduler(context.Store, [action], options, logger);
+
+        using var cts = new CancellationTokenSource();
+        var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
+        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(async () => await runTask);
+
+        logger.Messages.ShouldContain(m => m.Contains("aborted"));
+        // The abort must NOT be logged as a timeout - those are distinct outcomes.
+        logger.Messages.ShouldNotContain(m => m.Contains("timed out"));
     }
 }
