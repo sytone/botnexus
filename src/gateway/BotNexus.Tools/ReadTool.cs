@@ -147,7 +147,9 @@ public sealed class ReadTool : IAgentTool
                 ]);
             }
 
-            var textContent = Encoding.UTF8.GetString(bytes);
+            // UTF-8 first, then the host ANSI code page for legacy text files, so a windows-1252 /
+            // shift_jis / gbk file is not returned as mojibake (the Windows code-page corruption class).
+            var textContent = TextDecoder.DecodeBytes(bytes);
             var offset = arguments.TryGetValue("offset", out var offsetObj) && offsetObj is int parsedOffset ? parsedOffset : 1;
             var limit = arguments.TryGetValue("limit", out var limitObj) && limitObj is int parsedLimit ? parsedLimit : (int?)null;
             var content = ReadText(textContent, relativePath, offset, limit);
