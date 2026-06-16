@@ -202,7 +202,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         return conversation is null
             ? null
-            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions);
+            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions, conversation.TodoJson);
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
