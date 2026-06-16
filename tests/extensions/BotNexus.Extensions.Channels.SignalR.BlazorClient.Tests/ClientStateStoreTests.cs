@@ -305,6 +305,116 @@ public sealed class ClientStateStoreTests
         Assert.True(fired);
     }
 
+    // ── steer-routing regression: RegisterSession must not stomp the active conversation ──
+    // Reproduces the production bug where a steer landed on a different conversation's idle
+    // session. RefreshConversationsForAgentAsync loops over every session and calls
+    // RegisterSession; the old logic blindly stamped agent.SessionId AND the active
+    // conversation's ActiveSessionId with the last-iterated session, so steer/abort/compact
+    // targeted the wrong (often idle) session.
+
+    [Fact]
+    public void RegisterSession_with_conversationId_binds_to_that_conversation_only()
+    {
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [
+            CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
+            CreateConversation("conv-other", "a-1", "Other", activeSessionId: "sess-other")
+        ]);
+        store.SetActiveConversation("a-1", "conv-active");
+
+        // A bulk refresh registers the OTHER conversation's session while conv-active is displayed.
+        store.RegisterSession("a-1", "sess-other", "signalr", "user-agent", conversationId: "conv-other");
+
+        // The other conversation's session binds to ITS conversation, not the active one.
+        store.GetConversation("conv-other")!.ActiveSessionId.ShouldBe("sess-other");
+        // Critical: the active conversation's binding is untouched.
+        store.GetConversation("conv-active")!.ActiveSessionId.ShouldBe("sess-active",
+            customMessage: "Registering another conversation's session must NOT overwrite the " +
+                "active conversation's ActiveSessionId.");
+    }
+
+    [Fact]
+    public void RegisterSession_with_conversationId_only_updates_global_for_active_conversation()
+    {
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [
+            CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
+            CreateConversation("conv-other", "a-1", "Other", activeSessionId: "sess-other")
+        ]);
+        store.SetActiveConversation("a-1", "conv-active"); // sets agent.SessionId = sess-active
+
+        // Registering a non-active conversation's session must NOT move the agent-global SessionId.
+        store.RegisterSession("a-1", "sess-other", "signalr", "user-agent", conversationId: "conv-other");
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-active",
+            customMessage: "agent.SessionId must only follow the ACTIVE conversation's session.");
+
+        // Registering the active conversation's session does update the global fallback.
+        store.RegisterSession("a-1", "sess-active-v2", "signalr", "user-agent", conversationId: "conv-active");
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-active-v2");
+    }
+
+    [Fact]
+    public void RegisterSession_bulk_refresh_does_not_misroute_active_conversation_session()
+    {
+        // Full reproduction of the production scenario: conv-active is displayed with a live run;
+        // a refresh iterates ALL sessions (the displayed one AND an unrelated idle conversation).
+        // The displayed conversation's ActiveSessionId must remain its OWN session afterwards so
+        // a subsequent steer targets the right session.
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [
+            CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
+            CreateConversation("conv-idle", "a-1", "Idle", activeSessionId: "sess-idle")
+        ]);
+        store.SetActiveConversation("a-1", "conv-active");
+
+        // Simulate RefreshConversationsForAgentAsync's loop. Order matters: the idle session is
+        // iterated LAST (this is what poisoned agent.SessionId in production).
+        store.RegisterSession("a-1", "sess-active", "signalr", "user-agent", conversationId: "conv-active");
+        store.RegisterSession("a-1", "sess-idle", "signalr", "user-agent", conversationId: "conv-idle");
+
+        store.GetConversation("conv-active")!.ActiveSessionId.ShouldBe("sess-active");
+        store.GetConversation("conv-idle")!.ActiveSessionId.ShouldBe("sess-idle");
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-active",
+            customMessage: "After a full refresh, the agent-global session must still point at the " +
+                "DISPLAYED conversation's session, not the last-iterated one.");
+        // The displayed conversation's resolved session (used by steer/abort/compact) is correct.
+        store.GetAgent("a-1")!.ActiveConversationSessionId.ShouldBe("sess-active");
+    }
+
+    [Fact]
+    public void RegisterSession_cron_session_does_not_touch_active_conversation_or_global()
+    {
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [
+            CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active")
+        ]);
+        store.SetActiveConversation("a-1", "conv-active");
+
+        // A cron session must never poison the user-facing session/binding.
+        store.RegisterSession("a-1", "cron:job-1:run-1", "internal", "cron", conversationId: "conv-active");
+
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-active");
+        store.GetConversation("conv-active")!.ActiveSessionId.ShouldBe("sess-active");
+    }
+
+    [Fact]
+    public void RegisterSession_legacy_no_conversationId_still_binds_active_conversation()
+    {
+        // Preserve the #314 race fix: a freshly established session (e.g. from a SendMessage
+        // result, registered without a conversationId) binds to the active conversation so
+        // MessageStart can resolve it before the REST refresh completes.
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [
+            CreateConversation("conv-new", "a-1", "New", activeSessionId: null)
+        ]);
+        store.SetActiveConversation("a-1", "conv-new");
+
+        store.RegisterSession("a-1", "sess-new");
+
+        store.GetConversation("conv-new")!.ActiveSessionId.ShouldBe("sess-new");
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-new");
+    }
+
     private static ClientStateStore CreateSeededStore()
     {
         var store = new ClientStateStore();
@@ -367,14 +477,15 @@ public sealed class ClientStateStoreTests
         string title,
         bool isDefault = false,
         DateTimeOffset? updatedAt = null,
-        string kind = "HumanAgent") =>
+        string kind = "HumanAgent",
+        string? activeSessionId = null) =>
         new(
             conversationId,
             agentId,
             title,
             isDefault,
             "Active",
-            null,
+            activeSessionId,
             0,
             DateTimeOffset.UtcNow.AddHours(-1),
             updatedAt ?? DateTimeOffset.UtcNow,

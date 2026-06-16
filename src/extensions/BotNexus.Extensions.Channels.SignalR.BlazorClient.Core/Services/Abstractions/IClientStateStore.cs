@@ -64,8 +64,24 @@ public interface IClientStateStore
 
     // ── Session resolution ─────────────────────────────────────────────────────
 
-    /// <summary>Register or update a session-ID → agent-ID mapping.</summary>
-    void RegisterSession(string agentId, string sessionId, string? channelType = null, string? sessionType = null);
+    /// <summary>
+    /// Register or update a session-ID → agent-ID mapping.
+    /// </summary>
+    /// <param name="agentId">The owning agent.</param>
+    /// <param name="sessionId">The session being registered.</param>
+    /// <param name="channelType">Optional channel type for the session.</param>
+    /// <param name="sessionType">Optional session type (e.g. <c>cron</c>, <c>user-agent</c>).</param>
+    /// <param name="conversationId">
+    /// The conversation this session belongs to, when known (e.g. from the <c>/api/sessions</c>
+    /// projection). When supplied, the session is bound to <em>that</em> conversation rather than
+    /// the agent's currently-active one, and the agent-global <c>SessionId</c> is only updated when
+    /// the session belongs to the active conversation. This prevents a bulk session refresh from
+    /// stamping the last-iterated session onto the wrong conversation — the root cause of steer /
+    /// abort / compact actions targeting a different conversation's session.
+    /// When <see langword="null"/>, the legacy single-establish behaviour is preserved: the session
+    /// binds to the active conversation (race fix #314).
+    /// </summary>
+    void RegisterSession(string agentId, string sessionId, string? channelType = null, string? sessionType = null, string? conversationId = null);
 
     /// <summary>Resolve a session ID to the agent ID that owns it. Returns false if unknown.</summary>
     bool TryResolveAgentBySession(string? sessionId, out string? agentId);

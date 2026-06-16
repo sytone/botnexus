@@ -50,7 +50,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             // Always pass the conversation ID — the router handles direct lookup without binding scan.
             // Removed the IsDefault special-case that previously caused duplicate thread bindings and double fan-out.
             var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow);
-            _store.RegisterSession(agentId, result.SessionId, result.ChannelType);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convIdNow);
 
             // Refresh conversation so ActiveSessionId is current
             await RefreshConversationsForAgentAsync(agentId);
@@ -61,24 +61,55 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <summary>
+    /// Resolves the (conversationId, sessionId) pair that a conversation-targeted action
+    /// (steer, follow-up, abort, redirect, reset, compact) must act on, anchored to the
+    /// <em>currently displayed</em> conversation rather than the mutable agent-global
+    /// <see cref="AgentState.SessionId"/> fallback.
+    /// </summary>
+    /// <remarks>
+    /// The portal's ChatPanel is keyed only by agent id; the displayed conversation is
+    /// <see cref="AgentState.ActiveConversationId"/>. Earlier code routed these actions through
+    /// <c>AgentState.ActiveConversationSessionId</c>, which falls back to the agent-global
+    /// <c>SessionId</c>. A bulk session refresh could leave that global pointing at an unrelated
+    /// conversation's (often idle) session, so a steer landed on the wrong conversation and was
+    /// silently dropped. Resolving the session from the displayed conversation's own
+    /// <see cref="ConversationState.ActiveSessionId"/> with no global fallback guarantees the
+    /// action targets the conversation the user is actually looking at.
+    /// Returns <see langword="false"/> when there is no active conversation or it has no bound
+    /// session yet — callers should treat that as "nothing to act on" instead of guessing.
+    /// </remarks>
+    private bool TryResolveActiveConversationTarget(string agentId, out string conversationId, out string sessionId)
+    {
+        conversationId = string.Empty;
+        sessionId = string.Empty;
+
+        var agent = _store.GetAgent(agentId);
+        if (agent?.ActiveConversationId is not { } convId)
+            return false;
+        if (agent.Conversations.GetValueOrDefault(convId) is not { ActiveSessionId: { } sid })
+            return false;
+
+        conversationId = convId;
+        sessionId = sid;
+        return true;
+    }
+
     public async Task SteerAsync(string agentId, string content)
     {
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return;
+        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+            return;
 
         AppendUserMessage(agentId, $"🔀 {content}");
 
-
         // Add entry to steering queue panel
-        if (agent.ActiveConversationId is not null)
-        {
-            var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending);
-            _store.AddSteeringEntry(agent.ActiveConversationId, entry);
-        }
+        var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending);
+        _store.AddSteeringEntry(convId, entry);
+
         try
         {
-            var result = await _hub.SteerAsync(agentId, agent.ActiveConversationSessionId!, content, agent.ActiveConversationId);
-            _store.RegisterSession(agentId, result.SessionId, result.ChannelType);
+            var result = await _hub.SteerAsync(agentId, sessionId, content, convId);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convId);
             await RefreshConversationsForAgentAsync(agentId);
         }
         catch (Exception ex)
@@ -89,21 +120,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     public async Task FollowUpAsync(string agentId, string content)
     {
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return;
+        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+            return;
 
         AppendUserMessage(agentId, content);
 
         // Add entry to steering queue panel with FollowUp kind
-        if (agent.ActiveConversationId is not null)
-        {
-            var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
-            _store.AddSteeringEntry(agent.ActiveConversationId, entry);
-        }
+        var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
+        _store.AddSteeringEntry(convId, entry);
 
         try
         {
-            await _hub.FollowUpAsync(agentId, agent.ActiveConversationSessionId!, content);
+            await _hub.FollowUpAsync(agentId, sessionId, content);
         }
         catch (Exception ex)
         {
@@ -113,12 +141,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     public async Task AbortAsync(string agentId)
     {
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return;
+        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+            return;
 
         try
         {
-            await _hub.AbortAsync(agentId, agent.ActiveConversationSessionId!);
+            await _hub.AbortAsync(agentId, sessionId);
         }
         catch (Exception ex)
         {
@@ -132,15 +160,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
     public async Task InterruptAndSteerAsync(string agentId, string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
-
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return;
+        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+            return;
 
         AppendUserMessage(agentId, "[redirect] " + message);
 
         try
         {
-            var delivered = await _hub.InterruptAndSteerAsync(agentId, agent.ActiveConversationSessionId!, message);
+            var delivered = await _hub.InterruptAndSteerAsync(agentId, sessionId, message);
             if (!delivered)
                 AppendError(agentId, "Interrupt not delivered - agent was not running.");
         }
@@ -151,12 +178,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     }
     public async Task ResetSessionAsync(string agentId)
     {
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return;
+        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+            return;
 
         try
         {
-            await _hub.ResetSessionAsync(agentId, agent.ActiveConversationSessionId!);
+            await _hub.ResetSessionAsync(agentId, sessionId);
             // Server will send SessionReset event; GatewayEventHandler handles it
         }
         catch (Exception ex)
@@ -167,19 +194,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     public async Task<CompactSessionResult?> CompactSessionAsync(string agentId)
     {
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationSessionId is null) return null;
+        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+            return null;
 
         try
         {
-            var result = await _hub.CompactSessionAsync(agentId, agent.ActiveConversationSessionId!);
+            var result = await _hub.CompactSessionAsync(agentId, sessionId);
             // Inject the canonical compaction notification locally so the user
             // sees the same _[Session context compacted: ...]_ text regardless of
             // which path (auto-compact via channel push, or this RPC) triggered
             // compaction. The gateway no longer fans this out via the SignalR
             // channel for hub-initiated compactions, so we render it here.
-            var convId = agent.ActiveConversationId;
-            if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
+            if (_store.GetConversation(convId) is { } conv)
             {
                 var notificationText = result.Succeeded
                     ? $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_"
@@ -668,7 +694,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             _store.SeedConversations(agentId, list);
 
             foreach (var session in sessionsTask.Result)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
 
             // Fetch canvas for the auto-selected conversation on initial load (#383)
             var agent = _store.GetAgent(agentId);

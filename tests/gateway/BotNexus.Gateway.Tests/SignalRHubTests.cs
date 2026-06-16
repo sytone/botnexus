@@ -377,10 +377,13 @@ public sealed class SignalRHubTests
     {
         const string requestedSessionId = "session-steer-target";
 
-        var handle = Mock.Of<IAgentHandle>();
+        // A RUNNING handle is required for a steer to be applied (a steer only makes sense against
+        // an in-flight turn). The hub resolves the live handle via GetHandle first.
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(true);
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle);
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(handle.Object);
 
         var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1");
 
@@ -388,16 +391,17 @@ public sealed class SignalRHubTests
 
         result.SessionId.ShouldBe(requestedSessionId);
         // Verify SteerAsync was called on the handle with the content
-        Mock.Get(handle).Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
+        handle.Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task GatewayHub_Steer_SetsConversationIdOnDispatchedMessage()
     {
-        var handle = Mock.Of<IAgentHandle>();
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(true);
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle);
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(handle.Object);
         var activity = new Mock<IActivityBroadcaster>();
 
         var hub = CreateHub(supervisor: supervisor.Object, activity: activity.Object, connectionId: "conn-1");
@@ -408,6 +412,61 @@ public sealed class SignalRHubTests
         activity.Verify(a => a.PublishAsync(
             It.Is<GatewayActivity>(ga => ga.Type == GatewayActivityType.SteeringInjected && ga.ConversationId == "conv-42"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GatewayHub_Steer_WhenAgentNotRunning_DoesNotInjectOrPersist()
+    {
+        // Dead-letter guard: steering a session whose handle is idle must NOT enqueue the message
+        // (an idle handle's PendingMessageQueue is never drained) nor persist it to history.
+        // Regression for the production bug where a steer mis-routed to an unrelated idle session
+        // was silently swallowed.
+        var idleHandle = new Mock<IAgentHandle>();
+        idleHandle.SetupGet(h => h.IsRunning).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>();
+        // GetHandle returns the idle handle; GetOrCreateAsync (race fallback) returns the same.
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(idleHandle.Object);
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(idleHandle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var hub = CreateHub(supervisor: supervisor.Object, sessions: sessions, connectionId: "conn-1");
+
+        await hub.Steer(AgentId.From("agent-a"), SessionId.From("idle-sess"), "nudge", "conv-1");
+
+        // The steer is NOT injected into the idle handle.
+        idleHandle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // And the message is NOT persisted into the (would-be phantom) session.
+        var persisted = await sessions.GetAsync(SessionId.From("idle-sess"), CancellationToken.None);
+        (persisted is null || persisted.Session.History.Count == 0).ShouldBeTrue(
+            "A steer against an idle agent must not be persisted into session history.");
+    }
+
+    [Fact]
+    public async Task GatewayHub_Steer_WhenAgentNotRunning_PublishesErrorActivity()
+    {
+        // The user must get a clear signal instead of the steer silently vanishing.
+        var idleHandle = new Mock<IAgentHandle>();
+        idleHandle.SetupGet(h => h.IsRunning).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(idleHandle.Object);
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(idleHandle.Object);
+        var activity = new Mock<IActivityBroadcaster>();
+
+        var hub = CreateHub(supervisor: supervisor.Object, activity: activity.Object, connectionId: "conn-1");
+
+        await hub.Steer(AgentId.From("agent-a"), SessionId.From("idle-sess"), "nudge", "conv-1");
+
+        activity.Verify(a => a.PublishAsync(
+            It.Is<GatewayActivity>(ga => ga.Type == GatewayActivityType.Error && ga.ConversationId == "conv-1"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // SteeringInjected must NOT be published.
+        activity.Verify(a => a.PublishAsync(
+            It.Is<GatewayActivity>(ga => ga.Type == GatewayActivityType.SteeringInjected),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

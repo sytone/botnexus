@@ -669,7 +669,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         {
             var result = await _hub.SubscribeAllAsync();
             foreach (var session in result.Sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType);
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
         }
         catch (Exception ex)
         {
