@@ -375,7 +375,7 @@ public sealed class ClientStateStore : IClientStateStore
     // ── Session resolution ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public void RegisterSession(string agentId, string sessionId, string? channelType = null, string? sessionType = null)
+    public void RegisterSession(string agentId, string sessionId, string? channelType = null, string? sessionType = null, string? conversationId = null)
     {
         _sessionToAgent[sessionId] = agentId;
         if (!_agents.TryGetValue(agentId, out var agent))
@@ -387,29 +387,51 @@ public sealed class ClientStateStore : IClientStateStore
         // sessions (including cron) and the last one processed would stamp agent.SessionId.
         var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase)
             || (!string.IsNullOrWhiteSpace(sessionId) && sessionId.StartsWith("cron:", StringComparison.Ordinal));
-        if (!isCron)
-        {
-            agent.SessionId = sessionId;
-            if (channelType is not null)
-                agent.ChannelType = channelType;
-            if (sessionType is not null)
-                agent.SessionType = sessionType;
-            // Immediately bind session to active conversation so TryResolveConversationBySession works
-            // without waiting for the async REST refresh. This eliminates the race condition (#314)
-            // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
-            if (agent.ActiveConversationId is not null &&
-                agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
-                !activeConv.IsVirtualSession)
-            {
-                activeConv.ActiveSessionId = sessionId;
-            }
-        }
-        else
+        if (isCron)
         {
             // For cron sessions, only update the virtual conversation projection if it exists.
             // Never touch agent.SessionId or a real user conversation.
             if (channelType is not null)
                 agent.ChannelType ??= channelType;
+            return;
+        }
+
+        if (channelType is not null)
+            agent.ChannelType = channelType;
+        if (sessionType is not null)
+            agent.SessionType = sessionType;
+
+        // When the caller knows which conversation this session belongs to (e.g. the bulk
+        // /api/sessions refresh, where each SessionSummary carries its conversationId), bind the
+        // session to THAT conversation and only touch the agent-global SessionId / active-conv
+        // binding when the session actually belongs to the active conversation.
+        //
+        // The previous logic always stamped agent.SessionId = sessionId AND bound the session to
+        // the *active* conversation regardless of ownership. In a loop over every session that left
+        // agent.SessionId pointing at the last-iterated session and overwrote the active
+        // conversation's ActiveSessionId with the wrong value — causing steer / abort / compact to
+        // target a different conversation's (often idle) session. See steer-routing fix.
+        if (conversationId is not null)
+        {
+            if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsVirtualSession)
+                ownerConv.ActiveSessionId = sessionId;
+
+            // Only the active conversation's session should drive the agent-global fallback.
+            if (string.Equals(conversationId, agent.ActiveConversationId, StringComparison.Ordinal))
+                agent.SessionId = sessionId;
+
+            return;
+        }
+
+        // Legacy single-establish path (conversationId unknown): bind to the active conversation.
+        // This is the #314 race fix — a freshly established session (e.g. from a SendMessage
+        // result) is immediately bound so MessageStart can resolve it before the REST refresh.
+        agent.SessionId = sessionId;
+        if (agent.ActiveConversationId is not null &&
+            agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
+            !activeConv.IsVirtualSession)
+        {
+            activeConv.ActiveSessionId = sessionId;
         }
     }
 

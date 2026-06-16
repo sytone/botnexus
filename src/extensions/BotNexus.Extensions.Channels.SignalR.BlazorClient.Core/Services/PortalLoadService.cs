@@ -72,7 +72,7 @@ public sealed class PortalLoadService : IPortalLoadService
 
             var sessions = await _restClient.GetSessionsAsync(cancellationToken: cancellationToken);
             foreach (var session in sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
 
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
@@ -115,7 +115,7 @@ public sealed class PortalLoadService : IPortalLoadService
 
             var subscribeResult = await _hub.SubscribeAllAsync();
             foreach (var session in subscribeResult.Sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType);
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
 
             _ = _eventHandler; // force construction so hub event subscriptions are active
 
@@ -255,7 +255,7 @@ public sealed class PortalLoadService : IPortalLoadService
                 await _hub.ConnectAsync(_hubUrl);
                 var subscribeResult = await _hub.SubscribeAllAsync();
                 foreach (var session in subscribeResult.Sessions)
-                    _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType);
+                    _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
             }
 
             _store.NotifyChanged();
