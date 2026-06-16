@@ -581,6 +581,25 @@ public sealed class ConversationsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Gets the current per-conversation todo state (the raw <c>TodoJson</c> payload) for a
+    /// conversation, so the portal Todo panel can hydrate on initial load (#1464 step 5).
+    /// Returns 204 when the conversation has no todo state.
+    /// </summary>
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/todo")]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetTodo(string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        if (string.IsNullOrEmpty(conversation.TodoJson))
+            return NoContent();
+        return Content(conversation.TodoJson, "application/json");
+    }
+
     /// <summary>Pins a conversation to the top of the list.</summary>
     [HttpPost("{conversationId}/pin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

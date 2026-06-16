@@ -59,9 +59,17 @@
         }
 
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
+                 data-testid="agent-panel-canvas"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
                  role="tabpanel">
             <CanvasPanel AgentId="@AgentId" ConversationId="@Agent?.ActiveConversationId" />
+        </section>
+
+        <section id="@GetPanelId(AgentPanelTab.Todo)"
+                 data-testid="agent-panel-todo"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Todo) ? "active" : "")"
+                 role="tabpanel">
+            <TodoPanel AgentId="@AgentId" ConversationId="@Agent?.ActiveConversationId" />
         </section>
     </div>
 </div>
@@ -86,7 +94,8 @@
         (AgentPanelTab.Conversation, "Conversation", "💬"),
         (AgentPanelTab.Workspace, "Workspace", "📁"),
         (AgentPanelTab.Reports, "Reports", "📊"),
-        (AgentPanelTab.Canvas, "Canvas", "🎨")
+        (AgentPanelTab.Canvas, "Canvas", "🎨"),
+        (AgentPanelTab.Todo, "Todo", "✅")
     ];
 
     private AgentState? CurrentAgent => Store.GetAgent(AgentId);
@@ -210,13 +219,15 @@
             "workspace" => AgentPanelTab.Workspace,
             "reports" => AgentPanelTab.Reports,
             "canvas" => AgentPanelTab.Canvas,
+            "todo" => AgentPanelTab.Todo,
             _ => AgentPanelTab.Conversation
         };
 
         return value.Equals("conversation", StringComparison.OrdinalIgnoreCase)
                || value.Equals("workspace", StringComparison.OrdinalIgnoreCase)
                || value.Equals("reports", StringComparison.OrdinalIgnoreCase)
-               || value.Equals("canvas", StringComparison.OrdinalIgnoreCase);
+               || value.Equals("canvas", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("todo", StringComparison.OrdinalIgnoreCase);
     }
 
     private enum AgentPanelTab
@@ -224,6 +235,7 @@
         Conversation,
         Workspace,
         Reports,
-        Canvas
+        Canvas,
+        Todo
     }
 }

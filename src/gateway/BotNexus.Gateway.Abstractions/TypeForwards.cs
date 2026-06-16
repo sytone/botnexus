@@ -59,6 +59,7 @@
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Conversations.IConversationChangeNotifier))]
 
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentCanvasNotifier))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentTodoNotifier))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentRegistry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentToolFactory))]

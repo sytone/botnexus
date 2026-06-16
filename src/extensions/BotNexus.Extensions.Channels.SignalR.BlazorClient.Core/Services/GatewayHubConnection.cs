@@ -78,6 +78,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when a canvas state key is changed or cleared.</summary>
     public event Action<string, string, object?>? OnCanvasStateChanged;
 
+    /// <summary>Raised when a conversation's persisted todo state changes (raw TodoJson, or null when cleared).</summary>
+    public event Action<string, string, string?>? OnTodoUpdated;
+
     /// <summary>Raised when a conversation is created, updated, or archived on the server.</summary>
     public event Action<ConversationChangedPayload>? OnConversationChanged;
 
@@ -142,6 +145,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SteeringFeedbackPayload>("SteeringFeedback", p => OnSteeringFeedback?.Invoke(p));
         _connection.On<string, string, string>("CanvasUpdated", (agentId, conversationId, html) => OnCanvasUpdated?.Invoke(agentId, conversationId, html));
         _connection.On<string, string, object?>("CanvasStateChanged", (conversationId, key, value) => OnCanvasStateChanged?.Invoke(conversationId, key, value));
+        _connection.On<string, string, string?>("TodoUpdated", (agentId, conversationId, todoJson) => OnTodoUpdated?.Invoke(agentId, conversationId, todoJson));
         _connection.On<AgentsChangedPayload>("AgentsChanged", p => OnAgentsChanged?.Invoke(p));
                 _connection.On<ConversationChangedPayload>("ConversationChanged", p => OnConversationChanged?.Invoke(p));
 

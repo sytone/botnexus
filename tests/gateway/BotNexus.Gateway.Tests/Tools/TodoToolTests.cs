@@ -267,6 +267,104 @@ public sealed class TodoToolTests
             .ShouldContain("Todo list is empty");
     }
 
+    // ── live-update broadcast (#1464 step 5) ────────────────────────────
+
+    [Fact]
+    public async Task Write_BroadcastsTodoUpdate_WithAgentAndConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var convId = ConversationId.Create();
+        await store.CreateAsync(new Conversation
+        {
+            ConversationId = convId,
+            AgentId = AgentId.From("agent-broadcast"),
+            Title = "Todo broadcast",
+        });
+
+        var notifier = new CapturingTodoNotifier();
+        var tool = new TodoTool(convId, store, AgentId.From("agent-broadcast"), [notifier]);
+
+        await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["action"] = "write",
+            ["items"] = ItemsJson("""[{ "text": "broadcast me" }]"""),
+        });
+
+        notifier.Calls.Count.ShouldBe(1);
+        notifier.Calls[0].AgentId.ShouldBe("agent-broadcast");
+        notifier.Calls[0].ConversationId.ShouldBe(convId.Value);
+        notifier.Calls[0].TodoJson.ShouldNotBeNull();
+        notifier.Calls[0].TodoJson!.ShouldContain("broadcast me");
+    }
+
+    [Fact]
+    public async Task Clear_BroadcastsNullTodoJson()
+    {
+        var store = new InMemoryConversationStore();
+        var convId = ConversationId.Create();
+        await store.CreateAsync(new Conversation
+        {
+            ConversationId = convId,
+            AgentId = AgentId.From("agent-clear"),
+            Title = "Todo clear",
+        });
+
+        var notifier = new CapturingTodoNotifier();
+        var tool = new TodoTool(convId, store, AgentId.From("agent-clear"), [notifier]);
+        await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["action"] = "write",
+            ["items"] = ItemsJson("""[{ "text": "temp" }]"""),
+        });
+        await ExecuteAsync(tool, new Dictionary<string, object?> { ["action"] = "clear" });
+
+        // write then clear => 2 broadcasts; the last carries null (empty list serializes to null).
+        notifier.Calls.Count.ShouldBe(2);
+        notifier.Calls[^1].TodoJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Broadcast_FailureDoesNotFailTheToolCall()
+    {
+        var store = new InMemoryConversationStore();
+        var convId = ConversationId.Create();
+        await store.CreateAsync(new Conversation
+        {
+            ConversationId = convId,
+            AgentId = AgentId.From("agent-throw"),
+            Title = "Todo throw",
+        });
+
+        var tool = new TodoTool(convId, store, AgentId.From("agent-throw"), [new ThrowingTodoNotifier()]);
+
+        // The notifier throws, but the write must still succeed and persist.
+        var result = await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["action"] = "write",
+            ["items"] = ItemsJson("""[{ "text": "survives broadcast failure" }]"""),
+        });
+
+        ReadText(result).ShouldContain("Todo list set with 1 item(s)");
+        TodoTool.Parse((await store.GetAsync(convId))!.TodoJson).Count.ShouldBe(1);
+    }
+
+    private sealed class CapturingTodoNotifier : BotNexus.Gateway.Abstractions.Agents.IAgentTodoNotifier
+    {
+        public List<(string AgentId, string ConversationId, string? TodoJson)> Calls { get; } = [];
+
+        public Task NotifyTodoUpdatedAsync(string agentId, string conversationId, string? todoJson, CancellationToken cancellationToken = default)
+        {
+            Calls.Add((agentId, conversationId, todoJson));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingTodoNotifier : BotNexus.Gateway.Abstractions.Agents.IAgentTodoNotifier
+    {
+        public Task NotifyTodoUpdatedAsync(string agentId, string conversationId, string? todoJson, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("transport down");
+    }
+
     private static System.Text.Json.JsonElement ItemsJson(string json)
         => System.Text.Json.JsonDocument.Parse(json).RootElement.Clone();
 

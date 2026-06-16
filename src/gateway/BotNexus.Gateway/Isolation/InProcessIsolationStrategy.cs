@@ -394,6 +394,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Per-conversation todo list (#1464 step 2). Resolved per conversation exactly like the
             // canvas tool so the plan state is anchored to the bound conversation; no-ops safely when
             // there is no conversation context.
+            var todoNotifiers = _serviceProvider.GetServices<IAgentTodoNotifier>().ToArray();
             ConversationId? todoConversationId = null;
             var todoConvStore = _serviceProvider.GetService<IConversationStore>();
             if (todoConvStore is not null)
@@ -401,7 +402,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 todoConversationId = await GetConversationIdAsync(todoConvStore, sessionStore)
                     .ConfigureAwait(false);
             }
-            tools.Add(new TodoTool(todoConversationId, todoConvStore));
+            tools.Add(new TodoTool(todoConversationId, todoConvStore, descriptor.AgentId, todoNotifiers));
         }
 
         List<object> extensionResourcesToDispose = [];

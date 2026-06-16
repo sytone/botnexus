@@ -103,6 +103,13 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken ct = default);
 
+    /// <summary>GET /api/agents/{agentId}/conversations/{conversationId}/todo</summary>
+    /// <returns>The raw TodoJson document string, or null if the conversation has no todo state.</returns>
+    Task<string?> GetConversationTodoAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken ct = default);
+
     /// <summary>GET /api/extensions/details — lists all loaded extensions with full manifest detail.</summary>
     Task<IReadOnlyList<ExtensionDetailDto>> GetExtensionDetailsAsync(CancellationToken cancellationToken = default);
 
