@@ -249,6 +249,9 @@ public sealed class ChatPanelTests : IDisposable
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
         _store.SetActiveConversation("agent-1", "conv-1");
         _store.AppendMessage("conv-1", new ChatMessage("User", "Hello from user!", DateTimeOffset.UtcNow));
+        // #1475: user messages now render through the Markdown pipeline (plain text still shows verbatim).
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p>Hello from user!</p>");
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
@@ -770,5 +773,81 @@ public sealed class ChatPanelTests : IDisposable
 
         Assert.Empty(cut.FindAll(".thinking-block"));
         Assert.Single(cut.FindAll(".message.assistant"));
+    }
+
+    // #1475: user messages must render through the same Markdown pipeline as assistant messages.
+    [Fact]
+    public void Renders_user_message_as_markdown_markup()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "**bold**", DateTimeOffset.UtcNow));
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>bold</strong></p>");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // The user message bubble must render the sanitized HTML (msg-content), not the raw markdown source.
+        var userBubble = cut.Find(".message.user");
+        Assert.Contains("<strong>bold</strong>", userBubble.InnerHtml);
+        Assert.DoesNotContain("**bold**", userBubble.InnerHtml);
+    }
+
+    [Fact]
+    public void Renders_user_message_through_render_markdown_js()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "- a\n- b", DateTimeOffset.UtcNow));
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<ul><li>a</li><li>b</li></ul>");
+
+        _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Contains(_ctx.JSInterop.Invocations, i =>
+            i.Identifier == "BotNexus.renderMarkdown"
+            && i.Arguments.Count == 1
+            && i.Arguments[0] is string s && s == "- a\n- b");
+    }
+
+    [Fact]
+    public void Attaches_code_copy_buttons_after_rendering_user_markdown()
+    {
+        // Acceptance criteria: code blocks in user messages get the existing code-copy button treatment
+        // (BotNexus.attachCodeCopyButtons runs over the rendered container) without adding the
+        // message-level header copy button (.msg-copy-btn stays assistant-only).
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "```csharp\nx();\n```", DateTimeOffset.UtcNow));
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<pre><code>x();</code></pre>");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // User code renders through markdown (msg-content), and the code-copy hook runs.
+        var userBubble = cut.Find(".message.user");
+        Assert.Contains("<pre><code>x();</code></pre>", userBubble.InnerHtml);
+        Assert.Contains(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.attachCodeCopyButtons");
+        // The whole-message header copy button stays assistant-only (#1475 does not change it).
+        Assert.Empty(userBubble.QuerySelectorAll(".msg-copy-btn"));
+    }
+
+    [Fact]
+    public void Does_not_render_system_message_as_markdown_markup()
+    {
+        // System/Tool/Error rendering must be unchanged (not routed through the markdown cache).
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("System", "**not rendered**", DateTimeOffset.UtcNow));
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>not rendered</strong></p>");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Contains("**not rendered**", cut.Markup);
     }
 }
