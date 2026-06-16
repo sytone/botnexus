@@ -52,17 +52,41 @@ else
             // JS interop may not be available in all error scenarios.
         }
 
+        var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
+
         var report = new ChannelErrorReportDto
         {
             Message = exception.Message,
             StackTrace = exception.StackTrace,
+            // ErrorBoundary does not expose Blazor's component render stack, so carry
+            // the exception type and inner-exception chain as the closest equivalent
+            // diagnostic context (#1481 stretch goal -- align with the server-logged field).
+            ComponentStack = BuildComponentStack(exception),
             Timestamp = DateTimeOffset.UtcNow,
             AgentId = Store.ActiveAgentId,
+            // Prefer the active conversation's session so logged reports carry the
+            // session the user was actually in when the error surfaced.
+            SessionId = activeAgent?.ActiveConversationSessionId ?? activeAgent?.SessionId,
             Url = url,
             UserAgent = ua,
         };
 
         await ErrorReporter.ReportAsync(report);
+    }
+
+    private static string BuildComponentStack(Exception exception)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(exception.GetType().FullName);
+        var inner = exception.InnerException;
+        var depth = 0;
+        while (inner is not null && depth < 5)
+        {
+            sb.Append(" -> ").Append(inner.GetType().FullName);
+            inner = inner.InnerException;
+            depth++;
+        }
+        return sb.ToString();
     }
 
     private void ToggleDetail() => _showDetail = !_showDetail;
