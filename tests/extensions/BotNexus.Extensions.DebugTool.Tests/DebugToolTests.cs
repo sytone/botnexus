@@ -114,9 +114,35 @@ public sealed class DebugToolTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private DebugTool CreateTool(DebugToolConfig? config = null, IRuntimeStateProvider? runtimeProvider = null)
+    /// <summary>
+    /// Inserts a single <c>session_history</c> row into the test database. Used by the secret
+    /// redaction tests to seed content that contains a secret-shaped token.
+    /// </summary>
+    private void InsertHistoryRow(string sessionId, int sequenceId, string role, string content)
     {
-        return new DebugTool(_dbPath, _agentId, config ?? new DebugToolConfig(), runtimeProvider);
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Mode = SqliteOpenMode.ReadWrite
+        }.ToString();
+        using var connection = new SqliteConnection(connectionString);
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "INSERT INTO session_history (session_id, sequence_id, role, content, timestamp) VALUES (@s, @q, @r, @c, @t)";
+        cmd.Parameters.AddWithValue("@s", sessionId);
+        cmd.Parameters.AddWithValue("@q", sequenceId);
+        cmd.Parameters.AddWithValue("@r", role);
+        cmd.Parameters.AddWithValue("@c", content);
+        cmd.Parameters.AddWithValue("@t", "2024-01-01T00:05:00Z");
+        cmd.ExecuteNonQuery();
+    }
+
+    private DebugTool CreateTool(
+        DebugToolConfig? config = null,
+        IRuntimeStateProvider? runtimeProvider = null,
+        BotNexus.Gateway.Abstractions.Security.ISecretRedactor? secretRedactor = null)
+    {
+        return new DebugTool(_dbPath, _agentId, config ?? new DebugToolConfig(), runtimeProvider, secretRedactor);
     }
 
     private static IReadOnlyDictionary<string, object?> Args(string action, params (string key, string value)[] extras)
@@ -457,6 +483,80 @@ public sealed class DebugToolTests : IDisposable
         var result = await tool.ExecuteAsync("tc1", Args("runtime_status"));
         Assert.False(IsError(result));
         Assert.Contains("active_sessions", TextOf(result));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // secret redaction (#1494)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task QueryHistory_RedactsSecretShapedValues_WhenRedactorSupplied()
+    {
+        // sess-1 history holds a row whose content embeds a secret token. The redactor must scrub
+        // it from the serialized query output before it reaches the agent.
+        const string secret = "ghp_0123456789abcdefABCDEF0123456789abcd";
+        InsertHistoryRow("sess-1", 5, "assistant", $"here is the token {secret} for you");
+
+        var redactor = new FakeSecretRedactor(secret);
+        var tool = CreateTool(secretRedactor: redactor);
+
+        var result = await tool.ExecuteAsync("tc1", Args("query_history", ("session_id", "sess-1")));
+
+        Assert.False(IsError(result));
+        Assert.True(redactor.WasInvoked);
+        Assert.DoesNotContain(secret, TextOf(result));
+        Assert.Contains("[REDACTED]", TextOf(result));
+    }
+
+    [Fact]
+    public async Task QueryHistory_DoesNotRedact_WhenNoRedactorSupplied()
+    {
+        // Without a redactor the tool is a no-op pass-through (optional dependency). This pins the
+        // null-safe default so a test/host that omits the redactor still gets verbatim output.
+        const string secret = "ghp_0123456789abcdefABCDEF0123456789abcd";
+        InsertHistoryRow("sess-1", 6, "assistant", $"token {secret} verbatim");
+
+        var tool = CreateTool(secretRedactor: null);
+
+        var result = await tool.ExecuteAsync("tc1", Args("query_history", ("session_id", "sess-1")));
+
+        Assert.False(IsError(result));
+        Assert.Contains(secret, TextOf(result));
+    }
+
+    [Fact]
+    public async Task RawSql_RedactsSecretShapedValues_WhenRedactorSupplied()
+    {
+        const string secret = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv";
+        InsertHistoryRow("sess-1", 7, "user", $"my key is {secret}");
+
+        var redactor = new FakeSecretRedactor(secret);
+        var config = new DebugToolConfig { AllowRawSql = true };
+        var tool = CreateTool(config: config, secretRedactor: redactor);
+
+        var result = await tool.ExecuteAsync("tc1", Args("raw_sql",
+            ("sql", "SELECT content FROM session_history WHERE session_id = 'sess-1'")));
+
+        Assert.False(IsError(result));
+        Assert.True(redactor.WasInvoked);
+        Assert.DoesNotContain(secret, TextOf(result));
+        Assert.Contains("[REDACTED]", TextOf(result));
+    }
+
+    [Fact]
+    public async Task RuntimeStatus_RedactsSecretShapedValues_WhenRedactorSupplied()
+    {
+        const string secret = "ghp_0123456789abcdefABCDEF0123456789abcd";
+        var provider = new FakeRuntimeStateProvider($"{{ \"auth_token\": \"{secret}\" }}");
+        var redactor = new FakeSecretRedactor(secret);
+        var tool = CreateTool(runtimeProvider: provider, secretRedactor: redactor);
+
+        var result = await tool.ExecuteAsync("tc1", Args("runtime_status"));
+
+        Assert.False(IsError(result));
+        Assert.True(redactor.WasInvoked);
+        Assert.DoesNotContain(secret, TextOf(result));
+        Assert.Contains("[REDACTED]", TextOf(result));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -829,5 +929,21 @@ public sealed class DebugToolTests : IDisposable
     private sealed class FakeRuntimeStateProvider(string status) : IRuntimeStateProvider
     {
         public string GetRuntimeStatus() => status;
+    }
+
+    /// <summary>
+    /// Minimal redactor that replaces every occurrence of a known token with <c>[REDACTED]</c>.
+    /// Lets the redaction tests assert the data path without depending on the concrete
+    /// <c>SecretRedactor</c> regex patterns.
+    /// </summary>
+    private sealed class FakeSecretRedactor(string secret) : BotNexus.Gateway.Abstractions.Security.ISecretRedactor
+    {
+        public bool WasInvoked { get; private set; }
+
+        public string Redact(string input)
+        {
+            WasInvoked = true;
+            return input.Replace(secret, "[REDACTED]");
+        }
     }
 }
