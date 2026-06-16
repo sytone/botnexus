@@ -27,7 +27,7 @@ public sealed record RuntimeInfo
     public string? SessionKey { get; init; }
 }
 
-public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null);
+public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null, string? Todo = null);
 
 public sealed record SystemPromptParams
 {
@@ -132,6 +132,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
             .Add(new LambdaPromptSection(125, BuildConversationContextSection, HasConversationContext))
             .Add(new LambdaPromptSection(127, BuildConversationInstructionsSection, HasConversationInstructions))
+            .Add(new LambdaPromptSection(128, BuildConversationTodoSection, HasConversationTodo, xmlTag: "conversation_todo"))
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(ModelGuidanceSection.Create())
             .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
@@ -598,6 +599,21 @@ public static class SystemPromptBuilder
             "## Conversation Instructions",
             conversationContext.Instructions!
         ];
+    }
+
+    private static bool HasConversationTodo(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext;
+        return conversationContext is not null
+               && TodoPromptFormatter.BuildSection(conversationContext.Todo).Count > 0;
+    }
+
+    private static IReadOnlyList<string> BuildConversationTodoSection(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext
+            ?? throw new InvalidOperationException("ConversationContext is required for BuildConversationTodoSection.");
+
+        return TodoPromptFormatter.BuildSection(conversationContext.Todo);
     }
 
     private sealed class LambdaPromptSection(

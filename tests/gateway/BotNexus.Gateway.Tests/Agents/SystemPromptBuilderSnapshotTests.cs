@@ -106,6 +106,50 @@ public sealed class SystemPromptBuilderSnapshotTests
     }
 
     [Fact]
+    public void Build_ShouldIncludeConversationTodoSectionWhenItemsExist()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ConversationContext = new ConversationContext(
+                "conversation-123",
+                "Release Planning",
+                Purpose: null,
+                Instructions: null,
+                Todo: """
+                    { "items": [
+                      { "text": "create the conversation", "status": "done" },
+                      { "text": "launch sub-agents", "status": "in_progress" }
+                    ] }
+                    """)
+        });
+
+        prompt.ShouldContain("<conversation_todo>");
+        prompt.ShouldContain("## Conversation Todo");
+        prompt.ShouldContain("[x] create the conversation");
+        prompt.ShouldContain("[~] launch sub-agents");
+        prompt.ShouldContain("</conversation_todo>");
+    }
+
+    [Fact]
+    public void Build_ShouldOmitConversationTodoSectionWhenNoItems()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ConversationContext = new ConversationContext(
+                "conversation-123",
+                "Release Planning",
+                Purpose: "Coordinate sprint planning",
+                Instructions: null,
+                Todo: null)
+        });
+
+        prompt.ShouldNotContain("## Conversation Todo");
+        prompt.ShouldNotContain("<conversation_todo>");
+    }
+
+    [Fact]
     public void Build_MinimalMode_DoesNotIncludeReplyTagsByDefault()
     {
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
