@@ -110,7 +110,7 @@ else
                 else
                 {
                     <div class="message @GetMessageClass(msg)">
-                        @if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                        @if (ShouldRenderAsMarkdown(msg.Role) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                         {
                             <div class="message-content">@((MarkupString)rendered)</div>
                         }
@@ -211,6 +211,12 @@ else
     private bool _showNewSessionConfirm;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
+
+    // #1475: user and assistant messages both render through the Markdown pipeline.
+    // Platform-generated roles (System, Tool, Error, Notification) stay on raw text rendering.
+    private static bool ShouldRenderAsMarkdown(string? role) =>
+        string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "user", StringComparison.OrdinalIgnoreCase);
     private ChatMessage? _modalToolMessage;
     private DotNetObjectReference<Chat>? _dotNetRef;
     private bool _appResumeListenerRegistered;
@@ -548,7 +554,7 @@ else
         var needsRender = false;
         foreach (var msg in Store.GetMessages(activeConvId))
         {
-            if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && !_markdownCache.ContainsKey(msg.Id))
+            if (ShouldRenderAsMarkdown(msg.Role) && !string.IsNullOrEmpty(msg.Content) && !_markdownCache.ContainsKey(msg.Id))
             {
                 try
                 {

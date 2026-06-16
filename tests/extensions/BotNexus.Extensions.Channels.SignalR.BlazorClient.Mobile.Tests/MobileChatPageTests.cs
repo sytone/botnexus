@@ -269,4 +269,65 @@ public sealed class MobileChatPageTests : IDisposable
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
+    // -- #1475: user messages render through the Markdown pipeline on mobile -----
+
+    [Fact]
+    public void Renders_user_message_as_markdown_markup_on_mobile()
+    {
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "conv-1",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.ActiveAgentId.Returns("agent-1");
+        _store.GetAgent("agent-1").Returns(agent);
+        var messages = new List<ChatMessage> { new("user", "**bold**", DateTimeOffset.UtcNow) };
+        _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>bold</strong></p>");
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        // Markdown caching runs in response to store changes (streaming/load), so fire one.
+        _store.OnChanged += Raise.Event<Action>();
+
+        // The render markdown JS must be invoked for the user message...
+        Assert.Contains(_ctx.JSInterop.Invocations, i =>
+            i.Identifier == "BotNexus.renderMarkdown"
+            && i.Arguments.Count == 1
+            && i.Arguments[0] is string s && s == "**bold**");
+        // ...and the bubble renders the sanitized HTML rather than the raw markdown source.
+        Assert.Contains("<strong>bold</strong>", cut.Markup);
+        Assert.DoesNotContain("**bold**", cut.Markup);
+    }
+
+    [Fact]
+    public void Does_not_render_system_message_as_markdown_markup_on_mobile()
+    {
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "conv-1",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.ActiveAgentId.Returns("agent-1");
+        _store.GetAgent("agent-1").Returns(agent);
+        var messages = new List<ChatMessage> { new("system", "**not rendered**", DateTimeOffset.UtcNow) };
+        _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>not rendered</strong></p>");
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        _store.OnChanged += Raise.Event<Action>();
+
+        // System messages stay on raw text rendering.
+        Assert.Contains("**not rendered**", cut.Markup);
+    }
+
 }
