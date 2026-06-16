@@ -651,6 +651,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureTodoJsonColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
@@ -762,6 +763,32 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var canvasAlterCommand = connection.CreateCommand();
         canvasAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN canvas_html TEXT;";
         await canvasAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureTodoJsonColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasTodoColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "todo_json", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasTodoColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasTodoColumn)
+            return;
+
+        await using var todoAlterCommand = connection.CreateCommand();
+        todoAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN todo_json TEXT;";
+        await todoAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     private static async Task EnsureInitiatorColumnAsync(SqliteConnection connection, CancellationToken ct)
@@ -1034,7 +1061,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json
             FROM conversations
             WHERE id = $id
             """;
@@ -1061,7 +1088,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent,
             WorldId = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : string.Empty,
             IsPinned = reader.FieldCount > 15 && !reader.IsDBNull(15) && reader.GetInt64(15) != 0,
-            PinnedAt = reader.FieldCount > 16 && !reader.IsDBNull(16) ? ParseTimestamp(reader.GetString(16)) : null
+            PinnedAt = reader.FieldCount > 16 && !reader.IsDBNull(16) ? ParseTimestamp(reader.GetString(16)) : null,
+            TodoJson = reader.FieldCount > 17 && !reader.IsDBNull(17) ? reader.GetString(17) : null
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -1160,8 +1188,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1178,11 +1206,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     kind = excluded.kind,
                     world_id = excluded.world_id,
                     is_pinned = excluded.is_pinned,
-                    pinned_at = excluded.pinned_at
+                    pinned_at = excluded.pinned_at,
+                    todo_json = excluded.todo_json
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1201,6 +1230,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$worldId", conversation.WorldId ?? string.Empty);
         conversationCommand.Parameters.AddWithValue("$isPinned", conversation.IsPinned ? 1 : 0);
         conversationCommand.Parameters.AddWithValue("$pinnedAt", conversation.PinnedAt.HasValue ? (object)conversation.PinnedAt.Value.ToString("O") : DBNull.Value);
+        conversationCommand.Parameters.AddWithValue("$todoJson", conversation.TodoJson is null ? (object)DBNull.Value : conversation.TodoJson);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -1299,6 +1329,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Purpose = conversation.Purpose,
             Instructions = conversation.Instructions,
             CanvasHtml = conversation.CanvasHtml,
+            TodoJson = conversation.TodoJson,
             Initiator = conversation.Initiator,
             Kind = conversation.Kind,
             WorldId = conversation.WorldId,

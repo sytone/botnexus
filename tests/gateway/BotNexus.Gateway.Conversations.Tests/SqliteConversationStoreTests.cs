@@ -327,6 +327,42 @@ public sealed class SqliteConversationStoreTests
         conv!.Status.ShouldBe(ConversationStatus.Active);
     }
 
+    [Fact]
+    public async Task TodoJson_Persists_AcrossStoreReopen()
+    {
+        // Verifies the todo_json column survives a real DB reopen (issue #1464 Step 1/6):
+        // write via one store instance, read via a fresh instance on the same temp DB file,
+        // which also exercises the EnsureTodoJsonColumnAsync migration-on-open path.
+        using var fixture = new StoreFixture();
+        const string todo = "{\"items\":[{\"id\":\"x\",\"text\":\"launch sub-agents\",\"status\":\"in_progress\"}]}";
+
+        var seedStore = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-todo"), "todo-convo");
+        conversation.TodoJson = todo;
+        await seedStore.CreateAsync(conversation);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBe(todo);
+    }
+
+    [Fact]
+    public async Task TodoJson_NullForPreExistingRowsWithoutColumn()
+    {
+        // A conversation created without setting TodoJson reads back as null even though
+        // the column exists — proving the absence of todo state is represented as NULL.
+        using var fixture = new StoreFixture();
+        var seedStore = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-a"), "no-todo");
+        await seedStore.CreateAsync(conversation);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.TodoJson.ShouldBeNull();
+    }
+
     private static AgentId Agent(string id) => AgentId.From(id);
 
     // ── Initiator + ListForCitizenAsync ────────────────────────────────────────
