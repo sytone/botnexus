@@ -30,6 +30,17 @@ The panel hydrates its initial state from REST when a conversation is opened and
 via a SignalR `TodoUpdated` event whenever the `todo` tool mutates the list — no manual refresh is
 required.
 
+## Close-out Warning
+
+When a run **fully ends** (the authoritative `RunEnded` bracket) and the plan still has
+`in_progress` items, the Todo panel surfaces a non-fatal **close-out warning** — the signal that the
+run stopped mid-plan. This composes with the run-active bracket: `in_progress` items are expected
+*during* a run, so the warning only appears once the run is idle.
+
+It is **warn-only** by design — a visible indicator, never a hard gate. A run is never blocked from
+completing, and the warning never appears for an empty list or a list whose items are all `done` /
+`cancelled`.
+
 ## Todo Tool
 
 Agents manage the list through the built-in `todo` tool.
