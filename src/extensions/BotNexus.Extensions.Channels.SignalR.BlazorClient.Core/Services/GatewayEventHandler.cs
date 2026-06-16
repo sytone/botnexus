@@ -51,6 +51,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSteeringFeedback += HandleSteeringFeedback;
         _hub.OnCanvasUpdated += HandleCanvasUpdated;
         _hub.OnCanvasStateChanged += HandleCanvasStateChanged;
+        _hub.OnTodoUpdated += HandleTodoUpdated;
         _hub.OnConversationChanged += HandleConversationChanged;
                 _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
@@ -646,6 +647,32 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    /// <summary>
+    /// Applies a live per-conversation todo update (#1464 step 5). Routes the raw TodoJson to the
+    /// target conversation so the Todo panel re-renders without a manual refresh. Mirrors
+    /// <see cref="HandleCanvasUpdated"/>.
+    /// </summary>
+    public void HandleTodoUpdated(string agentId, string conversationId, string? todoJson)
+    {
+        var agent = string.IsNullOrWhiteSpace(agentId) ? null : _store.GetAgent(agentId);
+        if (agent is null)
+            return;
+
+        var conv = string.IsNullOrWhiteSpace(conversationId)
+            ? null
+            : agent.Conversations.GetValueOrDefault(conversationId);
+        if (conv is null)
+        {
+            // Unknown conversation — nothing to update.
+            _store.NotifyChanged();
+            return;
+        }
+
+        conv.TodoJson = string.IsNullOrWhiteSpace(todoJson) ? null : todoJson;
+        conv.TodoUpdatedAt = DateTimeOffset.UtcNow;
+        _store.NotifyChanged();
+    }
+
     // ── Connection lifecycle ──────────────────────────────────────────────
 
     public void HandleReconnecting()
@@ -992,6 +1019,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSteeringFeedback -= HandleSteeringFeedback;
         _hub.OnCanvasUpdated -= HandleCanvasUpdated;
         _hub.OnCanvasStateChanged -= HandleCanvasStateChanged;
+        _hub.OnTodoUpdated -= HandleTodoUpdated;
         _hub.OnConversationChanged -= HandleConversationChanged;
                 _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;

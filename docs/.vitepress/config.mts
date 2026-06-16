@@ -155,6 +155,7 @@ export default defineConfig({
           { text: 'Built-in Agents', link: '/features/built-in-agents' },
           { text: 'Shell Execution', link: '/features/shell-execution' },
           { text: 'Canvas', link: '/features/canvas' },
+          { text: 'Per-Conversation Todo', link: '/features/todo' },
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },

@@ -41,6 +41,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         typeof(IAgentChangeNotifier),
         typeof(IConversationChangeNotifier),
         typeof(IAgentCanvasNotifier),
+        typeof(IAgentTodoNotifier),
         typeof(IAgentToolContributor),
         typeof(IActivityBroadcaster),
         typeof(IAgentTool),
@@ -403,6 +404,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 contract == typeof(IAgentChangeNotifier) ||
                 contract == typeof(IConversationChangeNotifier) ||
                 contract == typeof(IAgentCanvasNotifier) ||
+                contract == typeof(IAgentTodoNotifier) ||
                 contract == typeof(IAgentToolContributor) ||
                 contract == typeof(IAgentTool) ||
                 contract == typeof(ICommandContributor) ||

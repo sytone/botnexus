@@ -36,6 +36,13 @@ public interface IGatewayHubClient
     /// <summary>Server notifies the client that a canvas state key was changed or cleared.</summary>
     Task CanvasStateChanged(string conversationId, string key, object? value);
 
+    /// <summary>
+    /// Server notifies the client that a conversation's per-conversation todo state changed.
+    /// Carries the raw <c>TodoJson</c> payload (or null/empty when cleared) so the portal Todo
+    /// panel can refresh live without a manual reload (#1464 step 5).
+    /// </summary>
+    Task TodoUpdated(string agentId, string conversationId, string? todoJson);
+
     /// <summary>Server notifies the client that a gateway restart interrupted its active agent turn.</summary>
     Task TurnInterrupted(AgentStreamEvent evt);
 

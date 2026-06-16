@@ -4,6 +4,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -22,7 +23,9 @@ namespace BotNexus.Gateway.Tools;
 /// </remarks>
 public sealed class TodoTool(
     ConversationId? conversationId,
-    IConversationStore? conversationStore = null) : IAgentTool
+    IConversationStore? conversationStore = null,
+    AgentId? agentId = null,
+    IReadOnlyList<IAgentTodoNotifier>? todoNotifiers = null) : IAgentTool
 {
     /// <summary>
     /// Serializer options for the persisted <see cref="Conversation.TodoJson"/> payload.
@@ -77,6 +80,8 @@ public sealed class TodoTool(
 
     private readonly ConversationId? _conversationId = conversationId;
     private readonly IConversationStore? _conversationStore = conversationStore;
+    private readonly AgentId? _agentId = agentId;
+    private readonly IReadOnlyList<IAgentTodoNotifier> _todoNotifiers = todoNotifiers ?? [];
 
     public string Name => "todo";
     public string Label => "Todo";
@@ -251,6 +256,26 @@ public sealed class TodoTool(
         // write protection. Use a record `with` so the cached/loaded instance is not mutated in place.
         var updated = conversation with { TodoJson = json };
         await _conversationStore!.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
+
+        // Fan the change out to live transports (e.g. the portal Todo panel) after the write commits.
+        // Best-effort: a broadcast failure must not fail the tool call. Mirrors the canvas notify path.
+        if (_todoNotifiers.Count > 0 && _conversationId is not null)
+        {
+            var agentIdValue = _agentId?.Value ?? string.Empty;
+            var conversationIdValue = _conversationId.Value.Value;
+            foreach (var notifier in _todoNotifiers)
+            {
+                try
+                {
+                    await notifier.NotifyTodoUpdatedAsync(agentIdValue, conversationIdValue, json, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Live-update notification is best-effort; never fail the tool on a broadcast error.
+                }
+            }
+        }
     }
 
     /// <summary>Parses the persisted todo JSON into a mutable working list. Returns an empty list on null/blank/malformed input.</summary>
