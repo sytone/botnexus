@@ -259,6 +259,153 @@ public sealed class HeartbeatActionTests
     }
 
     // -----------------------------------------------------------------
+    // Defer-when-active-run (#1500)
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_ScheduledHeartbeat_DefersWhenAgentRunIsActive()
+    {
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var supervisor = BuildSupervisorWithInstance("agent-a", isRunning: true);
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(supervisor.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services, triggerType: CronTriggerType.Scheduled);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Never);
+        context.SessionId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ScheduledHeartbeat_FiresWhenAgentRunIsIdle()
+    {
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var sessionId = SessionId.From("heartbeat:agent-a:20260101000000:idleidle");
+        var supervisor = BuildSupervisorWithInstance("agent-a", isRunning: false);
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(supervisor.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services, triggerType: CronTriggerType.Scheduled);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Once);
+        context.SessionId!.Value.ShouldBe(sessionId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ManualWake_FiresEvenWhenAgentRunIsActive()
+    {
+        // Manual / immediate wakes must keep their existing semantics and never defer.
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var sessionId = SessionId.From("heartbeat:agent-a:20260101000000:manualww");
+        var supervisor = BuildSupervisorWithInstance("agent-a", isRunning: true);
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(supervisor.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services, triggerType: CronTriggerType.Manual);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Once);
+        context.SessionId!.Value.ShouldBe(sessionId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ScheduledHeartbeat_FiresWhenNoSupervisorRegistered()
+    {
+        // No IAgentSupervisor (minimal host) -> heartbeats must still fire, not silently skip.
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var sessionId = SessionId.From("heartbeat:agent-a:20260101000000:nosuperv");
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            // no IAgentSupervisor registered
+            .BuildServiceProvider();
+        var context = CreateContext(services, triggerType: CronTriggerType.Scheduled);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ScheduledHeartbeat_FiresWhenOnlyAnotherAgentRunIsActive()
+    {
+        // A running instance belonging to a DIFFERENT agent must not defer this agent's heartbeat.
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var sessionId = SessionId.From("heartbeat:agent-a:20260101000000:otheragn");
+        var supervisor = BuildSupervisorWithInstance("agent-b", isRunning: true);
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(supervisor.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services, triggerType: CronTriggerType.Scheduled);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Once);
+        context.SessionId!.Value.ShouldBe(sessionId);
+    }
+
+    // -----------------------------------------------------------------
     // Phase 4: HEARTBEAT.md pre-check — IsEffectivelyEmpty
     // -----------------------------------------------------------------
 
@@ -413,7 +560,8 @@ public sealed class HeartbeatActionTests
     private static CronExecutionContext CreateContext(
         IServiceProvider services,
         string? agentId = "agent-a",
-        string? message = "Heartbeat ping")
+        string? message = "Heartbeat ping",
+        CronTriggerType triggerType = CronTriggerType.Scheduled)
         => new()
         {
             Job = new CronJob
@@ -431,9 +579,33 @@ public sealed class HeartbeatActionTests
             },
             RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
-            TriggerType = CronTriggerType.Scheduled,
+            TriggerType = triggerType,
             Services = services
         };
+
+    /// <summary>
+    /// Builds a mock <see cref="IAgentSupervisor"/> holding a single live instance for the given
+    /// agent, with a handle whose <c>IsRunning</c> reflects <paramref name="isRunning"/>.
+    /// </summary>
+    private static Mock<IAgentSupervisor> BuildSupervisorWithInstance(string agentId, bool isRunning)
+    {
+        var id = AgentId.From(agentId);
+        var sessionId = SessionId.From($"chat:{agentId}:20260101000000:sessabcd");
+        var instance = new AgentInstance
+        {
+            InstanceId = $"{agentId}:{sessionId.Value}",
+            AgentId = id,
+            SessionId = sessionId,
+            IsolationStrategy = "in-process"
+        };
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(isRunning);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetAllInstances()).Returns([instance]);
+        supervisor.Setup(s => s.GetHandle(id, sessionId)).Returns(handle.Object);
+        return supervisor;
+    }
 
     private static AgentDescriptor CreateDescriptorWithQuietHours(QuietHoursConfig quietHours)
         => new()
