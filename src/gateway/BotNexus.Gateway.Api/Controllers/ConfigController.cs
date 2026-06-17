@@ -70,8 +70,20 @@ public sealed class ConfigController : ControllerBase
             return NotFound();
 
         var sectionNode = config[section]?.DeepClone();
-        if (section.Equals("providers", StringComparison.OrdinalIgnoreCase) && sectionNode is JsonObject providers)
-            RedactProviderSecrets(providers);
+
+        // Route the section through the SAME redaction logic the whole-config path uses,
+        // not just the providers special case. A per-section read must never expose secrets
+        // the whole-config read (GET /api/config, /api/config/raw) masks -- e.g. the gateway
+        // section carries apiKeys / connection strings / cross-world peer keys. Wrap the section
+        // back into a { [section]: node } object so RedactSecrets keys on the real section name,
+        // redact in place, then unwrap. This covers providers, gateway, and any future
+        // secret-bearing section without per-section special casing (#1516).
+        if (sectionNode is not null)
+        {
+            var wrapper = new JsonObject { [section] = sectionNode };
+            RedactSecrets(wrapper);
+            sectionNode = wrapper[section];
+        }
 
         return Ok(sectionNode);
     }
