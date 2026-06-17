@@ -644,6 +644,115 @@ public sealed class SignalRHubTests
         await act.ShouldThrowAsync<ArgumentException>();
     }
 
+    // --- Reserved internal-namespace session-key guard (#1493) ---
+    // A client must not be able to steer/abort/compact/reset/inspect a gateway-internal
+    // sub-agent or cron session by hand-crafting its id. Each client-callable control method
+    // rejects a reserved target with a HubException BEFORE touching the supervisor/session store.
+
+    private const string ReservedSubAgentSessionId = "agent-a::subagent::child";
+    private const string ReservedCronSessionId = "cron:job-123:20260617:abc";
+    private const string ReservedSessionMessage =
+        "Session ID targets a reserved internal namespace and cannot be addressed by a client.";
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task Steer_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.Steer(AgentId.From("agent-a"), SessionId.From(reserved), "nudge", "conv-1");
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task InterruptAndSteer_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        // The guard runs after the message null-check but before any handle resolution,
+        // so a reserved id throws even with a non-empty message and no supervisor setup.
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.InterruptAndSteer(AgentId.From("agent-a"), SessionId.From(reserved), "steer");
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task FollowUp_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.FollowUp(AgentId.From("agent-a"), SessionId.From(reserved), "more");
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task Abort_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.Abort(AgentId.From("agent-a"), SessionId.From(reserved));
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task ResetSession_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.ResetSession(AgentId.From("agent-a"), SessionId.From(reserved));
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public async Task CompactSession_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.CompactSession(AgentId.From("agent-a"), SessionId.From(reserved));
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Theory]
+    [InlineData(ReservedSubAgentSessionId)]
+    [InlineData(ReservedCronSessionId)]
+    public void GetAgentStatus_ReservedNamespaceSessionId_ThrowsHubException(string reserved)
+    {
+        var hub = CreateHub();
+
+        Action act = () => hub.GetAgentStatus(AgentId.From("agent-a"), SessionId.From(reserved));
+
+        act.ShouldThrow<HubException>().Message.ShouldBe(ReservedSessionMessage);
+    }
+
+    [Fact]
+    public async Task Abort_NormalClientSessionId_PassesGuard_AndReturnsWithoutThrow()
+    {
+        // A generic (non-reserved) session id must NOT be rejected by the guard. With no live
+        // instance the method returns early (no-op) -- proving the guard let it through.
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns((AgentInstance?)null);
+        var hub = CreateHub(supervisor: supervisor.Object);
+
+        await Should.NotThrowAsync(() => hub.Abort(AgentId.From("agent-a"), SessionId.From("normal-session")));
+    }
+
     /// <summary>
     /// Exposed for cross-class test usage (e.g. auth verification tests).
     /// </summary>

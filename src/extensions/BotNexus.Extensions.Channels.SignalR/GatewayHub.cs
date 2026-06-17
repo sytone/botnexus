@@ -361,7 +361,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content, string? conversationId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
         var typedChannelType = ChannelKey.From("signalr");
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
@@ -477,7 +477,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
 
         var handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
         if (handle is null)
@@ -497,7 +497,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
         var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         _ = SafeDispatchAsync(
@@ -523,7 +523,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public async Task Abort(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
         var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
         if (instance is null)
             return;
@@ -550,7 +550,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
 
         var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
 
@@ -599,7 +599,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public async Task<CompactSessionResult> CompactSession(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
+        var typedSessionId = NormalizeClientSessionId(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
         if (session is null)
             throw new HubException($"Session '{typedSessionId.Value}' not found.");
@@ -634,7 +634,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="sessionId">The session id.</param>
     /// <returns>The get agent status result.</returns>
     public AgentInstance? GetAgentStatus(AgentId agentId, SessionId sessionId)
-        => _supervisor.GetInstance(NormalizeAgentId(agentId), NormalizeSessionId(sessionId));
+        => _supervisor.GetInstance(NormalizeAgentId(agentId), NormalizeClientSessionId(sessionId));
 
     /// <summary>
     /// Executes on connected async.
@@ -728,6 +728,22 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             throw new HubException("Session ID is required.");
         }
+    }
+
+    /// <summary>
+    /// Normalizes a caller-supplied session id and rejects any that targets a reserved internal
+    /// session namespace (sub-agent / cron). External clients address their own portal sessions;
+    /// they must not be able to steer, abort, compact, reset, or inspect a gateway-internal
+    /// session by hand-crafting its id. Throws <see cref="HubException"/> for a reserved target
+    /// instead of silently routing/creating a phantom internal session.
+    /// </summary>
+    private static SessionId NormalizeClientSessionId(SessionId sessionId)
+    {
+        var normalized = NormalizeSessionId(sessionId);
+        if (normalized.IsReservedInternalNamespace)
+            throw new HubException("Session ID targets a reserved internal namespace and cannot be addressed by a client.");
+
+        return normalized;
     }
 
     private static ChannelKey NormalizeChannelKey(ChannelKey channelType)
