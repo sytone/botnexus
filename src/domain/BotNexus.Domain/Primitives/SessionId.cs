@@ -76,6 +76,29 @@ public readonly partial struct SessionId
     /// </summary>
     public bool IsAgentConversation => Value.Contains("::agent-agent::", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True when this id targets a <b>reserved internal session namespace</b> that is minted and
+    /// owned by the gateway itself rather than by an external client &mdash; specifically the
+    /// sub-agent (<c>::subagent::</c>) and cron (<c>cron:</c> prefix) shapes.
+    /// </summary>
+    /// <remarks>
+    /// External transports (the SignalR hub, channel adapters) accept a caller-supplied
+    /// <see cref="SessionId"/> on steer/abort/compact/reset operations. A client must never be
+    /// able to steer or mutate one of these internal sessions by hand-crafting its id, so the
+    /// hub uses this predicate to reject such targeting. The check is value-shape based (mirroring
+    /// <see cref="IsSubAgent"/> and the cron <c>cron:</c> prefix used by <c>CronScheduler</c>) so a
+    /// new reserved prefix only needs to be added here.
+    /// <para>
+    /// Soul sessions are deliberately <b>not</b> matched here: directive G-4 (#645) forbids
+    /// sniffing soul-ness off the session id (the canonical signal is
+    /// <c>Session.Metadata["soulDate"]</c>), and the reserved namespaces a client could plausibly
+    /// hand-target are the sub-agent and cron ones called out by the originating finding.
+    /// </para>
+    /// </remarks>
+    public bool IsReservedInternalNamespace =>
+        IsSubAgent
+        || Value.StartsWith("cron:", StringComparison.OrdinalIgnoreCase);
+
     private static Validation Validate(string value) =>
         string.IsNullOrWhiteSpace(value)
             ? Validation.Invalid("SessionId cannot be null, empty, or whitespace.")

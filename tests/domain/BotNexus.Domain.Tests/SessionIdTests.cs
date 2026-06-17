@@ -123,6 +123,30 @@ public sealed class SessionIdTests
         legacy.IsAgentConversation.ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData("parent-id::subagent::child")]      // sub-agent shape
+    [InlineData("PARENT::SUBAGENT::child")]          // case-insensitive sub-agent
+    [InlineData("cron:job-123")]                     // cron prefix
+    [InlineData("CRON:job-123")]                     // case-insensitive cron prefix
+    [InlineData("cron:job-123:20260617:abc")]        // full cron session shape
+    public void IsReservedInternalNamespace_ReturnsTrue_ForGatewayOwnedNamespaces(string value)
+    {
+        // Guards the SignalR-hub reserved-namespace check: a client must not be able to
+        // hand-target an internal sub-agent or cron session via steer/abort/compact/reset.
+        SessionId.From(value).IsReservedInternalNamespace.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("session-1")]                         // generic client session
+    [InlineData("abc123def456")]                      // GUID-style generic
+    [InlineData("agent-a::soul::2026-01-15")]         // soul is deliberately NOT reserved here (directive G-4)
+    [InlineData("agent-a::agent-agent::agent-b::x")]  // legacy agent-agent is not a client-forbidden target
+    [InlineData("not-cron:something")]                // 'cron:' must be a prefix, not a substring
+    public void IsReservedInternalNamespace_ReturnsFalse_ForClientAddressableSessions(string value)
+    {
+        SessionId.From(value).IsReservedInternalNamespace.ShouldBeFalse();
+    }
+
     [Fact]
     public void Json_SerializesAsBareString()
     {
