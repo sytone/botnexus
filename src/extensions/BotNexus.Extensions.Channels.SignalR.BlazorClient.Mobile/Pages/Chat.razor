@@ -29,7 +29,7 @@ else
     var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
     var conversations = activeAgent?.Conversations.Values
         .Where(c => c.Status == "Active")
-        .OrderByDescending(c => c.UpdatedAt)
+        .OrderForDisplay()
         .ToList() ?? [];
     <div class="mobile-app">
         <!-- DISCONNECTED INDICATOR -->
@@ -45,7 +45,7 @@ else
         <!-- TOP BAR -->
         <div class="top-bar">
             <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
-                @foreach (var (agentId, agent) in Store.Agents)
+                @foreach (var (agentId, agent) in Store.Agents.OrderForDisplay())
                 {
                     <option value="@agentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
                 }
@@ -460,7 +460,7 @@ else
         var agent = Store.GetAgent(agentId);
         var firstConv = agent?.Conversations.Values
             .Where(c => c.Status == "Active")
-            .OrderByDescending(c => c.UpdatedAt)
+            .OrderForDisplay()
             .FirstOrDefault();
         if (firstConv is not null)
         {
