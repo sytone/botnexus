@@ -3,6 +3,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Extensions.DebugTool;
@@ -17,6 +18,7 @@ public sealed class DebugTool : IAgentTool
     private readonly string _agentId;
     private readonly DebugToolConfig _config;
     private readonly IRuntimeStateProvider? _runtimeStateProvider;
+    private readonly ISecretRedactor? _secretRedactor;
 
     internal const int DefaultLimit = 50;
     internal const int MaxLimit = 500;
@@ -33,12 +35,18 @@ public sealed class DebugTool : IAgentTool
         "raw_sql"
     };
 
-    public DebugTool(string dbPath, string agentId, DebugToolConfig config, IRuntimeStateProvider? runtimeStateProvider = null)
+    public DebugTool(
+        string dbPath,
+        string agentId,
+        DebugToolConfig config,
+        IRuntimeStateProvider? runtimeStateProvider = null,
+        ISecretRedactor? secretRedactor = null)
     {
         _dbPath = dbPath ?? throw new ArgumentNullException(nameof(dbPath));
         _agentId = agentId ?? throw new ArgumentNullException(nameof(agentId));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _runtimeStateProvider = runtimeStateProvider;
+        _secretRedactor = secretRedactor;
     }
 
     public string Name => "platform_debug";
@@ -345,7 +353,9 @@ public sealed class DebugTool : IAgentTool
         if (_runtimeStateProvider is null)
             return TextResult("Error: Runtime state provider is not available.");
 
-        return TextResult(_runtimeStateProvider.GetRuntimeStatus());
+        // The runtime state dump can include configuration-derived values; redact secret-shaped
+        // content before surfacing it to the agent.
+        return TextResult(Redact(_runtimeStateProvider.GetRuntimeStatus()));
     }
 
     private AgentToolResult RawSql(IReadOnlyDictionary<string, object?> args)
@@ -419,8 +429,11 @@ public sealed class DebugTool : IAgentTool
             if (rows.Count == 0)
                 return TextResult("No results found.");
 
+            // Stored rows can contain secret-shaped values (e.g. a transcript that captured an API
+            // key, or a session/config row holding a token). Route the serialized output through
+            // the secret redactor so the debug surface cannot echo credentials to the agent.
             var json = JsonSerializer.Serialize(rows, JsonOptions);
-            return TextResult(json);
+            return TextResult(Redact(json));
         }
         catch (SqliteException ex)
         {
@@ -599,6 +612,13 @@ public sealed class DebugTool : IAgentTool
 
     private static AgentToolResult TextResult(string text) =>
         new([new AgentToolContent(AgentToolContentType.Text, text)]);
+
+    /// <summary>
+    /// Applies the configured secret redactor to <paramref name="text"/>. Returns the input
+    /// unchanged when no redactor was supplied (the redactor is an optional dependency so the
+    /// tool remains usable in contexts that do not wire one up, e.g. unit tests).
+    /// </summary>
+    private string Redact(string text) => _secretRedactor?.Redact(text) ?? text;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

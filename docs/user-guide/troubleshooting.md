@@ -505,6 +505,40 @@ tail -f ~/.botnexus/logs/gateway.log
 
 ---
 
+### WebUI Shows "An error has occurred"
+
+**Symptom:** The portal displays the framework error strip ("An error has
+occurred" on mobile, "An unhandled error has occurred" on desktop) at the bottom
+of the page.
+
+**Cause:** An unrecoverable Blazor WebAssembly failure (dead circuit, fatal
+render fault, or unhandled JS interop error). Unlike recoverable render
+exceptions caught by the in-app error boundary, this `#blazor-error-ui` path runs
+when the .NET side may no longer be alive.
+
+**Diagnosis:** The portal now reports these failures to the gateway. On the next
+reproduction, look for an Error-level entry in the gateway log:
+
+```bash
+grep "Channel error reported" ~/.botnexus/logs/gateway.log
+```
+
+The entry carries the message, stack (where available), URL, and user-agent. You
+can also retrieve recent channel/render errors through the diagnostics API:
+
+```bash
+curl http://localhost:5000/api/diagnostics/log-patterns?hours=1
+```
+
+**Notes:**
+- Reporting is best-effort from the browser; when an API key is configured the
+  unrecoverable-path report may be rejected with 401 (the in-app error boundary
+  still reports through the authenticated client).
+- A hard refresh (Ctrl+Shift+R) clears a stale cached build that can cause these
+  errors after an update.
+
+---
+
 ## Tool Execution Failures
 
 ### Tool Not Found

@@ -97,4 +97,38 @@ public sealed class ReadToolTests
         result.Content[0].Value.ShouldContain("Use offset=");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenFileIsWindows1252_DecodesReadableTextNotMojibake()
+    {
+        // 0xE9 = 'e-acute', 0x93/0x94 = curly quotes in windows-1252. As raw bytes these are not valid
+        // UTF-8, so the old blind Encoding.UTF8.GetString would have produced a U+FFFD mojibake run.
+        byte[] legacyBytes = [0x63, 0x61, 0x66, 0xE9]; // caf<e9>
+        var filePath = Path.Combine(_tempDirectory, "legacy.txt");
+        await _fileSystem.File.WriteAllBytesAsync(filePath, legacyBytes);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "legacy.txt" });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("caf\u00e9");
+        result.Content[0].Value.ShouldNotContain("\uFFFD");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFileHasUtf8Bom_StripsBomAndReturnsContent()
+    {
+        byte[] bom = [0xEF, 0xBB, 0xBF];
+        var body = new System.Text.UTF8Encoding(false).GetBytes("alpha\nbeta");
+        var bytes = new byte[bom.Length + body.Length];
+        System.Buffer.BlockCopy(bom, 0, bytes, 0, bom.Length);
+        System.Buffer.BlockCopy(body, 0, bytes, bom.Length, body.Length);
+        var filePath = Path.Combine(_tempDirectory, "bom.txt");
+        await _fileSystem.File.WriteAllBytesAsync(filePath, bytes);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "bom.txt" });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldNotContain("\uFEFF");
+        result.Content[0].Value.ShouldBe($"alpha{Environment.NewLine}beta");
+    }
+
 }

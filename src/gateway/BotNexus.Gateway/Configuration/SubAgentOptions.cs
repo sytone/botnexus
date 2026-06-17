@@ -51,6 +51,26 @@ public sealed class SubAgentOptions
     public string DefaultModel { get; set; } = "";
 
     /// <summary>
+    /// Gets or sets how long, in minutes, a completed/failed/killed/timed-out sub-agent record is
+    /// retained in memory after it finishes so that <c>list_subagents</c> and status queries can
+    /// still surface a recently-finished sub-agent. After this window the record is swept and its
+    /// timeout <see cref="System.Threading.CancellationTokenSource"/> disposed, bounding the manager's
+    /// in-memory registry on a long-lived gateway that spawns many sub-agents. A value of zero or
+    /// less disables time-based eviction (the count cap below still applies). Running records are
+    /// never evicted.
+    /// </summary>
+    public int CompletedRecordRetentionMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Gets or sets the maximum number of <em>completed</em> sub-agent records to retain regardless
+    /// of age. When the count of completed records exceeds this cap, the oldest completed records are
+    /// evicted first (and their timeout source disposed) — a burst-spawn backstop so the registry
+    /// stays bounded even within the retention window. A value of zero or less disables the cap.
+    /// Running records do not count against this cap and are never evicted.
+    /// </summary>
+    public int MaxRetainedCompletedRecords { get; set; } = 200;
+
+    /// <summary>
     /// Resolves the effective turn budget for a spawn request: a non-positive request value falls
     /// back to <see cref="DefaultMaxTurns"/>, and the result is clamped to at most
     /// <see cref="MaxTurnsCeiling"/> (when the ceiling is positive). The floor is always one turn.

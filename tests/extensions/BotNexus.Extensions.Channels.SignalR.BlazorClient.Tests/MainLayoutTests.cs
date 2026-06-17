@@ -698,4 +698,171 @@ public sealed class MainLayoutTests : IDisposable
         var select = cut.Find("[data-testid='agent-select']");
         Assert.NotNull(select);
     }
+
+    // ── Conversation activity filter (None / Today / This Week) ──────────────────────────────
+
+    [Fact]
+    public void Conversation_filter_bar_renders_three_buttons_when_agent_active()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        cut.Find("[data-testid='conversation-filter-bar']");
+        Assert.Equal("None", cut.Find("[data-testid='conversation-filter-none']").TextContent.Trim());
+        Assert.Equal("Today", cut.Find("[data-testid='conversation-filter-today']").TextContent.Trim());
+        Assert.Equal("This Week", cut.Find("[data-testid='conversation-filter-week']").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Conversation_filter_replaces_redundant_conversations_heading()
+    {
+        // The redundant inner "Conversations" group label is replaced by the filter bar.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // The conversations group no longer renders a label element inside its header.
+        var group = cut.Find("[data-testid='conversation-group-conversations']");
+        Assert.DoesNotContain("conversation-group-label", group.InnerHtml);
+    }
+
+    [Fact]
+    public void Conversation_filter_defaults_to_none_and_shows_all()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // None is active by default and both conversations are visible.
+        Assert.Contains("active", cut.Find("[data-testid='conversation-filter-none']").GetAttribute("class"));
+        Assert.Contains("Recent Chat", cut.Markup);
+        Assert.Contains("Old Chat", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Conversation_filter_today_hides_conversations_updated_before_today()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-today", "a-1", "Today Chat", false, "Active", null, 0, DateTimeOffset.Now, DateTimeOffset.Now),
+            new ConversationSummaryDto("c-yesterday", "a-1", "Yesterday Chat", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-2), DateTimeOffset.Now.AddDays(-2))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
+
+        Assert.Contains("active", cut.Find("[data-testid='conversation-filter-today']").GetAttribute("class"));
+        Assert.Contains("Today Chat", cut.Markup);
+        Assert.DoesNotContain("Yesterday Chat", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Conversation_filter_this_week_hides_conversations_older_than_seven_days()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-3), DateTimeOffset.UtcNow.AddDays(-3)),
+            new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-week']").Click());
+
+        Assert.Contains("active", cut.Find("[data-testid='conversation-filter-week']").GetAttribute("class"));
+        Assert.Contains("Recent Chat", cut.Markup);
+        Assert.DoesNotContain("Old Chat", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Conversation_filter_today_with_no_matches_shows_empty_range_message()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
+
+        cut.Find("[data-testid='conversation-filter-empty']");
+        Assert.DoesNotContain("Old Chat", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Conversation_filter_today_does_not_hide_pinned_or_scheduled_groups()
+    {
+        // Pinned and scheduled groups carry their own intent and must remain visible
+        // regardless of the activity filter, even when their items are old.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-normal-old", "a-1", "Normal Old", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30)),
+            new ConversationSummaryDto("c-pinned-old", "a-1", "Pinned Old", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30))
+        ]);
+        _store.ActiveAgentId = "a-1";
+        _store.GetAgent("a-1")!.Conversations["c-pinned-old"].IsPinned = true;
+
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
+
+        // Pinned group is unaffected by the filter.
+        cut.Find("[data-testid='conversation-group-pinned']");
+        Assert.Contains("Pinned Old", cut.Markup);
+        // The old normal conversation is filtered out.
+        Assert.DoesNotContain("Normal Old", cut.Markup);
+    }
+
+    [Fact]
+    public void Conversation_filter_restores_persisted_selection_on_init()
+    {
+        // A previously-chosen filter persisted in localStorage is applied on first render.
+        _ctx.JSInterop.Setup<string?>("localStorage.getItem", "botnexus-conversation-activity-filter")
+            .SetResult("ThisWeek");
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-3), DateTimeOffset.UtcNow.AddDays(-3)),
+            new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        Assert.Contains("active", cut.Find("[data-testid='conversation-filter-week']").GetAttribute("class"));
+        Assert.Contains("Recent Chat", cut.Markup);
+        Assert.DoesNotContain("Old Chat", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Conversation_filter_click_persists_selection_to_local_storage()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
+
+        _ctx.JSInterop.VerifyInvoke("localStorage.setItem");
+        var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Last(i => i.Arguments.Count == 2 && (string?)i.Arguments[0] == "botnexus-conversation-activity-filter");
+        Assert.Equal("Today", setItemCall.Arguments[1]);
+    }
 }

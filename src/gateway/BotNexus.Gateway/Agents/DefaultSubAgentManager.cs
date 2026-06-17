@@ -29,6 +29,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly DefaultToolPolicyProvider? _policyProvider;
+    private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
     // Single source of truth per sub-agent. Folds the previously-separate parent/child agent
     // id, timeout CTS, and the completion/cleanup once-only gates into one record so an add or
@@ -48,7 +49,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ILogger<DefaultSubAgentManager> logger,
         IAgentWorkspaceManager? workspaceManager = null,
         DefaultToolPolicyProvider? policyProvider = null,
-        ISessionStore? sessionStore = null)
+        ISessionStore? sessionStore = null,
+        TimeProvider? timeProvider = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -59,6 +61,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _logger = logger;
         _policyProvider = policyProvider;
         _sessionStore = sessionStore;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -313,12 +316,18 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             request.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' spawned.");
 
+        // Opportunistically age out finished records so the registry stays bounded without a timer.
+        ReapCompletedRecords();
+
         return info;
     }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<SubAgentInfo>> ListAsync(SessionId parentSessionId, CancellationToken ct = default)
     {
+        // Reap on read too, so list_subagents never surfaces (or retains) an unbounded backlog.
+        ReapCompletedRecords();
+
         if (!_parentChildren.TryGetValue(parentSessionId, out var subAgentIds))
             return Task.FromResult<IReadOnlyList<SubAgentInfo>>([]);
 
@@ -336,6 +345,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     public Task<SubAgentInfo?> GetAsync(string subAgentId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
+        ReapCompletedRecords();
         return Task.FromResult(_records.TryGetValue(subAgentId, out var record) ? record.Info : null);
     }
 
@@ -669,6 +679,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_records.TryGetValue(subAgentId, out var record) || !record.TryBeginCleanup())
             return;
 
+        // Start the record's retention clock and release the timeout source now that the sub-agent
+        // has finished. The record itself stays in _records (for list_subagents / status queries)
+        // until ReapCompletedRecords ages it out, but its CancellationTokenSource is an IDisposable
+        // that must not be held for the process lifetime. DisposeTimeout is idempotent and a no-op
+        // when an explicit kill already disposed it via CancelTimeout.
+        record.MarkRetired(_timeProvider.GetUtcNow());
+        record.DisposeTimeout();
+
         var childAgentId = record.ChildAgentId;
 
         // Remove the dynamic deny-list registered for this ephemeral sub-agent
@@ -713,6 +731,68 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Evicts retired (finished) sub-agent records from the in-memory registry so it stays bounded
+    /// on a long-lived gateway that spawns many sub-agents. A record is eligible once its child
+    /// cleanup has run (<see cref="SubAgentRecord.RetiredAt"/> is set). Eligible records are evicted
+    /// when they are older than the configured retention window, and — as a burst-spawn backstop —
+    /// the oldest retired records beyond the configured count cap are evicted regardless of age.
+    /// Running (not-yet-retired) records are never evicted. Each evicted record's timeout source is
+    /// disposed (idempotent). Called opportunistically from spawn and the list/get read paths, so no
+    /// background timer or hosted service is required (mirrors the <c>ProcessManager</c> reap, #1333).
+    /// </summary>
+    private void ReapCompletedRecords()
+    {
+        var options = _options.CurrentValue.SubAgents;
+        var retentionMinutes = options.CompletedRecordRetentionMinutes;
+        var maxRetained = options.MaxRetainedCompletedRecords;
+
+        // Snapshot retired records once. ConcurrentDictionary enumeration is safe under concurrent
+        // mutation; a record that retires between the snapshot and a TryRemove just survives to the
+        // next reap.
+        var retired = _records
+            .Where(kvp => kvp.Value.RetiredAt is not null)
+            .Select(kvp => (Id: kvp.Key, Record: kvp.Value, RetiredAt: kvp.Value.RetiredAt!.Value))
+            .ToList();
+
+        if (retired.Count == 0)
+            return;
+
+        var now = _timeProvider.GetUtcNow();
+        var toEvict = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // (1) Time-based: anything older than the retention window.
+        if (retentionMinutes > 0)
+        {
+            var cutoff = now - TimeSpan.FromMinutes(retentionMinutes);
+            foreach (var entry in retired)
+            {
+                if (entry.RetiredAt <= cutoff)
+                    toEvict.Add(entry.Id);
+            }
+        }
+
+        // (2) Count-cap backstop: oldest retired records beyond the cap, regardless of age.
+        if (maxRetained > 0 && retired.Count > maxRetained)
+        {
+            var overflow = retired
+                .OrderBy(entry => entry.RetiredAt)
+                .Take(retired.Count - maxRetained)
+                .Select(entry => entry.Id);
+            foreach (var id in overflow)
+                toEvict.Add(id);
+        }
+
+        foreach (var id in toEvict)
+        {
+            if (_records.TryRemove(id, out var removed))
+            {
+                // Defensive: cleanup already disposed it, but DisposeTimeout is idempotent.
+                removed.DisposeTimeout();
+            }
+        }
+    }
+
+    /// <summary>
     /// Counts the sub-agent nesting depth encoded in a session ID.
     /// A top-level session has depth 0; each <c>::subagent::</c> separator adds one level.
     /// </summary>
@@ -744,6 +824,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         private SubAgentInfo _info = info;
         private int _completionProcessed;
         private int _cleanupStarted;
+        private long _retiredAtTicks;
 
         /// <summary>Parent agent id captured at spawn. Immutable for the record's lifetime.</summary>
         public AgentId ParentAgentId { get; } = parentAgentId;
@@ -789,6 +870,30 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         /// <summary>Returns true exactly once — the first caller wins the child-cleanup gate.</summary>
         public bool TryBeginCleanup() => Interlocked.CompareExchange(ref _cleanupStarted, 1, 0) == 0;
+
+        /// <summary>
+        /// The instant this record's child cleanup ran (i.e. the sub-agent finished and its resources
+        /// were reclaimed), or <see langword="null"/> while the sub-agent is still live. Used to age
+        /// the record out of the in-memory registry after the configured retention window. Stored as
+        /// ticks so the read/write is a single atomic operation.
+        /// </summary>
+        public DateTimeOffset? RetiredAt
+        {
+            get
+            {
+                var ticks = Interlocked.Read(ref _retiredAtTicks);
+                return ticks == 0 ? null : new DateTimeOffset(ticks, TimeSpan.Zero);
+            }
+        }
+
+        /// <summary>
+        /// Stamps <see cref="RetiredAt"/> exactly once (the first caller wins) so a record's retention
+        /// clock starts when its cleanup runs, not on a later re-entrant call.
+        /// </summary>
+        public void MarkRetired(DateTimeOffset retiredAt)
+        {
+            Interlocked.CompareExchange(ref _retiredAtTicks, retiredAt.UtcTicks, 0);
+        }
 
         /// <summary>Cancels and disposes the timeout source (used by an explicit kill). Idempotent.</summary>
         public void CancelTimeout()

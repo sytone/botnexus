@@ -342,6 +342,12 @@ body {
     white-space: nowrap;
     overflow: hidden;
     margin: 2px 0;
+    user-select: none;
+}
+
+.tool-pill:focus-visible {
+    outline: 2px solid rgba(100, 160, 220, 0.6);
+    outline-offset: 2px;
 }
 
 .tool-pill:hover, .tool-pill:active {
