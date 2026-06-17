@@ -59,6 +59,20 @@ public sealed class HeartbeatAction : ICronAction
         if (string.IsNullOrWhiteSpace(prompt))
             throw new InvalidOperationException("Heartbeat cron job must define a message prompt.");
 
+        // Pre-flight: defer a SCHEDULED heartbeat while the agent already has a run in flight.
+        // A background heartbeat firing mid-turn injects a redundant wake (or competes with the
+        // active run), so it is deferred until the next schedule when the agent is busy. Manual /
+        // immediate wakes keep their existing semantics and always fire. This is the
+        // "defer-when-active-run" behavior (#1500); the authoritative busy signal is the agent
+        // handle's IsRunning, which reflects the per-turn AgentStatus (not handle liveness).
+        if (context.TriggerType == CronTriggerType.Scheduled && HasActiveRun(context.Services, agentId))
+        {
+            logger?.LogDebug(
+                "Deferring scheduled heartbeat for agent '{AgentId}' \u2014 a run is currently active.",
+                agentId);
+            return;
+        }
+
         var trigger = ResolveHeartbeatTrigger(context.Services, descriptor);
 
         var sessionId = await trigger
@@ -77,6 +91,32 @@ public sealed class HeartbeatAction : ICronAction
             .ConfigureAwait(false);
 
         context.RecordSessionId(sessionId);
+    }
+
+    /// <summary>
+    /// Returns true when the agent has at least one live instance whose handle is currently
+    /// processing a turn. Used to defer scheduled heartbeats while a run is in flight (#1500).
+    /// Returns false when no supervisor is registered (e.g. minimal hosts) so heartbeats still fire.
+    /// </summary>
+    private static bool HasActiveRun(IServiceProvider services, AgentId agentId)
+    {
+        var supervisor = services.GetService<IAgentSupervisor>();
+        if (supervisor is null)
+            return false;
+
+        foreach (var instance in supervisor.GetAllInstances())
+        {
+            if (!instance.AgentId.Equals(agentId))
+                continue;
+
+            // GetHandle returns the live handle whose IsRunning reflects the agent's per-turn
+            // status; AgentInstance.Status is not transitioned per-turn, so it cannot be used here.
+            var handle = supervisor.GetHandle(instance.AgentId, instance.SessionId);
+            if (handle is { IsRunning: true })
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
