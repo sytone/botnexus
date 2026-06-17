@@ -97,15 +97,23 @@ else
             {
                 @if (msg.IsBoundary)
                 {
-                    <div class="session-boundary">@(msg.BoundaryLabel ?? "New session")</div>
+                    <div class="session-boundary" @key="msg.Id">@(msg.BoundaryLabel ?? "New session")</div>
                 }
                 else if (msg.IsToolCall)
                 {
                     var toolIcon = msg.ToolIsError == true ? "&#x274C;" : msg.ToolResult is not null ? "&#x2705;" : "&#x23F3;";
                     var toolDuration = msg.ToolDuration is not null ? $" {msg.ToolDuration.Value.TotalSeconds:F1}s" : "";
-                    <button class="tool-pill @(msg.ToolIsError == true ? "tool-pill-error" : "")"
-                            @onclick="() => OpenToolModal(msg)"
-                            title="Tap to view details">
+                    @* Render the tool pill as a <div role="button"> so every branch in this
+                       loop shares a <div> root. Combined with @key this prevents Blazor from
+                       patching a <div> into a <button> at the same tree position mid-stream
+                       (issue #1483). @onkeydown keeps it keyboard-activatable. *@
+                    <div class="tool-pill @(msg.ToolIsError == true ? "tool-pill-error" : "")"
+                         role="button"
+                         tabindex="0"
+                         @key="msg.Id"
+                         @onclick="() => OpenToolModal(msg)"
+                         @onkeydown="(e) => OnToolPillKeyDown(e, msg)"
+                         title="Tap to view details">
                         <span class="tool-pill-icon">@((MarkupString)toolIcon)</span>
                         <span class="tool-pill-name">@msg.ToolName</span>
                         @if (!string.IsNullOrEmpty(toolDuration))
@@ -113,11 +121,11 @@ else
                             <span class="tool-pill-duration">@toolDuration</span>
                         }
                         <span class="tool-pill-chevron">&#x25B8;</span>
-                    </button>
+                    </div>
                 }
                 else
                 {
-                    <div class="message @GetMessageClass(msg)">
+                    <div class="message @GetMessageClass(msg)" @key="msg.Id">
                         @if (ShouldRenderAsMarkdown(msg.Role) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                         {
                             <div class="message-content">@((MarkupString)rendered)</div>
@@ -594,6 +602,16 @@ else
     {
         _modalToolMessage = msg;
         StateHasChanged();
+    }
+
+    // Keyboard activation for the tool pill, which is a <div role="button"> (see #1483).
+    // Enter or Space opens the tool detail modal, matching native <button> semantics.
+    private void OnToolPillKeyDown(KeyboardEventArgs e, ChatMessage msg)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar")
+        {
+            OpenToolModal(msg);
+        }
     }
 
     private void CloseToolModal()
