@@ -58,36 +58,38 @@ You should see the root command help listing all available subcommands.
 6. [init](#init) — Initialize home directory
 7. [agent list](#agent-list) — List configured agents
 8. [agent add](#agent-add) — Add an agent
-9. [agent remove](#agent-remove) — Remove an agent
-10. [conversation](#conversation) — Manage conversations via the gateway REST API
-11. [config get](#config-get) — Read a config value
-12. [config set](#config-set) — Set a config value
-13. [config schema](#config-schema) — Generate JSON schema
-14. [gateway](#gateway) — Manage the gateway lifecycle
-15. [provider](#provider) — Show or set up providers
-16. [provider setup](#provider-setup) — Interactive provider setup wizard
-17. [provider list](#provider-list) — List configured providers
-18. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-19. [provider remove](#provider-remove) — Remove a provider non-interactively
-20. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-21. [prompt](#prompt) — Manage prompt templates
-22. [prompt list](#prompt-list) — List available prompt templates
-23. [prompt render](#prompt-render) — Render a prompt template
-24. [prompt run](#prompt-run) — Render and execute a prompt template
-25. [satellite](#satellite) — Manage satellite nodes
-26. [doctor](#doctor) — Diagnose configuration issues
-27. [doctor config](#doctor-config) — Guided config migration
-28. [locations](#locations) — Show resolved file paths
-29. [update](#update) — Check for and apply updates
-30. [memory](#memory) — Manage agent memory
-31. [cron](#cron-command) — Manage cron jobs from the CLI
-32. [debug sessions](#debug-sessions) — Inspect session SQLite database
-33. [debug logs](#debug-logs) — Inspect log files
-34. [debug memory](#debug-memory) — Inspect agent memory directories
-35. [debug db](#debug-db) — Inspect raw databases
-36. [debug gateway](#debug-gateway) — Live gateway diagnostics
-37. [debug cron](#debug-cron) — Cron scheduler diagnostics
-38. [Examples](#examples)
+9. [agent show](#agent-show) — Show a single agent's resolved config
+10. [agent remove](#agent-remove) — Remove an agent
+11. [conversation](#conversation) — Manage conversations via the gateway REST API
+12. [config get](#config-get) — Read a config value
+13. [config set](#config-set) — Set a config value
+14. [config schema](#config-schema) — Generate JSON schema
+15. [gateway](#gateway) — Manage the gateway lifecycle
+16. [provider](#provider) — Show or set up providers
+17. [provider setup](#provider-setup) — Interactive provider setup wizard
+18. [provider list](#provider-list) — List configured providers
+19. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+20. [provider remove](#provider-remove) — Remove a provider non-interactively
+21. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+22. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+23. [prompt](#prompt) — Manage prompt templates
+24. [prompt list](#prompt-list) — List available prompt templates
+25. [prompt render](#prompt-render) — Render a prompt template
+26. [prompt run](#prompt-run) — Render and execute a prompt template
+27. [satellite](#satellite) — Manage satellite nodes
+28. [doctor](#doctor) — Diagnose configuration issues
+29. [doctor config](#doctor-config) — Guided config migration
+30. [locations](#locations) — Show resolved file paths
+31. [update](#update) — Check for and apply updates
+32. [memory](#memory) — Manage agent memory
+33. [cron](#cron-command) — Manage cron jobs from the CLI
+34. [debug sessions](#debug-sessions) — Inspect session SQLite database
+35. [debug logs](#debug-logs) — Inspect log files
+36. [debug memory](#debug-memory) — Inspect agent memory directories
+37. [debug db](#debug-db) — Inspect raw databases
+38. [debug gateway](#debug-gateway) — Live gateway diagnostics
+39. [debug cron](#debug-cron) — Cron scheduler diagnostics
+40. [Examples](#examples)
 
 ---
 
@@ -1165,6 +1167,78 @@ botnexus provider remove --name <NAME> [OPTIONS]
 ```powershell
 botnexus provider remove --name integration-mock
 ```
+
+---
+
+## provider copilot
+
+Diagnostic and auth helper subcommands for the GitHub Copilot provider. These give operators a fast surface to check authentication, list entitled models, inspect quota, and confirm end-to-end connectivity without round-tripping through the gateway. Useful for debugging the [GitHub Copilot Provider](providers/github-copilot.md) integration.
+
+### Usage
+
+```powershell
+botnexus provider copilot <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `login` | Authenticate to GitHub Copilot via the device code flow (alias for `provider setup --provider github-copilot`) |
+| `whoami` | Show the authenticated Copilot user, plan, endpoint, and token expiry |
+| `models` | List the Copilot models the authenticated user is entitled to invoke |
+| `quota` | Show current Copilot quota snapshots (chat, completions, premium interactions) |
+| `test` | Round-trip a single request through the Copilot provider to confirm connectivity |
+
+All subcommands accept the global `--target <PATH>` option to point at a non-default BotNexus home directory.
+
+### provider copilot login
+
+Authenticate via GitHub's device code flow. This is an alias for `botnexus provider setup --provider github-copilot`, so the device-code flow stays authoritative in one place.
+
+```powershell
+botnexus provider copilot login
+```
+
+### provider copilot whoami
+
+Show the authenticated user, plan, SKU, API endpoint, and session token expiry. Run this first if `models` reports no cached endpoint.
+
+```powershell
+botnexus provider copilot whoami
+```
+
+### provider copilot models
+
+List the models your account is entitled to, including vendor, family, and capability flags (streaming, tools, vision, premium).
+
+```powershell
+botnexus provider copilot models
+```
+
+### provider copilot quota
+
+Show current quota snapshots with remaining percentage, entitlement, and reset date.
+
+```powershell
+botnexus provider copilot quota
+```
+
+### provider copilot test
+
+Send a single prompt through the Copilot provider end-to-end and report latency (total and time-to-first-token).
+
+```powershell
+botnexus provider copilot test
+botnexus provider copilot test --model gpt-5-mini --prompt "Respond with the single word: ok."
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--model <ID>` | `gpt-5-mini` | Copilot model id to round-trip |
+| `--prompt <TEXT>` | `Respond with the single word: ok.` | Prompt to send |
+
+See [GitHub Copilot Provider](providers/github-copilot.md) for full setup and configuration details.
 
 ---
 

@@ -39,12 +39,14 @@ No API key configuration is needed when `gh` is authenticated.
 Use the BotNexus CLI to verify and configure Copilot access:
 
 ```bash
-# Check Copilot provider status
-botnexus provider copilot status
+# Check Copilot authentication, plan, and endpoint
+botnexus provider copilot whoami
 
-# Discover available models
-botnexus provider copilot discover
+# List the models your account is entitled to
+botnexus provider copilot models
 ```
+
+See the [CLI Reference](../cli-reference.md#provider-copilot) for the full `provider copilot` diagnostic subcommand group (`login`, `whoami`, `models`, `quota`, `test`).
 
 ## Supported Models
 
@@ -58,7 +60,7 @@ Copilot provides access to models from multiple families. Availability depends o
 | `gpt-4.1` | GPT (OpenAI) |
 | `o3-mini` | GPT (OpenAI) |
 
-Run `botnexus provider copilot discover` to see the full list available to your account.
+Run `botnexus provider copilot models` to see the full list available to your account.
 
 ## Features
 
