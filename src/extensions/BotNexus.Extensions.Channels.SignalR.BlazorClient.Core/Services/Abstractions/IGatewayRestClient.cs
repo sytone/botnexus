@@ -110,6 +110,17 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken ct = default);
 
+    /// <summary>GET /api/agents/{agentId}/conversations/{conversationId}/pending-ask-user</summary>
+    /// <returns>
+    /// The raw serialized <c>AskUserRequest</c> JSON for the conversation's pending prompt, or null
+    /// when no prompt is waiting. Used to hydrate the inline prompt on connect for a reloaded,
+    /// newly-opened, or mobile client that missed the live <c>UserInputRequired</c> event (#1488).
+    /// </returns>
+    Task<string?> GetConversationPendingAskUserAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken ct = default);
+
     /// <summary>GET /api/extensions/details — lists all loaded extensions with full manifest detail.</summary>
     Task<IReadOnlyList<ExtensionDetailDto>> GetExtensionDetailsAsync(CancellationToken cancellationToken = default);
 

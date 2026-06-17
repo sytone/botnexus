@@ -1,7 +1,9 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Tools;
 
@@ -192,12 +194,150 @@ public sealed class AskUserToolTests
         request.ConversationId.ShouldBe(ConversationId.From("conversation-from-context"));
     }
 
+    // ── ask_user durability (#1488): persist while pending, clear on resolve ──
+
+    [Fact]
+    public async Task ExecuteAsync_PersistsPendingPrompt_WhileWaiting()
+    {
+        var registry = new AskUserResponseRegistry();
+        var store = new InMemoryConversationStore();
+        await SeedConversationAsync(store, "conversation-1");
+        var tool = CreateTool(registry, "conversation-1", store);
+        var updates = new List<AgentToolResult>();
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Pick a deploy target",
+            ["input_type"] = "single_choice",
+            ["choices"] = new[]
+            {
+                new Dictionary<string, object?> { ["value"] = "prod", ["label"] = "Production" }
+            }
+        });
+
+        var executionTask = tool.ExecuteAsync("call-ask-user", arguments, onUpdate: updates.Add);
+        var request = await WaitForRequestAsync(updates);
+
+        // While the tool is blocked waiting, the prompt is durably persisted on the conversation row
+        // so a reloaded/newly-opened/mobile client can hydrate it on connect.
+        var pending = await WaitForPendingJsonAsync(store, request.ConversationId, expectPresent: true);
+        pending.ShouldNotBeNull();
+        using (var doc = JsonDocument.Parse(pending!))
+        {
+            doc.RootElement.GetProperty("requestId").GetString().ShouldBe(request.RequestId);
+            doc.RootElement.GetProperty("prompt").GetString().ShouldBe("Pick a deploy target");
+            doc.RootElement.GetProperty("inputType").GetString().ShouldBe("SingleChoice");
+        }
+
+        registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, selectedValues: ["prod"], freeFormText: null)).ShouldBeTrue();
+        await executionTask;
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClearsPendingPrompt_AfterAnswer()
+    {
+        var registry = new AskUserResponseRegistry();
+        var store = new InMemoryConversationStore();
+        await SeedConversationAsync(store, "conversation-1");
+        var tool = CreateTool(registry, "conversation-1", store);
+        var updates = new List<AgentToolResult>();
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "What name should I use?"
+        });
+
+        var executionTask = tool.ExecuteAsync("call-ask-user", arguments, onUpdate: updates.Add);
+        var request = await WaitForRequestAsync(updates);
+        registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "Hermes")).ShouldBeTrue();
+        await executionTask;
+
+        // Once the wait resolves, the durable copy is cleared so a stale prompt never rehydrates.
+        var pending = await WaitForPendingJsonAsync(store, request.ConversationId, expectPresent: false);
+        pending.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClearsPendingPrompt_AfterTimeout()
+    {
+        var registry = new AskUserResponseRegistry();
+        var store = new InMemoryConversationStore();
+        await SeedConversationAsync(store, "conversation-1");
+        var tool = CreateTool(registry, "conversation-1", store);
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Respond soon",
+            ["timeout_seconds"] = 1
+        });
+
+        await tool.ExecuteAsync("call-ask-user", arguments, onUpdate: _ => { });
+
+        var loaded = await store.GetAsync(ConversationId.From("conversation-1"));
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutStore_DoesNotThrow()
+    {
+        // The conversation store is optional; the prompt must still work with no durability wired.
+        var registry = new AskUserResponseRegistry();
+        var tool = CreateTool(registry, "conversation-1");
+        var updates = new List<AgentToolResult>();
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Still works?"
+        });
+
+        var executionTask = tool.ExecuteAsync("call-ask-user", arguments, onUpdate: updates.Add);
+        var request = await WaitForRequestAsync(updates);
+        registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "yes")).ShouldBeTrue();
+        var result = await executionTask;
+
+        ReadText(result).ShouldContain("yes");
+    }
+
+    private static async Task SeedConversationAsync(InMemoryConversationStore store, string conversationId)
+    {
+        await store.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From(conversationId),
+            AgentId = AgentId.From("agent-a"),
+            Title = "Ask convo"
+        });
+    }
+
+    private static async Task<string?> WaitForPendingJsonAsync(
+        InMemoryConversationStore store,
+        ConversationId conversationId,
+        bool expectPresent)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var conversation = await store.GetAsync(conversationId);
+            var pending = conversation?.PendingAskUserJson;
+            if (expectPresent ? pending is not null : pending is null)
+                return pending;
+
+            await Task.Delay(25);
+        }
+
+        return (await store.GetAsync(conversationId))?.PendingAskUserJson;
+    }
+
     private static AskUserTool CreateTool(AskUserResponseRegistry registry, string conversationId)
         => new(
             registry,
             AgentId.From("agent-a"),
             SessionId.From("session-1"),
             ConversationId.From(conversationId));
+
+    private static AskUserTool CreateTool(AskUserResponseRegistry registry, string conversationId, IConversationStore conversationStore)
+        => new(
+            registry,
+            AgentId.From("agent-a"),
+            SessionId.From("session-1"),
+            ConversationId.From(conversationId),
+            conversationStore);
 
     private static async Task<AskUserRequest> WaitForRequestAsync(IReadOnlyList<AgentToolResult> updates)
     {

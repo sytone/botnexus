@@ -833,6 +833,77 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Rebuilds an <see cref="AskUserPromptState"/> from the durable <c>PendingAskUserJson</c> payload
+    /// (a serialized <c>AskUserRequest</c>) persisted on the conversation row, so a reloaded, newly-opened,
+    /// or mobile client that missed the live <c>UserInputRequired</c> event can hydrate the inline prompt
+    /// on connect (ask_user durability, #1488). The persisted shape uses the same camelCase field names as
+    /// the live <see cref="AskUserRequestPayload"/>, with the input type serialized as a string and the
+    /// timeout as an ISO duration; the extra session/agent fields are ignored. Returns false when the JSON
+    /// is missing, malformed, or lacks the required request id / prompt / input type.
+    /// </summary>
+    /// <param name="json">Raw persisted <c>AskUserRequest</c> JSON, or null/empty when no prompt is pending.</param>
+    /// <param name="conversationId">The conversation being hydrated, used when the payload omits its own id.</param>
+    /// <param name="prompt">The reconstructed prompt state on success.</param>
+    public static bool TryBuildAskUserPromptFromPersistedJson(
+        string? json,
+        string conversationId,
+        [NotNullWhen(true)] out AskUserPromptState? prompt)
+    {
+        prompt = null;
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        AskUserRequestPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<AskUserRequestPayload>(json, PersistedAskUserJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (payload is null)
+            return false;
+
+        var requestId = payload.RequestId;
+        var promptText = payload.Prompt;
+        var inputType = payload.InputType;
+        if (string.IsNullOrWhiteSpace(requestId) ||
+            string.IsNullOrWhiteSpace(promptText) ||
+            string.IsNullOrWhiteSpace(inputType))
+        {
+            return false;
+        }
+
+        // Prefer the conversation id carried in the payload, falling back to the conversation being
+        // hydrated so the prompt always binds to the tab the user is looking at.
+        var resolvedConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
+            ? conversationId
+            : payload.ConversationId!;
+
+        prompt = new AskUserPromptState
+        {
+            RequestId = requestId!,
+            ConversationId = resolvedConversationId,
+            Prompt = promptText!,
+            InputType = inputType!,
+            Choices = ParseChoices(metadata: null, payload.Choices),
+            AllowMultiple = payload.AllowMultiple,
+            AllowFreeForm = payload.AllowFreeForm,
+            ExpiresAt = ParseExpiration(payload.Timeout)
+        };
+
+        return true;
+    }
+
+    private static readonly JsonSerializerOptions PersistedAskUserJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
     private static string? GetRequiredString(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
     {
         var value = GetString(metadata, key);

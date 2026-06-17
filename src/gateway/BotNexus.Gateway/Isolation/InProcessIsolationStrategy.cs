@@ -231,7 +231,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 askUserRegistry,
                 descriptor.AgentId,
                 context.SessionId,
-                askUserConversationId));
+                askUserConversationId,
+                conversationStore));
         }
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
         tools.Add(new DelayTool(delayToolOptions));

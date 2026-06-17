@@ -600,6 +600,26 @@ public sealed class ConversationsController : ControllerBase
         return Content(conversation.TodoJson, "application/json");
     }
 
+    /// <summary>
+    /// Gets the current pending <c>ask_user</c> prompt (the raw <c>PendingAskUserJson</c> payload, a
+    /// serialized <c>AskUserRequest</c>) for a conversation, so a reloaded tab, a newly-opened window,
+    /// or a client that missed the live <c>UserInputRequired</c> event can hydrate the prompt on
+    /// connect (ask_user durability, #1488). Returns 204 when no prompt is waiting.
+    /// </summary>
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/pending-ask-user")]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetPendingAskUser(string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        if (string.IsNullOrEmpty(conversation.PendingAskUserJson))
+            return NoContent();
+        return Content(conversation.PendingAskUserJson, "application/json");
+    }
+
     /// <summary>Pins a conversation to the top of the list.</summary>
     [HttpPost("{conversationId}/pin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

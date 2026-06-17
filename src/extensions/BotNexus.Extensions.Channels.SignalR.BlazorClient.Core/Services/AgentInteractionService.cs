@@ -305,6 +305,25 @@ public sealed class AgentInteractionService : IAgentInteractionService
             catch { /* todo fetch is best-effort */ }
         }
 
+        // Hydrate a pending ask_user prompt from REST (#1488). A reloaded tab, a newly-opened window,
+        // or a mobile client that missed the live UserInputRequired event would otherwise show no
+        // prompt; mirror the canvas/todo hydration so the inline prompt reappears when the conversation
+        // is opened. Only hydrate when nothing is already pending locally so a live prompt is never
+        // clobbered by a slower REST round-trip.
+        if (_store.GetPendingAskUser(conversationId) is null)
+        {
+            try
+            {
+                var pendingJson = await _restClient.GetConversationPendingAskUserAsync(agentId, conversationId);
+                if (GatewayEventHandler.TryBuildAskUserPromptFromPersistedJson(pendingJson, conversationId, out var pendingPrompt))
+                {
+                    _store.SetPendingAskUser(pendingPrompt);
+                    _store.NotifyChanged();
+                }
+            }
+            catch { /* pending ask_user hydration is best-effort */ }
+        }
+
         // Fix #789: if the conversation was streaming when the user navigated away, a
         // terminal SignalR event (MessageEnd/Error/TurnInterrupted/RunEnded) may have been missed.
         // Reset stale streaming/run state and force a history reload so the UI reflects the

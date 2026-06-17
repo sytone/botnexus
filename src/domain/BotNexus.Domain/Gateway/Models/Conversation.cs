@@ -88,6 +88,18 @@ public sealed record Conversation
     public string? TodoJson { get; set; }
 
     /// <summary>
+    /// Gets or sets the pending <c>ask_user</c> prompt for this conversation as an opaque JSON string,
+    /// persisted on the conversation row alongside <see cref="CanvasHtml"/> and <see cref="TodoJson"/>.
+    /// When an agent pauses on an interactive prompt, the full request (id, prompt, choices, timeout
+    /// policy) is stored here so a reloaded tab, a newly-opened window, or a client that missed the live
+    /// <c>UserInputRequired</c> event can hydrate the prompt on connect, and so the prompt survives a
+    /// gateway restart (ask_user durability, issue #1488). <c>null</c> means no prompt is waiting. The
+    /// concrete JSON shape (a serialized <c>AskUserRequest</c>) is owned by the ask_user flow that writes
+    /// and clears it; the store treats this field as opaque text.
+    /// </summary>
+    public string? PendingAskUserJson { get; set; }
+
+    /// <summary>
     /// Gets or sets the citizen that opened this conversation — the user who sent the first
     /// inbound message, or the agent that programmatically created it (via <c>conversation_new</c>
     /// tool calls, heartbeats, cron triggers, etc.). Set by the router on creation and treated as

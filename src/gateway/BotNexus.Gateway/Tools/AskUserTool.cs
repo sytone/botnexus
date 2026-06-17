@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
 
@@ -16,7 +17,8 @@ public sealed class AskUserTool(
     IAskUserResponseRegistry responseRegistry,
     AgentId agentId,
     SessionId sessionId,
-    ConversationId? conversationId) : IAgentTool
+    ConversationId? conversationId,
+    IConversationStore? conversationStore = null) : IAgentTool
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -116,6 +118,12 @@ public sealed class AskUserTool(
 
         onUpdate?.Invoke(new AgentToolResult(Array.Empty<AgentToolContent>(), request));
 
+        // Persist the pending prompt as durable conversation-scoped state so a reloaded tab, a
+        // newly-opened window, mobile that missed the live UserInputRequired event, or a gateway
+        // restart can rehydrate it (ask_user durability, #1488). Best-effort: a persistence hiccup
+        // must never break the interactive prompt itself.
+        await PersistPendingPromptAsync(request, cancellationToken).ConfigureAwait(false);
+
         try
         {
             var response = await registration.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -133,6 +141,53 @@ public sealed class AskUserTool(
                 RequestId = registration.RequestId,
                 WasCancelled = true
             }, JsonOptions));
+        }
+        finally
+        {
+            // The wait has resolved by every path (answer, timeout, cancel, or exception) -- the
+            // prompt is no longer pending, so clear the durable copy. Using CancellationToken.None
+            // because the caller's token may already be cancelled and the clear must still run.
+            await ClearPendingPromptAsync(conversationId.Value, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task PersistPendingPromptAsync(AskUserRequest request, CancellationToken cancellationToken)
+    {
+        if (conversationStore is null)
+            return;
+
+        try
+        {
+            var conversation = await conversationStore.GetAsync(request.ConversationId, cancellationToken).ConfigureAwait(false);
+            if (conversation is null)
+                return;
+
+            conversation.PendingAskUserJson = JsonSerializer.Serialize(request, JsonOptions);
+            await conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Durability is a best-effort enhancement; never fail the prompt because persistence hiccuped.
+        }
+    }
+
+    private async Task ClearPendingPromptAsync(ConversationId conversation, CancellationToken cancellationToken)
+    {
+        if (conversationStore is null)
+            return;
+
+        try
+        {
+            var stored = await conversationStore.GetAsync(conversation, cancellationToken).ConfigureAwait(false);
+            if (stored is null || stored.PendingAskUserJson is null)
+                return;
+
+            stored.PendingAskUserJson = null;
+            await conversationStore.SaveAsync(stored, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Best-effort clear; a stale pending row is reconciled on the next register/clear cycle.
         }
     }
 
