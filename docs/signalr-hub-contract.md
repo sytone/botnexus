@@ -39,6 +39,15 @@ responds directly (most stream their results back as server events instead).
 | `ResetSession(agentId, sessionId)` | Seal the current session and start a fresh one (history is retained). |
 | `RespondToAskUser(conversationId, requestId, freeFormText, selectedValues, cancelled)` | Submit the user's answer to an outstanding `ask_user` prompt (pairs with the `UserInputRequired` event). |
 
+> **Durable `ask_user` prompts (#1488).** A pending `ask_user` prompt is persisted on the
+> conversation row, so a reloaded tab, a newly-opened window, or a mobile client that missed the
+> live `UserInputRequired` event can rehydrate it. Clients fetch it with
+> `GET /api/agents/{agentId}/conversations/{conversationId}/pending-ask-user`, which returns the
+> serialized prompt as JSON, `204 No Content` when nothing is pending, or `404` when the
+> conversation is unknown. The portal hydrates this automatically when a conversation is selected
+> (mirroring canvas and todo hydration); the durable copy is cleared once the prompt is answered,
+> times out, or is cancelled.
+
 > `OnConnectedAsync` / `OnDisconnectedAsync` are SignalR lifecycle hooks, not client-callable methods.
 
 ## Server Events (Server → Client)

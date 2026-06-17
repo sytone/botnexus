@@ -59,6 +59,26 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string?> GetConversationPendingAskUserAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken ct = default)
+    {
+        var url = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}/pending-ask-user";
+        try
+        {
+            var response = await _http.GetAsync(url, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsStringAsync(ct);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public void Configure(string apiBaseUrl)
     {
         _apiBaseUrl = apiBaseUrl.TrimEnd('/') + "/";

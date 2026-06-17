@@ -267,4 +267,65 @@ public abstract class ConversationStoreContractTests
         loaded.ShouldNotBeNull();
         loaded!.TodoJson.ShouldBeNull();
     }
+
+    // ── PendingAskUserJson (issue #1488, ask_user durability Step 1/5) ─────
+
+    [Fact]
+    public async Task PendingAskUserJson_RoundTrips_AcrossSaveAndReload()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        const string pending = "{\"requestId\":\"r1\",\"conversationId\":\"c1\",\"prompt\":\"Pick one\",\"inputType\":\"SingleChoice\"}";
+        conv = conv with { PendingAskUserJson = pending };
+
+        await store.CreateAsync(conv);
+        var loaded = await store.GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBe(pending);
+    }
+
+    [Fact]
+    public async Task PendingAskUserJson_DefaultsToNull_WhenNeverSet()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+
+        await store.CreateAsync(conv);
+        var loaded = await store.GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PendingAskUserJson_PersistsUpdate_OnExistingConversation()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        await store.CreateAsync(conv);
+
+        const string updated = "{\"requestId\":\"r2\",\"conversationId\":\"c1\",\"prompt\":\"Type a value\",\"inputType\":\"FreeForm\"}";
+        conv = conv with { PendingAskUserJson = updated };
+        await store.SaveAsync(conv);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBe(updated);
+    }
+
+    [Fact]
+    public async Task PendingAskUserJson_CanBeClearedBackToNull()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation() with { PendingAskUserJson = "{\"requestId\":\"r3\",\"prompt\":\"q\",\"inputType\":\"FreeForm\"}" };
+        await store.CreateAsync(conv);
+
+        conv = conv with { PendingAskUserJson = null };
+        await store.SaveAsync(conv);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBeNull();
+    }
 }

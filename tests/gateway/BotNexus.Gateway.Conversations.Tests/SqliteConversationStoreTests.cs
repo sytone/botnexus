@@ -363,6 +363,42 @@ public sealed class SqliteConversationStoreTests
         loaded!.TodoJson.ShouldBeNull();
     }
 
+    [Fact]
+    public async Task PendingAskUserJson_Persists_AcrossStoreReopen()
+    {
+        // Verifies the pending_ask_user_json column survives a real DB reopen (issue #1488):
+        // write via one store instance, read via a fresh instance on the same temp DB file,
+        // which also exercises the EnsurePendingAskUserJsonColumnAsync migration-on-open path.
+        using var fixture = new StoreFixture();
+        const string pending = "{\"requestId\":\"req-1\",\"conversationId\":\"c1\",\"prompt\":\"Continue?\",\"inputType\":\"SingleChoice\"}";
+
+        var seedStore = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-ask"), "ask-convo");
+        conversation.PendingAskUserJson = pending;
+        await seedStore.CreateAsync(conversation);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBe(pending);
+    }
+
+    [Fact]
+    public async Task PendingAskUserJson_NullForPreExistingRowsWithoutColumn()
+    {
+        // A conversation created without a pending prompt reads back as null even though
+        // the column exists -- the absence of a pending ask_user prompt is represented as NULL.
+        using var fixture = new StoreFixture();
+        var seedStore = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-b"), "no-ask");
+        await seedStore.CreateAsync(conversation);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.PendingAskUserJson.ShouldBeNull();
+    }
+
     private static AgentId Agent(string id) => AgentId.From(id);
 
     // ── Initiator + ListForCitizenAsync ────────────────────────────────────────
