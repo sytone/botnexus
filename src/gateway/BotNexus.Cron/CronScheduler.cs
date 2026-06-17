@@ -197,7 +197,19 @@ public sealed class CronScheduler(
         // Serialize same-job runs in this process so the "create conversation -> CAS stamp"
         // window is single-threaded; concurrent triggers for OTHER jobs run unimpeded.
         var jobLock = _jobLocks.GetOrAdd(job.Id.Value, _ => new SemaphoreSlim(1, 1));
-        await jobLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await jobLock.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Aborted while waiting for the per-job lock (another same-job run held it during a
+            // shutdown/cancel). The run was already stamped "running" by RecordRunStartAsync above,
+            // so record the abort here too - otherwise it stays stuck in "running". CancellationToken.None
+            // for the write since `ct` is cancelled.
+            await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+            throw;
+        }
 
         try
         {
@@ -238,6 +250,21 @@ public sealed class CronScheduler(
                     LastRunError = $"Job exceeded {timeoutSeconds}s timeout"
                 }, ct).ConfigureAwait(false);
                 return run with { Status = "timed_out", CompletedAt = DateTimeOffset.UtcNow, Error = $"Job exceeded {timeoutSeconds}s timeout" };
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The run was aborted via the host token (gateway shutdown, scheduler stop, or an
+                // explicit cancel of a manual run) rather than the per-job timeout. Without this
+                // branch the cancellation escapes BOTH catch guards below (whose `when` clauses are
+                // false once `ct` is cancelled), leaving the run permanently in the "running" state
+                // it was stamped with at RecordRunStartAsync - a silent non-success that masquerades
+                // as never having finished. Record it as a failed run so the abort is visible, then
+                // rethrow to preserve cancellation semantics for the caller/host shutdown.
+                _logger.LogWarning(
+                    "Cron job aborted (cancellation requested). JobId: {JobId}, ActionType: {ActionType}",
+                    job.Id, job.ActionType);
+                await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+                throw;
             }
 
             _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
@@ -304,6 +331,29 @@ public sealed class CronScheduler(
         {
             jobLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Records a cron run that was aborted via the host cancellation token (gateway shutdown,
+    /// scheduler stop, or an explicit cancel) as a failed run. The run was already stamped
+    /// <c>running</c> by <see cref="ICronStore.RecordRunStartAsync"/>, so this surfaces the abort
+    /// as an <c>error</c> status instead of leaving it stuck in <c>running</c> forever (a silent
+    /// non-success). The bookkeeping writes use <see cref="CancellationToken.None"/> because the
+    /// caller's token is already cancelled - passing it would cancel the very writes that record
+    /// the failure.
+    /// </summary>
+    private async Task RecordAbortedRunAsync(RunId runId, CronJob job, DateTimeOffset triggeredAt)
+    {
+        const string abortReason = "Cron run aborted before completion.";
+        await _cronStore.RecordRunCompleteAsync(runId, "error", abortReason, ct: CancellationToken.None).ConfigureAwait(false);
+
+        var latest = await _cronStore.GetAsync(job.Id, CancellationToken.None).ConfigureAwait(false) ?? job;
+        await _cronStore.UpdateAsync(latest with
+        {
+            LastRunAt = triggeredAt,
+            LastRunStatus = "error",
+            LastRunError = abortReason
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
