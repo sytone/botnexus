@@ -167,7 +167,10 @@ test("run blocks when a sensitive file changed and there is no approval", async 
   await run(h);
   assert.ok(h.state.failed, "should setFailed");
   assert.match(h.state.failed, /\.gitignore/);
-  assert.match(h.state.failed, new RegExp(APPROVE_COMMAND.replace(/[/]/g, "\\/")));
+  assert.match(
+    h.state.failed,
+    new RegExp(APPROVE_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  );
 });
 
 test("run approves when an admin posts a head-SHA-bound ack", async () => {
