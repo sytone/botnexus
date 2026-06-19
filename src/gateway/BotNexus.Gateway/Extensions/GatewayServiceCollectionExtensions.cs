@@ -125,6 +125,21 @@ public static class GatewayServiceCollectionExtensions
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<AgentExchangeBudgetTracker>();
+        // #1542: the shared turn loop and cross-world federation routing are their own
+        // single-responsibility collaborators, injected into AgentExchangeService.
+        services.AddSingleton<AgentExchangeTurnEngine>(serviceProvider =>
+            new AgentExchangeTurnEngine(
+                serviceProvider.GetRequiredService<ISessionStore>(),
+                serviceProvider.GetRequiredService<IConversationStore>(),
+                serviceProvider.GetRequiredService<ILogger<AgentExchangeTurnEngine>>(),
+                serviceProvider.GetService<AgentExchangeBudgetTracker>()));
+        services.AddSingleton<ICrossWorldExchangeRouter>(serviceProvider =>
+            new CrossWorldExchangeRouter(
+                serviceProvider.GetRequiredService<AgentExchangeTurnEngine>(),
+                serviceProvider.GetRequiredService<ISessionStore>(),
+                serviceProvider.GetRequiredService<IConversationStore>(),
+                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>(),
+                serviceProvider.GetRequiredService<CrossWorldChannelAdapter>()));
         services.AddSingleton<IAgentExchangeService, AgentExchangeService>();
         services.AddSingleton<CrossWorldInboundAuthService>();
         services.TryAddSingleton<IWorldContext, PlatformWorldContext>();

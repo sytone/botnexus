@@ -47,7 +47,11 @@ public sealed class CancelNoSealArchitectureTests
     [Fact]
     public void AgentExchangeService_SealOnErrorCatches_PrecededByCallerCancellationRethrow()
     {
-        var path = LocateFile("gateway", "BotNexus.Gateway", "Agents", "AgentExchangeService.cs");
+        // #1542: the single seal-on-error catch-all (post-#1384) moved into
+        // AgentExchangeTurnEngine.RunExchangeLoopAsync when the turn loop was extracted from
+        // AgentExchangeService (SRP). The #553 cancellation invariant is unchanged — it now
+        // lives in the engine file.
+        var path = LocateFile("gateway", "BotNexus.Gateway", "Agents", "AgentExchangeTurnEngine.cs");
         var source = File.ReadAllText(path);
 
         var violations = FindMissingCancellationRethrow(source);
@@ -221,13 +225,14 @@ public sealed class CancelNoSealArchitectureTests
         // Counter-fence: AgentExchangeService used to have two seal-on-error catch sites (the
         // local agent-agent path in ConverseAsync and the cross-world relay-out path). As of
         // #1384 both paths delegate to the shared RunExchangeLoopAsync, which owns the single
-        // seal-on-error catch-all — so there is now exactly one. The per-catch fence
-        // (`*_SealOnErrorCatch_PrecededByCallerCancellationRethrow`) still polices that one
-        // consolidated catch (it must be preceded by the `catch (OperationCanceledException)
-        // when (...)` rethrow). If a refactor collapses the seal behind a helper (no literal
-        // `Sealed` in the catch body), this test forces the author to either restore the
-        // literal or update the fence.
-        var path = LocateFile("gateway", "BotNexus.Gateway", "Agents", "AgentExchangeService.cs");
+        // seal-on-error catch-all. #1542: RunExchangeLoopAsync (and therefore that catch) moved
+        // into AgentExchangeTurnEngine when the turn loop was extracted from the service. The
+        // per-catch fence (`*_SealOnErrorCatches_PrecededByCallerCancellationRethrow`) still
+        // polices that one consolidated catch in the engine (it must be preceded by the
+        // `catch (OperationCanceledException) when (...)` rethrow). If a refactor collapses the
+        // seal behind a helper (no literal `Sealed` in the catch body), this test forces the
+        // author to either restore the literal or update the fence.
+        var path = LocateFile("gateway", "BotNexus.Gateway", "Agents", "AgentExchangeTurnEngine.cs");
         var source = File.ReadAllText(path);
 
         var count = CountSealWritingCatchAlls(source);
@@ -235,7 +240,8 @@ public sealed class CancelNoSealArchitectureTests
         count.ShouldBeGreaterThanOrEqualTo(1,
             $"Counter-fence: {Path.GetFileName(path)} must contain at least one " +
             "`catch (Exception ...) {{ ... GatewaySessionStatus.Sealed ... }}` block. Post-#1384 " +
-            "the local + cross-world seal-on-error logic is single-sourced in RunExchangeLoopAsync. " +
+            "the local + cross-world seal-on-error logic is single-sourced in RunExchangeLoopAsync, " +
+            "which #1542 moved into AgentExchangeTurnEngine. " +
             "See the comment in CrossWorldFederationController_HasAtLeastOneSealWritingCatchAll " +
             "for the rationale.");
     }
