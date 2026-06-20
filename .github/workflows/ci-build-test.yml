@@ -36,6 +36,13 @@ on:
       - '.gitattributes'
       - 'agents/**'
 
+# Redundant CI: on a PR that pushes several commits in quick succession, cancel the
+# superseded in-flight run so the latest commit wins instead of stacking builds.
+# Push runs on main are grouped per ref but not cancelled. See issue #1548.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

@@ -49,6 +49,14 @@ on:
   schedule:
     - cron: '36 4 * * 1'
 
+# Group runs per ref so a burst of pushes to a PR head (or to main) does not stack
+# overlapping CodeQL analyses. cancel-in-progress is false on purpose: a security scan
+# must run to completion -- a half-finished analysis is worse than a queued one.
+# Only the per-ref grouping changes (mirrors OpenClaw d491e9c69bb9). See issue #1548.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
