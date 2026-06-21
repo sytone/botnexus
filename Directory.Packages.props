@@ -4,6 +4,20 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      Suppress GHSA-2m69-gcr7-jv3q on the transitive SQLitePCLRaw.lib.e_sqlite3 native package
+      (pulled in via Microsoft.Data.Sqlite). This advisory's affected range is `<= 2.1.11` with
+      NO firstPatchedVersion published yet (2.1.11 is the latest release and is still flagged),
+      so there is nowhere to bump to. NuGetAudit promotes it to NU1903 and TreatWarningsAsErrors
+      breaks `dotnet restore` on every SQLite-referencing project, turning main CI red.
+      This suppression is advisory-scoped (NOT a blanket NU1903 NoWarn) so any other/future
+      vulnerable package still fails the build. REMOVE this once a patched native lib ships
+      (track GHSA-2m69-gcr7-jv3q / a SQLitePCLRaw.lib.e_sqlite3 > 2.1.11 release). See #1538.
+    -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Test infrastructure -->
     <PackageVersion Include="bunit" Version="2.7.2" />
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />
