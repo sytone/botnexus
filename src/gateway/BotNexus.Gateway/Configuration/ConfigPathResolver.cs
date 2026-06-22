@@ -515,6 +515,26 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         }
     }
 
+    // Scalar string-to-numeric parsers, dispatched by target type. Adding a newly-supported
+    // numeric target is a single table entry rather than another arm in the parse ladder
+    // (open/closed). Each parser uses InvariantCulture so config values are locale-independent.
+    private static readonly IReadOnlyDictionary<Type, Func<string, object>> NumericParsers =
+        new Dictionary<Type, Func<string, object>>
+        {
+            [typeof(int)] = s => int.Parse(s, CultureInfo.InvariantCulture),
+            [typeof(long)] = s => long.Parse(s, CultureInfo.InvariantCulture),
+            [typeof(double)] = s => double.Parse(s, CultureInfo.InvariantCulture),
+            [typeof(float)] = s => float.Parse(s, CultureInfo.InvariantCulture),
+            [typeof(decimal)] = s => decimal.Parse(s, CultureInfo.InvariantCulture),
+        };
+
+    /// <summary>
+    /// Coerces a raw setter value (string, <see cref="JsonElement"/>, or already-typed object)
+    /// into <paramref name="targetType"/>. This is the value-conversion stage of the dotted-path
+    /// config setter; the path-walking stage (<c>TryResolveToken</c>) was split for #1393, and
+    /// this method is the companion split of the value-coercion ladder (#1566). Pure dispatcher:
+    /// it routes by source kind and delegates the string sub-ladder to <see cref="TryConvertFromString"/>.
+    /// </summary>
     private static bool TryConvertValue(object? rawValue, Type targetType, out object? converted, out string error)
     {
         converted = null;
@@ -522,79 +542,12 @@ public sealed class ConfigPathResolver : IConfigPathResolver
 
         var nonNullableType = Nullable.GetUnderlyingType(targetType) ?? targetType;
         var allowsNull = !nonNullableType.IsValueType || Nullable.GetUnderlyingType(targetType) is not null;
-        if (rawValue is null)
-        {
-            if (allowsNull)
-                return true;
 
-            error = $"{targetType.Name} does not allow null.";
-            return false;
-        }
+        if (rawValue is null)
+            return AllowNullOrError(targetType, allowsNull, out error);
 
         if (rawValue is string rawString)
-        {
-            if (string.Equals(rawString, "null", StringComparison.OrdinalIgnoreCase))
-            {
-                if (allowsNull)
-                    return true;
-
-                error = $"{targetType.Name} does not allow null.";
-                return false;
-            }
-
-            if (nonNullableType == typeof(string))
-            {
-                converted = rawString;
-                return true;
-            }
-
-            if (nonNullableType == typeof(bool))
-            {
-                if (bool.TryParse(rawString, out var boolValue))
-                {
-                    converted = boolValue;
-                    return true;
-                }
-
-                error = $"'{rawString}' is not a valid boolean.";
-                return false;
-            }
-
-            if (nonNullableType.IsEnum)
-            {
-                if (Enum.TryParse(nonNullableType, rawString, ignoreCase: true, out var enumValue))
-                {
-                    converted = enumValue;
-                    return true;
-                }
-
-                error = $"'{rawString}' is not a valid {nonNullableType.Name} value.";
-                return false;
-            }
-
-            try
-            {
-                if (nonNullableType == typeof(int))
-                    converted = int.Parse(rawString, CultureInfo.InvariantCulture);
-                else if (nonNullableType == typeof(long))
-                    converted = long.Parse(rawString, CultureInfo.InvariantCulture);
-                else if (nonNullableType == typeof(double))
-                    converted = double.Parse(rawString, CultureInfo.InvariantCulture);
-                else if (nonNullableType == typeof(float))
-                    converted = float.Parse(rawString, CultureInfo.InvariantCulture);
-                else if (nonNullableType == typeof(decimal))
-                    converted = decimal.Parse(rawString, CultureInfo.InvariantCulture);
-                else
-                    converted = JsonSerializer.Deserialize(rawString, nonNullableType, ReadJsonOptions);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                error = $"Unable to convert '{rawString}' to {nonNullableType.Name}: {ex.Message}";
-                return false;
-            }
-        }
+            return TryConvertFromString(rawString, targetType, nonNullableType, allowsNull, out converted, out error);
 
         if (rawValue is JsonElement element)
         {
@@ -624,6 +577,85 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         catch (Exception ex)
         {
             error = $"Unable to convert value to {nonNullableType.Name}: {ex.Message}";
+            return false;
+        }
+    }
+
+    // Returns true (leaving converted = null) when null is permitted; otherwise stamps the
+    // "does not allow null" error. Shared by the raw-null and the string-literal-"null" paths so
+    // the message is written once.
+    private static bool AllowNullOrError(Type targetType, bool allowsNull, out string error)
+    {
+        if (allowsNull)
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        error = $"{targetType.Name} does not allow null.";
+        return false;
+    }
+
+    /// <summary>
+    /// Converts a non-null string into <paramref name="nonNullableType"/>: the "null" literal,
+    /// string passthrough, bool, enum, and the numeric/JSON fallback. Pure and independently
+    /// testable, including the user-facing error strings the CLI surfaces.
+    /// </summary>
+    private static bool TryConvertFromString(
+        string rawString,
+        Type targetType,
+        Type nonNullableType,
+        bool allowsNull,
+        out object? converted,
+        out string error)
+    {
+        converted = null;
+        error = string.Empty;
+
+        if (string.Equals(rawString, "null", StringComparison.OrdinalIgnoreCase))
+            return AllowNullOrError(targetType, allowsNull, out error);
+
+        if (nonNullableType == typeof(string))
+        {
+            converted = rawString;
+            return true;
+        }
+
+        if (nonNullableType == typeof(bool))
+        {
+            if (bool.TryParse(rawString, out var boolValue))
+            {
+                converted = boolValue;
+                return true;
+            }
+
+            error = $"'{rawString}' is not a valid boolean.";
+            return false;
+        }
+
+        if (nonNullableType.IsEnum)
+        {
+            if (Enum.TryParse(nonNullableType, rawString, ignoreCase: true, out var enumValue))
+            {
+                converted = enumValue;
+                return true;
+            }
+
+            error = $"'{rawString}' is not a valid {nonNullableType.Name} value.";
+            return false;
+        }
+
+        try
+        {
+            converted = NumericParsers.TryGetValue(nonNullableType, out var parse)
+                ? parse(rawString)
+                : JsonSerializer.Deserialize(rawString, nonNullableType, ReadJsonOptions);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Unable to convert '{rawString}' to {nonNullableType.Name}: {ex.Message}";
             return false;
         }
     }
