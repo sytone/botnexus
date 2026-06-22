@@ -77,84 +77,25 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
 
-        // Enforce spawn depth limit
-        var maxDepth = _options.CurrentValue.SubAgents.MaxDepth;
-        if (maxDepth > 0)
-        {
-            var depth = CountSubAgentDepth(request.ParentSessionId);
-            if (depth >= maxDepth)
-                throw new InvalidOperationException(
-                    $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
-        }
-
-        var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
-        if (maxConcurrent > 0)
-        {
-            var activeCount = _records.Values.Count(record =>
-                record.Info.ParentSessionId == request.ParentSessionId &&
-                record.Info.Status == SubAgentStatus.Running);
-
-            if (activeCount >= maxConcurrent)
-                throw new InvalidOperationException(
-                    $"Parent session '{request.ParentSessionId}' already has {activeCount} running sub-agents; maximum is {maxConcurrent}.");
-        }
+        EnforceSpawnLimits(request);
 
         var uniqueId = Guid.NewGuid().ToString("N");
         var subAgentId = uniqueId;
         var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
 
-        // Phase 5 / F-6 (#562): pattern-match on the required Mode discriminated
-        // union. Mode is `required` on SubAgentSpawnRequest as of step 5, so the
-        // null case is structurally unreachable — the default arm exists only to
-        // catch a future third subclass of SubAgentSpawnMode being added without
-        // updating this switch.
-        SubAgentArchetype archetype;
-        AgentDescriptor baseDescriptor;
-        AgentId childAgentId;
-        string? name;
-        string? modelOverride;
-        string? apiProviderOverride;
-        IReadOnlyList<string>? toolIds;
-        string? systemPromptOverride;
-
-        switch (request.Mode)
-        {
-            case Embody embody:
-                archetype = embody.Role;
-                baseDescriptor = parentDescriptor;
-                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
-                name = embody.Customizations.Name;
-                modelOverride = embody.Customizations.ModelOverride;
-                apiProviderOverride = embody.Customizations.ApiProviderOverride;
-                toolIds = embody.Customizations.ToolIds;
-                systemPromptOverride = embody.Customizations.SystemPromptOverride;
-                break;
-
-            case Mirror mirror:
-                // Mirror is strict pass-through of the target's descriptor. The
-                // archetype slot in the child agent id is filled with the target
-                // id (locked design #562) so the child surfaces the mirrored
-                // identity rather than a generic role label.
-                archetype = SubAgentArchetype.General;
-                baseDescriptor = _registry.Get(mirror.TargetAgentId)
-                    ?? throw new KeyNotFoundException($"Target agent '{mirror.TargetAgentId}' is not registered.");
-                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{mirror.TargetAgentId.Value}--{uniqueId}");
-                name = null;
-                modelOverride = null;
-                apiProviderOverride = null;
-                toolIds = null;
-                systemPromptOverride = null;
-                break;
-
-            default:
-                throw new InvalidOperationException(
-                    $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
-                    + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
-        }
+        // Resolve the Embody | Mirror discriminated union into a side-effect-free plan
+        // (descriptor + minted child id + customisation overrides). See ResolveSpawnPlan.
+        var plan = ResolveSpawnPlan(request, parentDescriptor, uniqueId);
+        var archetype = plan.Archetype;
+        var baseDescriptor = plan.BaseDescriptor;
+        var childAgentId = plan.ChildAgentId;
+        var name = plan.Name;
+        var modelOverride = plan.ModelOverride;
+        var toolIds = plan.ToolIds;
 
         // Validate tool grants against parent's deny-list (privilege escalation
-        // prevention). Runs AFTER the switch so it reads the typed `toolIds`
-        // local resolved from Mode, not a deleted top-level request field.
+        // prevention). Runs AFTER plan resolution so it reads the typed `toolIds`
+        // resolved from Mode, not a deleted top-level request field.
         if (_policyProvider is not null && toolIds is { Count: > 0 })
         {
             var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
@@ -320,6 +261,102 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ReapCompletedRecords();
 
         return info;
+    }
+
+    /// <summary>
+    /// Enforces the configured spawn depth and per-session concurrency ceilings for
+    /// <paramref name="request"/>. Pure guard — throws <see cref="InvalidOperationException"/>
+    /// when a limit is breached and is otherwise a no-op. Extracted from
+    /// <see cref="SpawnAsync"/> so the "depth limit rejects at N" / "concurrency rejects at N"
+    /// boundaries are independently unit-testable (#1565).
+    /// </summary>
+    /// <param name="request">The spawn request whose parent session is being bounded.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the parent session is already at the maximum spawn depth or already has the
+    /// maximum number of running sub-agents.
+    /// </exception>
+    internal void EnforceSpawnLimits(SubAgentSpawnRequest request)
+    {
+        var maxDepth = _options.CurrentValue.SubAgents.MaxDepth;
+        if (maxDepth > 0)
+        {
+            var depth = CountSubAgentDepth(request.ParentSessionId);
+            if (depth >= maxDepth)
+                throw new InvalidOperationException(
+                    $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
+        }
+
+        var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
+        if (maxConcurrent > 0)
+        {
+            var activeCount = _records.Values.Count(record =>
+                record.Info.ParentSessionId == request.ParentSessionId &&
+                record.Info.Status == SubAgentStatus.Running);
+
+            if (activeCount >= maxConcurrent)
+                throw new InvalidOperationException(
+                    $"Parent session '{request.ParentSessionId}' already has {activeCount} running sub-agents; maximum is {maxConcurrent}.");
+        }
+    }
+
+    /// <summary>
+    /// Resolves the required <see cref="SubAgentSpawnRequest.Mode"/> discriminated union
+    /// (Embody | Mirror) into a side-effect-free <see cref="SubAgentSpawnPlan"/> — the descriptor
+    /// to clone, the minted child agent id, and any Embody customisation overrides.
+    /// </summary>
+    /// <remarks>
+    /// Phase 5 / F-6 (#562): Mode is <c>required</c> on the request, so the null case is
+    /// structurally unreachable here (<see cref="SpawnAsync"/> already null-guards Mode) — the
+    /// default arm exists only to catch a future third <c>SubAgentSpawnMode</c> subclass being
+    /// added without updating this switch. Extracted as a pure method so each mode's resolution
+    /// (e.g. Mirror's model fallback deriving from the <i>target</i> descriptor, not the parent)
+    /// is unit-testable without the full manager (#1565).
+    /// </remarks>
+    /// <param name="request">The spawn request carrying the Mode.</param>
+    /// <param name="parentDescriptor">The already-resolved parent descriptor (Embody base).</param>
+    /// <param name="uniqueId">The minted unique id used to form the child agent id.</param>
+    /// <returns>The resolved plan.</returns>
+    /// <exception cref="KeyNotFoundException">Thrown when a Mirror target agent is not registered.</exception>
+    /// <exception cref="InvalidOperationException">Thrown for an unknown Mode subclass.</exception>
+    internal SubAgentSpawnPlan ResolveSpawnPlan(
+        SubAgentSpawnRequest request,
+        AgentDescriptor parentDescriptor,
+        string uniqueId)
+    {
+        switch (request.Mode)
+        {
+            case Embody embody:
+                return new SubAgentSpawnPlan(
+                    Archetype: embody.Role,
+                    BaseDescriptor: parentDescriptor,
+                    ChildAgentId: AgentId.From($"{request.ParentAgentId}--subagent--{embody.Role.Value}--{uniqueId}"),
+                    Name: embody.Customizations.Name,
+                    ModelOverride: embody.Customizations.ModelOverride,
+                    ApiProviderOverride: embody.Customizations.ApiProviderOverride,
+                    ToolIds: embody.Customizations.ToolIds,
+                    SystemPromptOverride: embody.Customizations.SystemPromptOverride);
+
+            case Mirror mirror:
+                // Mirror is strict pass-through of the target's descriptor. The archetype slot in
+                // the child agent id is filled with the target id (locked design #562) so the child
+                // surfaces the mirrored identity rather than a generic role label.
+                var targetDescriptor = _registry.Get(mirror.TargetAgentId)
+                    ?? throw new KeyNotFoundException($"Target agent '{mirror.TargetAgentId}' is not registered.");
+                return new SubAgentSpawnPlan(
+                    Archetype: SubAgentArchetype.General,
+                    BaseDescriptor: targetDescriptor,
+                    ChildAgentId: AgentId.From($"{request.ParentAgentId}--subagent--{mirror.TargetAgentId.Value}--{uniqueId}"),
+                    Name: null,
+                    ModelOverride: null,
+                    ApiProviderOverride: null,
+                    ToolIds: null,
+                    SystemPromptOverride: null);
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
+                    + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
+        }
     }
 
     /// <inheritdoc />
@@ -502,6 +539,39 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (string.IsNullOrWhiteSpace(parentAgentId.Value))
             return;
 
+        try
+        {
+            // Dispatch half: deliver the completion follow-up to the parent session.
+            await DispatchCompletionFollowUpAsync(subAgentId, normalizedSummary, updated, parentAgentId, childAgentId, ct);
+        }
+        finally
+        {
+            // Teardown half: always release the child agent/session, even if dispatch threw.
+            await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// Dispatch half of completion handling: builds the completion follow-up message and delivers
+    /// it to the parent session via <see cref="_dispatcher"/>, recording wake telemetry. Delivery
+    /// failures are logged and swallowed (the record-teardown in <see cref="OnCompletedAsync"/>
+    /// still runs). Separated from the record-teardown so the two concerns are independently
+    /// readable (#1565).
+    /// </summary>
+    /// <param name="subAgentId">The completing sub-agent's id.</param>
+    /// <param name="normalizedSummary">The normalized result summary.</param>
+    /// <param name="updated">The updated sub-agent info (final status/timestamps).</param>
+    /// <param name="parentAgentId">The parent agent to wake (already non-empty).</param>
+    /// <param name="childAgentId">The child agent id used as the wake sender (#526).</param>
+    /// <param name="ct">Cancellation token for the dispatch.</param>
+    private async Task DispatchCompletionFollowUpAsync(
+        string subAgentId,
+        string normalizedSummary,
+        SubAgentInfo updated,
+        AgentId parentAgentId,
+        AgentId childAgentId,
+        CancellationToken ct)
+    {
         var completionMessage = new SubAgentCompletionMessage
         {
             SubAgentId = subAgentId,
@@ -559,11 +629,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 subAgentId,
                 updated.ParentSessionId);
         }
-        finally
-        {
-            await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
-        }
     }
+
     private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds)
     {
         if (!_records.TryGetValue(subAgentId, out var record) || record.TimeoutCts is not { } timeoutCts)
