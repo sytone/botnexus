@@ -305,6 +305,11 @@ public sealed class EditTool : IAgentTool
 
                 var fuzzyOld = NormalizeForFuzzyMatch(normalizedOld);
                 var fuzzyMatchCount = CountOccurrences(normalizedForFuzzy.Normalized, fuzzyOld);
+                if (fuzzyMatchCount == 0)
+                {
+                    throw new InvalidOperationException(BuildNoMatchDiagnostic(normalizedOriginal, normalizedOld));
+                }
+
                 if (fuzzyMatchCount != 1)
                 {
                     throw new InvalidOperationException(
@@ -372,6 +377,131 @@ public sealed class EditTool : IAgentTool
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Builds an actionable message for the 0-match case (issue #1555): instead of a bare
+    /// "found 0", it anchors on the first non-empty line of <paramref name="normalizedOld"/>,
+    /// finds the closest line in the file (best token/substring overlap), and reports its line
+    /// number and text. When that closest line is identical to the anchor once leading/trailing
+    /// whitespace is removed, it adds a hint that the only difference is indentation or invisible
+    /// characters and to re-read the file with <c>read</c> for clean text. The message still
+    /// contains the "found 0" token so existing tooling and tests keep working.
+    /// </summary>
+    private static string BuildNoMatchDiagnostic(string normalizedOriginal, string normalizedOld)
+    {
+        const string prefix = "Expected exactly one match for edits[].oldText, but found 0.";
+
+        var anchor = FirstNonEmptyLine(normalizedOld);
+        if (anchor is null)
+        {
+            return prefix;
+        }
+
+        var fileLines = normalizedOriginal.Split('\n');
+        var anchorTrimmed = anchor.Trim();
+
+        var bestIndex = -1;
+        var bestScore = -1.0;
+        for (var i = 0; i < fileLines.Length; i++)
+        {
+            var score = LineSimilarity(anchorTrimmed, fileLines[i].Trim());
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIndex = i;
+            }
+        }
+
+        if (bestIndex < 0 || bestScore <= 0)
+        {
+            return $"{prefix} No similar line was found in the file \u2014 re-read the file with `read` to confirm the current text.";
+        }
+
+        var closestLine = fileLines[bestIndex];
+        var lineNumber = bestIndex + 1;
+        var snippet = Truncate(closestLine, 200);
+        var message = $"{prefix} The closest text in the file is at line {lineNumber}: \u00AB{snippet}\u00BB.";
+
+        // If the only difference is surrounding whitespace/invisible characters, say so explicitly.
+        if (string.Equals(closestLine.Trim(), anchorTrimmed, StringComparison.Ordinal))
+        {
+            message += " It differs only in leading/trailing whitespace or invisible characters \u2014 " +
+                       "re-read the file with `read` to get clean text (pasted shell output can carry hidden ANSI/whitespace).";
+        }
+
+        return message;
+    }
+
+    private static string? FirstNonEmptyLine(string text)
+    {
+        foreach (var line in text.Split('\n'))
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                return line;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Scores how similar two already-trimmed lines are in the range [0, 1]: exact match scores
+    /// 1, otherwise the score is the length of the longest common substring relative to the longer
+    /// line. Cheap and good enough to surface the line the model most likely meant.
+    /// </summary>
+    private static double LineSimilarity(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0)
+        {
+            return 0;
+        }
+
+        if (string.Equals(a, b, StringComparison.Ordinal))
+        {
+            return 1;
+        }
+
+        var longest = LongestCommonSubstringLength(a, b);
+        return (double)longest / Math.Max(a.Length, b.Length);
+    }
+
+    private static int LongestCommonSubstringLength(string a, string b)
+    {
+        // Rolling two-row DP to keep allocation small for long lines.
+        var previous = new int[b.Length + 1];
+        var current = new int[b.Length + 1];
+        var best = 0;
+
+        for (var i = 1; i <= a.Length; i++)
+        {
+            for (var j = 1; j <= b.Length; j++)
+            {
+                if (a[i - 1] == b[j - 1])
+                {
+                    current[j] = previous[j - 1] + 1;
+                    if (current[j] > best)
+                    {
+                        best = current[j];
+                    }
+                }
+                else
+                {
+                    current[j] = 0;
+                }
+            }
+
+            (previous, current) = (current, previous);
+            Array.Clear(current);
+        }
+
+        return best;
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength] + "\u2026";
     }
 
     private static string NormalizeForFuzzyMatch(string text)
