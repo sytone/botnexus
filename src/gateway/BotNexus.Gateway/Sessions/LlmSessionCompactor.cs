@@ -146,12 +146,43 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         if (toSummarize.Count == 0)
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
-            return CompactionResult.Skipped(
-                snap.DestructiveVersion,
-                snap.Count,
-                entriesPreserved: toPreserve.Count,
-                tokensBefore: visibleTokens,
-                tokensAfter: visibleTokens);
+
+            // #1574: a split can yield nothing when the session has <= PreservedTurns user turns,
+            // yet the visible tail may still exceed the compaction threshold. Returning Skipped here
+            // leaves ShouldCompact true forever, so the session loops on a context it can never shrink
+            // (the documented low-user-turn / high-tool-volume cascade). When we are still above the
+            // threshold, fall back to a smaller effective PreservedTurns so the oldest turn becomes
+            // summarizable and we actually shed context. Genuinely-below-threshold sessions keep
+            // returning Skipped (history is already minimal -- nothing to shed).
+            var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
+            if (visibleTokens > threshold)
+            {
+                for (var fallbackTurns = options.PreservedTurns - 1; fallbackTurns >= 1; fallbackTurns--)
+                {
+                    var (fallbackSummarize, fallbackPreserve) = SplitHistory(visible, fallbackTurns);
+                    if (fallbackSummarize.Count > 0)
+                    {
+                        _logger.LogInformation(
+                            "Compaction split found no summarizable turns at PreservedTurns={Requested} for session " +
+                            "{SessionId} ({Tokens} visible tokens > {Threshold} threshold). Falling back to " +
+                            "PreservedTurns={Fallback} so the session can shed context instead of looping.",
+                            options.PreservedTurns, session.SessionId, visibleTokens, threshold, fallbackTurns);
+                        toSummarize = fallbackSummarize;
+                        toPreserve = fallbackPreserve;
+                        break;
+                    }
+                }
+            }
+
+            if (toSummarize.Count == 0)
+            {
+                return CompactionResult.Skipped(
+                    snap.DestructiveVersion,
+                    snap.Count,
+                    entriesPreserved: toPreserve.Count,
+                    tokensBefore: visibleTokens,
+                    tokensAfter: visibleTokens);
+            }
         }
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);

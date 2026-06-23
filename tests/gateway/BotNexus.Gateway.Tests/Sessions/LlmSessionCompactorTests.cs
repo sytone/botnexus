@@ -158,6 +158,63 @@ public sealed class LlmSessionCompactorTests
     }
 
     [Fact]
+    public async Task CompactAsync_FewUserTurnsHugeTailAboveThreshold_SummarizesInsteadOfNoOp()
+    {
+        // #1574: a session with <= PreservedTurns user turns but a huge tail that still exceeds the
+        // compaction threshold previously returned Skipped (SplitHistory found no split point), so
+        // ShouldCompact stayed true forever and the session looped on a context it could not shrink.
+        // The fallback must reduce the effective PreservedTurns so the oldest turn becomes
+        // summarizable, actually shedding context (tokensAfter < tokensBefore).
+        var hugeTail = new string('a', 4_000); // ~1000 tokens (chars/4), far above the 50-token threshold
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", hugeTail),
+            ("user", "u2"),
+            ("assistant", "a2"));
+        var compactor = CreateCompactor("summary of the older turn");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 3,                 // more than the 2 user turns present -> would have no-op'd
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.5,          // threshold = 50 tokens; visible tail ~1000 >> 50
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue("a session above the compaction threshold must not no-op");
+        result.CompactedHistory.ShouldNotBeNull();
+        result.EntriesSummarized.ShouldBeGreaterThan(0);
+        result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
+    }
+
+    [Fact]
+    public async Task CompactAsync_FewUserTurnsSmallTailBelowThreshold_StillSkipped()
+    {
+        // The genuine no-op case must be preserved: when the visible tail is below the threshold
+        // there is nothing to shed, so Skipped (unchanged history) is the correct result even when
+        // the user-turn count is below PreservedTurns.
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("assistant", "a2"));
+        var originalHistory = session.GetHistorySnapshot().ToList();
+        var compactor = CreateCompactor("unused");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 3,
+            ContextWindowTokens = 1_000_000,    // threshold enormous; tiny tail is below it
+            TokenThresholdRatio = 0.5,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeFalse("below-threshold sessions still legitimately no-op");
+        result.EntriesSummarized.ShouldBe(0);
+        session.GetHistorySnapshot().ShouldBe(originalHistory);
+    }
+
+    [Fact]
     public async Task CompactAsync_PreservedTurnsZero_SummarizesEverything()
     {
         // This is the force-compact scenario: even with only 1 user turn (the
