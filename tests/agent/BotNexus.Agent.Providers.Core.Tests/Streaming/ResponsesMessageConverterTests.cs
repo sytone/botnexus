@@ -134,8 +134,12 @@ public class ResponsesMessageConverterTests
             ErrorMessage: null,
             ResponseId: null,
             Timestamp: Ts);
+        // Pair the call with its result so the whole-transcript pairing pass keeps the function_call.
+        var toolResult = new ToolResultMessage(
+            ToolCallId: "call_1|fc_99", ToolName: "do_thing",
+            Content: [new TextContent("ok")], IsError: false, Timestamp: Ts);
 
-        var result = ResponsesMessageConverter.ConvertMessages([assistant], Model());
+        var result = ResponsesMessageConverter.ConvertMessages([assistant, toolResult], Model());
 
         result[0]!["type"]!.GetValue<string>().ShouldBe("function_call");
         result[0]!["call_id"]!.GetValue<string>().ShouldBe("call_1");
@@ -146,6 +150,12 @@ public class ResponsesMessageConverterTests
     [Fact]
     public void ConvertMessages_ToolResult_EmitsFunctionCallOutput()
     {
+        // Pair the result with its originating call so the pairing pass keeps the function_call_output.
+        var assistant = new AssistantMessage(
+            Content: [new ToolCallContent("call_1|fc_99", "do_thing", new Dictionary<string, object?>())],
+            Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+            Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+            ErrorMessage: null, ResponseId: null, Timestamp: Ts);
         var toolResult = new ToolResultMessage(
             ToolCallId: "call_1|fc_99",
             ToolName: "do_thing",
@@ -153,11 +163,139 @@ public class ResponsesMessageConverterTests
             IsError: false,
             Timestamp: Ts);
 
-        var result = ResponsesMessageConverter.ConvertMessages([toolResult], Model());
+        var result = ResponsesMessageConverter.ConvertMessages([assistant, toolResult], Model());
 
-        result[0]!["type"]!.GetValue<string>().ShouldBe("function_call_output");
-        result[0]!["call_id"]!.GetValue<string>().ShouldBe("call_1");
-        result[0]!["output"]!.GetValue<string>().ShouldBe("the result");
+        var output = result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output");
+        output!["call_id"]!.GetValue<string>().ShouldBe("call_1");
+        output!["output"]!.GetValue<string>().ShouldBe("the result");
+    }
+
+    [Fact]
+    public void ConvertMessages_DanglingFunctionCallInOlderTurn_IsDropped()
+    {
+        // A tool-call in an OLDER (non-last) assistant turn whose tool-result was never written
+        // (crash/abort two turns back, conversation continued). The Responses API rejects the
+        // whole request (HTTP 400) when a function_call has no matching function_call_output, so
+        // the converter must drop the unpaired call instead of emitting it verbatim.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("first"), Ts),
+            new AssistantMessage(
+                Content: [new ToolCallContent("call_dangling|fc_1", "do_thing", new Dictionary<string, object?>())],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts),
+            // No ToolResultMessage for call_dangling -- the turn was abandoned.
+            new UserMessage(new UserMessageContent("second"), Ts + 1),
+            new AssistantMessage(
+                Content: [new TextContent("answer")],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.Stop,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts + 1),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+
+        // The dangling function_call must NOT appear in the input array.
+        result.Where(n => n!["type"]!.GetValue<string>() == "function_call").ShouldBeEmpty();
+        // Everything else is preserved: 2 user messages + 1 assistant text.
+        result.Count(n => n!["type"]!.GetValue<string>() == "message").ShouldBe(3);
+    }
+
+    [Fact]
+    public void ConvertMessages_DanglingFunctionCallInLastTurn_IsDropped()
+    {
+        // The trailing assistant turn issued a tool-call but no result was ever written (the active
+        // turn was aborted). On replay this dangling call would 400 the Responses request.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("go"), Ts),
+            new AssistantMessage(
+                Content: [new ToolCallContent("call_last|fc_9", "do_thing", new Dictionary<string, object?>())],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+
+        result.Where(n => n!["type"]!.GetValue<string>() == "function_call").ShouldBeEmpty();
+        result.Count.ShouldBe(1); // only the user message survives
+    }
+
+    [Fact]
+    public void ConvertMessages_OrphanFunctionCallOutput_IsDropped()
+    {
+        // A tool-result with no prior tool-call (orphan) -- symmetric malformation. The Responses
+        // API also rejects a function_call_output with no matching function_call.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("hi"), Ts),
+            new ToolResultMessage(
+                ToolCallId: "call_orphan|fc_3", ToolName: "do_thing",
+                Content: [new TextContent("orphan result")], IsError: false, Timestamp: Ts),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+
+        result.Where(n => n!["type"]!.GetValue<string>() == "function_call_output").ShouldBeEmpty();
+        result.Count.ShouldBe(1); // only the user message survives
+    }
+
+    [Fact]
+    public void ConvertMessages_PairedToolCallAndResult_BothPreserved()
+    {
+        // Regression guard: a properly paired call + result must pass through untouched.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("do it"), Ts),
+            new AssistantMessage(
+                Content: [new ToolCallContent("call_ok|fc_5", "do_thing", new Dictionary<string, object?>())],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts),
+            new ToolResultMessage(
+                ToolCallId: "call_ok|fc_5", ToolName: "do_thing",
+                Content: [new TextContent("done")], IsError: false, Timestamp: Ts),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+
+        var call = result.Single(n => n!["type"]!.GetValue<string>() == "function_call");
+        call!["call_id"]!.GetValue<string>().ShouldBe("call_ok");
+        var output = result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output");
+        output!["call_id"]!.GetValue<string>().ShouldBe("call_ok");
+        output!["output"]!.GetValue<string>().ShouldBe("done");
+    }
+
+    [Fact]
+    public void ConvertMessages_MixedPairedAndDangling_DropsOnlyUnpaired()
+    {
+        // One assistant turn emits two tool-calls; only the first gets a result. The paired call
+        // and its output survive; the unpaired second call is dropped.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("both"), Ts),
+            new AssistantMessage(
+                Content:
+                [
+                    new ToolCallContent("call_a|fc_a", "do_a", new Dictionary<string, object?>()),
+                    new ToolCallContent("call_b|fc_b", "do_b", new Dictionary<string, object?>()),
+                ],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts),
+            new ToolResultMessage(
+                ToolCallId: "call_a|fc_a", ToolName: "do_a",
+                Content: [new TextContent("a done")], IsError: false, Timestamp: Ts),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+
+        var calls = result.Where(n => n!["type"]!.GetValue<string>() == "function_call").ToList();
+        calls.Count.ShouldBe(1);
+        calls[0]!["call_id"]!.GetValue<string>().ShouldBe("call_a");
+        result.Count(n => n!["type"]!.GetValue<string>() == "function_call_output").ShouldBe(1);
     }
 
     [Fact]
