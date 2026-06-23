@@ -56,10 +56,12 @@ public sealed class AgentExchangeArchiveArchitectureTests
     {
         // P9-C (#1384): the cross-world sender path likewise delegates the seal/archive lifecycle
         // to the shared RunExchangeLoopAsync. See the local-path fence above for rationale.
-        var (source, methods) = LoadAndSplit(LocateAgentExchangeServiceFile());
+        // #1542: ConverseCrossWorldAsync moved into CrossWorldExchangeRouter when cross-world
+        // federation routing was split out of AgentExchangeService (SRP); the invariant holds.
+        var (source, methods) = LoadAndSplit(LocateCrossWorldExchangeRouterFile());
 
         AssertMethodInvokesHelper(methods, source, "ConverseCrossWorldAsync", "RunExchangeLoopAsync",
-            "P9-C: the cross-world sender path in AgentExchangeService.ConverseCrossWorldAsync " +
+            "P9-C: the cross-world sender path in CrossWorldExchangeRouter.ConverseCrossWorldAsync " +
             "MUST drive the shared RunExchangeLoopAsync(...) which owns the terminal seal + " +
             "ArchiveOnExchangeEndAsync contract. Without it, sender-side A↔A conversations stay " +
             "Active forever after the exchange ends.");
@@ -71,11 +73,12 @@ public sealed class AgentExchangeArchiveArchitectureTests
         // The single source of truth for the A↔A seal/archive lifecycle (#1384). Both
         // ConverseAsync and ConverseCrossWorldAsync delegate here, so this is where the
         // ArchiveOnExchangeEndAsync(...) call must live — on BOTH the success seal and the
-        // error catch arm.
-        var (source, methods) = LoadAndSplit(LocateAgentExchangeServiceFile());
+        // error catch arm. #1542: RunExchangeLoopAsync + the archive helper moved into
+        // AgentExchangeTurnEngine (the shared turn engine) when the service was split.
+        var (source, methods) = LoadAndSplit(LocateAgentExchangeTurnEngineFile());
 
         AssertMethodInvokesHelper(methods, source, "RunExchangeLoopAsync", HelperName,
-            "P9-C: the shared AgentExchangeService.RunExchangeLoopAsync MUST invoke " +
+            "P9-C: the shared AgentExchangeTurnEngine.RunExchangeLoopAsync MUST invoke " +
             $"{HelperName}(...) on its terminal seal paths (success + error catch). This is the " +
             "single-sourced lifecycle that ConverseAsync and ConverseCrossWorldAsync both drive. " +
             "Without it, A↔A conversations stay Active forever in portal/list APIs.");
@@ -100,7 +103,8 @@ public sealed class AgentExchangeArchiveArchitectureTests
         // helper (e.g. extracts it to a shared service), the per-method fence above passes
         // vacuously if the call sites also get refactored. This pin forces an author who
         // deletes the helper to ALSO update the per-method regex to track the new shape.
-        var path = LocateAgentExchangeServiceFile();
+        // #1542: the helper now lives in AgentExchangeTurnEngine (the shared turn engine).
+        var path = LocateAgentExchangeTurnEngineFile();
         var source = File.ReadAllText(path);
 
         var definitionPattern = new Regex(
@@ -108,7 +112,7 @@ public sealed class AgentExchangeArchiveArchitectureTests
             RegexOptions.Compiled);
 
         definitionPattern.IsMatch(source).ShouldBeTrue(
-            $"AgentExchangeService.cs must define a `private (async) Task {HelperName}(...)` " +
+            $"AgentExchangeTurnEngine.cs must define a `private (async) Task {HelperName}(...)` " +
             "helper. If you have moved this helper to a shared service, the per-method " +
             $"fences (`*_InvokesArchiveHelper`) will become vacuous because the literal " +
             $"`{HelperName}(` no longer appears in the call sites. Either keep the helper " +
@@ -140,16 +144,30 @@ public sealed class AgentExchangeArchiveArchitectureTests
     [Fact]
     public void SplitIntoMethodBodies_FindsAllThreeTargetMethods()
     {
-        var (_, exchangeMethods) = LoadAndSplit(LocateAgentExchangeServiceFile());
-        var exchangeNames = exchangeMethods.Select(m => m.Name).ToList();
-
-        exchangeNames.ShouldContain("ConverseAsync",
+        // #1542: the three policed methods now live across three files after the SRP split:
+        //   - ConverseAsync                stays in AgentExchangeService.cs (local path)
+        //   - RunExchangeLoopAsync         moved to AgentExchangeTurnEngine.cs (shared loop)
+        //   - ConverseCrossWorldAsync      moved to CrossWorldExchangeRouter.cs (federation)
+        //   - ExecuteRelayAsync            stays in CrossWorldFederationController.cs (receiver)
+        var (_, serviceMethods) = LoadAndSplit(LocateAgentExchangeServiceFile());
+        var serviceNames = serviceMethods.Select(m => m.Name).ToList();
+        serviceNames.ShouldContain("ConverseAsync",
             "Method splitter must find ConverseAsync in AgentExchangeService.cs — otherwise " +
-            "the local A↔A fence is vacuous. Splitter found: " + string.Join(", ", exchangeNames));
-        exchangeNames.ShouldContain("ConverseCrossWorldAsync",
-            "Method splitter must find ConverseCrossWorldAsync in AgentExchangeService.cs — " +
+            "the local A↔A fence is vacuous. Splitter found: " + string.Join(", ", serviceNames));
+
+        var (_, engineMethods) = LoadAndSplit(LocateAgentExchangeTurnEngineFile());
+        var engineNames = engineMethods.Select(m => m.Name).ToList();
+        engineNames.ShouldContain("RunExchangeLoopAsync",
+            "Method splitter must find RunExchangeLoopAsync in AgentExchangeTurnEngine.cs — " +
+            "otherwise the shared-loop archive fence is vacuous. Splitter found: " +
+            string.Join(", ", engineNames));
+
+        var (_, routerMethods) = LoadAndSplit(LocateCrossWorldExchangeRouterFile());
+        var routerNames = routerMethods.Select(m => m.Name).ToList();
+        routerNames.ShouldContain("ConverseCrossWorldAsync",
+            "Method splitter must find ConverseCrossWorldAsync in CrossWorldExchangeRouter.cs — " +
             "otherwise the cross-world sender fence is vacuous. Splitter found: " +
-            string.Join(", ", exchangeNames));
+            string.Join(", ", routerNames));
 
         var (_, controllerMethods) = LoadAndSplit(LocateCrossWorldFederationControllerFile());
         var controllerNames = controllerMethods.Select(m => m.Name).ToList();
@@ -313,6 +331,32 @@ public sealed class AgentExchangeArchiveArchitectureTests
             "Agents",
             "AgentExchangeService.cs");
         File.Exists(path).ShouldBeTrue("Expected AgentExchangeService.cs at " + path);
+        return path;
+    }
+
+    // #1542: the shared turn loop (RunExchangeLoopAsync + ArchiveOnExchangeEndAsync) lives here.
+    private static string LocateAgentExchangeTurnEngineFile()
+    {
+        var path = Path.Combine(
+            FindSourceRoot(),
+            "gateway",
+            "BotNexus.Gateway",
+            "Agents",
+            "AgentExchangeTurnEngine.cs");
+        File.Exists(path).ShouldBeTrue("Expected AgentExchangeTurnEngine.cs at " + path);
+        return path;
+    }
+
+    // #1542: the cross-world sender path (ConverseCrossWorldAsync) lives here.
+    private static string LocateCrossWorldExchangeRouterFile()
+    {
+        var path = Path.Combine(
+            FindSourceRoot(),
+            "gateway",
+            "BotNexus.Gateway",
+            "Agents",
+            "CrossWorldExchangeRouter.cs");
+        File.Exists(path).ShouldBeTrue("Expected CrossWorldExchangeRouter.cs at " + path);
         return path;
     }
 

@@ -3,6 +3,13 @@ name: "CI: Container Integration"
 on:
   workflow_dispatch:
 
+# Manual-dispatch integration runs are grouped per run so concurrent dispatches stay
+# isolated and do not collide. cancel-in-progress is false: a deliberately-triggered
+# container integration run should complete, not be cancelled. See issue #1548.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

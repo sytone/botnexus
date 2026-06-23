@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Concurrency;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -29,9 +29,17 @@ public sealed class SqliteConversationStore : IConversationStore
     private readonly ILogger<SqliteConversationStore> _logger;
     private readonly IWorldContext? _worldContext;
     private readonly SemaphoreSlim _initLock = new(1, 1);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _conversationLocks = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
+    // Striped write locks: a fixed pool hashed by conversation id. Bounds the number
+    // of sync primitives (no per-conversation SemaphoreSlim leak over the process
+    // lifetime) and cannot strand a lock on an exception (the stripe is pool-owned).
+    private readonly StripedAsyncLock _conversationLocks = new();
+    // Bounded read-through cache capped by LRU so a long-running gateway does not
+    // retain every conversation ever touched. Cold reads fall through to SQLite.
+    private readonly BoundedLruCache<string, Conversation> _cache;
     private bool _initialized;
+
+    /// <summary>Default bound for the in-memory conversation cache (entries).</summary>
+    public const int DefaultConversationCacheCapacity = 1000;
 
     /// <summary>
     /// Initialises a new instance of the <see cref="SqliteConversationStore"/> class without
@@ -53,11 +61,17 @@ public sealed class SqliteConversationStore : IConversationStore
     /// <param name="connectionString">The SQLite connection string.</param>
     /// <param name="logger">Logger instance.</param>
     /// <param name="worldContext">Resolves the gateway's current world identity; <c>null</c> disables stamping.</param>
-    public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger, IWorldContext? worldContext)
+    /// <param name="cacheCapacity">
+    /// Maximum number of conversations retained in the in-memory cache. Older entries are
+    /// evicted by LRU; cold reads fall through to SQLite. Defaults to
+    /// <see cref="DefaultConversationCacheCapacity"/>.
+    /// </param>
+    public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger, IWorldContext? worldContext, int cacheCapacity = DefaultConversationCacheCapacity)
     {
         _connectionString = connectionString;
         _logger = logger;
         _worldContext = worldContext;
+        _cache = new BoundedLruCache<string, Conversation>(cacheCapacity, StringComparer.Ordinal);
     }
 
     // World-id stamping/back-fill is shared across all three conversation stores — see
@@ -77,22 +91,21 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.conversation.id", conversationId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
-            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            if (_cache.TryGet(conversationId.Value, out var cached))
                 return BackfillWorldId(CloneConversation(cached));
 
             var loaded = await LoadConversationAsync(conversationId, ct).ConfigureAwait(false);
             if (loaded is not null)
-                _cache[conversationId.Value] = CloneConversation(loaded);
+                _cache.Set(conversationId.Value, CloneConversation(loaded));
 
             return BackfillWorldId(loaded);
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -120,7 +133,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var id = reader.GetString(0);
             Conversation conversation;
-            if (_cache.TryGetValue(id, out var cached))
+            if (_cache.TryGet(id, out var cached))
             {
                 conversation = CloneConversation(cached);
             }
@@ -128,7 +141,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 conversation = await LoadConversationAsync(connection, ConversationId.From(id), ct).ConfigureAwait(false)
                     ?? throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
-                _cache[id] = CloneConversation(conversation);
+                _cache.Set(id, CloneConversation(conversation));
             }
 
             conversations.Add(BackfillWorldId(conversation)!);
@@ -178,7 +191,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var id = reader.GetString(0);
             Conversation conversation;
-            if (_cache.TryGetValue(id, out var cached))
+            if (_cache.TryGet(id, out var cached))
             {
                 conversation = CloneConversation(cached);
             }
@@ -186,7 +199,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 conversation = await LoadConversationAsync(connection, ConversationId.From(id), ct).ConfigureAwait(false)
                     ?? throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
-                _cache[id] = CloneConversation(conversation);
+                _cache.Set(id, CloneConversation(conversation));
             }
 
             conversations.Add(BackfillWorldId(conversation)!);
@@ -213,8 +226,7 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.participants.count", snapshot.Count);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
             await using var connection = CreateConnection();
@@ -247,11 +259,11 @@ public sealed class SqliteConversationStore : IConversationStore
 
             // Invalidate cache entry — the next read will repopulate Participants via the
             // LoadParticipantsAsync join. Cheaper than mutating the cached list in place.
-            _cache.TryRemove(conversationId.Value, out _);
+            _cache.Remove(conversationId.Value);
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -262,23 +274,22 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.agent.id", conversation.AgentId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversation.ConversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversation.ConversationId.Value, ct).ConfigureAwait(false);
         try
         {
-            if (_cache.ContainsKey(conversation.ConversationId.Value))
+            if (_cache.TryGet(conversation.ConversationId.Value, out _))
                 throw new InvalidOperationException($"A conversation with id '{conversation.ConversationId}' already exists.");
 
             StampWorldId(conversation);
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await SaveConversationAsync(connection, conversation, upsert: false, ct).ConfigureAwait(false);
-            _cache[conversation.ConversationId.Value] = CloneConversation(conversation);
+            _cache.Set(conversation.ConversationId.Value, CloneConversation(conversation));
             return CloneConversation(conversation);
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -290,8 +301,7 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.agent.id", conversation.AgentId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversation.ConversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversation.ConversationId.Value, ct).ConfigureAwait(false);
         try
         {
             var updated = CloneConversation(conversation);
@@ -301,11 +311,11 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await SaveConversationAsync(connection, updated, upsert: true, ct).ConfigureAwait(false);
-            _cache[updated.ConversationId.Value] = CloneConversation(updated);
+            _cache.Set(updated.ConversationId.Value, CloneConversation(updated));
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -316,8 +326,7 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.conversation.id", conversationId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
             await using var connection = CreateConnection();
@@ -337,18 +346,18 @@ public sealed class SqliteConversationStore : IConversationStore
             command.Parameters.AddWithValue("$id", conversationId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            if (_cache.TryGet(conversationId.Value, out var cached))
             {
                 var archived = CloneConversation(cached);
                 archived.Status = ConversationStatus.Archived;
                 archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
-                _cache[conversationId.Value] = archived;
+                _cache.Set(conversationId.Value, archived);
             }
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -359,8 +368,7 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.conversation.id", conversationId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
             var updatedAt = DateTimeOffset.UtcNow;
@@ -379,16 +387,16 @@ public sealed class SqliteConversationStore : IConversationStore
 
             // Keep the in-memory cache consistent so subsequent GetAsync / ListAsync
             // calls return the updated timestamp without a disk round-trip.
-            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            if (_cache.TryGet(conversationId.Value, out var cached))
             {
                 var touched = CloneConversation(cached);
                 touched.UpdatedAt = updatedAt;
-                _cache[conversationId.Value] = touched;
+                _cache.Set(conversationId.Value, touched);
             }
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -400,8 +408,7 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.conversation.pin", pin);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = GetConversationLock(conversationId.Value);
-        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
             var now = DateTimeOffset.UtcNow;
@@ -424,18 +431,18 @@ public sealed class SqliteConversationStore : IConversationStore
             command.Parameters.AddWithValue("$id", conversationId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            if (_cache.TryGetValue(conversationId.Value, out var cached))
+            if (_cache.TryGet(conversationId.Value, out var cached))
             {
                 var updated = CloneConversation(cached);
                 updated.IsPinned = pin;
                 updated.PinnedAt = pinnedAt;
                 updated.UpdatedAt = now;
-                _cache[conversationId.Value] = updated;
+                _cache.Set(conversationId.Value, updated);
             }
         }
         finally
         {
-            conversationLock.Release();
+            conversationLock.Dispose();
         }
     }
 
@@ -685,8 +692,8 @@ public sealed class SqliteConversationStore : IConversationStore
         }
     }
 
-    private SemaphoreSlim GetConversationLock(string conversationId)
-        => _conversationLocks.GetOrAdd(conversationId, static _ => new SemaphoreSlim(1, 1));
+    private Task<IDisposable> AcquireConversationLockAsync(string conversationId, CancellationToken cancellationToken)
+        => _conversationLocks.AcquireAsync(conversationId, cancellationToken);
 
     private static async Task EnsurePurposeColumnAsync(SqliteConnection connection, CancellationToken ct)
     {

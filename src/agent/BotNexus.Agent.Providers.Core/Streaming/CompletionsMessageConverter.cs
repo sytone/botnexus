@@ -4,25 +4,25 @@ using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Utilities;
 
-namespace BotNexus.Agent.Providers.OpenAI;
+namespace BotNexus.Agent.Providers.Core.Streaming;
 
 /// <summary>
-/// Converts BotNexus messages into the OpenAI Chat Completions <c>messages</c> array.
+/// Converts BotNexus messages into the OpenAI-style Chat Completions <c>messages</c> array.
 /// Mirrors the <c>AnthropicMessageConverter</c> pattern: this type owns the message-shaping
 /// logic (system/developer role selection, user/assistant/tool-result conversion, image attachment
 /// promotion, and tool-call-id normalization) previously inlined on
-/// <see cref="OpenAICompletionsProvider"/>. Extracting it (#1405, step 3/6 of #1377) is a pure
-/// move + delegation — no behavior change; the byte-identical OpenAI/Copilot request bodies are
-/// guarded by <c>CopilotCompletionsProviderParityTests</c>.
+/// the OpenAI and GitHub Copilot completions providers (both emit the identical wire body). Unifying it
+/// here (#1540, follow-up to #1377/#1408) removes the per-provider duplicate copies; the byte-identical
+/// OpenAI/Copilot request bodies are guarded by <c>CopilotCompletionsProviderParityTests</c>.
 /// </summary>
-internal static class OpenAICompletionsMessageConverter
+public static class CompletionsMessageConverter
 {
     /// <summary>
     /// Builds the OpenAI Chat Completions <c>messages</c> array for the given prompt, model, and
-    /// transcript. Supplied to <see cref="OpenAICompletionsRequestBuilder.Build"/> as the
-    /// message-conversion delegate.
+    /// transcript. Supplied to the per-provider Completions request builder as the
+    /// message-conversion delegate (the OpenAI and Copilot builders both pass this method).
     /// </summary>
-    internal static JsonArray Convert(
+    public static JsonArray Convert(
         string? systemPrompt,
         LlmModel model,
         IReadOnlyList<Message> messages,
