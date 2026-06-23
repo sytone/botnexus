@@ -62,7 +62,7 @@ public sealed class OpenAICompletionsProvider(
         BuildPayload: static (model, systemPrompt, messages, tools, options, compat) =>
             OpenAICompletionsRequestBuilder.Build(
                 model, systemPrompt, messages, tools, options, compat,
-                OpenAICompletionsMessageConverter.Convert, CompletionsStreamEngine.ConvertTools),
+                CompletionsMessageConverter.Convert, CompletionsStreamEngine.ConvertTools),
         DecorateHeaders: static (request, model, messages, _) =>
         {
             if (string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))

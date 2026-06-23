@@ -16,11 +16,12 @@ namespace BotNexus.Agent.Providers.Copilot.Responses;
 /// <para>
 /// Thin shell over the shared <see cref="ResponsesStreamEngine"/> (step 6/6 of #1377): this class
 /// supplies only the Copilot transport deltas via a <see cref="ResponsesTransportProfile"/> — its
-/// project-internal <see cref="CopilotResponsesRequestBuilder"/> / <see cref="CopilotResponsesStreamParser"/>,
-/// unconditional dynamic-header decoration with resolved interaction id, a response-header telemetry
-/// hook, and the <c>ProviderHttpErrorHelper</c> error projection. The reasoning <c>effort:none</c>
-/// fallback omission lives in <see cref="CopilotResponsesRequestBuilder"/>. The request loop,
-/// message/tool conversion, and emit shapes are shared with the OpenAI Responses provider.
+/// project-internal <see cref="CopilotResponsesRequestBuilder"/> and the shared
+/// <see cref="ResponsesStreamParser"/> (parameterized with the Copilot usage-telemetry hook and
+/// service-tier resolver), unconditional dynamic-header decoration with resolved interaction id, a
+/// response-header telemetry hook, and the <c>ProviderHttpErrorHelper</c> error projection. The
+/// reasoning <c>effort:none</c> fallback omission lives in <see cref="CopilotResponsesRequestBuilder"/>.
+/// The request loop, message/tool conversion, and emit shapes are shared with the OpenAI Responses provider.
 /// </para>
 /// </summary>
 public sealed class CopilotResponsesProvider(
@@ -65,7 +66,11 @@ public sealed class CopilotResponsesProvider(
                 model, systemPrompt, messages, tools, options,
                 ResponsesMessageConverter.ConvertMessages, ResponsesMessageConverter.ConvertTools),
         Parse: (stream, reader, model, options, api, emitError, ct) =>
-            CopilotResponsesStreamParser.ParseAsync(stream, reader, model, options, api, logger, emitError, ct),
+            ResponsesStreamParser.ParseAsync(
+                stream, reader, model, options, api, logger, emitError,
+                onParsedEvent: static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
+                resolveConfiguredServiceTier: static o => o is CopilotResponsesOptions ro ? ro.ServiceTier : null,
+                ct),
         DecorateHeaders: static (request, _, messages, options) =>
         {
             // Copilot transport always applies the dynamic vision/intent headers —
