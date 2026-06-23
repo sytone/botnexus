@@ -115,17 +115,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     "Compaction circuit breaker OPEN for session {SessionId}: " +
                     "{Failures} consecutive failures. Cooling down for {Remaining:0}s more before retrying.",
                     sessionKey, breakerState.Count, (cooldown - elapsed).TotalSeconds);
-                return new CompactionResult
-                {
-                    Summary = string.Empty,
-                    Succeeded = false,
-                    EntriesSummarized = 0,
-                    EntriesPreserved = 0,
-                    TokensBefore = 0,
-                    TokensAfter = 0,
-                    SnapshotDestructiveVersion = 0,
-                    SnapshotHistoryCount = 0
-                };
+                return CompactionResult.Skipped();
             }
 
             // Cooldown elapsed: clear the breaker and allow this attempt through.
@@ -144,17 +134,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var history = snap.Entries;
         if (history.Count == 0)
         {
-            return new CompactionResult
-            {
-                Summary = string.Empty,
-                Succeeded = false,
-                EntriesSummarized = 0,
-                EntriesPreserved = 0,
-                TokensBefore = 0,
-                TokensAfter = 0,
-                SnapshotDestructiveVersion = snap.DestructiveVersion,
-                SnapshotHistoryCount = snap.Count
-            };
+            return CompactionResult.Skipped(snap.DestructiveVersion, snap.Count);
         }
 
         // Phase 3a: compaction operates on the "LLM-visible" projection only. Already-historical
@@ -166,17 +146,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         if (toSummarize.Count == 0)
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
-            return new CompactionResult
-            {
-                Summary = string.Empty,
-                Succeeded = false,
-                EntriesSummarized = 0,
-                EntriesPreserved = toPreserve.Count,
-                TokensBefore = visibleTokens,
-                TokensAfter = visibleTokens,
-                SnapshotDestructiveVersion = snap.DestructiveVersion,
-                SnapshotHistoryCount = snap.Count
-            };
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion,
+                snap.Count,
+                entriesPreserved: toPreserve.Count,
+                tokensBefore: visibleTokens,
+                tokensAfter: visibleTokens);
         }
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
@@ -201,17 +176,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 newCount,
                 MaxConsecutiveFailures);
 
-            return new CompactionResult
-            {
-                Summary = string.Empty,
-                Succeeded = false,
-                EntriesSummarized = 0,
-                EntriesPreserved = history.Count,
-                TokensBefore = tokensBefore,
-                TokensAfter = tokensBefore,
-                SnapshotDestructiveVersion = snap.DestructiveVersion,
-                SnapshotHistoryCount = snap.Count
-            };
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion,
+                snap.Count,
+                entriesPreserved: history.Count,
+                tokensBefore: tokensBefore,
+                tokensAfter: tokensBefore);
         }
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
@@ -227,17 +197,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 newCount,
                 MaxConsecutiveFailures);
 
-            return new CompactionResult
-            {
-                Summary = string.Empty,
-                Succeeded = false,
-                EntriesSummarized = 0,
-                EntriesPreserved = history.Count,
-                TokensBefore = tokensBefore,
-                TokensAfter = tokensBefore,
-                SnapshotDestructiveVersion = snap.DestructiveVersion,
-                SnapshotHistoryCount = snap.Count
-            };
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion,
+                snap.Count,
+                entriesPreserved: history.Count,
+                tokensBefore: tokensBefore,
+                tokensAfter: tokensBefore);
         }
 
         if (summary.Length > options.MaxSummaryChars)
@@ -249,6 +214,51 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         if (_redactor is not null)
             summary = _redactor.Redact(summary);
 
+        // Phase 3a: rebuild the new history by folding the summarised range and inserting the
+        // summary entry at the historical/preserved boundary. Extracted (#1564) so the subtle
+        // insert-at-index walk (the #532 drop-entries bug class) is independently testable.
+        var newHistory = BuildCompactedHistory(history, toSummarize, summary);
+        var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
+
+        _logger.LogInformation(
+            "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
+            "tokens {Before}→{After} (delta {Delta}) — full history retained in store",
+            session.SessionId,
+            toSummarize.Count,
+            toPreserve.Count,
+            tokensBefore,
+            tokensAfter,
+            tokensBefore - tokensAfter);
+
+        // Reset circuit breaker on success.
+        _breaker.TryRemove(sessionKey, out _);
+
+        return CompactionResult.ForSuccess(
+            summary,
+            newHistory,
+            entriesSummarized: toSummarize.Count,
+            entriesPreserved: toPreserve.Count,
+            tokensBefore: tokensBefore,
+            tokensAfter: tokensAfter,
+            snapshotDestructiveVersion: snap.DestructiveVersion,
+            snapshotHistoryCount: snap.Count);
+    }
+
+    /// <summary>
+    /// Rebuilds session history after a successful summarization: walks the ORIGINAL history,
+    /// marks every entry in <paramref name="toSummarize"/> as <c>IsHistory = true</c> (folded), passes
+    /// all other entries (pre-existing historical entries, crash sentinels, the preserved tail)
+    /// through verbatim, and inserts the new summary entry at the index immediately AFTER the last
+    /// summarised entry so chronological order is preserved for transcript readers. Extracted from
+    /// <see cref="CompactAsync"/> (#1564) because the <c>summaryInserted</c>/<c>summarizedSeen</c>
+    /// bookkeeping is the part most likely to silently drop entries (the #532 bug class) and
+    /// deserves direct unit coverage.
+    /// </summary>
+    private static List<SessionEntry> BuildCompactedHistory(
+        IReadOnlyList<SessionEntry> history,
+        IReadOnlyList<SessionEntry> toSummarize,
+        string summary)
+    {
         var compactionEntry = new SessionEntry
         {
             Role = MessageRole.System,
@@ -257,11 +267,6 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             Timestamp = DateTimeOffset.UtcNow
         };
 
-        // Phase 3a: build the new history by walking the ORIGINAL history. Entries in toSummarize
-        // are marked IsHistory=true (folded); all other entries — pre-existing historical entries
-        // from prior compactions, crash sentinels, and the preserved tail — pass through verbatim.
-        // The new summary is inserted at the index immediately AFTER the last toSummarize entry's
-        // original position so chronological order is preserved for transcript readers.
         var toSummarizeSet = new HashSet<SessionEntry>(toSummarize, ReferenceEqualityComparer.Instance);
         var newHistory = new List<SessionEntry>(history.Count + 1);
         var summaryInserted = false;
@@ -290,33 +295,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         if (!summaryInserted)
             newHistory.Insert(0, compactionEntry);
 
-        var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
-
-        _logger.LogInformation(
-            "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
-            "tokens {Before}→{After} (delta {Delta}) — full history retained in store",
-            session.SessionId,
-            toSummarize.Count,
-            toPreserve.Count,
-            tokensBefore,
-            tokensAfter,
-            tokensBefore - tokensAfter);
-
-        // Reset circuit breaker on success.
-        _breaker.TryRemove(sessionKey, out _);
-
-        return new CompactionResult
-        {
-            Summary = summary,
-            Succeeded = true,
-            CompactedHistory = newHistory,
-            EntriesSummarized = toSummarize.Count,
-            EntriesPreserved = toPreserve.Count,
-            TokensBefore = tokensBefore,
-            TokensAfter = tokensAfter,
-            SnapshotDestructiveVersion = snap.DestructiveVersion,
-            SnapshotHistoryCount = snap.Count
-        };
+        return newHistory;
     }
 
     /// <summary>

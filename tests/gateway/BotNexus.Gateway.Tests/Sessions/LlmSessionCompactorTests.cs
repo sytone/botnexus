@@ -975,4 +975,111 @@ public sealed class LlmSessionCompactorTests
         // The prompt must stay under the max chars threshold
         capturedPrompt!.Length.ShouldBeLessThanOrEqualTo(LlmSessionCompactor.MaxSummarizationPromptChars);
     }
+
+    // --- #1564: CompactionResult.Skipped / ForSuccess factories + history-rebuild preservation ---
+    // The factories replace the five previously-duplicated `Succeeded = false` literals; pin their
+    // shape so a snapshot-stamping bug can only be written once. The rebuild test guards the
+    // extracted BuildCompactedHistory walk against silently dropping entries (the #532 bug class).
+
+    [Fact]
+    public void CompactionResult_Skipped_DefaultsToUnchangedFailureShape()
+    {
+        var result = CompactionResult.Skipped();
+
+        result.Succeeded.ShouldBeFalse();
+        result.Summary.ShouldBeEmpty();
+        result.CompactedHistory.ShouldBeNull();
+        result.EntriesSummarized.ShouldBe(0);
+        result.EntriesPreserved.ShouldBe(0);
+        result.TokensBefore.ShouldBe(0);
+        result.TokensAfter.ShouldBe(0);
+        result.SnapshotDestructiveVersion.ShouldBe(0);
+        result.SnapshotHistoryCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void CompactionResult_Skipped_StampsSnapshotAndTokenFields()
+    {
+        var result = CompactionResult.Skipped(
+            snapshotDestructiveVersion: 42,
+            snapshotHistoryCount: 9,
+            entriesPreserved: 4,
+            tokensBefore: 1200,
+            tokensAfter: 1200);
+
+        result.Succeeded.ShouldBeFalse();
+        result.SnapshotDestructiveVersion.ShouldBe(42);
+        result.SnapshotHistoryCount.ShouldBe(9);
+        result.EntriesPreserved.ShouldBe(4);
+        result.TokensBefore.ShouldBe(1200);
+        result.TokensAfter.ShouldBe(1200);
+        result.CompactedHistory.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CompactionResult_ForSuccess_CarriesHistoryAndCounts()
+    {
+        var history = new List<SessionEntry>
+        {
+            new() { Role = "system", Content = "summary" },
+            new() { Role = "user", Content = "kept" }
+        };
+
+        var result = CompactionResult.ForSuccess(
+            summary: "the summary",
+            compactedHistory: history,
+            entriesSummarized: 3,
+            entriesPreserved: 1,
+            tokensBefore: 800,
+            tokensAfter: 200,
+            snapshotDestructiveVersion: 7,
+            snapshotHistoryCount: 4);
+
+        result.Succeeded.ShouldBeTrue();
+        result.Summary.ShouldBe("the summary");
+        result.CompactedHistory.ShouldBe(history);
+        result.EntriesSummarized.ShouldBe(3);
+        result.EntriesPreserved.ShouldBe(1);
+        result.TokensBefore.ShouldBe(800);
+        result.TokensAfter.ShouldBe(200);
+        result.SnapshotDestructiveVersion.ShouldBe(7);
+        result.SnapshotHistoryCount.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task CompactAsync_RebuiltHistory_PreservesEveryOriginalEntry_AndInsertsSummaryOnce()
+    {
+        // Guards the extracted BuildCompactedHistory walk: every original entry must survive in the
+        // rebuilt history (summarised ones marked IsHistory, the rest verbatim) and exactly one
+        // compaction-summary entry is inserted (#532 drop-entries / double-insert bug class).
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("assistant", "a2"),
+            ("user", "u3"),
+            ("assistant", "a3"));
+        var compactor = CreateCompactor("folded-summary");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        var rebuilt = result.CompactedHistory!;
+
+        // exactly one summary entry inserted
+        rebuilt.Count(e => e.IsCompactionSummary).ShouldBe(1);
+        // no original content was dropped: every original user/assistant content is still present
+        foreach (var content in new[] { "u1", "a1", "u2", "a2", "u3", "a3" })
+            rebuilt.Any(e => e.Content == content).ShouldBeTrue($"entry '{content}' was dropped during rebuild");
+        // rebuilt length = original (6) + 1 summary
+        rebuilt.Count.ShouldBe(7);
+        // summarised entries are folded (IsHistory) while the preserved tail stays live
+        rebuilt.Single(e => e.Content == "a3").IsHistory.ShouldBeFalse();
+        rebuilt.Single(e => e.Content == "u1").IsHistory.ShouldBeTrue();
+    }
 }
