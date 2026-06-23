@@ -21,8 +21,20 @@ public static class ResponsesMessageConverter
     /// Converts the agent message list into the Responses-API <c>input</c> array, expanding assistant
     /// messages into their per-block items (text, reasoning, function calls).
     /// </summary>
+    /// <remarks>
+    /// The OpenAI Responses API rejects the <em>entire</em> request (HTTP 400) when the <c>input</c>
+    /// array contains an unpaired tool item: a <c>function_call</c> with no matching
+    /// <c>function_call_output</c>, or a <c>function_call_output</c> with no prior <c>function_call</c>.
+    /// A transcript can carry such a dangling call when a turn was aborted/crashed mid-tool-execution
+    /// (the result was never persisted) and the conversation later continued. To keep every replayed
+    /// request well-formed we run a whole-transcript pairing pass first and drop any unpaired tool
+    /// item rather than emit it verbatim, which would permanently wedge the session on this provider.
+    /// Pairing is keyed on the base call id (the segment before <c>|</c>), matching how
+    /// <see cref="SplitToolCallId"/> derives the wire <c>call_id</c>.
+    /// </remarks>
     public static JsonArray ConvertMessages(IReadOnlyList<Message> messages, LlmModel model)
     {
+        var (callIds, resultCallIds) = CollectToolCallPairing(messages);
         var result = new JsonArray();
 
         foreach (var message in messages)
@@ -34,17 +46,59 @@ public static class ResponsesMessageConverter
                     break;
 
                 case AssistantMessage assistant:
-                    foreach (var item in ConvertAssistantMessage(assistant, model))
+                    foreach (var item in ConvertAssistantMessage(assistant, model, resultCallIds))
                         result.Add(item);
                     break;
 
                 case ToolResultMessage toolResult:
+                    // Drop an orphan result whose originating call is absent from the transcript.
+                    if (!callIds.Contains(BaseCallId(toolResult.ToolCallId)))
+                        break;
                     result.Add(ConvertToolResultMessage(toolResult, model));
                     break;
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Walks the whole transcript once and returns the set of base call ids that appear as a
+    /// <c>function_call</c> (from assistant <see cref="ToolCallContent"/>) and the set that appear as
+    /// a <c>function_call_output</c> (from <see cref="ToolResultMessage"/>). The intersection is the
+    /// set of well-paired calls; anything only in one set is unpaired and must be dropped.
+    /// </summary>
+    private static (HashSet<string> CallIds, HashSet<string> ResultCallIds) CollectToolCallPairing(
+        IReadOnlyList<Message> messages)
+    {
+        var callIds = new HashSet<string>(StringComparer.Ordinal);
+        var resultCallIds = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var message in messages)
+        {
+            switch (message)
+            {
+                case AssistantMessage assistant:
+                    foreach (var block in assistant.Content)
+                    {
+                        if (block is ToolCallContent toolCall)
+                            callIds.Add(BaseCallId(toolCall.Id));
+                    }
+                    break;
+
+                case ToolResultMessage toolResult:
+                    resultCallIds.Add(BaseCallId(toolResult.ToolCallId));
+                    break;
+            }
+        }
+
+        return (callIds, resultCallIds);
+    }
+
+    private static string BaseCallId(string id)
+    {
+        var pipe = id.IndexOf('|');
+        return pipe < 0 ? id : id[..pipe];
     }
 
     private static JsonObject ConvertUserMessage(UserMessage user, LlmModel model)
@@ -98,7 +152,8 @@ public static class ResponsesMessageConverter
         };
     }
 
-    private static IReadOnlyList<JsonObject> ConvertAssistantMessage(AssistantMessage assistant, LlmModel model)
+    private static IReadOnlyList<JsonObject> ConvertAssistantMessage(
+        AssistantMessage assistant, LlmModel model, HashSet<string> resultCallIds)
     {
         var items = new List<JsonObject>();
         var isDifferentModel = !string.Equals(assistant.ModelId, model.Id, StringComparison.Ordinal) &&
@@ -160,6 +215,10 @@ public static class ResponsesMessageConverter
                     break;
 
                 case ToolCallContent toolCall:
+                    // Drop a dangling call whose tool-result was never written (aborted turn); emitting
+                    // it would 400 the whole Responses request and wedge the session on this provider.
+                    if (!resultCallIds.Contains(BaseCallId(toolCall.Id)))
+                        break;
                     var (callId, itemId) = SplitToolCallId(toolCall.Id);
                     if (isDifferentModel && itemId?.StartsWith("fc_", StringComparison.Ordinal) == true)
                         itemId = null;
