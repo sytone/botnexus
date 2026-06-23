@@ -27,6 +27,7 @@ public sealed record ConfiguredCronJob
     public string? ShellCommand { get; init; }
     public bool Enabled { get; init; } = true;
     public bool System { get; init; }
+    public bool DeleteAfterRun { get; init; }
     public string? TimeZone { get; init; }
     public string? CreatedBy { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }

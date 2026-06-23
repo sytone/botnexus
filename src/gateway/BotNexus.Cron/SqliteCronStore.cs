@@ -62,7 +62,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     last_run_status TEXT NULL,
                     last_run_error TEXT NULL,
                     metadata_json TEXT NULL,
-                    conversation_id TEXT NULL
+                    conversation_id TEXT NULL,
+                    delete_after_run INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
@@ -134,6 +135,16 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add delete_after_run column if missing (#1561).
+            // Opt-in ephemeral-run cleanup flag; pre-existing rows default to 0 (no auto-delete),
+            // preserving the long-lived-session behaviour every current job relies on.
+            await using var migrateDeleteAfterRun = connection.CreateCommand();
+            migrateDeleteAfterRun.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN delete_after_run INTEGER NOT NULL DEFAULT 0;
+                """;
+            try { await migrateDeleteAfterRun.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -162,11 +173,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.CommandText = """
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
+                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId
+                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun
                 )
                 """;
             BindJob(command, created);
@@ -194,7 +205,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -215,7 +226,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -244,11 +255,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.CommandText = """
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id
+                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId
+                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
@@ -271,7 +282,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     last_run_status = excluded.last_run_status,
                     last_run_error = excluded.last_run_error,
                     metadata_json = excluded.metadata_json,
-                    conversation_id = excluded.conversation_id
+                    conversation_id = excluded.conversation_id,
+                    delete_after_run = excluded.delete_after_run
                 """;
             BindJob(command, job);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -526,6 +538,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$lastRunError", (object?)job.LastRunError ?? DBNull.Value);
         command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
         command.Parameters.AddWithValue("$conversationId", job.ConversationId.HasValue ? (object)job.ConversationId.Value.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$deleteAfterRun", job.DeleteAfterRun ? 1 : 0);
     }
 
     private static CronJob ReadJob(SqliteDataReader reader)
@@ -555,7 +568,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             LastRunStatus = reader.IsDBNull(18) ? null : reader.GetString(18),
             LastRunError = reader.IsDBNull(19) ? null : reader.GetString(19),
             Metadata = DeserializeMetadata(metadataJson),
-            ConversationId = reader.IsDBNull(21) ? null : ConversationId.From(reader.GetString(21))
+            ConversationId = reader.IsDBNull(21) ? null : ConversationId.From(reader.GetString(21)),
+            DeleteAfterRun = !reader.IsDBNull(22) && reader.GetInt32(22) != 0
         };
     }
 
