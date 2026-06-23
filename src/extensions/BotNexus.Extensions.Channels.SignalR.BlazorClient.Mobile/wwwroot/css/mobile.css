@@ -645,3 +645,125 @@ body {
     from { opacity: 0; }
     to { opacity: 1; }
 }
+
+/* #1491: ask_user prompt rendered as a bottom-sheet on mobile, above the input bar.
+   Styles the shared AskUserPrompt component (ask-user-* classes) to match the mobile
+   dark theme. The component itself is reused verbatim from the desktop client. */
+.ask-user-sheet {
+    position: sticky;
+    bottom: 60px; /* sits directly above the .bottom-bar (min-height 60px) */
+    z-index: 900;
+    padding: 12px;
+    background: #0d1926;
+    border-top: 1px solid rgba(100, 160, 220, 0.25);
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.ask-user-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ask-user-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ask-user-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: #d0dff0;
+}
+
+.ask-user-timeout {
+    font-size: 12px;
+    color: #8aa6c8;
+}
+
+.ask-user-text {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.4;
+    color: #d0dff0;
+}
+
+.ask-user-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ask-user-choice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    color: #d0dff0;
+}
+
+.ask-user-choice input {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    accent-color: #1a4a80;
+}
+
+.ask-user-free-form {
+    width: 100%;
+    background: #111d2e;
+    color: #d0dff0;
+    border: 1px solid rgba(100, 160, 220, 0.2);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 15px;
+    font-family: inherit;
+    resize: none;
+    min-height: 56px;
+    line-height: 1.4;
+    box-sizing: border-box;
+}
+
+.ask-user-free-form:focus {
+    outline: none;
+    border-color: rgba(100, 160, 220, 0.5);
+}
+
+.ask-user-error {
+    font-size: 13px;
+    color: #f08080;
+}
+
+.ask-user-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.ask-user-actions .cancel-btn {
+    padding: 8px 16px;
+    border: 1px solid rgba(100, 160, 220, 0.25);
+    border-radius: 8px;
+    background: transparent;
+    color: #a6c0dc;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.ask-user-actions .send-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #1a4a80;
+    color: #d0dff0;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.ask-user-actions .send-btn:disabled,
+.ask-user-actions .cancel-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
