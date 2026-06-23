@@ -409,14 +409,27 @@ internal sealed class ServeCommand
     }
 
     /// <summary>
-    /// Checks if a TCP port is available for binding.
-    /// Public to allow GatewayCommand to use it.
+    /// Checks if a TCP port is available for binding on the interface the gateway
+    /// will actually bind. The gateway binds a wildcard address by default
+    /// (<c>http://0.0.0.0:5005</c>, see <see cref="InitCommand"/>), so the probe
+    /// defaults to <see cref="System.Net.IPAddress.Any"/> rather than loopback.
+    /// Probing the wildcard address detects an occupant on <em>any</em> interface
+    /// (loopback included); a loopback-only probe missed wildcard/non-loopback
+    /// occupants and could report a confusing late Kestrel <c>EADDRINUSE</c>
+    /// (issue #1536). Public so <see cref="GatewayCommand"/> and
+    /// <see cref="UpdateCommand"/> can share one aligned probe.
     /// </summary>
-    public static bool IsPortAvailable(int port)
+    /// <param name="port">The TCP port to probe.</param>
+    /// <param name="bindAddress">
+    /// The interface the caller intends to bind. Defaults to
+    /// <see cref="System.Net.IPAddress.Any"/> (the gateway's wildcard bind) when
+    /// not specified, keeping the probe interface aligned with the bind interface.
+    /// </param>
+    public static bool IsPortAvailable(int port, System.Net.IPAddress? bindAddress = null)
     {
         try
         {
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
+            using var listener = new TcpListener(bindAddress ?? System.Net.IPAddress.Any, port);
             listener.Server.ExclusiveAddressUse = true;
             listener.Start();
             listener.Stop();

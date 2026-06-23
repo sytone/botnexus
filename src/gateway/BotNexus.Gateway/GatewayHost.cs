@@ -390,65 +390,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             // target conversation doesn't exist, so this MUST follow the first SaveAsync.
             await EnsureCallerParticipantAsync(session, message.Sender, cancellationToken).ConfigureAwait(false);
 
-            if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
-            {
-                _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
-                try
-                {
-                    var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
-                    if (outcome.Applied)
-                    {
-                        await _compactionCoordinator.TrySendChannelNotificationAsync(
-                            outcome,
-                            message.ChannelType,
-                            message.ChannelAddress,
-                            sessionId,
-                            cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
-                }
-            }
-
-            // Abandoned turn detection (#790): before starting the new turn, check if
-            // the previous turn stalled mid-tool-execution. If so, destroy the existing
-            // agent handle (forces fresh context on recreate) and notify the user.
-            var abandonedTurnResult = SessionContextProjector.DetectAbandonedTurn(session.History);
-            if (abandonedTurnResult.HasAbandonedTurn)
-            {
-                _logger.LogWarning(
-                    "Abandoned turn detected for session '{SessionId}': {Count} dangling tool call(s). " +
-                    "Destroying stale agent handle to prevent context replay.",
-                    sessionId, abandonedTurnResult.AbandonedEntryCount);
-
-                // Kill the existing handle so the supervisor creates a fresh one with
-                // clean context from ProjectForResume (which drops tool entries).
-                var stopTask = _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
-                if (stopTask is not null)
-                    await stopTask;
-
-                // Add a notification entry so the user knows the prior turn was incomplete.
-                session.AddEntry(new SessionEntry
-                {
-                    Role = MessageRole.Notification,
-                    Content = $"[Previous turn did not complete — {abandonedTurnResult.AbandonedEntryCount} tool call(s) were abandoned. Starting fresh.]"
-                });
-                await _sessions.SaveAsync(session, cancellationToken);
-            }
-
-            // Write-ahead Layer 2: crash sentinel written before the LLM call.
-            // If the gateway restarts mid-turn, this sentinel survives in the session store,
-            // showing an interrupted-turn marker to the user rather than a silent gap (#363).
-            var crashSentinel = new SessionEntry
-            {
-                Role = MessageRole.System,
-                Content = "[agent turn in progress — gateway restarted if visible]",
-                IsCrashSentinel = true
-            };
-            session.AddEntry(crashSentinel);
-            await _sessions.SaveAsync(session, cancellationToken);
+            // #1503 (increment 2, follow-up to #1381): the pre-execution "prepare turn"
+            // concern -- auto-compaction, abandoned-turn detection (#790), and the
+            // write-ahead crash sentinel (#363) -- is extracted into PrepareTurnAsync so
+            // ProcessAsync no longer inlines it. The method mutates+persists the session in
+            // the exact prior order (compaction -> abandoned-turn handle-stop+notify ->
+            // crash sentinel save); none of its locals escape into the execution path below,
+            // so applying it here preserves the prior control flow and side-effect ordering.
+            await PrepareTurnAsync(session, message, typedAgentId, typedSessionId, sessionId, cancellationToken);
 
             try
             {
@@ -908,6 +857,86 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ChannelSource ResolvedSource,
         InboundMessage Message,
         DispatchResult? Dispatch);
+
+    /// <summary>
+    /// Runs the pre-execution "prepare turn" steps for a single agent dispatch, extracted from
+    /// <see cref="ProcessAsync"/> (#1503 increment 2, follow-up to #1381). In strict order:
+    /// (1) auto-compaction when <see cref="ISessionCompactor.ShouldCompact"/> is true (best-effort:
+    /// a compaction failure is logged and swallowed so the turn still proceeds, #363/#602),
+    /// (2) abandoned-turn detection (#790) -- if the previous turn stalled mid-tool, stop the stale
+    /// handle so the supervisor rebuilds clean context and append a user-visible notification, and
+    /// (3) the write-ahead crash sentinel (#363) persisted before the LLM call. Every step mutates
+    /// and persists <paramref name="session"/> exactly as the inlined block did; no value produced
+    /// here is consumed by the caller, so the extraction is behaviour-preserving.
+    /// </summary>
+    private async Task PrepareTurnAsync(
+        GatewaySession session,
+        InboundMessage message,
+        AgentId typedAgentId,
+        SessionId typedSessionId,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
+        {
+            _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
+            try
+            {
+                var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+                if (outcome.Applied)
+                {
+                    await _compactionCoordinator.TrySendChannelNotificationAsync(
+                        outcome,
+                        message.ChannelType,
+                        message.ChannelAddress,
+                        sessionId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
+            }
+        }
+
+        // Abandoned turn detection (#790): before starting the new turn, check if
+        // the previous turn stalled mid-tool-execution. If so, destroy the existing
+        // agent handle (forces fresh context on recreate) and notify the user.
+        var abandonedTurnResult = SessionContextProjector.DetectAbandonedTurn(session.History);
+        if (abandonedTurnResult.HasAbandonedTurn)
+        {
+            _logger.LogWarning(
+                "Abandoned turn detected for session '{SessionId}': {Count} dangling tool call(s). " +
+                "Destroying stale agent handle to prevent context replay.",
+                sessionId, abandonedTurnResult.AbandonedEntryCount);
+
+            // Kill the existing handle so the supervisor creates a fresh one with
+            // clean context from ProjectForResume (which drops tool entries).
+            var stopTask = _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
+            if (stopTask is not null)
+                await stopTask;
+
+            // Add a notification entry so the user knows the prior turn was incomplete.
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.Notification,
+                Content = $"[Previous turn did not complete — {abandonedTurnResult.AbandonedEntryCount} tool call(s) were abandoned. Starting fresh.]"
+            });
+            await _sessions.SaveAsync(session, cancellationToken);
+        }
+
+        // Write-ahead Layer 2: crash sentinel written before the LLM call.
+        // If the gateway restarts mid-turn, this sentinel survives in the session store,
+        // showing an interrupted-turn marker to the user rather than a silent gap (#363).
+        var crashSentinel = new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "[agent turn in progress — gateway restarted if visible]",
+            IsCrashSentinel = true
+        };
+        session.AddEntry(crashSentinel);
+        await _sessions.SaveAsync(session, cancellationToken);
+    }
 
     private async Task SendSessionStatusRejectedAsync(
         InboundMessage message,

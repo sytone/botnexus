@@ -60,36 +60,37 @@ You should see the root command help listing all available subcommands.
 8. [agent add](#agent-add) — Add an agent
 9. [agent show](#agent-show) — Show a single agent's resolved config
 10. [agent remove](#agent-remove) — Remove an agent
-11. [conversation](#conversation) — Manage conversations via the gateway REST API
-12. [config get](#config-get) — Read a config value
-13. [config set](#config-set) — Set a config value
-14. [config schema](#config-schema) — Generate JSON schema
-15. [gateway](#gateway) — Manage the gateway lifecycle
-16. [provider](#provider) — Show or set up providers
-17. [provider setup](#provider-setup) — Interactive provider setup wizard
-18. [provider list](#provider-list) — List configured providers
-19. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-20. [provider remove](#provider-remove) — Remove a provider non-interactively
-21. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-22. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-23. [prompt](#prompt) — Manage prompt templates
-24. [prompt list](#prompt-list) — List available prompt templates
-25. [prompt render](#prompt-render) — Render a prompt template
-26. [prompt run](#prompt-run) — Render and execute a prompt template
-27. [satellite](#satellite) — Manage satellite nodes
-28. [doctor](#doctor) — Diagnose configuration issues
-29. [doctor config](#doctor-config) — Guided config migration
-30. [locations](#locations) — Show resolved file paths
-31. [update](#update) — Check for and apply updates
-32. [memory](#memory) — Manage agent memory
-33. [cron](#cron-command) — Manage cron jobs from the CLI
-34. [debug sessions](#debug-sessions) — Inspect session SQLite database
-35. [debug logs](#debug-logs) — Inspect log files
-36. [debug memory](#debug-memory) — Inspect agent memory directories
-37. [debug db](#debug-db) — Inspect raw databases
-38. [debug gateway](#debug-gateway) — Live gateway diagnostics
-39. [debug cron](#debug-cron) — Cron scheduler diagnostics
-40. [Examples](#examples)
+11. [agent wizard](#agent-wizard) — Create an agent interactively
+12. [conversation](#conversation) — Manage conversations via the gateway REST API
+13. [config get](#config-get) — Read a config value
+14. [config set](#config-set) — Set a config value
+15. [config schema](#config-schema) — Generate JSON schema
+16. [gateway](#gateway) — Manage the gateway lifecycle
+17. [provider](#provider) — Show or set up providers
+18. [provider setup](#provider-setup) — Interactive provider setup wizard
+19. [provider list](#provider-list) — List configured providers
+20. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+21. [provider remove](#provider-remove) — Remove a provider non-interactively
+22. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+23. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+24. [prompt](#prompt) — Manage prompt templates
+25. [prompt list](#prompt-list) — List available prompt templates
+26. [prompt render](#prompt-render) — Render a prompt template
+27. [prompt run](#prompt-run) — Render and execute a prompt template
+28. [satellite](#satellite) — Manage satellite nodes
+29. [doctor](#doctor) — Diagnose configuration issues
+30. [doctor config](#doctor-config) — Guided config migration
+31. [locations](#locations) — Manage configured locations
+32. [update](#update) — Pull, build, and restart the gateway
+33. [memory](#memory) — Backfill agent memory stores
+34. [cron](#cron-command) — Manage cron jobs from the CLI
+35. [debug sessions](#debug-sessions) — Inspect session SQLite database
+36. [debug logs](#debug-logs) — Inspect log files
+37. [debug memory](#debug-memory) — Inspect agent memory directories
+38. [debug db](#debug-db) — Inspect raw databases
+39. [debug gateway](#debug-gateway) — Live gateway diagnostics
+40. [debug cron](#debug-cron) — Cron scheduler diagnostics
+41. [Examples](#examples)
 
 ---
 
@@ -594,6 +595,31 @@ Output (warning):
 ```text
 Warning: removing default agent 'assistant'. Update gateway.defaultAgentId if needed.
 Removed agent 'assistant'.
+```
+
+---
+
+## agent wizard
+
+Interactively create a new agent using a step-by-step wizard. The wizard prompts for the agent id, provider, model, and other settings, then writes the agent to `config.json`. Use this when you want a guided experience instead of the non-interactive [`agent add`](#agent-add).
+
+### Usage
+
+```powershell
+botnexus agent wizard [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show the updated configuration after the wizard completes. |
+
+### Examples
+
+```powershell
+botnexus agent wizard
 ```
 
 ---
@@ -1677,42 +1703,62 @@ botnexus doctor config --yes
 
 ## locations
 
-Show resolved paths for all BotNexus directories and files (config, logs, sessions, agents, extensions).
+Manage the `locations` entries in `config.json` — named references to filesystem paths, APIs, MCP servers, databases, and remote nodes that agents and extensions can resolve by name. The command has the alias `location`.
 
 ### Usage
 
 ```powershell
-botnexus locations [OPTIONS]
+botnexus locations <COMMAND> [OPTIONS]
 ```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all registered locations. |
+| `add` | Add a location to `config.json`. |
+| `update` | Update an existing location. |
+| `delete` | Delete a location from `config.json` (alias `remove`). |
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| Option | Applies to | Description |
+|--------|-----------|-------------|
+| `name` (argument) | `add`, `update`, `delete` | The location name. |
+| `--type <TYPE>` | `add` | Location type: `filesystem`, `api`, `mcp-server`, `database`, `remote-node`. Required. |
+| `--path <PATH>` | `add`, `update` | Filesystem path or primary location path. Required on `add`. |
+| `--endpoint <URL>` | `add`, `update` | Endpoint URL for `api`/`mcp-server`/`remote-node` locations. |
+| `--connection-string <STR>` | `add` | Connection string for `database` locations (redacted in `list` output). |
+| `--description <TEXT>` | `add`, `update` | Human-readable description. |
+| `--target <DIR>` | all | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | all | Show the resolved config file path. |
 
 ### Examples
 
 ```powershell
-botnexus locations
+# List configured locations
+botnexus locations list
+
+# Add a filesystem location
+botnexus locations add docs --type filesystem --path "C:\repos\docs" --description "Docs repo"
+
+# Add an MCP-server location
+botnexus locations add weather --type mcp-server --path "weather" --endpoint "http://localhost:9000"
+
+# Update a location's path
+botnexus locations update docs --path "D:\repos\docs"
+
+# Delete a location
+botnexus locations delete docs
 ```
 
-Example output:
-
-```text
-Home:       C:\Users\you\.botnexus
-Config:     C:\Users\you\.botnexus\config.json
-Logs:       C:\Users\you\.botnexus\logs
-Sessions:   C:\Users\you\.botnexus\sessions
-Agents:     C:\Users\you\.botnexus\agents
-Extensions: C:\Users\you\.botnexus\extensions
-```
+> To see the resolved paths for BotNexus home directories (config, logs, sessions), use [`debug gateway config`](#debug-gateway) or inspect `~/.botnexus` directly.
 
 ---
 
 ## update
 
-Check for available updates and optionally apply them.
+Pull the latest source, build, deploy extensions, and restart the BotNexus gateway. Run without a subcommand to perform the full update; use the `check` subcommand to see whether updates are available without applying them.
 
 ### Usage
 
@@ -1724,15 +1770,15 @@ botnexus update [COMMAND] [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `check` | Check if updates are available (default) |
-| `apply` | Pull latest changes and rebuild |
+| `check` | Check whether updates are available from `origin/main` (does not apply them). |
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `--path <DIR>` | Repository root. Defaults to install location. |
-| `--verbose` | Show detailed update output. |
+| Option | Applies to | Description |
+|--------|-----------|-------------|
+| `--source <DIR>` | `update`, `check` | Path to the BotNexus repository root. Defaults to `~/botnexus`. |
+| `--port <PORT>` | `update` | Gateway port to restart against. Defaults to `5005`. |
+| `--verbose` | `update`, `check` | Show detailed update output. |
 
 ### Exit Codes (for `update check`)
 
@@ -1745,18 +1791,18 @@ botnexus update [COMMAND] [OPTIONS]
 ### Examples
 
 ```powershell
-# Check for updates
+# Check for updates without applying
 botnexus update check
 
-# Apply updates
-botnexus update apply
+# Pull, build, and restart the gateway
+botnexus update
 ```
 
 ---
 
 ## memory
 
-Manage agent memory files from the CLI.
+Memory store operations from the CLI.
 
 ### Usage
 
@@ -1768,26 +1814,29 @@ botnexus memory <COMMAND> [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `list` | List memory entries for an agent |
-| `search` | Search memory content |
-| `consolidate` | Trigger memory consolidation |
+| `backfill` | Index conversation turns from existing sessions into the per-agent memory stores. |
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--agent <ID>` | Target agent ID. |
-| `--target <DIR>` | BotNexus home directory. |
+| `--agent <ID>` | Backfill only this agent. If omitted, backfill all agents. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show detailed (debug-level) indexing output. |
+
+The session store type is resolved from `gateway.sessionStore` in `config.json`; only `Sqlite` and `File` session stores support backfill.
 
 ### Examples
 
 ```powershell
-# List memory files for an agent
-botnexus memory list --agent assistant
+# Backfill memory for all agents from existing sessions
+botnexus memory backfill
 
-# Search memory content
-botnexus memory search --agent assistant --query "deployment"
+# Backfill a single agent
+botnexus memory backfill --agent assistant
 ```
+
+> To browse memory files on disk for an agent, use [`debug memory`](#debug-memory).
 
 ---
 
@@ -1805,11 +1854,14 @@ botnexus cron <COMMAND> [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `list` | List all configured cron jobs |
-| `status` | Show job status and last run time |
-| `run` | Manually trigger a job |
-| `enable` | Enable a disabled job |
-| `disable` | Disable a job |
+| `list` | List all configured cron jobs. |
+| `get` | Show details for a single cron job. |
+| `run` | Manually trigger a job immediately. |
+| `enable` | Enable a disabled job. |
+| `disable` | Disable a job. |
+| `delete` | Delete a cron job. |
+
+Each subcommand takes a `--url <URL>` option pointing at the running gateway (defaults to `http://localhost:5005`); `get`, `run`, `enable`, `disable`, and `delete` take the job id as an argument.
 
 ### Examples
 
@@ -1817,12 +1869,18 @@ botnexus cron <COMMAND> [OPTIONS]
 # List all cron jobs
 botnexus cron list
 
-# Check status
-botnexus cron status
+# Show details for a single job
+botnexus cron get morning-briefing
 
 # Trigger a job manually
 botnexus cron run morning-briefing
+
+# Disable then delete a job
+botnexus cron disable morning-briefing
+botnexus cron delete morning-briefing
 ```
+
+> For offline scheduler diagnostics (status, history, missed runs) that do not need a running gateway, use [`debug cron`](#debug-cron).
 
 ---
 
