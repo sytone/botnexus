@@ -1,29 +1,55 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
-using BotNexus.Agent.Providers.Core.Registry;
-using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
 using Microsoft.Extensions.Logging;
 
-namespace BotNexus.Agent.Providers.OpenAI;
+namespace BotNexus.Agent.Providers.Core.Streaming;
 
 /// <summary>
-/// Parses an OpenAI Responses API SSE stream into content blocks and streaming events. Extracted
-/// verbatim from <c>OpenAIResponsesProvider.ParseSseStream</c> (#1404 step 2/6 of #1377) so the
-/// single most behaviorally-sensitive block lives in one focused, testable seam. This is a pure
-/// move: the parsing logic and its exclusive helpers are unchanged; the provider supplies its
-/// <c>Api</c> string, logger, and error-emit callback as parameters. The shared <see cref="SseEvent"/>,
-/// <see cref="ToolState"/>, and pure helpers (<c>ParseUsage</c>/<c>MapStopReason</c>/<c>ComposeToolCallId</c>)
-/// now live in <c>BotNexus.Agent.Providers.Core.Streaming</c> (step 5/6 of #1377), shared with the Copilot
-/// Responses parser. <c>CopilotResponsesProviderParityTests</c> guards behavior preservation.
+/// The single shared Responses API SSE stream parser for every Responses-flavoured provider
+/// (OpenAI and Copilot today). Extracted verbatim from the previously-duplicated
+/// <c>OpenAIResponsesStreamParser</c> / <c>CopilotResponsesStreamParser</c> (#1545, slice 2 of the
+/// #1540 post-#1377 drift cleanup): those two parsers were ~95% byte-identical and differed only in
+/// two provider deltas, which are now supplied as delegates so this type stays provider-agnostic:
+/// <list type="bullet">
+/// <item><paramref name="onParsedEvent"/> -- a per-event hook the Copilot provider uses for usage
+/// telemetry (<c>CopilotUsageActivity.TryParseAndEmit</c>); OpenAI passes <c>null</c>.</item>
+/// <item><paramref name="resolveConfiguredServiceTier"/> -- reads the configured service tier from the
+/// provider's own options type (<c>OpenAIResponsesOptions</c> / <c>CopilotResponsesOptions</c>);
+/// either may pass <c>null</c> when no configured tier applies.</item>
+/// </list>
+/// This is the same delegate-injection seam <see cref="ResponsesTransportProfile"/> already uses for
+/// the build/parse/header hooks. Behaviour preservation is guarded by
+/// <c>CopilotResponsesProviderParityTests</c> (byte-identical wire contract) and
+/// <c>OpenAIResponsesProviderTests</c>; <c>ResponsesStreamParserUnificationTests</c> locks the single
+/// Core home.
 /// </summary>
-internal static class OpenAIResponsesStreamParser
+public static class ResponsesStreamParser
 {
-    internal static async Task ParseAsync(
+    /// <summary>
+    /// Drains a Responses API SSE <paramref name="reader"/> into the <paramref name="stream"/>,
+    /// emitting start/delta/end events for text, reasoning, and tool-call content.
+    /// </summary>
+    /// <param name="stream">The output stream events are pushed to.</param>
+    /// <param name="reader">The SSE response body reader.</param>
+    /// <param name="model">The model the request was issued against.</param>
+    /// <param name="options">The (possibly provider-specific) stream options.</param>
+    /// <param name="api">The provider <c>Api</c> identifier surfaced on emitted messages.</param>
+    /// <param name="logger">The provider logger (debug-logs malformed SSE events).</param>
+    /// <param name="emitError">The provider's error-emit callback.</param>
+    /// <param name="onParsedEvent">
+    /// Optional per-event hook invoked with each successfully parsed SSE event's JSON root, before
+    /// the event is dispatched. The Copilot provider uses it for usage telemetry; OpenAI passes null.
+    /// </param>
+    /// <param name="resolveConfiguredServiceTier">
+    /// Optional resolver returning the configured service tier from <paramref name="options"/> (the
+    /// provider supplies the cast to its own options type). Used to price usage on completion when
+    /// the response body omits <c>service_tier</c>. May be null.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    public static async Task ParseAsync(
         LlmStream stream,
         StreamReader reader,
         LlmModel model,
@@ -31,6 +57,8 @@ internal static class OpenAIResponsesStreamParser
         string api,
         ILogger logger,
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
+        Action<JsonElement>? onParsedEvent,
+        Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
         CancellationToken ct)
     {
         var contentBlocks = new List<ContentBlock>();
@@ -88,6 +116,8 @@ internal static class OpenAIResponsesStreamParser
             using (doc)
             {
                 var root = doc.RootElement;
+
+                onParsedEvent?.Invoke(root);
 
                 if (evt.Event is "response.created")
                 {
@@ -309,7 +339,7 @@ internal static class OpenAIResponsesStreamParser
                         usageEl.ValueKind == JsonValueKind.Object)
                     {
                         usage = ResponsesStreamHelpers.ParseUsage(usageEl, model);
-                        var configuredTier = options is OpenAIResponsesOptions ro ? ro.ServiceTier : null;
+                        var configuredTier = resolveConfiguredServiceTier?.Invoke(options);
                         var responseTier = GetString(responseEl, "service_tier");
                         usage = ApplyServiceTierPricing(usage, responseTier ?? configuredTier);
                     }
@@ -440,5 +470,4 @@ internal static class OpenAIResponsesStreamParser
             return value.GetString();
         return null;
     }
-
 }

@@ -35,6 +35,37 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task Cache_IsBounded_ColdConversationsStillReadableViaFallThrough()
+    {
+        // The in-memory conversation cache is bounded by LRU: inserting far more
+        // distinct conversations than the cap must not retain them all in memory, yet
+        // every conversation must remain correctly readable (cold reads fall through
+        // to SQLite). Regression guard for the unbounded-cache leak (#1504).
+        using var fixture = new StoreFixture();
+        const int cap = 8;
+        const int total = 40;
+        var store = fixture.CreateStore(cacheCapacity: cap);
+
+        var ids = new List<ConversationId>();
+        for (var i = 0; i < total; i++)
+        {
+            var conversation = CreateConversation(Agent("agent-a"), $"conv-{i}", CreateBinding("telegram", $"{i}"));
+            await store.CreateAsync(conversation);
+            ids.Add(conversation.ConversationId);
+        }
+
+        // Every conversation — including the earliest ones long since evicted from the
+        // bounded cache — is still retrievable with its persisted state intact.
+        for (var i = 0; i < total; i++)
+        {
+            var loaded = await store.GetAsync(ids[i]);
+            loaded.ShouldNotBeNull();
+            loaded!.Title.ShouldBe($"conv-{i}");
+            loaded.ChannelBindings.Count.ShouldBe(1);
+        }
+    }
+
+    [Fact]
     public async Task ListAsync_FiltersByAgentId()
     {
         using var fixture = new StoreFixture();

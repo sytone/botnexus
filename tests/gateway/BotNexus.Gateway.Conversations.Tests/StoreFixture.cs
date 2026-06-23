@@ -24,6 +24,9 @@ internal sealed class StoreFixture : IDisposable
     public SqliteConversationStore CreateStore(IWorldContext worldContext)
         => new(ConnectionString, NullLogger<SqliteConversationStore>.Instance, worldContext);
 
+    public SqliteConversationStore CreateStore(int cacheCapacity)
+        => new(ConnectionString, NullLogger<SqliteConversationStore>.Instance, worldContext: null, cacheCapacity: cacheCapacity);
+
     public void Dispose()
     {
         if (File.Exists(DatabasePath))

@@ -65,7 +65,7 @@ public sealed class CopilotCompletionsProvider(
         BuildPayload: static (model, systemPrompt, messages, tools, opts, compat) =>
             CopilotCompletionsRequestBuilder.Build(
                 model, systemPrompt, messages, tools, opts, compat,
-                CopilotCompletionsMessageConverter.Convert, CompletionsStreamEngine.ConvertTools),
+                CompletionsMessageConverter.Convert, CompletionsStreamEngine.ConvertTools),
         DecorateHeaders: static (request, _, messages, opts) =>
         {
             // Copilot transport always applies the dynamic vision/intent headers —

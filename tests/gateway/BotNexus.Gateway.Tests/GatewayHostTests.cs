@@ -1795,6 +1795,59 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_WhenPreviousTurnAbandonedMidTool_StopsHandleAndNotifiesUser()
+    {
+        // Arrange: a session whose history ends with a dangling ToolStart (no matching ToolEnd)
+        // from a prior user turn. When the new inbound message arrives, PrepareTurnAsync's
+        // abandoned-turn detection (#790) must fire: stop the stale handle and add a
+        // Notification entry so the user knows the previous turn did not complete.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-abandon"]);
+
+        var handle = CreatePromptHandle("agent-abandon", "session-abandon", "response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-abandon"),
+            BotNexus.Domain.Primitives.SessionId.From("session-abandon"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-abandon"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-abandon")
+        };
+        // Seed a previous user turn that stalled mid-tool: a User entry followed by a
+        // ToolStart (ToolArgs set) with no matching ToolEnd.
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "do the thing" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "some_tool", ToolCallId = "call-1", ToolArgs = "{}" });
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("session-abandon"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-abandon"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        // Act
+        await host.DispatchAsync(CreateMessage("second message", sessionId: "session-abandon"));
+
+        // Assert: the stale handle was stopped (forces fresh context on recreate) and a
+        // Notification entry describing the abandoned turn was added to history.
+        supervisor.Verify(s => s.StopAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-abandon"),
+            BotNexus.Domain.Primitives.SessionId.From("session-abandon"),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        session.History.ShouldContain(
+            e => e.Role.Equals(MessageRole.Notification) && e.Content != null && e.Content.Contains("did not complete"),
+            "abandoned-turn detection must add a notification entry when a prior turn stalled mid-tool (#790)");
+    }
+
+    [Fact]
     public async Task StreamEvents_FanOutToSignalRObserverBindings_WhenOriginatingChannelIsNotSignalR()
     {
         // Arrange: telegram message with a SignalR observer binding on the conversation
