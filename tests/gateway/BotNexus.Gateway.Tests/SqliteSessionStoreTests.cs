@@ -55,6 +55,36 @@ public sealed class SqliteSessionStoreTests
     }
 
     [Fact]
+    public async Task Cache_IsBounded_ColdSessionsStillReadableViaFallThrough()
+    {
+        // The in-memory cache is intentionally bounded: inserting far more distinct
+        // sessions than the cap must not retain them all in memory, yet every session
+        // must remain correctly readable (cold reads fall through to SQLite). This is
+        // the regression guard for the unbounded-cache leak (#1504).
+        using var fixture = new StoreFixture();
+        const int cap = 8;
+        const int total = 40;
+        var store = fixture.CreateStore(cacheCapacity: cap);
+
+        for (var i = 0; i < total; i++)
+        {
+            var session = await store.GetOrCreateAsync(SessionId.From($"s{i}"), AgentId.From("agent-a"));
+            session.History.Add(new SessionEntry { Role = MessageRole.User, Content = $"msg-{i}" });
+            await store.SaveAsync(session);
+        }
+
+        // Every session — including the earliest ones long since evicted from the
+        // bounded cache — is still retrievable with its persisted history intact.
+        for (var i = 0; i < total; i++)
+        {
+            var reloaded = await store.GetAsync(SessionId.From($"s{i}"));
+            reloaded.ShouldNotBeNull();
+            reloaded!.SessionId.Value.ShouldBe($"s{i}");
+            reloaded.History.Where(e => e.Content == $"msg-{i}").ShouldHaveSingleItem();
+        }
+    }
+
+    [Fact]
     public async Task SaveAsync_UpdatesExistingSessionAndMetadata()
     {
         using var fixture = new StoreFixture();
@@ -1163,6 +1193,9 @@ public sealed class SqliteSessionStoreTests
 
         public SqliteSessionStore CreateStore(IConversationStore? conversationStore = null)
             => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? Conversations);
+
+        public SqliteSessionStore CreateStore(int cacheCapacity, IConversationStore? conversationStore = null)
+            => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversationStore ?? Conversations, redactor: null, cacheCapacity: cacheCapacity);
 
         public void Dispose()
         {

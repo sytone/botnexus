@@ -234,7 +234,7 @@ internal static class ToolExecutor
         }
 
         var argumentElement = JsonSerializer.SerializeToElement(rawArgs);
-        var (isValid, errors) = ToolCallValidator.Validate(argumentElement, tool.Definition.Parameters);
+        var (isValid, errors) = ToolCallValidator.Validate(argumentElement, tool.Definition.Parameters, out var coercedElement);
         if (!isValid)
         {
             return new ToolPreparation(
@@ -243,10 +243,17 @@ internal static class ToolExecutor
                 true);
         }
 
+        // The validator may have coerced losslessly-safe shape mismatches (e.g. a
+        // string-encoded integer or a scalar where an array was expected, issue #1552).
+        // Dispatch the corrected shape so the tool receives the fixed arguments rather
+        // than the original — otherwise a coerced-but-dropped value (e.g. a scalar tag)
+        // would be silently lost downstream.
+        var dispatchArgs = ApplyCoercedArguments(rawArgs, coercedElement);
+
         IReadOnlyDictionary<string, object?> validatedArgs;
         try
         {
-            validatedArgs = await tool.PrepareArgumentsAsync(rawArgs, cancellationToken).ConfigureAwait(false);
+            validatedArgs = await tool.PrepareArgumentsAsync(dispatchArgs, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -420,6 +427,38 @@ internal static class ToolExecutor
     private static AgentToolResult BuildErrorResult(string message)
     {
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+    }
+
+    /// <summary>
+    /// Returns the dispatch arguments for the tool. When the validator coerced one or more
+    /// values (issue #1552), the coerced JSON object is unpacked back into a
+    /// <see cref="Dictionary{TKey, TValue}"/> (each value a cloned <see cref="JsonElement"/>,
+    /// which every tool argument reader already accepts) so the tool sees the corrected
+    /// shape. When nothing was coerced the original <paramref name="rawArgs"/> is returned
+    /// unchanged to avoid needless reallocation.
+    /// </summary>
+    private static IReadOnlyDictionary<string, object?> ApplyCoercedArguments(
+        IReadOnlyDictionary<string, object?> rawArgs,
+        JsonElement coercedElement)
+    {
+        if (coercedElement.ValueKind != JsonValueKind.Object)
+        {
+            return rawArgs;
+        }
+
+        var original = JsonSerializer.SerializeToElement(rawArgs);
+        if (string.Equals(original.GetRawText(), coercedElement.GetRawText(), StringComparison.Ordinal))
+        {
+            return rawArgs;
+        }
+
+        var coercedArgs = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var property in coercedElement.EnumerateObject())
+        {
+            coercedArgs[property.Name] = property.Value.Clone();
+        }
+
+        return coercedArgs;
     }
 
     private static async Task<ToolResultAgentMessage> EmitToolResultMessageAsync(

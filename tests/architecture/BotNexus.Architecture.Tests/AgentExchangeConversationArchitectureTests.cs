@@ -32,22 +32,28 @@ public sealed class AgentExchangeConversationArchitectureTests
     [Fact]
     public void AgentExchangeService_DoesNotCall_SessionIdForAgentConversation()
     {
-        var source = File.ReadAllText(LocateAgentExchangeServiceFile());
+        // #1542: scan both the local service AND the cross-world router — ConverseCrossWorldAsync
+        // moved to CrossWorldExchangeRouter.cs but must still mint SessionId.Create() (never the
+        // synthetic ::agent-agent:: factory).
+        foreach (var path in new[] { LocateAgentExchangeServiceFile(), LocateCrossWorldExchangeRouterFile() })
+        {
+            var source = File.ReadAllText(path);
 
-        var match = new System.Text.RegularExpressions.Regex(
-            @"\bSessionId\.ForAgentConversation\s*\(",
-            System.Text.RegularExpressions.RegexOptions.Compiled)
-            .Match(source);
+            var match = new System.Text.RegularExpressions.Regex(
+                @"\bSessionId\.ForAgentConversation\s*\(",
+                System.Text.RegularExpressions.RegexOptions.Compiled)
+                .Match(source);
 
-        match.Success.ShouldBeFalse(
-            "AgentExchangeService.cs contains a SessionId.ForAgentConversation(...) call. " +
-            "The Phase 4 / F-3 contract requires named↔named exchanges to flow through " +
-            "IConversationStore.CreateAsync with a freshly minted ConversationId, and the " +
-            "session to be assigned a generic SessionId.Create() (no `::agent-agent::` " +
-            "encoding). The synthetic factory is reserved for back-compat readers in " +
-            "CrossWorldFederationController and DefaultAgentCommunicator until Phase 4 " +
-            "item 1b ships.\n" +
-            "Match at character index: " + match.Index);
+            match.Success.ShouldBeFalse(
+                Path.GetFileName(path) + " contains a SessionId.ForAgentConversation(...) call. " +
+                "The Phase 4 / F-3 contract requires named↔named exchanges to flow through " +
+                "IConversationStore.CreateAsync with a freshly minted ConversationId, and the " +
+                "session to be assigned a generic SessionId.Create() (no `::agent-agent::` " +
+                "encoding). The synthetic factory is reserved for back-compat readers in " +
+                "CrossWorldFederationController and DefaultAgentCommunicator until Phase 4 " +
+                "item 1b ships.\n" +
+                "Match at character index: " + match.Index);
+        }
     }
 
     [Fact]
@@ -205,20 +211,25 @@ public sealed class AgentExchangeConversationArchitectureTests
     [Fact]
     public void SplitIntoMethodBodies_FindsTheTwoMethodsTheFenceMustPolice()
     {
-        var path = LocateAgentExchangeServiceFile();
-        var source = File.ReadAllText(path);
-        var methods = SplitIntoMethodBodies(source);
-        var names = methods.Select(m => m.Name).ToList();
-
-        names.ShouldContain("ConverseAsync",
+        // #1542: ConverseAsync stays in AgentExchangeService.cs (local named↔named branch);
+        // ConverseCrossWorldAsync moved into CrossWorldExchangeRouter.cs when cross-world
+        // federation routing was split out (SRP). Both must remain splitter-findable so their
+        // respective fences keep policing.
+        var serviceNames = SplitIntoMethodBodies(File.ReadAllText(LocateAgentExchangeServiceFile()))
+            .Select(m => m.Name).ToList();
+        serviceNames.ShouldContain("ConverseAsync",
             "ConverseAsync is the local named↔named branch and is the primary subject of the " +
             "lexical-ordering fence. If the method splitter cannot find it, the fence is not " +
             "actually checking anything for the local branch. Method splitter found: " +
-            string.Join(", ", names));
-        names.ShouldContain("ConverseCrossWorldAsync",
-            "ConverseCrossWorldAsync is the cross-world sender branch. If the method splitter " +
-            "cannot find it, regressions in that branch slip through. Method splitter found: " +
-            string.Join(", ", names));
+            string.Join(", ", serviceNames));
+
+        var routerNames = SplitIntoMethodBodies(File.ReadAllText(LocateCrossWorldExchangeRouterFile()))
+            .Select(m => m.Name).ToList();
+        routerNames.ShouldContain("ConverseCrossWorldAsync",
+            "ConverseCrossWorldAsync is the cross-world sender branch (moved to " +
+            "CrossWorldExchangeRouter.cs in #1542). If the method splitter cannot find it, " +
+            "regressions in that branch slip through. Method splitter found: " +
+            string.Join(", ", routerNames));
     }
 
     private static string LocateAgentExchangeServiceFile()
@@ -230,6 +241,19 @@ public sealed class AgentExchangeConversationArchitectureTests
             "Agents",
             "AgentExchangeService.cs");
         File.Exists(path).ShouldBeTrue("Expected AgentExchangeService.cs at " + path);
+        return path;
+    }
+
+    // #1542: the cross-world sender branch (ConverseCrossWorldAsync) lives here after the SRP split.
+    private static string LocateCrossWorldExchangeRouterFile()
+    {
+        var path = Path.Combine(
+            FindSourceRoot(),
+            "gateway",
+            "BotNexus.Gateway",
+            "Agents",
+            "CrossWorldExchangeRouter.cs");
+        File.Exists(path).ShouldBeTrue("Expected CrossWorldExchangeRouter.cs at " + path);
         return path;
     }
 

@@ -1,8 +1,6 @@
 using System.Net;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
@@ -58,16 +56,9 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_SkipsEmptyAssistantWithoutToolCalls()
     {
-        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
-        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
-        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
-            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
-        converterType.ShouldNotBeNull();
-        var convertMessages = converterType!.GetMethod(
-            "Convert",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        convertMessages.ShouldNotBeNull();
-
+        // #1540: the per-provider OpenAI/Copilot completions converters were unified into the
+        // public CompletionsMessageConverter in Providers.Core, so this can call it directly
+        // (no reflection / InternalsVisibleTo needed).
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var model = new LlmModel(
             Id: "gpt-4o",
@@ -96,9 +87,8 @@ public class OpenAICompletionsProviderTests
             new UserMessage(new UserMessageContent("next"), timestamp)
         };
 
-        var converted = convertMessages!.Invoke(
-            null,
-            [null, model, messages, new OpenAICompletionsCompat()]) as JsonArray;
+        var converted = CompletionsMessageConverter.Convert(
+            null, model, messages, new OpenAICompletionsCompat());
 
         converted.ShouldNotBeNull();
         converted!
@@ -120,16 +110,7 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_NonVisionModel_FiltersImageOnlyUserMessage()
     {
-        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
-        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
-        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
-            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
-        converterType.ShouldNotBeNull();
-        var convertMessages = converterType!.GetMethod(
-            "Convert",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        convertMessages.ShouldNotBeNull();
-
+        // #1540: converter unified into the public CompletionsMessageConverter in Providers.Core.
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var model = new LlmModel(
             Id: "gpt-4o-mini",
@@ -146,9 +127,8 @@ public class OpenAICompletionsProviderTests
             new ImageContent("aGVsbG8=", "image/png")
         ]), timestamp);
 
-        var converted = convertMessages!.Invoke(
-            null,
-            [null, model, new Message[] { userWithOnlyImage }, new OpenAICompletionsCompat()]) as JsonArray;
+        var converted = CompletionsMessageConverter.Convert(
+            null, model, new Message[] { userWithOnlyImage }, new OpenAICompletionsCompat());
 
         converted.ShouldNotBeNull();
         converted.ShouldBeEmpty();
@@ -157,16 +137,7 @@ public class OpenAICompletionsProviderTests
     [Fact]
     public void ConvertMessages_SanitizesSystemUserAndToolResultText()
     {
-        // #1405: ConvertMessages moved to the internal OpenAICompletionsMessageConverter.
-        // Resolve it by name from the provider assembly so the test needs no InternalsVisibleTo.
-        var converterType = typeof(OpenAICompletionsProvider).Assembly.GetType(
-            "BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter");
-        converterType.ShouldNotBeNull();
-        var convertMessages = converterType!.GetMethod(
-            "Convert",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        convertMessages.ShouldNotBeNull();
-
+        // #1540: converter unified into the public CompletionsMessageConverter in Providers.Core.
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var model = new LlmModel(
             Id: "gpt-4o",
@@ -190,14 +161,29 @@ public class OpenAICompletionsProviderTests
                 Timestamp: timestamp)
         };
 
-        var converted = convertMessages!.Invoke(
-            null,
-            ["sys \uD800 prompt", model, messages, new OpenAICompletionsCompat()]) as JsonArray;
+        var converted = CompletionsMessageConverter.Convert(
+            "sys \uD800 prompt", model, messages, new OpenAICompletionsCompat());
 
         converted.ShouldNotBeNull();
         converted![0]!["content"]!.GetValue<string>().ShouldBe("sys  prompt");
         converted[1]!["content"]!.GetValue<string>().ShouldBe("hello  world");
         converted[2]!["content"]!.GetValue<string>().ShouldBe("tool  output");
+    }
+
+    [Fact]
+    public void CompletionsMessageConverter_IsUnifiedIntoCore_NotDuplicatedPerProvider()
+    {
+        // #1540: the OpenAI and Copilot completions converters were near-byte-identical duplicates
+        // (enforced only by CopilotCompletionsProviderParityTests). They are now a single shared
+        // type in Providers.Core. Lock that here so the duplication cannot silently return.
+        var coreAssembly = typeof(CompletionsMessageConverter).Assembly;
+        coreAssembly.GetName().Name.ShouldBe("BotNexus.Agent.Providers.Core");
+
+        var openAiAssembly = typeof(OpenAICompletionsProvider).Assembly;
+        openAiAssembly.GetType("BotNexus.Agent.Providers.OpenAI.OpenAICompletionsMessageConverter")
+            .ShouldBeNull("the OpenAI completions converter must be unified into Providers.Core, not duplicated");
+        openAiAssembly.GetType("BotNexus.Agent.Providers.Copilot.Completions.CopilotCompletionsMessageConverter")
+            .ShouldBeNull("the Copilot completions converter must be unified into Providers.Core, not duplicated");
     }
 }
 

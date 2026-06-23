@@ -14,7 +14,8 @@ namespace BotNexus.Agent.Providers.OpenAI;
 /// <para>
 /// Thin shell over the shared <see cref="ResponsesStreamEngine"/> (step 6/6 of #1377): this class
 /// supplies only the OpenAI transport deltas via a <see cref="ResponsesTransportProfile"/> — its
-/// project-internal <see cref="OpenAIResponsesRequestBuilder"/> / <see cref="OpenAIResponsesStreamParser"/>,
+/// project-internal <see cref="OpenAIResponsesRequestBuilder"/> and the shared
+/// <see cref="ResponsesStreamParser"/> (parameterized with OpenAI's service-tier resolver),
 /// conditional Copilot-header decoration (applied only for github-copilot-routed models), and a plain
 /// <see cref="HttpRequestException"/> error projection. The request loop, message/tool conversion, and
 /// emit shapes are shared with the Copilot Responses provider.
@@ -62,7 +63,11 @@ public sealed class OpenAIResponsesProvider(
                 model, systemPrompt, messages, tools, options,
                 ResponsesMessageConverter.ConvertMessages, ResponsesMessageConverter.ConvertTools),
         Parse: (stream, reader, model, options, api, emitError, ct) =>
-            OpenAIResponsesStreamParser.ParseAsync(stream, reader, model, options, api, logger, emitError, ct),
+            ResponsesStreamParser.ParseAsync(
+                stream, reader, model, options, api, logger, emitError,
+                onParsedEvent: null,
+                resolveConfiguredServiceTier: static o => o is OpenAIResponsesOptions ro ? ro.ServiceTier : null,
+                ct),
         DecorateHeaders: static (request, model, messages, _) =>
         {
             if (string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))

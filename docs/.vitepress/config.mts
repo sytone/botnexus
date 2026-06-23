@@ -144,6 +144,7 @@ export default defineConfig({
           { text: 'E2E Tests', link: '/development/e2e-tests' },
           { text: 'Triggers and Federation', link: '/development/triggers-and-federation' },
           { text: 'WebUI Connection', link: '/development/webui-connection' },
+          { text: 'Security-Sensitive File Guard', link: '/development/security-sensitive-file-guard' },
         ],
       },
       {
