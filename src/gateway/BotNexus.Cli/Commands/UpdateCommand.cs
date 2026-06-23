@@ -1,6 +1,5 @@
 using System.CommandLine;
 using System.Diagnostics;
-using System.Net.Sockets;
 using System.Reflection;
 using System.Xml.Linq;
 using BotNexus.Cli.Services;
@@ -713,10 +712,6 @@ internal class UpdateCommand
     }
 
     /// <summary>
-    /// Checks if a TCP port is available for binding. Mirrors ServeCommand.IsPortAvailable.
-    /// Used to verify the port is free before starting the new gateway process.
-    /// </summary>
-    /// <summary>
     /// Waits until the given port is available (process released it) or timeout elapses.
     /// Polls every 250ms for up to 15 seconds.
     /// </summary>
@@ -732,21 +727,13 @@ internal class UpdateCommand
         // If still not free, proceed anyway — build may still succeed if it's a different process
     }
 
-    internal static bool IsPortAvailable(int port)
-    {
-        try
-        {
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
-            listener.Server.ExclusiveAddressUse = true;
-            listener.Start();
-            listener.Stop();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    /// <summary>
+    /// Checks if a TCP port is available for binding before starting the new
+    /// gateway process. Delegates to <see cref="ServeCommand.IsPortAvailable(int, System.Net.IPAddress?)"/>
+    /// so the probe interface stays aligned with the gateway's wildcard bind
+    /// (issue #1536) and all CLI call sites share one implementation.
+    /// </summary>
+    internal static bool IsPortAvailable(int port) => ServeCommand.IsPortAvailable(port);
 
     internal readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
     internal readonly record struct GitCommandResult(int ExitCode, string? FailureDetail, bool WasCanceled);

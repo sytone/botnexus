@@ -14,7 +14,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
-using System.Collections.Concurrent;
+using BotNexus.Gateway.Abstractions.Concurrency;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -28,10 +28,21 @@ namespace BotNexus.Gateway.Sessions;
 public sealed class SqliteSessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
+
+    /// <summary>Default bound for the in-memory session cache (entries).</summary>
+    public const int DefaultSessionCacheCapacity = 500;
+
     private readonly string _connectionString;
     private readonly SemaphoreSlim _initLock = new(1, 1);
-    private readonly ConcurrentDictionary<SessionId, SemaphoreSlim> _sessionLocks = new();
-    private readonly ConcurrentDictionary<SessionId, GatewaySession> _cache = new();
+    // Striped write locks: a fixed pool hashed by session id. This bounds the number
+    // of sync primitives (no per-session SemaphoreSlim leak across the process
+    // lifetime) and never strands a lock on an exception, since the stripe is the
+    // pool's, not a per-key entry that must be removed.
+    private readonly StripedAsyncLock _sessionLocks = new();
+    // Bounded read-through cache: holds the hot set of materialized sessions (each
+    // carries its full history) capped by LRU so a long-running gateway does not
+    // retain every session ever touched. Cold reads fall through to SQLite.
+    private readonly BoundedLruCache<SessionId, GatewaySession> _cache;
     private bool _initialized;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -41,7 +52,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     private readonly IConversationStore _conversationStore;
     private readonly LegacyConversationResolver _legacyResolver;
-    private readonly ConcurrentDictionary<ConversationId, AgentId> _agentIdCache = new();
+    // Bounded conversation -> agent id cache (shared by hydration + stats). Same LRU
+    // bound as the session cache so it cannot grow unbounded across distinct
+    // conversations over the process lifetime.
+    private readonly BoundedLruCache<ConversationId, AgentId> _agentIdCache;
     private readonly ILogger<SqliteSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
 
@@ -61,11 +75,17 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// <see cref="Session.ConversationId"/> defensively at save time.
     /// </param>
     /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
+    /// <param name="cacheCapacity">
+    /// Maximum number of sessions (and conversation->agent mappings) retained in the
+    /// in-memory caches. Older entries are evicted by LRU; cold reads fall through to
+    /// SQLite. Defaults to <see cref="DefaultSessionCacheCapacity"/>.
+    /// </param>
     public SqliteSessionStore(
         string connectionString,
         ILogger<SqliteSessionStore> logger,
         IConversationStore conversationStore,
-        ISecretRedactor? redactor = null)
+        ISecretRedactor? redactor = null,
+        int cacheCapacity = DefaultSessionCacheCapacity)
         : base(conversationStore)
     {
         _connectionString = connectionString;
@@ -73,6 +93,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         _conversationStore = conversationStore ?? throw new ArgumentNullException(nameof(conversationStore));
         _legacyResolver = new LegacyConversationResolver(conversationStore, logger: null);
         _redactor = redactor;
+        _cache = new BoundedLruCache<SessionId, GatewaySession>(cacheCapacity);
+        _agentIdCache = new BoundedLruCache<ConversationId, AgentId>(cacheCapacity);
     }
 
     /// <inheritdoc />
@@ -82,20 +104,15 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", sessionId);
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        var sessionLock = GetSessionLock(sessionId);
-        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_cache.TryGetValue(sessionId, out var cached))
-                return cached;
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (_cache.TryGet(sessionId, out var cached))
+            return cached;
 
-            var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
-            if (loaded is not null)
-                _cache[sessionId] = loaded;
+        var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (loaded is not null)
+            _cache.Set(sessionId, loaded);
 
-            return loaded;
-        }
-        finally { sessionLock.Release(); }
+        return loaded;
     }
 
     /// <inheritdoc />
@@ -106,25 +123,20 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.agent.id", agentId);
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        var sessionLock = GetSessionLock(sessionId);
-        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (_cache.TryGet(sessionId, out var cached))
+            return cached;
+
+        var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (loaded is not null)
         {
-            if (_cache.TryGetValue(sessionId, out var cached))
-                return cached;
-
-            var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
-            if (loaded is not null)
-            {
-                _cache[sessionId] = loaded;
-                return loaded;
-            }
-
-            var session = CreateSession(sessionId, agentId, null, _redactor);
-            _cache[sessionId] = session;
-            return session;
+            _cache.Set(sessionId, loaded);
+            return loaded;
         }
-        finally { sessionLock.Release(); }
+
+        var session = CreateSession(sessionId, agentId, null, _redactor);
+        _cache.Set(sessionId, session);
+        return session;
     }
 
     /// <inheritdoc />
@@ -140,11 +152,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
         // does not interleave with concurrent saves of the same session.
         await EnsureConversationIdStampedAsync(session, cancellationToken).ConfigureAwait(false);
 
-        var sessionLock = GetSessionLock(session.SessionId);
-        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = await AcquireSessionLockAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
         try
         {
-            _cache[session.SessionId] = session;
+            _cache.Set(session.SessionId, session);
             await RetryOnTransientAsync(async () =>
             {
                 await using var connection = CreateConnection();
@@ -153,7 +164,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        finally { sessionLock.Release(); }
+        finally { sessionLock.Dispose(); }
     }
 
     /// <inheritdoc />
@@ -163,55 +174,45 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", sessionId);
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        var sessionLock = GetSessionLock(sessionId);
-        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            _cache.TryRemove(sessionId, out _);
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        _cache.Remove(sessionId);
 
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            await using var deleteHistory = connection.CreateCommand();
-            deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $sessionId";
-            deleteHistory.Parameters.AddWithValue("$sessionId", sessionId.Value);
-            await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await using var deleteHistory = connection.CreateCommand();
+        deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $sessionId";
+        deleteHistory.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            await using var deleteSession = connection.CreateCommand();
-            deleteSession.CommandText = "DELETE FROM sessions WHERE id = $sessionId";
-            deleteSession.Parameters.AddWithValue("$sessionId", sessionId.Value);
-            await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            _sessionLocks.TryRemove(sessionId, out _);
-        }
-        finally { sessionLock.Release(); }
+        await using var deleteSession = connection.CreateCommand();
+        deleteSession.CommandText = "DELETE FROM sessions WHERE id = $sessionId";
+        deleteSession.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        // No per-session lock entry to remove: the striped lock pool is fixed-size.
     }
 
     /// <inheritdoc />
     public override async Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        var sessionLock = GetSessionLock(sessionId);
-        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            _cache.TryRemove(sessionId, out _);
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        _cache.Remove(sessionId);
 
-            var session = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
-            if (session is not null)
+        var session = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is not null)
+        {
+            session.Status = SessionStatus.Sealed;
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            _cache.Set(sessionId, session);
+            await RetryOnTransientAsync(async () =>
             {
-                session.Status = SessionStatus.Sealed;
-                session.UpdatedAt = DateTimeOffset.UtcNow;
-                _cache[sessionId] = session;
-                await RetryOnTransientAsync(async () =>
-                {
-                    await using var connection = CreateConnection();
-                    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-                    await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                    await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                }, cancellationToken: cancellationToken).ConfigureAwait(false);
-            }
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        finally { sessionLock.Release(); }
     }
 
     protected override Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
@@ -234,11 +235,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var sessionId = SessionId.From(reader.GetString(0));
-            var session = _cache.GetValueOrDefault(sessionId)
+            var session = (_cache.TryGet(sessionId, out var c1) ? c1 : null)
                 ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
-                _cache[sessionId] = session;
+                _cache.Set(sessionId, session);
                 sessions.Add(session);
             }
         }
@@ -283,11 +284,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var sessionId = SessionId.From(reader.GetString(0));
-            var session = _cache.GetValueOrDefault(sessionId)
+            var session = (_cache.TryGet(sessionId, out var c2) ? c2 : null)
                 ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
-                _cache[sessionId] = session;
+                _cache.Set(sessionId, session);
                 if (agentId is null || session.AgentId == agentId)
                     sessions.Add(session);
             }
@@ -403,8 +404,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         finally { _initLock.Release(); }
     }
 
-    private SemaphoreSlim GetSessionLock(SessionId sessionId)
-        => _sessionLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+    private Task<IDisposable> AcquireSessionLockAsync(SessionId sessionId, CancellationToken cancellationToken)
+        => _sessionLocks.AcquireAsync(sessionId, cancellationToken);
 
     /// <summary>
     /// Returns <c>true</c> when the named column exists on the given SQLite table.
@@ -798,7 +799,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// session).
     /// </summary>
     /// <remarks>
-    /// Uses a positive-only <see cref="ConcurrentDictionary{TKey,TValue}"/> cache keyed by
+    /// Uses a positive-only <see cref="BoundedLruCache{TKey,TValue}"/> cache keyed by
     /// <see cref="ConversationId"/>. The cache is safe because <see cref="Conversation.AgentId"/>
     /// is init-only (verified by <c>ConversationAgentIdImmutabilityArchitectureTests</c>).
     /// Negative results are not cached so a create-then-resolve race never observes a
@@ -816,7 +817,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 "inspect SqliteSessionStore logs at startup.");
         }
 
-        if (_agentIdCache.TryGetValue(session.ConversationId, out var cached))
+        if (_agentIdCache.TryGet(session.ConversationId, out var cached))
         {
             session.HydrateAgentId(cached);
             return;
@@ -832,7 +833,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 "the session is unrecoverable.");
         }
 
-        _agentIdCache[session.ConversationId] = conversation.AgentId;
+        _agentIdCache.Set(session.ConversationId, conversation.AgentId);
         session.HydrateAgentId(conversation.AgentId);
     }
 
@@ -1345,7 +1346,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         }
 
         var convId = ConversationId.From(conversationId);
-        if (_agentIdCache.TryGetValue(convId, out var cached))
+        if (_agentIdCache.TryGet(convId, out var cached))
         {
             return cached.Value;
         }
@@ -1356,7 +1357,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             return null;
         }
 
-        _agentIdCache[convId] = conversation.AgentId;
+        _agentIdCache.Set(convId, conversation.AgentId);
         return conversation.AgentId.Value;
     }
 }
