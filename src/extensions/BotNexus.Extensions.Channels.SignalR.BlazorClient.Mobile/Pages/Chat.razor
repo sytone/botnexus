@@ -160,6 +160,20 @@ else
                 &#x21A6;
             </button>
         </div>
+        @* #1491: when the agent is blocked on an ask_user prompt for the active
+           conversation, render the shared AskUserPrompt component as a bottom-sheet
+           above the input bar. Reuses the same component + RespondToAskUserAsync
+           interaction the desktop ChatPanel uses, so the mobile path stays behaviour
+           identical. The sheet only renders when a pending prompt exists. *@
+        @if (PendingAskUserPrompt is { } pendingPrompt)
+        {
+            <div class="ask-user-sheet" data-testid="ask-user-sheet">
+                <AskUserPrompt Prompt="pendingPrompt"
+                               ErrorMessage="_askUserError"
+                               OnSubmit="HandleAskUserSubmit"
+                               OnTimeout="HandleAskUserTimeout" />
+            </div>
+        }
     </div>
     <!-- NEW SESSION CONFIRM OVERLAY -->
     @if (_showNewSessionConfirm)
@@ -249,6 +263,7 @@ else
     private bool _isRefreshing;
     private bool _menuOpen;
     private bool _showNewSessionConfirm;
+    private string? _askUserError;
     private ConversationState? _archiveTarget;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
@@ -507,6 +522,86 @@ else
     {
         if (e.Key == "Enter" && !e.ShiftKey)
             await SendMessage();
+    }
+
+    // #1491: the pending ask_user prompt (if any) for the active conversation.
+    // Mirrors desktop ChatPanel.PendingAskUserPrompt, deriving the active conversation
+    // id from the store rather than a cascaded parameter.
+    private AskUserPromptState? PendingAskUserPrompt
+    {
+        get
+        {
+            var activeConvId = Store.ActiveAgentId is not null
+                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
+                : null;
+            return activeConvId is not null ? Store.GetPendingAskUser(activeConvId) : null;
+        }
+    }
+
+    // #1491: submit the user's ask_user response through the same interaction path the
+    // desktop uses (RespondToAskUserAsync). On success, clear the pending prompt and append
+    // a summary line; on failure, surface the error inline without dropping the prompt.
+    private async Task HandleAskUserSubmit(AskUserPromptSubmission submission)
+    {
+        var prompt = PendingAskUserPrompt;
+        if (prompt is null)
+            return;
+
+        _askUserError = null;
+        prompt.IsSubmitting = true;
+        Store.NotifyChanged();
+
+        try
+        {
+            await Interaction.RespondToAskUserAsync(
+                prompt.ConversationId,
+                prompt.RequestId,
+                submission.FreeFormText,
+                submission.SelectedValues,
+                submission.Cancelled);
+
+            Store.ClearPendingAskUser(prompt.ConversationId);
+            Store.AppendMessage(prompt.ConversationId, new ChatMessage("System", BuildAskUserSummary(submission), DateTimeOffset.UtcNow));
+            await ForceScrollToBottomAsync();
+        }
+        catch (Exception ex)
+        {
+            prompt.IsSubmitting = false;
+            _askUserError = $"Failed to submit response: {ex.Message}";
+            Store.NotifyChanged();
+        }
+    }
+
+    // #1491: a soft timeout on the prompt clears it and notes the expiry, matching desktop.
+    private async Task HandleAskUserTimeout()
+    {
+        var prompt = PendingAskUserPrompt;
+        if (prompt is null)
+            return;
+
+        Store.ClearPendingAskUser(prompt.ConversationId);
+        Store.AppendMessage(prompt.ConversationId, new ChatMessage("System", "Prompt timed out before you could answer.", DateTimeOffset.UtcNow));
+        await ForceScrollToBottomAsync();
+    }
+
+    // #1491: human-readable summary of what the user answered, mirroring desktop.
+    private static string BuildAskUserSummary(AskUserPromptSubmission submission)
+    {
+        if (submission.Cancelled)
+            return "You cancelled the prompt.";
+
+        var selected = submission.SelectedValues is { Length: > 0 }
+            ? string.Join(", ", submission.SelectedValues)
+            : null;
+        var freeForm = string.IsNullOrWhiteSpace(submission.FreeFormText) ? null : submission.FreeFormText.Trim();
+
+        return (selected, freeForm) switch
+        {
+            (not null, not null) => $"You answered: {selected} | {freeForm}",
+            (not null, null) => $"You answered: {selected}",
+            (null, not null) => $"You answered: {freeForm}",
+            _ => "You answered the prompt."
+        };
     }
 
     private void ToggleMenu() => _menuOpen = !_menuOpen;
