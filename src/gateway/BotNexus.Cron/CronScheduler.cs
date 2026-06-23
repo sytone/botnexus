@@ -231,6 +231,13 @@ public sealed class CronScheduler(
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
+            // Opt-in ephemeral cleanup (#1561): once the action has run, delete the run's
+            // cron-scoped session + transcript when the job requested it, exactly once, across
+            // every terminal path (ok / timed_out / aborted / error). The inner finally fires
+            // before the outer error catch, so the error path is covered too without a second
+            // cleanup. Uses the per-run scope's ISessionStore (same seam as ReconcileCasLoserAsync).
+            try
+            {
             try
             {
                 await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
@@ -312,6 +319,11 @@ public sealed class CronScheduler(
             }, ct).ConfigureAwait(false);
 
             return run with { Status = "ok", CompletedAt = DateTimeOffset.UtcNow, SessionId = context.SessionId };
+            }
+            finally
+            {
+                await MaybeDeleteEphemeralRunSessionAsync(jobForRun, context, scope.ServiceProvider).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -354,6 +366,76 @@ public sealed class CronScheduler(
             LastRunStatus = "error",
             LastRunError = abortReason
         }, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Opt-in ephemeral-run cleanup (#1561). When <see cref="CronJob.DeleteAfterRun"/> is set and the
+    /// run produced a cron-scoped (<c>cron:</c>) session, deletes that session and its transcript so
+    /// run-scoped cron sessions cannot accumulate transcript entries indefinitely.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Called from a <c>finally</c> that wraps the action execution + completion bookkeeping, so it
+    /// runs exactly once across every terminal path (ok / timed_out / aborted / error). Deletion is
+    /// best-effort: a failure here is logged and swallowed so it can never mask the run's real outcome
+    /// or escape the finally.
+    /// </para>
+    /// <para>
+    /// Guards that make this safe to leave off the hot path for normal jobs:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>No-op unless the job opted in (<see cref="CronJob.DeleteAfterRun"/>).</item>
+    ///   <item>No-op when the action recorded no session id (nothing produced to delete).</item>
+    ///   <item>Only deletes sessions whose id begins with <c>cron:</c> — a misconfigured flag on a
+    ///   job whose action reuses a long-lived/per-agent session cannot remove that session.</item>
+    /// </list>
+    /// <para>
+    /// Uses <see cref="CancellationToken.None"/> for the delete: when the run was aborted via host
+    /// shutdown the caller's token is already cancelled, and we still want the ephemeral session
+    /// reclaimed rather than leaked.
+    /// </para>
+    /// </remarks>
+    private async Task MaybeDeleteEphemeralRunSessionAsync(
+        CronJob job,
+        CronExecutionContext context,
+        IServiceProvider services)
+    {
+        if (!job.DeleteAfterRun)
+            return;
+
+        if (context.SessionId is not { } sessionId)
+            return;
+
+        // Only ephemeral cron-scoped sessions are eligible — never a long-lived/per-agent session
+        // that an action happened to reuse. Mirrors the `cron:` prefix convention used by the
+        // legacy-conversation migration sweep.
+        if (!sessionId.Value.StartsWith("cron:", StringComparison.Ordinal))
+        {
+            _logger.LogDebug(
+                "DeleteAfterRun set for job '{JobId}' but run session '{SessionId}' is not a cron-scoped session; skipping cleanup.",
+                job.Id,
+                sessionId.Value);
+            return;
+        }
+
+        try
+        {
+            var sessions = services.GetRequiredService<ISessionStore>();
+            await sessions.DeleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Deleted ephemeral cron run session '{SessionId}' (and its transcript) for job '{JobId}' after run (deleteAfterRun).",
+                sessionId.Value,
+                job.Id);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: a cleanup failure must never mask the run outcome or escape the finally.
+            _logger.LogWarning(
+                ex,
+                "Failed to delete ephemeral cron run session '{SessionId}' for job '{JobId}' after run. The run outcome is unaffected.",
+                sessionId.Value,
+                job.Id);
+        }
     }
 
     /// <summary>
@@ -692,6 +774,7 @@ public sealed class CronScheduler(
                     ShellCommand = configuredJob.ShellCommand,
                     Enabled = configuredJob.Enabled,
                     System = configuredJob.System,
+                    DeleteAfterRun = configuredJob.DeleteAfterRun,
                     TimeZone = configuredJob.TimeZone,
                     CreatedBy = configuredJob.CreatedBy,
                     CreatedAt = DateTimeOffset.UtcNow,
@@ -715,6 +798,7 @@ public sealed class CronScheduler(
                 ShellCommand = configuredJob.ShellCommand,
                 Enabled = configuredJob.Enabled,
                 System = configuredJob.System,
+                DeleteAfterRun = configuredJob.DeleteAfterRun,
                 TimeZone = configuredJob.TimeZone ?? existing.TimeZone,
                 CreatedBy = configuredJob.CreatedBy ?? existing.CreatedBy,
                 Metadata = configuredJob.Metadata ?? existing.Metadata
