@@ -158,4 +158,90 @@ public sealed class ConfigPathResolverUnitTests
         ok.ShouldBeFalse();
         error.ShouldContain("is not a valid boolean");
     }
+
+    // --- Value-conversion (#1566: TryConvertValue dispatcher + TryConvertFromString + numeric table) ---
+    // These pin the per-rule behaviour and the exact user-facing error strings the CLI surfaces, so
+    // the conversion ladder stays correct after the long-method split. Each rule was previously only
+    // reachable through the full 111-line method.
+
+    [Fact]
+    public void TrySetValue_ParsesIntegerString_IntoNonNullableIntProperty()
+    {
+        // platformVersion is a non-nullable int at the root; the string "7" must route through the
+        // numeric-parser table (int) rather than JSON deserialization.
+        var config = new PlatformConfig();
+
+        var ok = _resolver.TrySetValue(config, "platformVersion", "7", out var error);
+
+        ok.ShouldBeTrue(error);
+        config.PlatformVersion.ShouldBe(7);
+    }
+
+    [Fact]
+    public void TrySetValue_InvalidInteger_ReturnsDescriptiveConversionError()
+    {
+        var config = new PlatformConfig();
+
+        var ok = _resolver.TrySetValue(config, "platformVersion", "not-an-int", out var error);
+
+        ok.ShouldBeFalse();
+        error.ShouldContain("Unable to convert 'not-an-int' to Int32");
+    }
+
+    [Fact]
+    public void TrySetValue_ParsesNestedIntegerString_AfterCreatingMissingIntermediate()
+    {
+        // rateLimit is null; create-missing builds RateLimitConfig and the int leaf is parsed.
+        var config = new PlatformConfig { Gateway = new GatewaySettingsConfig() };
+
+        var ok = _resolver.TrySetValue(config, "gateway.rateLimit.requestsPerMinute", "150", out var error);
+
+        ok.ShouldBeTrue(error);
+        config.Gateway!.RateLimit.ShouldNotBeNull();
+        config.Gateway.RateLimit!.RequestsPerMinute.ShouldBe(150);
+    }
+
+    [Fact]
+    public void TrySetValue_NullLiteral_OnNonNullableValueType_ReturnsDoesNotAllowNull()
+    {
+        // platformVersion is a non-nullable int; the "null" literal must be rejected with the
+        // shared does-not-allow-null message (the AllowNullOrError path reached via a string).
+        var config = new PlatformConfig();
+
+        var ok = _resolver.TrySetValue(config, "platformVersion", "null", out var error);
+
+        ok.ShouldBeFalse();
+        error.ShouldContain("does not allow null");
+    }
+
+    [Fact]
+    public void TrySetValue_DeserializesJsonObjectString_IntoComplexProperty()
+    {
+        // A non-numeric, non-bool string for a complex target falls through to JSON deserialization
+        // (the table-miss branch of TryConvertFromString).
+        var config = new PlatformConfig { Providers = new(StringComparer.OrdinalIgnoreCase) };
+
+        var ok = _resolver.TrySetValue(
+            config,
+            "providers.copilot",
+            "{\"apiKey\":\"k-9\",\"enabled\":false}",
+            out var error);
+
+        ok.ShouldBeTrue(error);
+        config.Providers!.ShouldContainKey("copilot");
+        config.Providers["copilot"].ApiKey.ShouldBe("k-9");
+        config.Providers["copilot"].Enabled.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TrySetValue_BooleanCaseInsensitive_ParsesTrue()
+    {
+        // bool.TryParse accepts mixed case; confirm the bool arm survives the split.
+        var config = new PlatformConfig { Gateway = new GatewaySettingsConfig() };
+
+        var ok = _resolver.TrySetValue(config, "gateway.rateLimit.enabled", "TRUE", out var error);
+
+        ok.ShouldBeTrue(error);
+        config.Gateway!.RateLimit!.Enabled.ShouldBeTrue();
+    }
 }
