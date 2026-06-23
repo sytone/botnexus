@@ -155,7 +155,9 @@ public sealed class MemoryIndexer(
                     SessionId = sessionId.Value,
                     TurnIndex = pendingTurnIndex,
                     SourceType = "conversation",
-                    Content = $"User: {pendingUser.Content}\nAssistant: {entry.Content}",
+                    // Strip LLM control / role-injection markup before persisting raw transcript
+                    // text to the searchable store — defends against memory-poisoning (#1560).
+                    Content = $"User: {MemoryContentSanitizer.Sanitize(pendingUser.Content)}\nAssistant: {MemoryContentSanitizer.Sanitize(entry.Content)}",
                     MetadataJson = null,
                     Embedding = null,
                     CreatedAt = entry.Timestamp,

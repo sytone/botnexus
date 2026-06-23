@@ -247,9 +247,12 @@ public sealed class MemorySearchTool : IAgentTool
         for (var i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
-            var preview = entry.Content.Length > 240
-                ? $"{entry.Content[..240]}..."
-                : entry.Content;
+            // Defence-in-depth: neutralize any control / role-injection markup in historical rows
+            // (written before sanitization existed) on the recall path too (#1560).
+            var sanitized = MemoryContentSanitizer.Sanitize(entry.Content);
+            var preview = sanitized.Length > 240
+                ? $"{sanitized[..240]}..."
+                : sanitized;
             preview = preview.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
 
             lines.Add($"[{i + 1}] ID: {entry.Id}");

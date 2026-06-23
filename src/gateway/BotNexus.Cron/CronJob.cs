@@ -26,6 +26,20 @@ public sealed record CronJob
     public bool Enabled { get; init; } = true;
     /// <summary>Whether this is a system-provisioned job (e.g., heartbeat). Hidden from default listings.</summary>
     public bool System { get; init; }
+
+    /// <summary>
+    /// Opt-in cleanup for ephemeral jobs: when <c>true</c>, the scheduler deletes the run's
+    /// agent session and its transcript after the run completes (across success / timeout /
+    /// error / abort), provided the run produced a cron-scoped (<c>cron:</c>) session.
+    ///
+    /// This prevents run-scoped cron sessions from accumulating transcript entries indefinitely
+    /// (the unbounded-growth class behind long-lived reporting sessions). It is <b>off by default</b>:
+    /// long-lived reporting jobs (heartbeat, maintenance) that intentionally persist context across
+    /// runs must NOT enable this -- for those, compaction/truncation is the right lever. Deletion only
+    /// targets sessions whose id begins with <c>cron:</c>, so a misconfigured flag cannot remove an
+    /// unrelated long-lived session.
+    /// </summary>
+    public bool DeleteAfterRun { get; init; }
     public string? TimeZone { get; init; }
     public string? CreatedBy { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
