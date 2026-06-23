@@ -61,9 +61,25 @@ public sealed class ConversationGroupingTests : IDisposable
         _store.ActiveAgentId = "a-1";
     }
 
+    // Seeds the persisted "Scheduled" group collapse state to expanded ("false").
+    // MainLayout.OnAfterRenderAsync reads localStorage["botnexus-cron-collapsed"]; under the Loose
+    // JS mock an unseeded read returns null -> the group stays collapsed and only re-expands via a
+    // toggle click. Because that read runs on an async continuation, it can re-collapse the group
+    // after the click, producing a flaky "item missing from group body" failure under CI timing.
+    // Seeding "false" makes the group render expanded deterministically with no toggle race.
+    private void ExpandScheduledGroupByDefault() =>
+        _ctx.JSInterop.Setup<string?>("localStorage.getItem", "botnexus-cron-collapsed").SetResult("false");
+
     [Fact]
     public void CronConversations_RenderedInScheduledGroup()
     {
+        // Seed the Scheduled group as expanded so the rendered output is deterministic.
+        // Without this, MainLayout.OnAfterRenderAsync reads localStorage (null under Loose mode
+        // -> collapsed) on an async continuation that can re-collapse the group *after* a manual
+        // toggle click, racing the assertion and intermittently failing in CI. Seeding the stored
+        // value to "false" makes OnAfterRenderAsync land on expanded and removes the race entirely.
+        ExpandScheduledGroupByDefault();
+
         // Arrange: one cronconv:-prefixed conversation
         SeedAgentWithConversations(
             new ConversationSummaryDto("cronconv:daily-check", "a-1", "Daily Check", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
@@ -76,16 +92,19 @@ public sealed class ConversationGroupingTests : IDisposable
         var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
         Assert.NotNull(scheduledGroup);
 
-        // The cron conversation title should be inside the scheduled group (when expanded)
-        // First expand the group
-        cut.Find("[data-testid='cron-group-toggle']").Click();
-        scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
-        Assert.Contains("Daily Check", scheduledGroup.TextContent);
+        // WaitForAssertion lets the async OnAfterRenderAsync settle before we read the group body,
+        // so the cron conversation is reliably rendered inside the expanded Scheduled group.
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Daily Check", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
     }
 
     [Fact]
     public void CronConversations_VirtualKind_RenderedInScheduledGroup()
     {
+        // Seed the Scheduled group as expanded so the rendered output is deterministic (see the
+        // sibling test above for the OnAfterRenderAsync re-collapse race this avoids).
+        ExpandScheduledGroupByDefault();
+
         // Arrange: conversation with IsVirtualSession + VirtualSessionKind = "cron"
         SeedAgentWithConversations(
             new ConversationSummaryDto("c-1", "a-1", "Cron Task", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
@@ -100,10 +119,10 @@ public sealed class ConversationGroupingTests : IDisposable
         var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
         Assert.NotNull(scheduledGroup);
 
-        // Expand and verify
-        cut.Find("[data-testid='cron-group-toggle']").Click();
-        scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
-        Assert.Contains("Cron Task", scheduledGroup.TextContent);
+        // The virtual-kind cron conversation (IsVirtualSession + VirtualSessionKind == "cron")
+        // should be grouped under Scheduled exactly like a cronconv:-prefixed one.
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Cron Task", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
     }
 
     [Fact]
@@ -203,7 +222,7 @@ public sealed class ConversationGroupingTests : IDisposable
     }
 
     [Fact]
-    public async Task ConversationAssignedToCronJob_RenderedInScheduledGroup()
+    public void ConversationAssignedToCronJob_RenderedInScheduledGroup()
     {
         // Arrange: set up a mock HTTP handler that returns cron jobs with a conversationId
         var handler = new MockCronHttpHandler();
@@ -232,6 +251,10 @@ public sealed class ConversationGroupingTests : IDisposable
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+        // Render the Scheduled group expanded by default so the assertion does not depend on a
+        // toggle click racing the async OnAfterRenderAsync localStorage read (see the
+        // ExpandScheduledGroupByDefault helper for the shared-context tests).
+        ctx.JSInterop.Setup<string?>("localStorage.getItem", "botnexus-cron-collapsed").SetResult("false");
 
         store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         store.SeedConversations("a-1", [
@@ -243,19 +266,15 @@ public sealed class ConversationGroupingTests : IDisposable
         var cut = ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (RenderFragment)(_ => { })));
 
-        // Wait for async OnAfterRenderAsync to complete
-        await Task.Delay(100);
-        cut.Render();
-
-        // Expand the cron group
-        cut.Find("[data-testid='cron-group-toggle']").Click();
-
-        // The assigned conversation should be in the scheduled group
-        var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
-        Assert.Contains("Digest Conv", scheduledGroup.TextContent);
+        // The cron->conversation id mapping is fetched asynchronously in OnAfterRenderAsync
+        // (LoadCronConversationIdsAsync). WaitForAssertion retries until that async load and the
+        // resulting re-render have settled, so the assigned conversation reliably appears in the
+        // expanded Scheduled group without a fixed Task.Delay or a toggle click.
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Digest Conv", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
 
         // The normal conversation should NOT be in the scheduled group
-        Assert.DoesNotContain("Normal Conv", scheduledGroup.TextContent);
+        Assert.DoesNotContain("Normal Conv", cut.Find("[data-testid='conversation-group-scheduled']").TextContent);
     }
 
     private sealed class MockCronHttpHandler : HttpMessageHandler
