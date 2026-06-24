@@ -2,6 +2,47 @@ using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.Telegram;
 
+/// <summary>
+/// Content of a Telegram Rich Message (Bot API 10.1+) to send via <c>sendRichMessage</c>,
+/// <c>sendRichMessageDraft</c>, or <c>editMessageText</c>.
+/// </summary>
+/// <remarks>
+/// Per the Telegram spec, exactly one of <see cref="Markdown"/> or <see cref="Html"/> must be set.
+/// BotNexus only uses the <see cref="Markdown"/> field: LLM output is GitHub-Flavored-Markdown-ish,
+/// which Rich Markdown accepts nearly as-is, so no MarkdownV2-style escaping is required.
+/// Reference: https://core.telegram.org/bots/api#inputrichmessage
+/// </remarks>
+public sealed record InputRichMessage
+{
+    /// <summary>
+    /// Rich message content described using Rich Markdown. Mutually exclusive with <see cref="Html"/>.
+    /// </summary>
+    [JsonPropertyName("markdown")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Markdown { get; init; }
+
+    /// <summary>
+    /// Rich message content described using Rich HTML. Mutually exclusive with <see cref="Markdown"/>.
+    /// Unused by BotNexus today but modelled for completeness.
+    /// </summary>
+    [JsonPropertyName("html")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Html { get; init; }
+
+    /// <summary>Pass true to render the message right-to-left.</summary>
+    [JsonPropertyName("is_rtl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsRtl { get; init; }
+
+    /// <summary>
+    /// Pass true to skip Telegram's automatic detection of entities (URLs, mentions, hashtags,
+    /// phone numbers, etc.) in the text.
+    /// </summary>
+    [JsonPropertyName("skip_entity_detection")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SkipEntityDetection { get; init; }
+}
+
 public sealed record TelegramApiResponse<T>
 {
     [JsonPropertyName("ok")]
