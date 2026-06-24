@@ -331,6 +331,52 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
+    public async Task SendStreamEventAsync_EditReturnsMessageNotModified_DoesNotThrow_AndContinuesTurn()
+    {
+        // Regression for #1587: during streaming the adapter edits the reply message
+        // progressively. When a flush re-sends text identical to what is already displayed,
+        // Telegram returns 400 "message is not modified". This must be treated as a benign
+        // no-op — previously it threw HttpRequestException, aborting the turn and leaving the
+        // bot unresponsive to the next message.
+        var calls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.MethodName switch
+            {
+                "sendMessage" => JsonOk(new TelegramMessage { MessageId = 99, Chat = new TelegramChat { Id = 42 } }),
+                "editMessageText" => new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message is not modified: specified new message content and reply markup are exactly the same\"}",
+                        Encoding.UTF8,
+                        "application/json")
+                },
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60000
+        }, handler);
+
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('a', 101) });
+
+        // The forced end-of-message flush edits the already-sent text, triggering Telegram's
+        // "message is not modified". This must not throw.
+        await Should.NotThrowAsync(async () =>
+            await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }));
+
+        calls.Count(c => c.MethodName == "sendMessage").ShouldBe(1);
+        calls.Count(c => c.MethodName == "editMessageText").ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
     public async Task SendStreamEventAsync_WithCompositeAddress_RoutesFirstSend_ToForumTopic()
     {
         // Regression for PR #512: pre-refactor, streaming replies to Telegram forum topics
