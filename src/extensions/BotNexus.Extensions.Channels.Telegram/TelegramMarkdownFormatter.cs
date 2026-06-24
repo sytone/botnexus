@@ -1,410 +1,526 @@
 using System.Text;
+using Markdig;
+using Markdig.Extensions.Tables;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 
 namespace BotNexus.Extensions.Channels.Telegram;
 
 /// <summary>
-/// Converts LLM Markdown output to Telegram MarkdownV2 format so the Telegram client
-/// renders bold, italic, code, links, and headings rather than displaying raw punctuation.
+/// Converts LLM Markdown output to Telegram MarkdownV2 so the Telegram client renders
+/// bold, italic, code, links, lists, blockquotes, headings, and tables rather than
+/// displaying raw punctuation.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Telegram MarkdownV2 reference: https://core.telegram.org/bots/api#markdownv2-style
-///
-/// Conversion rules applied:
-/// - LLM **bold** → Telegram *bold* (single asterisk)
-/// - LLM *italic* → Telegram _italic_ (underscore)
-/// - LLM _italic_ → Telegram _italic_ (unchanged)
-/// - LLM ***bold italic*** → Telegram *_bold italic_*
-/// - LLM ~~strike~~ → Telegram ~strike~ (single tilde)
-/// - LLM `code` → Telegram `code`
-/// - LLM ```lang\n...\n``` → Telegram ```lang\n...\n```
-/// - LLM [text](url) → Telegram [text](url)
-/// - LLM # Heading → Telegram *Heading* (mapped to bold, no native heading support)
-/// - All literal special chars are escaped with a preceding backslash.
+/// </para>
+/// <para>
+/// LLM output is parsed with <see href="https://github.com/xoofx/markdig">Markdig</see>
+/// (CommonMark + pipe tables) and the resulting AST is walked to emit MarkdownV2. Parsing to
+/// an AST — rather than scanning characters — is what makes lists, nested spans, blockquotes,
+/// balanced tokens, and tables correct by construction, and it avoids the malformed output that
+/// causes Telegram to reject a message with HTTP 400.
+/// </para>
+/// <para>
+/// MarkdownV2 has no native table or heading support. Headings are rendered bold; tables are
+/// rendered as an aligned, column-padded monospace block (the only faithful representation
+/// Telegram offers for tabular data) instead of leaking raw <c>| pipe | text |</c> markup.
+/// </para>
 /// </remarks>
 internal static class TelegramMarkdownFormatter
 {
-    // All characters that must be escaped in MarkdownV2 literal text regions.
-    private static readonly HashSet<char> EscapeSet =
-    [
-        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '\\'
-    ];
+    // Characters that must be backslash-escaped in MarkdownV2 literal-text regions.
+    // Telegram rejects (400) any unescaped occurrence of one of these outside a recognized entity.
+    private static readonly char[] EscapeChars =
+        ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '\\'];
+
+    private static readonly HashSet<char> EscapeSet = [.. EscapeChars];
+
+    // A single Markdig pipeline reused for every conversion. UseAdvancedExtensions enables
+    // pipe tables, strikethrough (~~), task lists, autolinks, etc. — the syntax LLMs emit.
+    private static readonly MarkdownPipeline Pipeline =
+        new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
 
     /// <summary>
-    /// Converts a markdown string (as produced by LLMs) into Telegram MarkdownV2 format.
-    /// Recognized formatting is converted; all other special characters are escaped.
+    /// Converts a markdown string (as produced by LLMs) into Telegram MarkdownV2.
+    /// Recognized formatting is translated; all other special characters are escaped.
     /// Returns an empty string for null/empty input.
     /// </summary>
     public static string Convert(string? markdown)
     {
         if (string.IsNullOrEmpty(markdown)) return string.Empty;
 
-        var sb = new StringBuilder(markdown.Length + markdown.Length / 4);
-        var i = 0;
-
-        while (i < markdown.Length)
+        MarkdownDocument document;
+        try
         {
-            var c = markdown[i];
-
-            // Fenced code block: ```[lang]\n...\n```
-            if (c == '`' && Peek(markdown, i + 1) == '`' && Peek(markdown, i + 2) == '`')
-            {
-                i = ProcessCodeBlock(markdown, i, sb);
-                continue;
-            }
-
-            // Inline code: `...`
-            if (c == '`')
-            {
-                i = ProcessInlineCode(markdown, i, sb);
-                continue;
-            }
-
-            // Heading at line start: # text
-            if (c == '#' && (i == 0 || markdown[i - 1] == '\n'))
-            {
-                i = ProcessHeading(markdown, i, sb);
-                continue;
-            }
-
-            // Bold+italic: ***...***
-            if (c == '*' && Peek(markdown, i + 1) == '*' && Peek(markdown, i + 2) == '*')
-            {
-                i = ProcessBoldItalic(markdown, i, sb);
-                continue;
-            }
-
-            // Bold: **...**
-            if (c == '*' && Peek(markdown, i + 1) == '*')
-            {
-                i = ProcessBold(markdown, i, sb);
-                continue;
-            }
-
-            // Strikethrough: ~~...~~
-            if (c == '~' && Peek(markdown, i + 1) == '~')
-            {
-                i = ProcessStrikethrough(markdown, i, sb);
-                continue;
-            }
-
-            // Link: [text](url)
-            if (c == '[')
-            {
-                i = ProcessLink(markdown, i, sb);
-                continue;
-            }
-
-            // Italic with single asterisk: *...*
-            if (c == '*')
-            {
-                i = ProcessItalicStar(markdown, i, sb);
-                continue;
-            }
-
-            // Italic with underscore: _..._
-            if (c == '_')
-            {
-                i = ProcessItalicUnderscore(markdown, i, sb);
-                continue;
-            }
-
-            // Literal character — escape if required by MarkdownV2
-            if (EscapeSet.Contains(c)) sb.Append('\\');
-            sb.Append(c);
-            i++;
+            document = Markdown.Parse(markdown, Pipeline);
+        }
+        catch
+        {
+            // Defensive: if the parser ever throws on pathological input, fall back to a
+            // fully-escaped plain rendering so the caller still gets a Telegram-safe string.
+            return EscapeMarkdownV2(markdown);
         }
 
-        return sb.ToString();
+        var sb = new StringBuilder(markdown.Length + (markdown.Length / 4));
+        WriteBlocks(document, sb, listDepth: 0);
+
+        // Markdig appends a trailing newline per block; trim a single trailing newline run
+        // so streamed deltas don't accumulate blank lines at the end.
+        return sb.ToString().TrimEnd('\n');
     }
 
     /// <summary>
-    /// Escapes all MarkdownV2 special characters in a plain-text string.
-    /// Use this for structural strings (display prefixes, tool names, labels) that
-    /// must appear as literal text with no formatting applied.
+    /// Escapes all MarkdownV2 special characters in a plain-text string. Use this for
+    /// structural strings (display prefixes, tool names, labels) that must appear as literal
+    /// text with no formatting applied.
     /// </summary>
     public static string EscapeMarkdownV2(string? text)
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
 
-        var sb = new StringBuilder(text.Length + text.Length / 4);
+        var sb = new StringBuilder(text.Length + (text.Length / 4));
+        AppendEscaped(text, sb);
+        return sb.ToString();
+    }
+
+    // ─── Block rendering ─────────────────────────────────────────────────────
+
+    private static void WriteBlocks(ContainerBlock container, StringBuilder sb, int listDepth)
+    {
+        for (var i = 0; i < container.Count; i++)
+        {
+            var block = container[i];
+            WriteBlock(block, sb, listDepth);
+
+            // Separate top-level blocks with a blank line (paragraph spacing), matching how
+            // the source markdown read. List items are spaced by the list writer itself.
+            if (listDepth == 0 && i < container.Count - 1)
+                sb.Append('\n');
+        }
+    }
+
+    private static void WriteBlock(Block block, StringBuilder sb, int listDepth)
+    {
+        switch (block)
+        {
+            case HeadingBlock heading:
+                // No native heading in MarkdownV2 — render bold.
+                sb.Append('*');
+                WriteInlines(heading.Inline, sb);
+                sb.Append('*');
+                sb.Append('\n');
+                break;
+
+            case ParagraphBlock paragraph:
+                WriteInlines(paragraph.Inline, sb);
+                sb.Append('\n');
+                break;
+
+            case ListBlock list:
+                WriteList(list, sb, listDepth);
+                break;
+
+            case QuoteBlock quote:
+                WriteQuote(quote, sb, listDepth);
+                break;
+
+            case Table table:
+                WriteTable(table, sb);
+                break;
+
+            case FencedCodeBlock fenced:
+                WriteFencedCode(fenced, sb);
+                break;
+
+            case CodeBlock code:
+                // Indented code block (no fence info) — render as a plain fenced block.
+                WriteIndentedCode(code, sb);
+                break;
+
+            case ThematicBreakBlock:
+                // Horizontal rule — Telegram has no <hr>; emit a short escaped divider.
+                sb.Append("\\-\\-\\-\n");
+                break;
+
+            case ContainerBlock containerBlock:
+                // Any other container (e.g. custom) — recurse.
+                WriteBlocks(containerBlock, sb, listDepth);
+                break;
+
+            default:
+                // Unknown leaf block — best-effort escaped text of its raw lines.
+                if (block is LeafBlock leaf && leaf.Lines.Count > 0)
+                {
+                    AppendEscaped(leaf.Lines.ToString(), sb);
+                    sb.Append('\n');
+                }
+                break;
+        }
+    }
+
+    private static void WriteList(ListBlock list, StringBuilder sb, int listDepth)
+    {
+        var indent = new string(' ', listDepth * 2);
+        var ordered = list.IsOrdered;
+        var number = ParseStartNumber(list.OrderedStart);
+
+        foreach (var child in list)
+        {
+            if (child is not ListItemBlock item) continue;
+
+            sb.Append(indent);
+            if (ordered)
+            {
+                // Ordered markers keep their number; the dot is a MarkdownV2 special char.
+                sb.Append(number.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                sb.Append("\\. ");
+                number++;
+            }
+            else
+            {
+                // Bullet glyph renders cleanly and needs no escaping.
+                sb.Append("\u2022 ");
+            }
+
+            // A list item is itself a container of blocks (usually one paragraph, possibly a
+            // nested list). Render the first paragraph inline on the marker line; deeper blocks
+            // (nested lists) recurse with increased depth.
+            WriteListItemBody(item, sb, listDepth);
+        }
+    }
+
+    private static void WriteListItemBody(ListItemBlock item, StringBuilder sb, int listDepth)
+    {
+        var first = true;
+        foreach (var child in item)
+        {
+            if (first && child is ParagraphBlock paragraph)
+            {
+                WriteInlines(paragraph.Inline, sb);
+                sb.Append('\n');
+                first = false;
+                continue;
+            }
+
+            if (child is ListBlock nested)
+            {
+                WriteList(nested, sb, listDepth + 1);
+                first = false;
+                continue;
+            }
+
+            // Other block kinds inside a list item (code, quote, extra paragraphs):
+            // render them with the item's indentation depth.
+            if (first)
+            {
+                WriteBlock(child, sb, listDepth + 1);
+                first = false;
+            }
+            else
+            {
+                WriteBlock(child, sb, listDepth + 1);
+            }
+        }
+
+        if (first)
+        {
+            // Empty list item — still terminate the line.
+            sb.Append('\n');
+        }
+    }
+
+    private static void WriteQuote(QuoteBlock quote, StringBuilder sb, int listDepth)
+    {
+        // Render the quote's inner blocks, then prefix every produced line with '>'.
+        var inner = new StringBuilder();
+        WriteBlocks(quote, inner, listDepth);
+
+        var text = inner.ToString().TrimEnd('\n');
+        foreach (var line in text.Split('\n'))
+        {
+            sb.Append('>');
+            sb.Append(line);
+            sb.Append('\n');
+        }
+    }
+
+    private static void WriteFencedCode(FencedCodeBlock fenced, StringBuilder sb)
+    {
+        var info = fenced.Info?.Trim();
+        var content = fenced.Lines.ToString();
+
+        sb.Append("```");
+        if (!string.IsNullOrEmpty(info)) sb.Append(info);
+        sb.Append('\n');
+        AppendCodeEscaped(content, sb);
+        sb.Append("\n```\n");
+    }
+
+    private static void WriteIndentedCode(CodeBlock code, StringBuilder sb)
+    {
+        var content = code.Lines.ToString();
+        sb.Append("```\n");
+        AppendCodeEscaped(content, sb);
+        sb.Append("\n```\n");
+    }
+
+    // ─── Table rendering (no native Telegram support → aligned monospace block) ───
+
+    private static void WriteTable(Table table, StringBuilder sb)
+    {
+        // Extract every cell's plain text (formatting is flattened — a monospace table can't
+        // carry bold/italic), compute per-column widths, then emit a padded grid inside a
+        // code block so columns line up in Telegram's monospace font.
+        var rows = new List<List<string>>();
+        foreach (var rowObj in table)
+        {
+            if (rowObj is not TableRow row) continue;
+            var cells = new List<string>();
+            foreach (var cellObj in row)
+            {
+                if (cellObj is not TableCell cell) continue;
+                cells.Add(FlattenToPlainText(cell).Trim());
+            }
+            rows.Add(cells);
+        }
+
+        if (rows.Count == 0) return;
+
+        var columnCount = rows.Max(r => r.Count);
+        var widths = new int[columnCount];
+        foreach (var row in rows)
+        {
+            for (var c = 0; c < row.Count; c++)
+                widths[c] = Math.Max(widths[c], row[c].Length);
+        }
+
+        var grid = new StringBuilder();
+        for (var r = 0; r < rows.Count; r++)
+        {
+            var row = rows[r];
+            for (var c = 0; c < columnCount; c++)
+            {
+                var value = c < row.Count ? row[c] : string.Empty;
+                // Pad every column except the last so columns line up without trailing
+                // whitespace at the end of each row.
+                if (c < columnCount - 1)
+                {
+                    grid.Append(value.PadRight(widths[c]));
+                    grid.Append(" | ");
+                }
+                else
+                {
+                    grid.Append(value);
+                }
+            }
+            grid.Append('\n');
+
+            // Header separator row after the first (header) row.
+            if (r == 0 && table.Count > 1)
+            {
+                for (var c = 0; c < columnCount; c++)
+                {
+                    grid.Append(new string('-', widths[c]));
+                    if (c < columnCount - 1) grid.Append("-+-");
+                }
+                grid.Append('\n');
+            }
+        }
+
+        sb.Append("```\n");
+        AppendCodeEscaped(grid.ToString().TrimEnd('\n'), sb);
+        sb.Append("\n```\n");
+    }
+
+    // ─── Inline rendering ────────────────────────────────────────────────────
+
+    private static void WriteInlines(ContainerInline? container, StringBuilder sb)
+    {
+        if (container is null) return;
+
+        foreach (var inline in container)
+            WriteInline(inline, sb);
+    }
+
+    private static void WriteInline(Inline inline, StringBuilder sb)
+    {
+        switch (inline)
+        {
+            case LiteralInline literal:
+                AppendEscaped(literal.Content.ToString(), sb);
+                break;
+
+            case EmphasisInline emphasis:
+                WriteEmphasis(emphasis, sb);
+                break;
+
+            case CodeInline code:
+                sb.Append('`');
+                AppendCodeEscaped(code.Content, sb);
+                sb.Append('`');
+                break;
+
+            case LinkInline link:
+                WriteLink(link, sb);
+                break;
+
+            case LineBreakInline:
+                sb.Append('\n');
+                break;
+
+            case AutolinkInline auto:
+                // Bare URL — render as a link to itself.
+                sb.Append('[');
+                AppendEscaped(auto.Url, sb);
+                sb.Append("](");
+                AppendUrlEscaped(auto.Url, sb);
+                sb.Append(')');
+                break;
+
+            case HtmlInline html:
+                // Raw inline HTML is not valid MarkdownV2 — escape it as literal text.
+                AppendEscaped(html.Tag, sb);
+                break;
+
+            case ContainerInline containerInline:
+                WriteInlines(containerInline, sb);
+                break;
+
+            default:
+                // Unknown inline — emit its escaped textual form if available.
+                AppendEscaped(inline.ToString() ?? string.Empty, sb);
+                break;
+        }
+    }
+
+    private static void WriteEmphasis(EmphasisInline emphasis, StringBuilder sb)
+    {
+        // Markdig encodes emphasis by delimiter char + run length:
+        //   * or _ , length 1  → italic        → _…_
+        //   * or _ , length 2  → bold           → *…*
+        //   ~       , length 2 → strikethrough  → ~…~
+        // A length-3 run (***) is represented as nested emphasis (bold wrapping italic),
+        // so it is handled naturally by recursion.
+        string open, close;
+        switch (emphasis.DelimiterChar)
+        {
+            case '~':
+                open = close = "~";
+                break;
+            case '*':
+            case '_':
+                if (emphasis.DelimiterCount >= 2) { open = close = "*"; }   // bold
+                else { open = close = "_"; }                                 // italic
+                break;
+            default:
+                open = close = string.Empty;
+                break;
+        }
+
+        sb.Append(open);
+        WriteInlines(emphasis, sb);
+        sb.Append(close);
+    }
+
+    private static void WriteLink(LinkInline link, StringBuilder sb)
+    {
+        if (link.IsImage)
+        {
+            // MarkdownV2 has no inline image; render the alt text plus the URL as a link.
+            sb.Append('[');
+            WriteInlines(link, sb);
+            sb.Append("](");
+            AppendUrlEscaped(link.Url ?? string.Empty, sb);
+            sb.Append(')');
+            return;
+        }
+
+        sb.Append('[');
+        WriteInlines(link, sb);
+        sb.Append("](");
+        AppendUrlEscaped(link.Url ?? string.Empty, sb);
+        sb.Append(')');
+    }
+
+    // ─── Escaping helpers ────────────────────────────────────────────────────
+
+    private static void AppendEscaped(string text, StringBuilder sb)
+    {
         foreach (var c in text)
         {
             if (EscapeSet.Contains(c)) sb.Append('\\');
             sb.Append(c);
         }
-        return sb.ToString();
     }
 
-    // Processes a fenced code block starting at `start` (the first `).
-    // Emits ```lang\ncontent\n``` with ` and \ escaped inside the block.
-    private static int ProcessCodeBlock(string text, int start, StringBuilder sb)
+    // Inside code spans / pre blocks MarkdownV2 only requires ` and \ to be escaped.
+    private static void AppendCodeEscaped(string text, StringBuilder sb)
     {
-        var openEnd = start + 3; // position after the opening ```
-
-        // Find the newline that terminates the opening fence (and optional lang tag).
-        var newlineIndex = text.IndexOf('\n', openEnd);
-        if (newlineIndex < 0)
-        {
-            // No newline found — treat ``` as escaped literal
-            sb.Append("\\`\\`\\`");
-            return start + 3;
-        }
-
-        var lang = text.Substring(openEnd, newlineIndex - openEnd).Trim();
-        var contentStart = newlineIndex + 1;
-
-        // Find the closing ```, which must appear after a newline.
-        const string ClosePattern = "\n```";
-        var closeIndex = text.IndexOf(ClosePattern, contentStart, StringComparison.Ordinal);
-        if (closeIndex < 0)
-        {
-            // No closing fence — treat opening as escaped literal
-            sb.Append("\\`\\`\\`");
-            return start + 3;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-
-        sb.Append("```");
-        if (!string.IsNullOrEmpty(lang)) sb.Append(lang);
-        sb.Append('\n');
-
-        // Inside pre/code blocks only ` and \ must be escaped.
-        foreach (var c in content)
+        foreach (var c in text)
         {
             if (c == '`' || c == '\\') sb.Append('\\');
             sb.Append(c);
         }
-
-        sb.Append("\n```");
-
-        // closeIndex points at the \n before ```; skip past \n + ```
-        return closeIndex + ClosePattern.Length;
     }
 
-    // Processes an inline code span starting at `start` (the opening `).
-    private static int ProcessInlineCode(string text, int start, StringBuilder sb)
+    // Inside a (link) URL MarkdownV2 only requires ) and \ to be escaped.
+    private static void AppendUrlEscaped(string url, StringBuilder sb)
     {
-        var contentStart = start + 1;
-
-        // Locate the closing backtick; do not cross line boundaries.
-        var closeIndex = -1;
-        for (var j = contentStart; j < text.Length; j++)
-        {
-            if (text[j] == '\n') break;
-            if (text[j] == '`') { closeIndex = j; break; }
-        }
-
-        if (closeIndex < 0)
-        {
-            sb.Append("\\`");
-            return start + 1;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-
-        sb.Append('`');
-        foreach (var c in content)
-        {
-            if (c == '`' || c == '\\') sb.Append('\\');
-            sb.Append(c);
-        }
-        sb.Append('`');
-
-        return closeIndex + 1;
-    }
-
-    // Processes a heading line (# / ## / etc.) starting at `start`.
-    // Telegram has no native heading; headings are mapped to bold.
-    private static int ProcessHeading(string text, int start, StringBuilder sb)
-    {
-        var i = start;
-        while (i < text.Length && text[i] == '#') i++;
-
-        // Skip the space between # markers and the heading text.
-        if (i < text.Length && text[i] == ' ') i++;
-
-        var lineEnd = text.IndexOf('\n', i);
-        var headingText = lineEnd >= 0
-            ? text.Substring(i, lineEnd - i)
-            : text.Substring(i);
-
-        sb.Append('*');
-        AppendLiteralEscaped(headingText, sb);
-        sb.Append('*');
-
-        return lineEnd >= 0 ? lineEnd : text.Length;
-    }
-
-    // Processes a bold+italic span ***...*** → Telegram *_..._*
-    private static int ProcessBoldItalic(string text, int start, StringBuilder sb)
-    {
-        var contentStart = start + 3;
-        var closeIndex = text.IndexOf("***", contentStart, StringComparison.Ordinal);
-        if (closeIndex < 0)
-        {
-            sb.Append("\\*\\*\\*");
-            return start + 3;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-        sb.Append("*_");
-        AppendLiteralEscaped(content, sb);
-        sb.Append("_*");
-
-        return closeIndex + 3;
-    }
-
-    // Processes a bold span **...** → Telegram *...*
-    private static int ProcessBold(string text, int start, StringBuilder sb)
-    {
-        var contentStart = start + 2;
-        var closeIndex = text.IndexOf("**", contentStart, StringComparison.Ordinal);
-        if (closeIndex < 0)
-        {
-            sb.Append("\\*\\*");
-            return start + 2;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-        sb.Append('*');
-        AppendLiteralEscaped(content, sb);
-        sb.Append('*');
-
-        return closeIndex + 2;
-    }
-
-    // Processes a strikethrough span ~~...~~ → Telegram ~...~
-    private static int ProcessStrikethrough(string text, int start, StringBuilder sb)
-    {
-        var contentStart = start + 2;
-        var closeIndex = text.IndexOf("~~", contentStart, StringComparison.Ordinal);
-        if (closeIndex < 0)
-        {
-            sb.Append("\\~\\~");
-            return start + 2;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-        sb.Append('~');
-        AppendLiteralEscaped(content, sb);
-        sb.Append('~');
-
-        return closeIndex + 2;
-    }
-
-    // Processes a markdown link [text](url) → Telegram [text](url)
-    private static int ProcessLink(string text, int start, StringBuilder sb)
-    {
-        var closeTextIndex = text.IndexOf(']', start + 1);
-        if (closeTextIndex < 0 || closeTextIndex + 1 >= text.Length || text[closeTextIndex + 1] != '(')
-        {
-            // Not a valid link — escape the [ and move on.
-            sb.Append("\\[");
-            return start + 1;
-        }
-
-        var closeUrlIndex = text.IndexOf(')', closeTextIndex + 2);
-        if (closeUrlIndex < 0)
-        {
-            sb.Append("\\[");
-            return start + 1;
-        }
-
-        var linkText = text.Substring(start + 1, closeTextIndex - start - 1);
-        var url = text.Substring(closeTextIndex + 2, closeUrlIndex - closeTextIndex - 2);
-
-        sb.Append('[');
-        AppendLiteralEscaped(linkText, sb);
-        sb.Append("](");
-
-        // Inside the URL, only ) and \ must be escaped.
         foreach (var c in url)
         {
             if (c == ')' || c == '\\') sb.Append('\\');
             sb.Append(c);
         }
-
-        sb.Append(')');
-
-        return closeUrlIndex + 1;
     }
 
-    // Processes italic *...* → Telegram _..._
-    // Only matches a single * (not **); does not cross line boundaries.
-    private static int ProcessItalicStar(string text, int start, StringBuilder sb)
+    // Flattens an inline container (e.g. a table cell) to plain unformatted text.
+    private static string FlattenToPlainText(Block block)
     {
-        var contentStart = start + 1;
+        var sb = new StringBuilder();
+        FlattenBlock(block, sb);
+        return sb.ToString();
+    }
 
-        var closeIndex = -1;
-        for (var j = contentStart; j < text.Length; j++)
+    private static void FlattenBlock(Block block, StringBuilder sb)
+    {
+        switch (block)
         {
-            if (text[j] == '\n') break;
-            // Closing * must not be immediately followed by another * (that would be **).
-            if (text[j] == '*' && Peek(text, j + 1) != '*')
-            {
-                closeIndex = j;
+            case LeafBlock leaf when leaf.Inline is not null:
+                FlattenInlines(leaf.Inline, sb);
                 break;
+            case ContainerBlock container:
+                foreach (var child in container) FlattenBlock(child, sb);
+                break;
+        }
+    }
+
+    private static void FlattenInlines(ContainerInline container, StringBuilder sb)
+    {
+        foreach (var inline in container)
+        {
+            switch (inline)
+            {
+                case LiteralInline literal:
+                    sb.Append(literal.Content.ToString());
+                    break;
+                case CodeInline code:
+                    sb.Append(code.Content);
+                    break;
+                case LineBreakInline:
+                    sb.Append(' ');
+                    break;
+                case ContainerInline child:
+                    FlattenInlines(child, sb);
+                    break;
+                default:
+                    sb.Append(inline.ToString());
+                    break;
             }
         }
-
-        if (closeIndex < 0)
-        {
-            sb.Append("\\*");
-            return start + 1;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-        sb.Append('_');
-        AppendLiteralEscaped(content, sb);
-        sb.Append('_');
-
-        return closeIndex + 1;
     }
 
-    // Processes italic _..._ → Telegram _..._
-    // Does not cross line boundaries.
-    private static int ProcessItalicUnderscore(string text, int start, StringBuilder sb)
-    {
-        var contentStart = start + 1;
-
-        var closeIndex = -1;
-        for (var j = contentStart; j < text.Length; j++)
-        {
-            if (text[j] == '\n') break;
-            // Closing _ must not be immediately followed by another _ (that would be __).
-            if (text[j] == '_' && Peek(text, j + 1) != '_')
-            {
-                closeIndex = j;
-                break;
-            }
-        }
-
-        if (closeIndex < 0)
-        {
-            sb.Append("\\_");
-            return start + 1;
-        }
-
-        var content = text.Substring(contentStart, closeIndex - contentStart);
-        sb.Append('_');
-        AppendLiteralEscaped(content, sb);
-        sb.Append('_');
-
-        return closeIndex + 1;
-    }
-
-    // Appends each character of `text` to `sb`, escaping MarkdownV2 special chars.
-    // Used for the content inside formatting spans where no further markdown is parsed.
-    private static void AppendLiteralEscaped(string text, StringBuilder sb)
-    {
-        foreach (var c in text)
-        {
-            if (EscapeSet.Contains(c)) sb.Append('\\');
-            sb.Append(c);
-        }
-    }
-
-    private static char Peek(string text, int index)
-        => index < text.Length ? text[index] : '\0';
+    private static int ParseStartNumber(string? orderedStart)
+        => int.TryParse(orderedStart, out var n) ? n : 1;
 }

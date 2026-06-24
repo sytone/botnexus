@@ -104,7 +104,10 @@ public sealed class TelegramMarkdownFormatterTests
 
     [Fact]
     public void Convert_BoldItalic_ConvertsTelegramBoldItalic()
-        => TelegramMarkdownFormatter.Convert("***bold italic***").ShouldBe("*_bold italic_*");
+        // CommonMark parses *** as italic wrapping bold; Telegram renders _*x*_ identically to
+        // *_x_*. The Markdig-based formatter emits the parsed nesting (italic-outer) — both are
+        // valid MarkdownV2 and display the same bold-italic text.
+        => TelegramMarkdownFormatter.Convert("***bold italic***").ShouldBe("_*bold italic*_");
 
     // ─── Convert: strikethrough ──────────────────────────────────────────────
 
@@ -150,10 +153,16 @@ public sealed class TelegramMarkdownFormatterTests
     }
 
     [Fact]
-    public void Convert_UnclosedCodeBlock_EscapesOpeningFence()
+    public void Convert_UnclosedCodeBlock_RendersAsOpenCodeBlock()
     {
+        // CommonMark: an unterminated fenced code block runs to end-of-input and IS a valid
+        // code block. Telegram renders it as a code block (the previous scanner wrongly escaped
+        // the fence into literal backticks). The trailing text on the fence line becomes the
+        // info string.
         var result = TelegramMarkdownFormatter.Convert("```no closing fence");
-        result.ShouldBe("\\`\\`\\`no closing fence");
+        result.ShouldStartWith("```");
+        result.ShouldEndWith("```");
+        result.ShouldNotContain("\\`");
     }
 
     // ─── Convert: links ──────────────────────────────────────────────────────
@@ -215,6 +224,7 @@ public sealed class TelegramMarkdownFormatterTests
     {
         var input = "# Title\n\nSome **bold** text.\n\n`code here`";
         var result = TelegramMarkdownFormatter.Convert(input);
+        // Markdig separates distinct blocks (heading / paragraph / code) with a blank line.
         result.ShouldBe("*Title*\n\nSome *bold* text\\.\n\n`code here`");
     }
 
@@ -231,9 +241,10 @@ public sealed class TelegramMarkdownFormatterTests
     [Fact]
     public void Convert_HeadingOnSecondLine_ConvertsToBold()
     {
-        // A heading on the second line (preceded by \n) must still be converted.
+        // A heading after a paragraph is a separate block; Markdig separates blocks with a
+        // blank line, so the rendered output has an empty line between the two.
         var result = TelegramMarkdownFormatter.Convert("intro\n# Section");
-        result.ShouldBe("intro\n*Section*");
+        result.ShouldBe("intro\n\n*Section*");
     }
 
     // ─── Convert: multiple formatting spans ──────────────────────────────────
@@ -347,11 +358,12 @@ public sealed class TelegramMarkdownFormatterTests
     }
 
     [Fact]
-    public void Convert_BulletListItem_EscapesDash()
+    public void Convert_BulletListItem_RendersBulletGlyph()
     {
-        // Unordered list items starting with "- " — the dash must be escaped.
+        // Unordered list items now render with a bullet glyph (\u2022) instead of an escaped
+        // dash, so Telegram shows a proper list rather than literal "- " punctuation.
         var result = TelegramMarkdownFormatter.Convert("- item one\n- item two");
-        result.ShouldBe("\\- item one\n\\- item two");
+        result.ShouldBe("\u2022 item one\n\u2022 item two");
     }
 
     [Fact]
@@ -361,5 +373,178 @@ public sealed class TelegramMarkdownFormatterTests
         var input = "**Summary**\n\nUse `git status` to check changes. Cost: $0.00.";
         var result = TelegramMarkdownFormatter.Convert(input);
         result.ShouldBe("*Summary*\n\nUse `git status` to check changes\\. Cost: $0\\.00\\.");
+    }
+
+    // ─── Convert: lists (Markdig-based) ──────────────────────────────────────
+
+    [Fact]
+    public void Convert_OrderedList_KeepsNumbersAndEscapesDots()
+    {
+        var result = TelegramMarkdownFormatter.Convert("1. First\n2. Second\n3. Third");
+        result.ShouldBe("1\\. First\n2\\. Second\n3\\. Third");
+    }
+
+    [Fact]
+    public void Convert_OrderedList_RespectsStartNumber()
+    {
+        var result = TelegramMarkdownFormatter.Convert("5. Five\n6. Six");
+        result.ShouldBe("5\\. Five\n6\\. Six");
+    }
+
+    [Fact]
+    public void Convert_UnorderedList_WithAsteriskMarker_RendersBullets()
+    {
+        // A '* ' list marker must NOT be mistaken for italic (the old scanner's failure mode).
+        var result = TelegramMarkdownFormatter.Convert("* alpha\n* beta");
+        result.ShouldBe("\u2022 alpha\n\u2022 beta");
+    }
+
+    [Fact]
+    public void Convert_NestedUnorderedList_IndentsNested()
+    {
+        var input = "- parent\n  - child\n  - child two";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        result.ShouldBe("\u2022 parent\n  \u2022 child\n  \u2022 child two");
+    }
+
+    [Fact]
+    public void Convert_ListItemWithBoldAndCode_FormatsInline()
+    {
+        var result = TelegramMarkdownFormatter.Convert("- run `git status` for **changes**");
+        result.ShouldBe("\u2022 run `git status` for *changes*");
+    }
+
+    // ─── Convert: blockquotes ────────────────────────────────────────────────
+
+    [Fact]
+    public void Convert_Blockquote_RendersMarkdownV2Quote()
+    {
+        var result = TelegramMarkdownFormatter.Convert("> quoted text");
+        result.ShouldBe(">quoted text");
+    }
+
+    [Fact]
+    public void Convert_MultilineBlockquote_PrefixesEachLine()
+    {
+        var result = TelegramMarkdownFormatter.Convert("> line one\n> line two");
+        result.ShouldBe(">line one\n>line two");
+    }
+
+    [Fact]
+    public void Convert_BlockquoteWithBold_FormatsInsideQuote()
+    {
+        var result = TelegramMarkdownFormatter.Convert("> a **bold** quote");
+        result.ShouldBe(">a *bold* quote");
+    }
+
+    // ─── Convert: nested inline formatting ───────────────────────────────────
+
+    [Fact]
+    public void Convert_BoldContainingInlineCode_PreservesBoth()
+    {
+        // The old scanner escaped the inner backticks as literals; Markdig keeps the code span.
+        var result = TelegramMarkdownFormatter.Convert("**use `code` here**");
+        result.ShouldBe("*use `code` here*");
+    }
+
+    [Fact]
+    public void Convert_BoldContainingLink_PreservesBoth()
+    {
+        var result = TelegramMarkdownFormatter.Convert("**see [docs](https://example.com)**");
+        result.ShouldBe("*see [docs](https://example.com)*");
+    }
+
+    [Fact]
+    public void Convert_LinkWithBoldText_FormatsLinkLabel()
+    {
+        var result = TelegramMarkdownFormatter.Convert("[**bold link**](https://example.com)");
+        result.ShouldBe("[*bold link*](https://example.com)");
+    }
+
+    // ─── Convert: unbalanced tokens are safe (no greedy span) ─────────────────
+
+    [Fact]
+    public void Convert_LoneAsteriskInProse_DoesNotItaliciseAcrossText()
+    {
+        // "5 * 3 = 15 and 2 * 4 = 8": the old scanner greedily italicised between the asterisks.
+        // Markdig treats them as literal '*' (no valid emphasis), so they are escaped, not paired.
+        var result = TelegramMarkdownFormatter.Convert("5 * 3 = 15 and 2 * 4 = 8");
+        result.ShouldNotContain("_");
+        result.ShouldContain("\\*");
+    }
+
+    // ─── Convert: tables (no native Telegram support → monospace grid) ────────
+
+    [Fact]
+    public void Convert_PipeTable_RendersAsAlignedCodeBlock()
+    {
+        var input = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 5 |";
+        var result = TelegramMarkdownFormatter.Convert(input);
+
+        // Rendered inside a code block so columns line up in Telegram's monospace font.
+        result.ShouldStartWith("```");
+        result.ShouldEndWith("```");
+        // No raw pipe markup leaks as MarkdownV2 formatting — pipes live inside the code block.
+        result.ShouldContain("Name");
+        result.ShouldContain("Alice");
+        result.ShouldContain("Bob");
+        // Columns are padded so the shorter "Bob"/"5" row aligns with the header widths.
+        result.ShouldContain("Alice | 30");
+    }
+
+    [Fact]
+    public void Convert_PipeTable_DoesNotLeakRawPipesAsFormatting()
+    {
+        var input = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        // The only backtick fences are the wrapping code block; pipes are plain text inside.
+        result.ShouldStartWith("```");
+        result.ShouldNotContain("\\|"); // pipes inside a pre block are not escaped, just literal
+    }
+
+    [Fact]
+    public void Convert_PipeTable_ExactAlignedGrid()
+    {
+        // Pins the exact monospace grid a Telegram user receives: header row, dashed separator,
+        // and padded data rows inside a code block, columns separated by " | ".
+        var input = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 5 |";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        result.ShouldBe(
+            "```\n" +
+            "Name  | Age\n" +
+            "------+----\n" +
+            "Alice | 30\n" +
+            "Bob   | 5\n" +
+            "```");
+    }
+
+    // ─── Convert: escape completeness (Telegram-400 safety property) ──────────
+
+    [Theory]
+    [InlineData("a_b")]
+    [InlineData("x*y")]
+    [InlineData("f(x)")]
+    [InlineData("a.b.c")]
+    [InlineData("1+1=2")]
+    [InlineData("path/to-file.cs")]
+    [InlineData("hello! world?")]
+    [InlineData("[bracket] {brace}")]
+    public void Convert_LiteralProse_EscapesAllSpecialChars(string input)
+    {
+        // Outside any recognised entity, every MarkdownV2 special char in literal prose must be
+        // backslash-escaped, otherwise Telegram rejects the message with HTTP 400. This is a
+        // safety property: no special char may appear unescaped in plain-text output.
+        var result = TelegramMarkdownFormatter.Convert(input);
+        const string specials = "_*[]()~`>#+-=|{}.!";
+        for (var i = 0; i < result.Length; i++)
+        {
+            var c = result[i];
+            if (specials.IndexOf(c) >= 0)
+            {
+                // Must be immediately preceded by a backslash (which itself may be escaped).
+                (i > 0 && result[i - 1] == '\\').ShouldBeTrue(
+                    $"Unescaped '{c}' at index {i} in \"{result}\" (input \"{input}\")");
+            }
+        }
     }
 }

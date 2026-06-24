@@ -163,6 +163,31 @@ If the SignalR portal is also connected, messages from Telegram appear there too
 
 ---
 
+## Message formatting
+
+Agent replies are written in Markdown and converted to Telegram's [MarkdownV2](https://core.telegram.org/bots/api#markdownv2-style) before sending, so Telegram renders rich formatting rather than raw punctuation. Conversion is done by parsing the Markdown to a syntax tree (via [Markdig](https://github.com/xoofx/markdig)) and emitting MarkdownV2 from it, which handles nested and unbalanced formatting correctly.
+
+Supported:
+
+| Markdown | Rendered as |
+|---|---|
+| `**bold**`, `# Heading` | bold |
+| `*italic*`, `_italic_` | italic |
+| `~~strikethrough~~` | strikethrough |
+| `` `inline code` ``, fenced ```` ``` ```` blocks | monospace |
+| `[text](url)` | link |
+| `- item` / `1. item` (incl. nested) | bullet / numbered list |
+| `> quote` | blockquote |
+| Pipe tables | aligned monospace grid |
+
+Notes:
+
+- **Tables** have no native Telegram representation, so they are rendered as a column-aligned monospace block (inside a code block) instead of leaking raw `| pipe | text |` markup.
+- **Headings** map to bold (Telegram has no heading styles).
+- If Telegram still rejects a message's formatting, the adapter automatically retries it as plain text so the content is never dropped.
+
+---
+
 ## Polling vs webhook
 
 | | Long polling (default) | Webhook |

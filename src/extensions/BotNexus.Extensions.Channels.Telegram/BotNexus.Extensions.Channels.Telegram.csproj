@@ -7,6 +7,12 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CommonMark parser: outbound LLM markdown is parsed to an AST then rendered to
+         Telegram MarkdownV2, so lists, blockquotes, tables, and nested spans are handled
+         correctly rather than by a fragile char-scanner (see #1589). -->
+    <PackageReference Include="Markdig" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
   </ItemGroup>
   <ItemGroup>
