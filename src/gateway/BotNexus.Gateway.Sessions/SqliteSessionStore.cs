@@ -248,6 +248,97 @@ public sealed class SqliteSessionStore : SessionStoreBase
         }, cancellationToken: cancellationToken);
 
     /// <summary>
+    /// Transcript-free summary read: a single metadata query over <c>sessions</c> with a
+    /// <c>COUNT(*)</c> aggregate from <c>session_history</c> for <c>MessageCount</c>. Session
+    /// <c>content</c> is never read, so this stays cheap regardless of how large the history
+    /// table grows. Replaces the previous warmup path that loaded every session's full
+    /// transcript just to build a metadata list (issue #1581).
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="updatedAfter"/> bound is applied on parsed values rather than in
+    /// SQL: timestamps are persisted via <c>DateTimeOffset.ToString("O")</c>, which preserves
+    /// the original UTC offset, so a lexicographic <c>updated_at &gt;= ?</c> comparison would be
+    /// wrong across rows written at different offsets. AgentId is resolved from
+    /// <c>Conversation.AgentId</c> (P9-I) and cached per conversation; rows whose conversation
+    /// no longer resolves to an agent are skipped — they cannot belong to an agent's visible
+    /// list.
+    /// </remarks>
+    public override async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
+        DateTimeOffset updatedAfter,
+        CancellationToken cancellationToken = default)
+        => await RetryOnTransientAsync(async () =>
+        {
+            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT s.id, s.channel_type, s.session_type, s.status,
+                       s.created_at, s.updated_at, s.conversation_id,
+                       COALESCE(h.cnt, 0) AS message_count
+                FROM sessions s
+                LEFT JOIN (
+                    SELECT session_id, COUNT(*) AS cnt
+                    FROM session_history
+                    GROUP BY session_id
+                ) h ON h.session_id = s.id
+                """;
+
+            // Read raw rows first; resolving the agent per row touches the conversation
+            // store and must not happen while the data reader holds the connection.
+            var rows = new List<(string Id, ChannelKey? Channel, SessionType Type, SessionStatus Status,
+                DateTimeOffset Created, DateTimeOffset Updated, string? ConversationId, int Count)>();
+
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var updated = ParseTimestamp(reader.GetString(5));
+                    if (updated < updatedAfter)
+                        continue;
+
+                    var id = reader.GetString(0);
+                    ChannelKey? channel = reader.IsDBNull(1) ? (ChannelKey?)null : ChannelKey.From(reader.GetString(1));
+                    var type = ParseSessionType(reader.IsDBNull(2) ? null : reader.GetString(2), SessionId.From(id), channel);
+                    var status = ParseStatus(reader.IsDBNull(3) ? null : reader.GetString(3));
+                    var created = ParseTimestamp(reader.GetString(4));
+                    var conversationId = reader.IsDBNull(6) ? null : reader.GetString(6);
+                    var count = reader.IsDBNull(7) ? 0 : (int)reader.GetInt64(7);
+                    rows.Add((id, channel, type, status, created, updated, conversationId, count));
+                }
+            }
+
+            var summaries = new List<SessionSummary>(rows.Count);
+            foreach (var row in rows)
+            {
+                var agentId = await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(agentId))
+                    continue;
+
+                // Mirror Session.IsInteractive: a user-facing session is UserAgent-typed and
+                // not delivered over the internal "cron" channel.
+                var isInteractive = row.Type.Equals(SessionType.UserAgent)
+                    && (!row.Channel.HasValue
+                        || !string.Equals(row.Channel.Value.Value, "cron", StringComparison.OrdinalIgnoreCase));
+
+                summaries.Add(new SessionSummary(
+                    row.Id,
+                    agentId,
+                    row.Channel,
+                    row.Status,
+                    row.Type,
+                    isInteractive,
+                    row.Count,
+                    row.Created,
+                    row.Updated,
+                    row.ConversationId));
+            }
+
+            return (IReadOnlyList<SessionSummary>)summaries;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
     /// Returns sessions for a single conversation, using the
     /// <c>idx_sessions_conversation_created</c> index to avoid loading the
     /// full session table. Honours the same chronological-ascending /

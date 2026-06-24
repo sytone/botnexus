@@ -123,10 +123,22 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
                     _cache.TryRemove(existingAgentId, out _);
             }
 
+            // One transcript-free query for every agent, then bucket in memory. The store
+            // never materialises session history here (issue #1581).
+            var summaries = await _sessionStore.ListSummariesAsync(ComputeUpdatedAfter(options), ct);
+            var byAgent = summaries
+                .GroupBy(static summary => summary.AgentId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => (IReadOnlyList<SessionSummary>)group.ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+
             foreach (var agentId in agentIds)
             {
-                var summaries = await BuildSummariesForAgentAsync(agentId, options, ct);
-                _cache[agentId] = summaries;
+                var agentSummaries = byAgent.TryGetValue(agentId, out var list)
+                    ? list
+                    : Array.Empty<SessionSummary>();
+                _cache[agentId] = BuildVisibleSummaries(agentSummaries, options);
             }
         }
         finally
@@ -140,8 +152,12 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         await _refreshGate.WaitAsync(ct);
         try
         {
-            var summaries = await BuildSummariesForAgentAsync(agentId, _options.Value, ct);
-            _cache[agentId] = summaries;
+            var options = _options.Value;
+            var summaries = await _sessionStore.ListSummariesAsync(ComputeUpdatedAfter(options), ct);
+            var agentSummaries = summaries
+                .Where(summary => string.Equals(summary.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            _cache[agentId] = BuildVisibleSummaries(agentSummaries, options);
         }
         finally
         {
@@ -149,62 +165,48 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         }
     }
 
-    private async Task<List<SessionSummary>> BuildSummariesForAgentAsync(string agentId, SessionWarmupOptions options, CancellationToken ct)
+    private static DateTimeOffset ComputeUpdatedAfter(SessionWarmupOptions options)
+        => DateTimeOffset.UtcNow.AddHours(-Math.Max(0, options.RetentionWindowHours));
+
+    private static List<SessionSummary> BuildVisibleSummaries(
+        IEnumerable<SessionSummary> summaries,
+        SessionWarmupOptions options)
     {
-        var retentionHours = Math.Max(0, options.RetentionWindowHours);
-        var updatedAfter = DateTimeOffset.UtcNow.AddHours(-retentionHours);
         var maxSessions = Math.Max(0, options.MaxSessionsPerAgent);
-
-        var sessions = await _sessionStore.ListAsync(AgentId.From(agentId), ct);
-        var summaries = GetVisibleSessionsAsync(sessions, updatedAfter, options.CollapseChannelContinuations)
-            .OrderByDescending(static session => session.UpdatedAt)
+        return GetVisibleSummaries(summaries, options.CollapseChannelContinuations)
+            .OrderByDescending(static summary => summary.UpdatedAt)
             .Take(maxSessions)
-            .Select(static session => new SessionSummary(
-                session.SessionId.Value,
-                session.AgentId.Value,
-                session.ChannelType,
-                session.Status,
-                session.SessionType,
-                session.IsInteractive,
-                session.MessageCount,
-                session.CreatedAt,
-                session.UpdatedAt,
-                session.ConversationId.IsInitialized() ? session.ConversationId.Value : null))
             .ToList();
-
-        _logger.LogDebug("Session warmup cache refreshed for agent {AgentId}: {Count} sessions", agentId, summaries.Count);
-        return summaries;
     }
 
-    private static IEnumerable<GatewaySession> GetVisibleSessionsAsync(
-        IEnumerable<GatewaySession> sessions,
-        DateTimeOffset updatedAfter,
+    private static IEnumerable<SessionSummary> GetVisibleSummaries(
+        IEnumerable<SessionSummary> summaries,
         bool collapseChannelContinuations)
     {
         // Only surface user-agent sessions; hide internal types (Soul, Cron, AgentSubAgent, etc.)
-        // and sessions delivered via the "cron" channel even if typed as UserAgent.
-        var visibleCandidates = sessions
-            .Where(session =>
-                session.UpdatedAt >= updatedAfter
-                && session.SessionType.Equals(SessionType.UserAgent)
-                && (!session.ChannelType.HasValue
-                    || !string.Equals(session.ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase)))
+        // and sessions delivered via the "cron" channel even if typed as UserAgent. The retention
+        // window has already been applied by the store's ListSummariesAsync.
+        var visibleCandidates = summaries
+            .Where(summary =>
+                summary.SessionType.Equals(SessionType.UserAgent)
+                && (!summary.ChannelType.HasValue
+                    || !string.Equals(summary.ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase)))
             .ToArray();
 
         if (!collapseChannelContinuations)
             return visibleCandidates;
 
         var visible = visibleCandidates
-            .Where(static session => !session.ChannelType.HasValue)
+            .Where(static summary => !summary.ChannelType.HasValue)
             .ToList();
 
         foreach (var channelSessions in visibleCandidates
-                     .Where(static session => session.ChannelType.HasValue)
-                     .GroupBy(static session => session.ChannelType!.Value))
+                     .Where(static summary => summary.ChannelType.HasValue)
+                     .GroupBy(static summary => summary.ChannelType!.Value))
         {
             var mostRecentActiveOrSuspended = channelSessions
-                .Where(session => session.Status == GatewaySessionStatus.Active || session.Status == GatewaySessionStatus.Suspended)
-                .OrderByDescending(static session => session.UpdatedAt)
+                .Where(summary => summary.Status == GatewaySessionStatus.Active || summary.Status == GatewaySessionStatus.Suspended)
+                .OrderByDescending(static summary => summary.UpdatedAt)
                 .FirstOrDefault();
 
             if (mostRecentActiveOrSuspended is not null)
@@ -214,8 +216,8 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
             }
 
             var mostRecentSealed = channelSessions
-                .Where(session => session.Status == GatewaySessionStatus.Sealed)
-                .OrderByDescending(static session => session.UpdatedAt)
+                .Where(summary => summary.Status == GatewaySessionStatus.Sealed)
+                .OrderByDescending(static summary => summary.UpdatedAt)
                 .FirstOrDefault();
 
             if (mostRecentSealed is not null)
