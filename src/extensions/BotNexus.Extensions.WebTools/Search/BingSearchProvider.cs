@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Extensions.WebTools.Search;
 
@@ -25,10 +26,14 @@ internal sealed class BingSearchProvider : ISearchProvider
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUrl);
         request.Headers.Add("Ocp-Apim-Subscription-Key", _apiKey);
 
-        var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+        // ResponseHeadersRead so the body is NOT pre-buffered by HttpClient — the bounded reader
+        // below must see the raw stream to abort an unbounded/hostile body before it is materialized.
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        // The body is an untrusted external search upstream — cap the read so a hostile or
+        // malfunctioning endpoint cannot stream an unbounded body and OOM the gateway.
+        var json = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, cancellationToken: ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
 
         var results = new List<SearchResult>();
