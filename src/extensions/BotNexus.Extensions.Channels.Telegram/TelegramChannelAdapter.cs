@@ -179,7 +179,7 @@ public sealed class TelegramChannelAdapter(
         if (string.IsNullOrEmpty(delta) || !TelegramChannelAddress.TryDecode(target.ChannelAddress, out var chatId, out var messageThreadId))
             return;
 
-        var runtime = ResolveSingleConfiguredBot();
+        var runtime = ResolveStreamingBot(null);
         EnsureChatAllowed(runtime.Config, chatId);
         var stateKey = target.ChannelAddress.Value;
         var state = runtime.StreamingStates.GetOrAdd(stateKey, _ => new StreamingState(chatId, messageThreadId));
@@ -208,7 +208,7 @@ public sealed class TelegramChannelAdapter(
         if (!TelegramChannelAddress.TryDecode(target.ChannelAddress, out var chatId, out var messageThreadId))
             return;
 
-        var runtime = ResolveSingleConfiguredBot();
+        var runtime = ResolveStreamingBot(streamEvent.AgentId);
         EnsureChatAllowed(runtime.Config, chatId);
         var stateKey = target.ChannelAddress.Value;
         var state = runtime.StreamingStates.GetOrAdd(stateKey, _ => new StreamingState(chatId, messageThreadId));
@@ -564,12 +564,32 @@ public sealed class TelegramChannelAdapter(
         }
     }
 
-    private BotRuntime ResolveSingleConfiguredBot()
+    // Resolves which bot a streamed reply should be sent through. Single-bot
+    // deployments are unambiguous; multi-bot deployments route by the originating
+    // agent because each bot binds a distinct agentId and the enriched
+    // AgentStreamEvent carries that agent — this sends the reply back through the
+    // same bot that received the message.
+    private BotRuntime ResolveStreamingBot(AgentId? agentId)
     {
         if (_bots.Count == 1)
             return _bots.Values.Single();
 
-        throw new InvalidOperationException("Streaming over Telegram requires a single configured bot or explicit bot routing metadata.");
+        if (agentId is { } id)
+        {
+            var matches = _bots.Values
+                .Where(b => string.Equals(b.Config.AgentId, id.Value, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (matches.Count == 1)
+                return matches[0];
+
+            if (matches.Count > 1)
+                throw new InvalidOperationException(
+                    $"Multiple Telegram bots are configured for agent '{id.Value}'. Each bot must bind a distinct agentId.");
+        }
+
+        throw new InvalidOperationException(
+            "Streaming over Telegram requires a single configured bot or a stream event carrying the originating agent id.");
     }
 
     private BotRuntime ResolveOutboundBot(OutboundMessage message)
