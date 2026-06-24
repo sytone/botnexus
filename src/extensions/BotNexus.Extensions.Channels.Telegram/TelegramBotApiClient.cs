@@ -79,16 +79,32 @@ public sealed class TelegramBotApiClient(
     /// <summary>
     /// Edits an existing message's text. Uses MarkdownV2 parse_mode.
     /// </summary>
-    public Task<TelegramMessage> EditMessageTextAsync(
+    /// <remarks>
+    /// Telegram returns <c>400 Bad Request: message is not modified</c> when the new text is
+    /// identical to what is already displayed. This is a benign condition that routinely occurs
+    /// during streaming when a throttled or final flush re-sends unchanged content. It is treated
+    /// as a no-op success — the message already holds the correct text — and the existing message
+    /// is returned so the streaming pipeline continues without aborting the turn.
+    /// </remarks>
+    public async Task<TelegramMessage> EditMessageTextAsync(
         long chatId,
         int messageId,
         string text,
         CancellationToken cancellationToken = default)
-        => PostForResultAsync<TelegramMessage>(
-            "editMessageText",
-            new { chat_id = chatId, message_id = messageId, text, parse_mode = "MarkdownV2" },
-            cancellationToken,
-            allowMarkdownFallback: false);
+    {
+        try
+        {
+            return await PostForResultAsync<TelegramMessage>(
+                "editMessageText",
+                new { chat_id = chatId, message_id = messageId, text, parse_mode = "MarkdownV2" },
+                cancellationToken,
+                allowMarkdownFallback: false);
+        }
+        catch (TelegramMessageNotModifiedException)
+        {
+            return new TelegramMessage { MessageId = messageId };
+        }
+    }
 
     /// <summary>
     /// Long-polls for new updates from the Telegram Bot API.
@@ -194,6 +210,13 @@ public sealed class TelegramBotApiClient(
                 continue;
             }
 
+            // 400 "message is not modified" is benign: the message already holds the requested
+            // content (common during streaming when a flush re-sends unchanged text). Surface it
+            // as a typed signal so callers can treat it as a no-op rather than a hard failure.
+            if (response.StatusCode == HttpStatusCode.BadRequest &&
+                body.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+                throw new TelegramMessageNotModifiedException($"Telegram reported no change for {methodName}: {body}");
+
             // 400 on sendMessage with MarkdownV2 parse_mode means malformed markdown — signal fallback.
             if (response.StatusCode == HttpStatusCode.BadRequest && allowMarkdownFallback)
                 throw new TelegramMarkdownParseException($"Telegram rejected MarkdownV2 for {methodName}: {body}");
@@ -246,3 +269,10 @@ public sealed class TelegramBotApiClient(
 /// signalling that <see cref="TelegramBotApiClient"/> should retry as plain text.
 /// </summary>
 internal sealed class TelegramMarkdownParseException(string message) : Exception(message);
+
+/// <summary>
+/// Thrown internally when Telegram returns a 400 "message is not modified" for an edit,
+/// signalling that the existing message already holds the requested content. Callers treat
+/// this as a benign no-op so streaming edits with unchanged text do not abort the turn.
+/// </summary>
+internal sealed class TelegramMessageNotModifiedException(string message) : Exception(message);
