@@ -107,6 +107,93 @@ public sealed class TelegramBotApiClient(
     }
 
     /// <summary>
+    /// Sends a Telegram Rich Message (Bot API 10.1+) using Rich Markdown, optionally into a forum
+    /// topic thread. Rich Markdown natively supports tables, headings, lists, blockquotes, and
+    /// more, so the markdown is sent nearly as-is (no MarkdownV2 escaping).
+    /// </summary>
+    /// <remarks>
+    /// On a 400 Bad Request (e.g. the recipient's client predates Bot API 10.1, or the markdown is
+    /// malformed) a <see cref="TelegramMarkdownParseException"/> is thrown so the caller can fall
+    /// back to the legacy <see cref="SendMessageAsync(long, string, int?, CancellationToken)"/>
+    /// (MarkdownV2 then plain text) path. General topic (threadId == 1) omits message_thread_id,
+    /// matching <see cref="SendMessageAsync(long, string, int?, CancellationToken)"/>.
+    /// </remarks>
+    public Task<TelegramMessage> SendRichMessageAsync(
+        long chatId,
+        string markdown,
+        int? messageThreadId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveThreadId = messageThreadId is 1 ? null : messageThreadId;
+        var richMessage = new InputRichMessage { Markdown = markdown };
+
+        var payload = effectiveThreadId.HasValue
+            ? (object)new { chat_id = chatId, rich_message = richMessage, message_thread_id = effectiveThreadId.Value }
+            : new { chat_id = chatId, rich_message = richMessage };
+
+        return PostForResultAsync<TelegramMessage>("sendRichMessage", payload, cancellationToken, allowMarkdownFallback: true);
+    }
+
+    /// <summary>
+    /// Streams a partial Rich Message draft (Bot API 10.1+) to a private chat while a reply is being
+    /// generated. Drafts are ephemeral 30-second previews; reusing the same <paramref name="draftId"/>
+    /// animates successive updates. The caller MUST finalize with
+    /// <see cref="SendRichMessageAsync"/> to persist the message past the preview window.
+    /// Returns the raw API boolean (true on success).
+    /// </summary>
+    /// <remarks>
+    /// Per the Telegram spec this method targets a private chat only; group/forum streaming is not
+    /// supported and should be handled by sending a single finalized
+    /// <see cref="SendRichMessageAsync"/> instead. A 400 surfaces as
+    /// <see cref="TelegramMarkdownParseException"/> so the caller can fall back.
+    /// </remarks>
+    public Task<bool> SendRichMessageDraftAsync(
+        long chatId,
+        long draftId,
+        string markdown,
+        int? messageThreadId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveThreadId = messageThreadId is 1 ? null : messageThreadId;
+        var richMessage = new InputRichMessage { Markdown = markdown };
+
+        var payload = effectiveThreadId.HasValue
+            ? (object)new { chat_id = chatId, draft_id = draftId, rich_message = richMessage, message_thread_id = effectiveThreadId.Value }
+            : new { chat_id = chatId, draft_id = draftId, rich_message = richMessage };
+
+        return PostForResultAsync<bool>("sendRichMessageDraft", payload, cancellationToken, allowMarkdownFallback: true);
+    }
+
+    /// <summary>
+    /// Edits an existing message to Rich Message content (Bot API 10.1+) using Rich Markdown.
+    /// </summary>
+    /// <remarks>
+    /// As with <see cref="EditMessageTextAsync"/>, a <c>message is not modified</c> 400 is treated as
+    /// a benign no-op success. Other 400s surface as <see cref="TelegramMarkdownParseException"/> so
+    /// the caller can fall back to a plain edit.
+    /// </remarks>
+    public async Task<TelegramMessage> EditMessageRichAsync(
+        long chatId,
+        int messageId,
+        string markdown,
+        CancellationToken cancellationToken = default)
+    {
+        var richMessage = new InputRichMessage { Markdown = markdown };
+        try
+        {
+            return await PostForResultAsync<TelegramMessage>(
+                "editMessageText",
+                new { chat_id = chatId, message_id = messageId, rich_message = richMessage },
+                cancellationToken,
+                allowMarkdownFallback: true);
+        }
+        catch (TelegramMessageNotModifiedException)
+        {
+            return new TelegramMessage { MessageId = messageId };
+        }
+    }
+
+    /// <summary>
     /// Long-polls for new updates from the Telegram Bot API.
     /// Specifies <c>allowed_updates</c> so Telegram only sends relevant update types.
     /// </summary>
