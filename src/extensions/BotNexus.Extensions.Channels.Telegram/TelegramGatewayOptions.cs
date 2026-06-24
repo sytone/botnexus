@@ -81,6 +81,20 @@ public sealed class TelegramGatewayOptions
     /// </summary>
     public int MaxMessageLength { get; set; } = 4000;
 
+    /// <summary>
+    /// When true (default), outbound messages are sent as Telegram Rich Messages (Bot API 10.1+)
+    /// using Rich Markdown, with automatic fallback to MarkdownV2 then plain text on rejection.
+    /// Set to false to force the legacy MarkdownV2 path. Mirrored into the synthesised default bot.
+    /// </summary>
+    public bool RichMessages { get; set; } = true;
+
+    /// <summary>
+    /// Maximum Rich Message length before payload splitting. Rich Messages allow up to 32768
+    /// characters; the default (32000) stays safely below that. Only used when
+    /// <see cref="RichMessages"/> is enabled.
+    /// </summary>
+    public int MaxRichMessageLength { get; set; } = 32000;
+
     // ── Multi-bot configuration ───────────────────────────────────────────────
 
     /// <summary>
@@ -122,6 +136,8 @@ public sealed class TelegramGatewayOptions
             PollingTimeoutSeconds = PollingTimeoutSeconds,
             StreamingBufferMs = StreamingBufferMs,
             MaxMessageLength = MaxMessageLength,
+            RichMessages = RichMessages,
+            MaxRichMessageLength = MaxRichMessageLength,
             ErrorCooldownMs = ErrorCooldownMs,
             ProcessEditedMessages = ProcessEditedMessages
         };

@@ -165,8 +165,47 @@ public sealed class TelegramChannelAdapter(
 
         var runtime = ResolveOutboundBot(message);
         EnsureChatAllowed(runtime.Config, chatId);
-        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
+        await SendOutboundAsync(runtime, chatId, decodedThreadId, message, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a complete outbound message, preferring Telegram Rich Markdown (Bot API 10.1+) when
+    /// enabled and falling back to the legacy MarkdownV2 (then plain text) path if Telegram rejects
+    /// the rich send — so content is never dropped even for older clients.
+    /// </summary>
+    private async Task SendOutboundAsync(
+        BotRuntime runtime,
+        long chatId,
+        int? decodedThreadId,
+        OutboundMessage message,
+        CancellationToken cancellationToken)
+    {
+        if (runtime.Config.RichMessages)
+        {
+            var richMarkdown = BuildOutboundMarkdown(message.Content, message.Metadata, message.DisplayPrefix);
+            try
+            {
+                foreach (var chunk in SplitMarkdown(richMarkdown, Math.Max(1, runtime.Config.MaxRichMessageLength)))
+                    await runtime.ApiClient.SendRichMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
+                return;
+            }
+            catch (TelegramMarkdownParseException ex)
+            {
+                // Telegram rejected the Rich Message (e.g. a client older than Bot API 10.1, or
+                // malformed markdown). Fall back to the legacy MarkdownV2/plain path below so the
+                // message still arrives.
+                _logger.LogWarning(
+                    ex,
+                    "{DisplayName} bot '{BotName}' rich send rejected for chat {ChatId}; falling back to MarkdownV2",
+                    DisplayName,
+                    runtime.BotName,
+                    chatId);
+            }
+        }
+
+        // Legacy path: MarkdownV2 with an automatic plain-text fallback inside SendMessageAsync.
+        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
             await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
     }
@@ -658,6 +697,46 @@ public sealed class TelegramChannelAdapter(
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Builds the outbound message body as raw Rich Markdown (GitHub-Flavored-Markdown-ish) for the
+    /// Telegram Rich Message <c>markdown</c> field. Unlike <see cref="BuildOutboundText"/>, no
+    /// MarkdownV2 escaping is applied — Rich Markdown renders standard markdown (tables, headings,
+    /// lists, links) directly, so the LLM content passes through nearly as-is.
+    /// </summary>
+    private static string BuildOutboundMarkdown(string content, IReadOnlyDictionary<string, object?> metadata, string? displayPrefix)
+    {
+        var builder = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(displayPrefix))
+        {
+            // Render the prefix in bold; Rich Markdown shows literal punctuation without escaping.
+            builder.Append("**");
+            builder.Append(displayPrefix.Trim());
+            builder.Append("** ");
+        }
+
+        if (TryGetMetadataString(metadata, "thinking", out var thinking))
+        {
+            builder.Append("_Thinking:_ ");
+            builder.Append(thinking);
+            builder.AppendLine();
+            builder.AppendLine();
+        }
+
+        builder.Append(content);
+
+        if (TryGetMetadataString(metadata, "toolCall", out var toolCall))
+        {
+            builder.AppendLine();
+            // Tool-call marker as inline code so brackets/underscores render literally.
+            builder.Append('`');
+            builder.Append(toolCall);
+            builder.Append('`');
+        }
+
+        return builder.ToString();
+    }
+
     private bool ShouldSendErrorReply(BotRuntime runtime, long chatId)
     {
         var now = DateTimeOffset.UtcNow;
@@ -705,6 +784,67 @@ public sealed class TelegramChannelAdapter(
         {
             var length = Math.Min(maxLength, content.Length - offset);
             yield return content.Substring(offset, length);
+        }
+    }
+
+    /// <summary>
+    /// Splits Rich Markdown into chunks at line boundaries so that tables, code blocks, and other
+    /// multi-line constructs are not severed mid-line. Lines are accumulated until adding the next
+    /// would exceed <paramref name="maxLength"/>; a single line longer than the limit is split as a
+    /// last resort. Most replies fit in one chunk (the rich limit is 32768 characters).
+    /// </summary>
+    internal static IEnumerable<string> SplitMarkdown(string content, int maxLength)
+    {
+        if (string.IsNullOrEmpty(content))
+        {
+            yield return string.Empty;
+            yield break;
+        }
+
+        if (content.Length <= maxLength)
+        {
+            yield return content;
+            yield break;
+        }
+
+        var builder = new StringBuilder();
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var isLast = i == lines.Length - 1;
+
+            // A single line longer than the limit must be hard-split on character boundaries.
+            if (line.Length > maxLength)
+            {
+                if (builder.Length > 0)
+                {
+                    yield return builder.ToString();
+                    builder.Clear();
+                }
+
+                for (var offset = 0; offset < line.Length; offset += maxLength)
+                {
+                    var length = Math.Min(maxLength, line.Length - offset);
+                    yield return line.Substring(offset, length);
+                }
+                continue;
+            }
+
+            // +1 accounts for the '\n' that re-joins this line to the buffer.
+            var projected = builder.Length == 0 ? line.Length : builder.Length + 1 + line.Length;
+            if (projected > maxLength)
+            {
+                yield return builder.ToString();
+                builder.Clear();
+            }
+
+            if (builder.Length > 0)
+                builder.Append('\n');
+            builder.Append(line);
+
+            if (isLast && builder.Length > 0)
+                yield return builder.ToString();
         }
     }
 

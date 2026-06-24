@@ -1551,6 +1551,11 @@ public sealed class TelegramChannelAdapterTests
 
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
+        // These legacy tests assert the MarkdownV2 / streaming-edit path, which is now the fallback
+        // tier behind Rich Markdown. Force RichMessages off so they continue to exercise exactly the
+        // path they were written for. Rich Markdown (the default-on primary path) is covered by
+        // TelegramChannelAdapterRichTests.
+        options.RichMessages = false;
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
         return new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
