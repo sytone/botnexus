@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.Telegram;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
@@ -152,6 +153,74 @@ public sealed class TelegramMultiBotTests
         message.RoutingHints.ShouldNotBeNull();
         message.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("legacy-agent");
         message.Content.ShouldBe("legacy message");
+    }
+
+    /// <summary>
+    /// Regression for the multi-bot streaming reply bug: when two bots are configured,
+    /// a streamed reply must be routed to the bot whose configured agent matches the
+    /// stream event's AgentId — not rejected by the old single-bot-only resolver.
+    /// </summary>
+    [Fact]
+    public async Task SendStreamEvent_MultiBot_RoutesReplyToBotMatchingAgent()
+    {
+        var larrySends = new List<string>();
+        var assistantSends = new List<string>();
+
+        HttpResponseMessage Handler(HttpRequestMessage req, List<string> sendSink)
+        {
+            var method = req.RequestUri?.Segments.LastOrDefault()?.Trim('/');
+            if (method == "sendMessage")
+            {
+                sendSink.Add(req.RequestUri!.AbsoluteUri);
+                return JsonOk(new TelegramMessage { MessageId = 999, Chat = new TelegramChat { Id = 202 } });
+            }
+            if (method == "getUpdates") return JsonOk(Array.Empty<TelegramUpdate>());
+            return JsonOk(true);
+        }
+
+        var options = new TelegramGatewayOptions
+        {
+            Bots =
+            {
+                ["larry-bot"] = new TelegramBotConfig
+                {
+                    BotToken = "token-larry",
+                    AgentId = "agent-b",
+                    AllowedChatIds = { 101 },
+                    PollingTimeoutSeconds = 1
+                },
+                ["assistant-bot"] = new TelegramBotConfig
+                {
+                    BotToken = "token-assistant",
+                    AgentId = "assistant",
+                    AllowedChatIds = { 202 },
+                    PollingTimeoutSeconds = 1
+                }
+            }
+        };
+
+        var httpFactory = new StubHttpClientFactory(name => name == "larry-bot"
+            ? new HttpClient(new StubHandler(req => Task.FromResult(Handler(req, larrySends))))
+            : new HttpClient(new StubHandler(req => Task.FromResult(Handler(req, assistantSends)))));
+
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(options),
+            httpFactory);
+
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-1"),
+            SessionId.From("sess-1"),
+            TelegramChannelAddress.Encode(202, null));
+
+        var assistant = AgentId.From("assistant");
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, AgentId = assistant });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi there", AgentId = assistant });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, AgentId = assistant });
+
+        assistantSends.ShouldNotBeEmpty();
+        assistantSends.ShouldContain(u => u.Contains("token-assistant"));
+        larrySends.ShouldBeEmpty();
     }
 
     private static TelegramUpdate MakeUpdate(int updateId, long chatId, string text) =>
