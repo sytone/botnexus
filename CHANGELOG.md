@@ -5,6 +5,387 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-06-24
+
+### ✨ Features
+
+- **portal:** Render ask_user prompts on mobile chat (#1572)
+
+### 🐛 Bug Fixes
+
+- **openai-responses:** Drop unpaired tool calls/results before send (#1577)
+- **compaction:** Fall back to smaller PreservedTurns when split no-ops above threshold (#1578)
+
+### 🧪 Testing
+
+- **portal:** Deflake cron conversation-grouping sidebar tests (#1576)
+
+## [0.9.0] - 2026-06-23
+
+### ✨ Features
+
+- **security:** Add SecurityEvent model and trusted ring-buffer sink (#1533)
+- **cron:** Add opt-in DeleteAfterRun cleanup for ephemeral run sessions (#1571)
+
+### 🐛 Bug Fixes
+
+- **cli:** Align port-availability probe with the gateway wildcard bind (#1537)
+- **tools:** Coerce losslessly-safe tool argument shapes before rejecting (#1562)
+- **tools:** Return nearest-line diagnostic on edit 0-match instead of bare error (#1563)
+- **memory:** Sanitize control/role-injection markup before indexing transcript to memory (#1569)
+
+### 📖 Documentation
+
+- Backfill v0.7.0-v0.8.1 release pages + CLI reference accuracy fixes (#1534)
+
+### ⚡ Performance
+
+- **persistence:** Bound SQLite session/conversation caches and lock pools (#1530)
+
+### 🔨 Refactor
+
+- **gateway:** Extract PrepareTurnAsync from ProcessAsync (#1531)
+- **providers:** Unify duplicated completions converter into Core (#1543)
+- **gateway:** Split cross-world federation routing out of AgentExchangeService (#1544)
+- **providers:** Unify OpenAI/Copilot Responses stream parsers into Core (#1546)
+- **config:** Split ConfigPathResolver.TryConvertValue into a dispatcher (#1567)
+- **sessions:** Decompose LlmSessionCompactor.CompactAsync (#1568)
+- **gateway:** Split DefaultSubAgentManager spawn/completion into testable helpers (#1570)
+
+### 🔧 CI/Build
+
+- **security:** Add a guard for security-sensitive boundary files (#1529)
+- **workflows:** Add per-ref concurrency groups to stop stacked CodeQL/CI runs (#1549)
+
+## [0.8.1] - 2026-06-21
+
+### 🐛 Bug Fixes
+
+- **ci:** Unblock main restore on unpatchable SQLite advisory and repair security auto-issue (#1539)
+
+## [0.8.0] - 2026-06-17
+
+### ✨ Features
+
+- **gateway:** Persist pending ask_user prompt and hydrate it on connect (#1513)
+
+### 🐛 Bug Fixes
+
+- **signalr:** Reject hub session-key targeting reserved internal namespaces (#1514)
+- **gateway:** Redact secrets for every config section, not just providers (#1527)
+- **cron:** Defer scheduled heartbeat while an agent run is active (#1528)
+
+### 📖 Documentation
+
+- Add v0.3.0-v0.6.0 release pages and document provider copilot CLI (#1517)
+
+### 🧪 Testing
+
+- **security:** Add architecture fence for config/secret-echoing redaction (#1515)
+
+## [0.7.0] - 2026-06-17
+
+### ✨ Features
+
+- **portal:** Warn when a run ends with in_progress todo items (#1486)
+- **portal:** Replace redundant Conversations heading with activity filter buttons (#1510)
+
+### 🐛 Bug Fixes
+
+- **portal:** Key mobile chat loop and make tool pill a div to stop render crash (#1484)
+- **portal:** Report unrecoverable #blazor-error-ui failures to diagnostics (#1485)
+- **tools:** Decode read/edit file bytes UTF-8-first with system code page fallback (#1506)
+- **gateway:** Evict completed sub-agent records with bounded retention (#1507)
+- **security:** Redact secret-shaped values from DebugTool query and runtime output (#1508)
+- **cron:** Record host-aborted runs as failed instead of leaving them stuck running (#1511)
+- **portal:** Align mobile agent and conversation list ordering with desktop (#1512)
+
+### 📖 Documentation
+
+- Sync SignalR hub contract with IGatewayHubClient and dedupe ignoreDeadLinks (#1492)
+
+## [0.6.0] - 2026-06-16
+
+### ✨ Features
+
+- **portal:** Show agent description in panel header with id on hover (#1457)
+- **gateway:** Add RunStarted/RunEnded stream events for authoritative run-active signal (#1458)
+- **portal:** Add Follow Up control and fix steer-button flicker between tool runs (#1459)
+- **prompts:** Add anti-narration trip-wire to tool-use enforcement (#1463)
+- **conversations:** Persist per-conversation todo state on the conversation row (#1472)
+- **tools:** Add per-conversation todo tool (#1473)
+- **prompts:** Re-inject conversation todo state into the system prompt each turn (#1474)
+- **portal:** Add archive conversation action to the mobile overflow menu (#1476)
+- **prompts:** Couple todo done-transition to a same-turn tool result (#1477)
+- **portal:** Add per-conversation Todo panel with live SignalR updates (#1479)
+
+### 🐛 Bug Fixes
+
+- **conversations:** Populate participant roster in File and SQLite summaries (#1442)
+- **docs:** Ignore dead links to srcExclude'd training pages in vitepress build (#1444)
+- **config:** Accept Kestrel binding wildcards in gateway.listenUrl validation (#1445)
+- **config:** Stop hydrating a default listenUrl into config.json (#1448)
+- **persistence:** Set SQLite busy_timeout on every connection across stores (#1451)
+- **mobile:** Always show Canvas menu item in mobile portal (#1452)
+- **providers:** Retry transient HTTP 421 and transport faults on a fresh connection (#1454)
+- **persistence:** Set SQLite busy_timeout on SqliteConversationStore connections (#1455)
+- **gateway:** Make session compaction resilient to transient summary failures (#1456)
+- **search:** Parse Web IQ webResults shape in MicrosoftAiSearchProvider (#1460)
+- **portal:** Seed agent description into client state from REST on initial load (#1462)
+- **portal:** Route steer/abort/compact to the displayed conversation's session (#1471)
+- **portal:** Render user messages as Markdown like assistant messages (#1478)
+
+### 📖 Documentation
+
+- Add GitHub Models provider page and fix training dead-link check (#1449)
+
+### 🔨 Refactor
+
+- **providers:** Extract Completions ConvertMessages into *MessageConverter (#1443)
+- **gateway:** Extract MapAgentEvent pure function from StreamCoreAsync (#1446)
+- **providers:** Extract ParseSseStream into ResponsesStreamParser (#1447)
+- **providers:** Promote shared Responses stream primitives to Core (#1453)
+- **providers:** Collapse the four providers to thin shells over Core engines (#1461)
+
+## [0.5.0] - 2026-06-14
+
+### ✨ Features
+
+- **prompts:** Wrap runtime-context block in internal delimiters (#1433)
+
+### 🐛 Bug Fixes
+
+- **tests:** Serialize provider-registry tests to stop static-registry race (#1421)
+- **gateway:** Set explicit SignalR hub transport limits (#1428)
+- **docker:** Install curl so container healthcheck reports healthy (#1434)
+
+### 📖 Documentation
+
+- Document debug memory and doctor config CLI commands (#1431)
+
+### ⚡ Performance
+
+- **gateway:** Avoid redundant session re-read in fan-out and extract DeliverToBindingAsync (#1423)
+- **gateway:** Resolve conversation id once in InProcessIsolationStrategy (#1429)
+
+### 🔨 Refactor
+
+- **config:** Extract FinishLoad to dedup sync and async config loading (#1422)
+- **providers:** Extract BuildRequestPayload into per-provider RequestBuilders (#1424)
+- **gateway:** Consolidate sub-agent state into a single SubAgentRecord (#1425)
+- **persistence:** Extract shared world-id and citizen logic for conversation stores (#1426)
+
+## [0.4.0] - 2026-06-14
+
+### ✨ Features
+
+- **prompts:** Wrap system prompt sections in XML tags and consolidate tool enforcement (#1280)
+- **extensions:** Add per-agent store scoping for QMD knowledge base (#1281)
+- **sessions:** Add tool result trimming with age+size hybrid strategy (#1285)
+- **gateway:** Add world event bus with subscription model and in-memory implementation (#1286)
+- **extensions:** Enforce configurable row limit on DataStore query action (#1290)
+- **tools:** Return response metadata in WebFetchTool output (#1295)
+- **gateway:** Expose agent exchange budget diagnostics via REST endpoint (#1299)
+- **tools:** Add per-call count parameter to WebSearchTool (#1302)
+- **tools:** Add status filter to ConversationTool list action (#1303)
+- **agent:** Add RunMetrics to AgentEndEvent for token and turn tracking (#1306)
+- **gateway:** Add active loop tracking to diagnostics for capacity monitoring (#1307)
+- **cli:** Add conversation management subcommands for list, inspect, and archive (#1311)
+- **sessions:** Add markdown transcript export endpoint for session history (#1312)
+- **gateway:** Add audit logging for conversation mutations (#1317)
+- **extensions:** Integrate shared memory stores as QMD knowledge collections (#1318)
+- **sessions:** Add delete action to SessionTool for expired and sealed sessions (#1327)
+- **cli:** Add debug memory subcommand for agent memory diagnostics (#1328)
+- **cron:** Enforce per-job execution timeout to prevent runaway jobs (#1291)
+- **prompts:** Expose session identity in the agent runtime line (#1380)
+
+### 🐛 Bug Fixes
+
+- **gateway:** Add input length validation on conversation title, purpose, and instructions (#1315)
+- **gateway:** Rename PlatformConfig.Version to PlatformVersion to avoid DOTNET_VERSION collision (#1283)
+- **gateway:** Separate config and data directories to support read-only mounts (#1279)
+- **gateway:** Make IConversationChangeNotifier optional to prevent DI crash in minimal configs (#1284)
+- **tools:** Respect exchange access policy in ListAgentsTool CanConverse field (#1294)
+- **tools:** Validate apiProvider against registered providers in agent creation and update (#1298)
+- **gateway:** Skip fan-out for non-deliverable channel types like cron (#1321)
+- **gateway:** Increase liveness watchdog thresholds to reduce false FATAL alerts (#1322)
+- **extensions:** Reject multi-statement SQL in DataStore query action (#1331)
+- **extensions:** Re-validate redirect targets to close WebFetch SSRF bypass (#1332)
+- **extensions:** Evict exited processes from ProcessManager registry (#1335)
+- **extensions:** Evict exited PIDs from ExecTool background-process registry (#1336)
+- **tools:** Tolerate non-integer and out-of-range count in web search (#1339)
+- **tools:** Reject multi-statement SQL in platform_debug raw_sql action (#1340)
+- **tools:** Clamp agent_converse maxTurns to a configurable ceiling (#1342)
+- **agents:** Clamp sub-agent spawn maxTurns and timeoutSeconds to configurable ceilings (#1346)
+- **extensions:** Cap audio payload size in Whisper transcription handler (#1347)
+- **tools:** Cap canvas set_state key length and value size (#1349)
+- **memory:** Clamp memory_get limit and memory_search topK to configured ceilings (#1353)
+- **tools:** Bound process output tail to a configurable ceiling (#1354)
+- **gateway:** Harden Docker startup resilience for minimal and misconfigured environments (#1323)
+- **tools:** Clamp shell command timeout to a configurable ceiling (#1355)
+- **ci:** Add BotNexus.CodingAgent.Tests to solution so 224 tests run in CI (#1357)
+- **tools:** Clamp grep limit to a configurable ceiling (#1359)
+- **cron:** Tolerate non-integer and out-of-range limit in cron history (#1364)
+- **extensions:** Tolerate non-integer and out-of-range limit in knowledge search (#1374)
+- **gateway:** Enforce caller authorization on sub-agent kill endpoint (#1375)
+- **extensions:** Reject multi-statement SQL in DataStore where-clause for delete, update, and count (#1418)
+- **gateway:** Make ConversationRetentionHostedService change-notifier dependency optional via IEnumerable (#1376)
+- **telegram:** Add secure webhook receiver with secret-token validation (#1409)
+- **portal:** Tolerate non-integer delay seconds in tool-call description renderer (#1412)
+- **extensions:** Tolerate non-integer and out-of-range limit in platform_debug pagination (#1419)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-06-12 (#1310)
+- Document conversation CLI command and fix debug gateway reference (#1361)
+
+### ⚡ Performance
+
+- **persistence:** Avoid full conversation hydrate for canvas-state existence checks (#1395)
+- **persistence:** Scope FileSessionStore.ListByConversationAsync to matching sidecars (#1398)
+- **providers:** Cache partial snapshot and tool-arg parse in OpenAIStreamProcessor (#1401)
+- **sessions:** Compute GetStatsAsync with SQL aggregates instead of full hydration (#1416)
+
+### 🔨 Refactor
+
+- **skills:** Move SkillsController into the Skills extension as minimal API endpoints (#1287)
+- **cli:** Collapse five duplicated git subprocess helpers into one RunGitAsync (#1396)
+- **memory:** Extract shared filter-clause builder and bound the LIKE fallback (#1397)
+- **config:** Split ConfigPathResolver.TryResolveToken into ResolveMember and ResolveIndex (#1399)
+- **portal:** Consolidate stream-state reset into a single ConversationStreamState.Reset() (#1400)
+- **gateway:** Extract shared RunExchangeLoopAsync for local and cross-world exchanges (#1402)
+- **providers:** Move DetectCompat/CompatProfiles into Core CompatResolver (#1410)
+- **api:** Extract conversation history assembly into a service (#1414)
+- **gateway:** Extract conversation/session resolution from ProcessAsync (#1417)
+
+### 🧪 Testing
+
+- **cli:** Eliminate flaky CI failures from shared global test state (#1413)
+- **cron:** Pin MissedRunDetection no-missed-runs test to a fixed time (#1415)
+
+## [0.3.0] - 2026-06-12
+
+### ✨ Features
+
+- **canvas:** Add canvas state domain model and SQLite persistence (#1073)
+- **provider:** Add GitHub Models integration test suite and CI workflow (#1082)
+- **gateway:** Add Docker sandbox isolation strategy with lifecycle management (#1083)
+- **cli:** Add gateway install/uninstall for OS service integration (#1087)
+- **provider:** Split system prompt at cache boundary marker for Anthropic (#1092)
+- **canvas:** Add canvas state REST API endpoints for CRUD operations (#1097)
+- **providers:** Add claude-opus-4.8 to Copilot built-in models (#1098)
+- **gateway:** Add per-agent Docker sandbox configuration and DI registration (#1099)
+- **canvas:** Add set_state, get_state, and clear_state actions to canvas tool (#1104)
+- **canvas:** Add postMessage bridge for iframe-to-server state persistence (#1115)
+- **#1108:** Add Satellite domain model, config schema, and CLI registration command (#1116)
+- **gateway:** Add Docker sandbox workspace synchronization (#1118)
+- **gateway:** Add satellite authentication and connection tracking (#1120)
+- **canvas:** Add SignalR notifications for canvas state changes (#1121)
+- **cli:** Add Ollama provider setup and diagnostic subcommands (#1122)
+- **memory:** Add memory dreaming cron action for periodic consolidation (#1124)
+- **channels:** Wire JWT auth into SignalR hub with claims-derived user identity (#1123)
+- **gateway:** Add Docker sandbox tool execution routing and gateway callback (#1128)
+- **agents:** Add built-in internal agents for common sub-agent roles (#1130)
+- **providers:** Add dynamic model discovery at startup with built-in fallback (#1132)
+- **cli:** Add debug sessions subcommand for direct SQLite inspection (#1135)
+- **cli:** Add debug logs subcommand for direct log file inspection (#1136)
+- **portal:** Expose participant roster and agent attribution for multi-agent conversations (#1137)
+- **ci:** Add maintenance automation scripts for PR status, logs, and branch sync (#1141)
+- **gateway:** Add threadpool and activity diagnostics REST endpoints (#1142)
+- **extensions:** Add update action to DataStoreTool for modifying existing rows (#1163)
+- **cron:** Add history action to CronTool for inspecting run outcomes (#1164)
+- **extensions:** Add QMD knowledge base extension scaffold with config and backend interface (#1178)
+- **cli:** Add debug db subcommand for raw database introspection (#1179)
+- **cron:** Add run history retention service to purge old completed records (#1184)
+- **gateway:** Add memory statistics REST endpoint for per-agent store diagnostics (#1185)
+- **memory:** Add IAgentMemory abstraction with DTOs and factory interface (#1187)
+- **portal:** Persist thinking content in session history for reload (#1197)
+- **memory:** Add shared memory store configuration and registry with access control (#1207)
+- **portal:** Add new conversation button to mobile overflow menu (#1211)
+- **extensions:** Add QMD CLI backend and knowledge_search tool (#1215)
+- **gateway:** Hydrate config.json with default values from schema contributors on startup (#1217)
+- **cli:** Add debug cron subcommand for scheduler diagnostics (#1220)
+- **memory:** Wire MemorySaveTool and MemorySearchTool through IAgentMemory abstraction (#1221)
+- **cron:** Detect and log missed cron runs on gateway startup (#1225)
+- **extensions:** Add count action to DataStoreTool for row counting (#1229)
+- **gateway:** Expose standard rate limit headers on every response (#1230)
+- **portal:** Add canvas panel to mobile UI as bottom sheet overlay (#1216)
+- **gateway:** Add provider health check REST endpoint for API connectivity validation (#1233)
+- **gateway:** Add session statistics REST endpoint for aggregate metrics (#1234)
+- **webhooks:** Add run retention service to purge old completed webhook runs (#1168)
+- **gateway:** Add configurable access policy for agent-to-agent exchanges (#1252)
+- **memory:** Add shared store scope to memory search and save tools (#1255)
+- **extensions:** Add knowledge_stores and knowledge_get tools to QMD extension (#1256)
+- **gateway:** Add conversation budget system with daily caps, loop detection, and cooldown (#1254)
+- **cron:** Add agent-converse action for scheduled inter-agent conversations (#1258)
+- **extensions:** Add QMD index hosted service with auto-update and health tracking (#1259)
+- **memory:** Add learning extraction pipeline with turn classification and knowledge routing (#1260)
+- **skills:** Add SHA-256 trust catalog verification for skill script integrity (#1261)
+- **cli:** Add debug gateway subcommand for live gateway diagnostics (#1263)
+- **search:** Add Microsoft AI Search provider (api.microsoft.ai) (#1270)
+- **cli:** Add compaction model doctor checks for expensive and missing summarization models (#1274)
+- **memory:** Add shared store promotion during dreaming consolidation (#1276)
+
+### 🐛 Bug Fixes
+
+- **hooks:** Use instance-based HookDispatcher registration to share with extension loader (#1090)
+- **portal:** Render settings and debug panels as centered modal overlays (#1089)
+- **tests:** Increase debounce test wait margin for slow CI runners (#1086)
+- **compaction:** Force compaction when user explicitly requests /compact (#1084)
+- **provider:** Filter non-Anthropic thinking signatures in cross-provider replay (#1081)
+- **portal:** Map ToolExecutionUpdateEvent to UserInputRequired stream event (#1093)
+- **portal:** Move modal panels outside app-shell to escape flex containment (#1095)
+- **compaction:** Use PreservedTurns=0 for forced compaction to guarantee summarization (#1096)
+- **tests:** Isolate SteeringLoopTests with per-test API provider names (#1102)
+- **gateway:** Bypass orchestrator queue for steering to prevent serialization deadlock (#1103)
+- **hooks:** Pass AgentDescriptor via BeforePromptBuildEvent to avoid stale DI references (#1105)
+- **gateway:** Use GetOrCreateAsync in Steer to eliminate handle lookup race (#1114)
+- **compaction:** Surface failure reason in portal and fix adaptive model empty response (#1113)
+- **gateway:** Filter non-live entries from auto-title guard condition (#1117)
+- **gateway:** Add threadpool watchdog, lock timeout logging, and health endpoint hardening (#1125)
+- **tests:** Make GitHub Models integration tests resilient to API degradation (#1131)
+- **compaction:** Add configurable timeout and circuit-breaker for hung LLM summarization calls (#1157)
+- **security:** Extract SSRF validator as shared utility for reuse across tools (#1158)
+- **channels:** Evict stale streaming and error-reply state in Telegram adapter (#1159)
+- **gateway:** Resolve skill paths to sandbox-relative locations for Docker isolation (#1160)
+- **channels:** Register SignalR hub auth policy in production via IServiceContributor (#1188)
+- **webhooks:** Validate callback URLs against SSRF and use IHttpClientFactory (#1167)
+- **portal:** Sort built-in agents to bottom of agent dropdown (#1194)
+- **portal:** Skip empty message bubble when response is thinking-only (#1195)
+- **canvas:** Inject bridge SDK before user scripts to eliminate async timing race (#1196)
+- **gateway:** Silently drop thinking-only responses instead of showing confusing stall notice (#1200)
+- **portal:** Expand thinking block by default instead of collapsed (#1214)
+- **tools:** Reject unknown properties when additionalProperties is false (#1224)
+- **tests:** Add 'you' to GenericWindowsAccounts allowlist for docs placeholder (#1241)
+- **skills:** Validate symlink resolution before skill file writes (#1242)
+- **gateway:** Skip session entry for NO_REPLY responses (#1243)
+- **memory:** Add retry logic for transient SQLite and I/O failures on read operations (#1244)
+- **providers:** Honor Retry-After header for short rate-limit windows instead of blind backoff (#1245)
+- **compaction:** Resolve API key from GatewayAuthManager for summarization calls (#1253)
+- **gateway:** Bind gateway.auxiliary.titling as object to stop PlatformConfig crash (#1257)
+- **portal:** Include cron-assigned conversations in scheduled sidebar group (#1275)
+- **config:** Add JsonConverter for TitlingConfig to handle legacy string format (#1278)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-06-10 (#1140)
+- **domain:** Fix HIGH and MED stale XML doc comments from post-579 audit (#1144)
+- Daily documentation grooming 2026-06-11 (#1226)
+
+### 🔨 Refactor
+
+- **gateway:** Eliminate repeated .From() conversions in AgentsController (#1126)
+- **gateway:** Construct typed AgentId and SessionId once at method entry in GatewayHost (#1127)
+- **gateway:** Delegate daily memory loading to IAgentMemory.GetPromptContextAsync() (#1267)
+- **memory:** Delegate session indexing to IAgentMemory.OnSessionCompleteAsync() (#1269)
+
+### 🧪 Testing
+
+- **agent:** Add comprehensive steering loop tests covering all injection scenarios (#1080)
+- **gateway:** Add steering pipeline tests proving queue serialization bug (#1094)
+- **cli:** Add unit tests for SatelliteCommand list, register, and remove operations (#1146)
+- **security:** Verify SignalR inbound auth rejects writes before authentication (#1169)
+
 ## [0.2.2] - 2026-06-09
 
 ### ✨ Features
@@ -2232,6 +2613,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.10.0]: https://github.com/sytone/botnexus/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/sytone/botnexus/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/sytone/botnexus/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/sytone/botnexus/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/sytone/botnexus/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/sytone/botnexus/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/sytone/botnexus/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/sytone/botnexus/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/sytone/botnexus/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/sytone/botnexus/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/sytone/botnexus/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/sytone/botnexus/compare/v0.1.15...v0.2.0
