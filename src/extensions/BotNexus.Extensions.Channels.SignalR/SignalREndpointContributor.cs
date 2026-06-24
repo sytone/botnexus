@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -77,9 +78,22 @@ public class SignalREndpointContributor : IEndpointContributor
             if (fileInfo.Exists && !fileInfo.IsDirectory)
             {
                 var contentType = GetContentType(subPath);
+
+                // Prefer a precompressed sibling (.br/.gz) when the client accepts it.
+                // Blazor publish emits these next to each asset; serving them keeps the
+                // large runtime wasm/js small over the wire and avoids mid-flight load
+                // failures on mobile over slow/proxied links. The Content-Type stays the
+                // original payload type; Content-Encoding tells the browser how to decode.
+                var (encodedFile, encoding) = SelectEncodedFile(
+                    fileProvider, subPath, context.Request.Headers.AcceptEncoding);
+                var fileToServe = encodedFile ?? fileInfo;
+
                 context.Response.ContentType = contentType;
-                context.Response.ContentLength = fileInfo.Length;
-                await using var stream = fileInfo.CreateReadStream();
+                if (encoding is not null)
+                    context.Response.Headers.ContentEncoding = encoding;
+                context.Response.Headers.Vary = "Accept-Encoding";
+                context.Response.ContentLength = fileToServe.Length;
+                await using var stream = fileToServe.CreateReadStream();
                 await stream.CopyToAsync(context.Response.Body);
                 return;
             }
@@ -94,6 +108,35 @@ public class SignalREndpointContributor : IEndpointContributor
 
             await next();
         });
+    }
+
+    // Returns the precompressed sibling file and its Content-Encoding token when the
+    // client accepts an encoding for which a sibling exists; otherwise (null, null).
+    // Brotli is preferred over gzip. Already-compressed requests are left untouched.
+    internal static (IFileInfo? File, string? Encoding) SelectEncodedFile(
+        IFileProvider fileProvider, string subPath, StringValues acceptEncoding)
+    {
+        if (subPath.EndsWith(".br", StringComparison.OrdinalIgnoreCase) ||
+            subPath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+            return (null, null);
+
+        var accepts = acceptEncoding.ToString();
+
+        if (accepts.Contains("br", StringComparison.OrdinalIgnoreCase))
+        {
+            var br = fileProvider.GetFileInfo(subPath + ".br");
+            if (br.Exists && !br.IsDirectory)
+                return (br, "br");
+        }
+
+        if (accepts.Contains("gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            var gz = fileProvider.GetFileInfo(subPath + ".gz");
+            if (gz.Exists && !gz.IsDirectory)
+                return (gz, "gzip");
+        }
+
+        return (null, null);
     }
 
     private static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
