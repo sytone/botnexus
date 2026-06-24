@@ -58,6 +58,36 @@ public interface ISessionStore
     Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns lightweight <see cref="SessionSummary"/> records for sessions whose
+    /// <c>UpdatedAt</c> is at or after <paramref name="updatedAfter"/>, <b>without loading
+    /// conversation transcripts</b>.
+    /// </summary>
+    /// <remarks>
+    /// This is the read path the WebUI session list and <c>SessionWarmupService</c> use.
+    /// Loading full session history just to render a metadata list does not scale — on a
+    /// large database it dominates the request and can exceed the SignalR hub cancellation
+    /// window. Transcript content is only needed when a user actually opens a conversation.
+    /// <para>
+    /// The default implementation maps from <see cref="ListAsync"/>, which still materialises
+    /// history; it exists so non-SQLite stores (File, InMemory, test doubles) keep working.
+    /// The SQLite store overrides this with a metadata-only query that derives
+    /// <c>MessageCount</c> from a <c>COUNT(*)</c> aggregate rather than reading entries.
+    /// </para>
+    /// </remarks>
+    /// <param name="updatedAfter">Lower bound (inclusive) on session <c>UpdatedAt</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
+        DateTimeOffset updatedAfter,
+        CancellationToken cancellationToken = default)
+    {
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        return sessions
+            .Where(session => session.UpdatedAt >= updatedAfter)
+            .Select(SessionSummary.FromSession)
+            .ToList();
+    }
+
+    /// <summary>
     /// Lists sessions for a specific agent filtered by channel type,
     /// ordered by created time descending (newest first).
     /// </summary>

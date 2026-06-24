@@ -39,6 +39,23 @@ public abstract class SessionStoreBase : ISessionStore
         return ApplyAgentFilter(sessions, agentId).ToList();
     }
 
+    /// <summary>
+    /// Default summary path for stores without a transcript-free read: enumerate sessions
+    /// (still materialising history) and project to <see cref="SessionSummary"/>. Suitable
+    /// for File/InMemory stores used in development and tests. <see cref="SqliteSessionStore"/>
+    /// overrides this with a metadata-only query so production never loads the whole DB.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
+        DateTimeOffset updatedAfter,
+        CancellationToken cancellationToken = default)
+    {
+        var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
+        return sessions
+            .Where(session => session.UpdatedAt >= updatedAfter)
+            .Select(SessionSummary.FromSession)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(
         AgentId? agentId,
         BotNexus.Gateway.Abstractions.Models.SessionStatus? status,
