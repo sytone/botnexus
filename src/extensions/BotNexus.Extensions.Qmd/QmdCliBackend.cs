@@ -120,9 +120,19 @@ public sealed class QmdCliBackend : IQmdBackend
         {
             await process.WaitForExitAsync(timeoutCts.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // The wait was aborted for one of two reasons; in BOTH cases the qmd child (which may be a
+            // long-running embedding/query that never exits on its own) must be killed, or it is orphaned.
+            // Previously this catch was guarded with `when (!ct.IsCancellationRequested)`, so a caller
+            // cancellation skipped the kill and `using var process` disposed the handle without reaping the
+            // child. Always kill the process tree, then surface the appropriate exception.
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+
+            if (ct.IsCancellationRequested)
+                throw; // caller cancellation -> propagate the OperationCanceledException
+
+            // Internal timeout (timeoutCts fired while the caller token is still live).
             throw new TimeoutException($"qmd CLI call timed out after {_timeout.TotalSeconds}s. Args: {string.Join(' ', arguments)}");
         }
 
