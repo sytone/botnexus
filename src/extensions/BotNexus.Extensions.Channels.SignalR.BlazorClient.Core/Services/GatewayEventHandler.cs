@@ -143,8 +143,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         agent.IsStreaming = true;
         conv.StreamState.IsStreaming = true;
-        conv.StreamState.Buffer = "";
-        conv.StreamState.ThinkingBuffer = "";
+        conv.StreamState.ClearBuffers();
         agent.ProcessingStage = "🤖 Agent is responding…";
         _store.NotifyChanged();
     }
@@ -158,9 +157,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
-        conv.StreamState.Buffer += evt.ContentDelta ?? "";
+        conv.StreamState.AppendBuffer(evt.ContentDelta);
         agent.ProcessingStage = "🤖 Agent is responding…";
-        _store.NotifyChanged();
+        _store.NotifyChangedThrottled();
     }
 
     public void HandleThinkingDelta(AgentStreamEvent evt)
@@ -172,9 +171,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
-        conv.StreamState.ThinkingBuffer += evt.ThinkingContent ?? "";
+        conv.StreamState.AppendThinking(evt.ThinkingContent);
         agent.ProcessingStage = "💭 Thinking…";
-        _store.NotifyChanged();
+        _store.NotifyChangedThrottled();
     }
 
     public void HandleToolStart(AgentStreamEvent evt)
