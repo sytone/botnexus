@@ -205,6 +205,7 @@ Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
 | `Agent` | string | (agent jobs only) | Name of agent to run |
 | `Prompt` | string | (agent jobs only) | Prompt to execute |
 | `Session` | string | (agent jobs only) | Session mode: `new`, `persistent`, or `named:<key>` |
+| `DeleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 | `Action` | string | (system/maintenance jobs) | Action name to execute |
 | `Agents` | list | `[]` | Agent names for `consolidate-memory` |
 | `OutputChannels` | list | `[]` | Channels to route output to |
