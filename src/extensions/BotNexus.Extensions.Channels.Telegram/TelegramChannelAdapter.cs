@@ -31,6 +31,10 @@ public sealed class TelegramChannelAdapter(
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
 
+    // Monotonic source of non-zero Rich Message draft ids. Telegram animates updates that reuse the
+    // same draft id, so each stream takes one id and keeps it for the life of that message.
+    private long _draftIdCounter;
+
     /// <summary>
     /// Resolves Telegram options from <see cref="IOptions{T}"/> if populated, or falls back to
     /// binding from <see cref="IConfiguration"/> when the extension was loaded after the initial
@@ -309,7 +313,7 @@ public sealed class TelegramChannelAdapter(
                     break;
 
                 case AgentStreamEventType.MessageEnd:
-                    await FlushStreamingStateAsync(runtime, state, force: true, cancellationToken);
+                    await FinalizeStreamAsync(runtime, state, cancellationToken);
                     state.Reset();
                     // Remove the entry to prevent unbounded dictionary growth over time.
                     runtime.StreamingStates.TryRemove(stateKey, out _);
@@ -520,10 +524,73 @@ public sealed class TelegramChannelAdapter(
         if (state.Buffer.Length == 0)
             return;
 
+        // Rich Markdown streaming uses ephemeral animated drafts, but only in private chats
+        // (sendRichMessageDraft is DM-only). In groups/forum topics the content is buffered silently
+        // and delivered once at MessageEnd via a single sendRichMessage (see FinalizeStreamAsync).
+        if (runtime.Config.RichMessages && state.ChatId > 0 && !state.RichDraftDisabled)
+        {
+            await FlushRichDraftAsync(runtime, state, force, cancellationToken);
+            return;
+        }
+
+        if (runtime.Config.RichMessages)
+        {
+            // Group/forum Rich Markdown: no live preview (drafts are DM-only). Just keep buffering;
+            // FinalizeStreamAsync sends the whole message at MessageEnd. Throttle the pending counter
+            // so ShouldFlush doesn't spin.
+            state.LastFlushUtc = DateTimeOffset.UtcNow;
+            state.PendingCharacterCount = 0;
+            return;
+        }
+
+        // Legacy MarkdownV2 streaming: send first, then edit; convert raw markdown to MarkdownV2 at
+        // flush time so multi-delta tokens like **bold** are assembled before transformation.
+        await FlushLegacyMarkdownV2Async(runtime, state, force, cancellationToken);
+    }
+
+    // Sends/updates the ephemeral Rich Message draft preview for a private chat. The draft animates
+    // as the same draft id is reused; it is finalized into a persistent message at MessageEnd.
+    private async Task FlushRichDraftAsync(BotRuntime runtime, StreamingState state, bool force, CancellationToken cancellationToken)
+    {
+        if (!force && !ShouldFlush(state, runtime.Config))
+            return;
+
+        state.RichDraftId ??= NextDraftId();
+        var markdown = state.Buffer.ToString();
+
+        try
+        {
+            await runtime.ApiClient.SendRichMessageDraftAsync(
+                state.ChatId,
+                state.RichDraftId.Value,
+                markdown,
+                state.MessageThreadId,
+                cancellationToken);
+            state.HasRichDraft = true;
+        }
+        catch (TelegramMarkdownParseException ex)
+        {
+            // The draft was rejected (e.g. transient malformed-markdown window mid-stream). Stop
+            // drafting; the accumulated content is still delivered intact at MessageEnd. A lost
+            // preview frame is harmless.
+            _logger.LogDebug(
+                ex,
+                "{DisplayName} bot '{BotName}' rich draft rejected for chat {ChatId}; suppressing further drafts this stream",
+                DisplayName,
+                runtime.BotName,
+                state.ChatId);
+            state.RichDraftDisabled = true;
+        }
+
+        state.LastFlushUtc = DateTimeOffset.UtcNow;
+        state.PendingCharacterCount = 0;
+    }
+
+    private async Task FlushLegacyMarkdownV2Async(BotRuntime runtime, StreamingState state, bool force, CancellationToken cancellationToken)
+    {
         var maxLength = Math.Max(1, runtime.Config.MaxMessageLength);
         while (state.Buffer.Length > maxLength)
         {
-            // Convert the raw chunk to MarkdownV2 before sending.
             var rawChunk = state.Buffer.ToString(0, maxLength);
             var formattedChunk = TelegramMarkdownFormatter.Convert(rawChunk);
             await SendOrEditStreamingMessageAsync(runtime, state, formattedChunk, cancellationToken);
@@ -538,13 +605,61 @@ public sealed class TelegramChannelAdapter(
         if (string.IsNullOrEmpty(rawText))
             return;
 
-        // Convert accumulated raw markdown to Telegram MarkdownV2 at flush time.
-        // Doing the conversion here (not per-delta) ensures multi-delta formatting tokens
-        // such as **bold** are fully assembled before being transformed.
         var formattedText = TelegramMarkdownFormatter.Convert(rawText);
         await SendOrEditStreamingMessageAsync(runtime, state, formattedText, cancellationToken);
         state.LastFlushUtc = DateTimeOffset.UtcNow;
         state.PendingCharacterCount = 0;
+    }
+
+    /// <summary>
+    /// Finalizes a stream at MessageEnd, delivering the persistent message. For Rich Markdown this is
+    /// a single <c>sendRichMessage</c> (which also replaces any ephemeral draft preview); on rejection
+    /// it falls back to the legacy MarkdownV2/plain path so the message always persists. For the
+    /// legacy path the buffered content is flushed as the final MarkdownV2 edit.
+    /// </summary>
+    private async Task FinalizeStreamAsync(BotRuntime runtime, StreamingState state, CancellationToken cancellationToken)
+    {
+        var rawText = state.Buffer.ToString();
+
+        if (!runtime.Config.RichMessages)
+        {
+            await FlushLegacyMarkdownV2Async(runtime, state, force: true, cancellationToken);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(rawText))
+        {
+            // Nothing to persist (e.g. an empty stream). A dangling draft simply expires after 30s.
+            return;
+        }
+
+        try
+        {
+            foreach (var chunk in SplitMarkdown(rawText, Math.Max(1, runtime.Config.MaxRichMessageLength)))
+                await runtime.ApiClient.SendRichMessageAsync(state.ChatId, chunk, state.MessageThreadId, cancellationToken);
+        }
+        catch (TelegramMarkdownParseException ex)
+        {
+            // Rich finalize was rejected — fall back to MarkdownV2 (then plain) so the message still
+            // arrives. Send fresh (do not edit the draft, which is a separate ephemeral object).
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} bot '{BotName}' rich finalize rejected for chat {ChatId}; falling back to MarkdownV2",
+                DisplayName,
+                runtime.BotName,
+                state.ChatId);
+
+            var formatted = TelegramMarkdownFormatter.Convert(rawText);
+            foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
+                await runtime.ApiClient.SendMessageAsync(state.ChatId, chunk, state.MessageThreadId, cancellationToken);
+        }
+    }
+
+    private long NextDraftId()
+    {
+        // Telegram requires a non-zero draft id; skip 0 on the (astronomically unlikely) wrap.
+        var id = System.Threading.Interlocked.Increment(ref _draftIdCounter);
+        return id == 0 ? System.Threading.Interlocked.Increment(ref _draftIdCounter) : id;
     }
 
     private async Task SendOrEditStreamingMessageAsync(BotRuntime runtime, StreamingState state, string text, CancellationToken cancellationToken)
@@ -917,12 +1032,36 @@ public sealed class TelegramChannelAdapter(
         public StringBuilder Buffer { get; } = new();
         public SemaphoreSlim Lock { get; } = new(1, 1);
 
+        /// <summary>
+        /// Non-zero id identifying the Rich Message draft for this stream. Reusing the same id across
+        /// flushes makes Telegram animate the successive draft updates. Assigned lazily on the first
+        /// draft flush; null until then. Reset between messages.
+        /// </summary>
+        public long? RichDraftId { get; set; }
+
+        /// <summary>
+        /// True once a Rich Message draft has been sent for this stream, so MessageEnd knows it must
+        /// finalize the draft with a persistent <c>sendRichMessage</c> (drafts are ephemeral 30s
+        /// previews that vanish if not finalized).
+        /// </summary>
+        public bool HasRichDraft { get; set; }
+
+        /// <summary>
+        /// Set when a draft send fails (e.g. Telegram rejects it). Further draft attempts are skipped
+        /// for this stream; the accumulated content is delivered once at MessageEnd via the normal
+        /// send/fallback path so the message still arrives.
+        /// </summary>
+        public bool RichDraftDisabled { get; set; }
+
         public void Reset()
         {
             MessageId = null;
             PendingCharacterCount = 0;
             LastFlushUtc = DateTimeOffset.UtcNow;
             Buffer.Clear();
+            RichDraftId = null;
+            HasRichDraft = false;
+            RichDraftDisabled = false;
         }
     }
 }

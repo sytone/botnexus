@@ -167,6 +167,39 @@ If the SignalR portal is also connected, messages from Telegram appear there too
 
 ---
 
+## Message formatting
+
+Agent replies are written in Markdown and sent as Telegram **Rich Messages** (Bot API 10.1+), which render rich formatting natively rather than as raw punctuation. Because Rich Markdown is GitHub-Flavored-Markdown-compatible, the agent's markdown is passed through nearly as-is.
+
+Supported:
+
+| Markdown | Rendered as |
+|---|---|
+| `**bold**` / `__bold__` | bold |
+| `*italic*` / `_italic_` | italic |
+| `~~strikethrough~~` | strikethrough |
+| `# Heading` … `###### Heading` | real headings |
+| `` `inline code` `` / fenced ```` ``` ```` blocks | monospace |
+| `[text](url)` | link |
+| `- item` / `* item` / `1. item` (incl. nested) | bullet / numbered list |
+| `- [ ]` / `- [x]` | task list |
+| `> quote` | blockquote |
+| Pipe tables (`\| a \| b \|`) | **native table** |
+| `\|\|spoiler\|\|`, `==marked==` | spoiler, highlight |
+
+### Streaming
+
+While a reply is being generated, Telegram shows a live **draft preview** that animates as text arrives. Drafts are a Bot API feature for **private chats only**:
+
+- **DM** — the reply streams as an animated draft, then is finalized into a persistent message.
+- **Group / forum topic** — no live draft (Telegram does not support draft streaming there); the full reply is sent once when it is complete.
+
+### Fallback
+
+Rich Messages are enabled by default (`richMessages: true`). If Telegram ever rejects a rich send (for example a very old client), the adapter automatically falls back to MarkdownV2, then plain text, so a reply is never dropped. Set `richMessages: false` to force the legacy MarkdownV2 path — in which case tables render as plain pipes and headings render as bold.
+
+---
+
 ## Polling vs webhook
 
 | | Long polling (default) | Webhook |
