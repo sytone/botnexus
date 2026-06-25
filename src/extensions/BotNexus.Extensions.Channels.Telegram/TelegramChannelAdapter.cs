@@ -887,7 +887,12 @@ public sealed class TelegramChannelAdapter(
         return false;
     }
 
-    private static IEnumerable<string> SplitMessage(string content, int maxLength)
+    /// <summary>
+    /// Splits plain (non-rich / MarkdownV2 / fallback) outbound text into chunks no longer than
+    /// <paramref name="maxLength"/> UTF-16 code units, never severing a surrogate pair across a chunk
+    /// boundary (see <see cref="SliceSurrogateSafe"/>). Used by the legacy and fallback send paths.
+    /// </summary>
+    internal static IEnumerable<string> SplitMessage(string content, int maxLength)
     {
         if (string.IsNullOrEmpty(content))
         {
@@ -895,11 +900,45 @@ public sealed class TelegramChannelAdapter(
             yield break;
         }
 
-        for (var offset = 0; offset < content.Length; offset += maxLength)
+        var offset = 0;
+        while (offset < content.Length)
         {
-            var length = Math.Min(maxLength, content.Length - offset);
-            yield return content.Substring(offset, length);
+            var chunk = SliceSurrogateSafe(content, offset, maxLength);
+            yield return chunk;
+            offset += chunk.Length;
         }
+    }
+
+    /// <summary>
+    /// Returns a slice of <paramref name="content"/> starting at <paramref name="offset"/> that is at
+    /// most <paramref name="maxLength"/> UTF-16 code units long and never ends in the middle of a
+    /// surrogate pair. If taking <paramref name="maxLength"/> code units would split an astral
+    /// character (emoji / non-BMP glyph) — i.e. the last code unit is a high surrogate — the slice is
+    /// shortened by one so the whole pair moves into the next chunk instead of leaving a lone
+    /// surrogate that serializes to invalid UTF-16 (which Telegram rejects with
+    /// <c>400 can't parse entities</c>). Callers must advance by the returned slice's length, not by
+    /// a fixed <paramref name="maxLength"/>, so the deferred code unit is not skipped.
+    /// </summary>
+    /// <remarks>
+    /// At least one code unit is always returned (assuming <paramref name="maxLength"/> &gt;= 1 and
+    /// characters remain) to guarantee forward progress. The only case that can return a slice ending
+    /// on a high surrogate is the degenerate <paramref name="maxLength"/> == 1 with a surrogate pair
+    /// at <paramref name="offset"/>; a single-code-unit limit cannot physically hold a two-unit pair,
+    /// and real Telegram limits (4096 / 32768) never hit this.
+    /// </remarks>
+    internal static string SliceSurrogateSafe(string content, int offset, int maxLength)
+    {
+        var remaining = content.Length - offset;
+        var length = Math.Min(maxLength, remaining);
+
+        // If the slice would end on a high surrogate whose low half lies in the next chunk, back off
+        // by one so the pair is not severed. Keep at least one code unit for forward progress.
+        if (length > 1 && offset + length < content.Length && char.IsHighSurrogate(content[offset + length - 1]))
+        {
+            length--;
+        }
+
+        return content.Substring(offset, length);
     }
 
     /// <summary>
@@ -929,7 +968,9 @@ public sealed class TelegramChannelAdapter(
             var line = lines[i];
             var isLast = i == lines.Length - 1;
 
-            // A single line longer than the limit must be hard-split on character boundaries.
+            // A single line longer than the limit must be hard-split as a last resort. Slice on
+            // surrogate-pair boundaries so an emoji straddling the limit is not severed into a lone
+            // surrogate (the same hazard SliceSurrogateSafe guards in SplitMessage).
             if (line.Length > maxLength)
             {
                 if (builder.Length > 0)
@@ -938,10 +979,12 @@ public sealed class TelegramChannelAdapter(
                     builder.Clear();
                 }
 
-                for (var offset = 0; offset < line.Length; offset += maxLength)
+                var offset = 0;
+                while (offset < line.Length)
                 {
-                    var length = Math.Min(maxLength, line.Length - offset);
-                    yield return line.Substring(offset, length);
+                    var chunk = SliceSurrogateSafe(line, offset, maxLength);
+                    yield return chunk;
+                    offset += chunk.Length;
                 }
                 continue;
             }
