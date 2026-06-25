@@ -1,4 +1,5 @@
 using BotNexus.Agent.Providers.Core.Compatibility;
+using BotNexus.Agent.Providers.Core.Utilities;
 using System.Net.Http.Json;
 
 namespace BotNexus.Agent.Providers.OpenAICompat;
@@ -46,9 +47,16 @@ public static class OllamaCapabilityChecker
 
             try
             {
-                var response = await httpClient.PostAsJsonAsync(
-                    $"{apiBase}/api/show",
-                    new { name = modelId },
+                // ResponseHeadersRead so the body is NOT pre-buffered — the bounded reader must see the
+                // raw stream to abort an unbounded/hostile body before it is materialized. Build the
+                // request explicitly since PostAsJsonAsync pre-buffers the response.
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{apiBase}/api/show")
+                {
+                    Content = JsonContent.Create(new { name = modelId })
+                };
+                var response = await httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
@@ -57,7 +65,8 @@ public static class OllamaCapabilityChecker
                     return false;
                 }
 
-                var body = await response.Content.ReadFromJsonAsync<OllamaShowResponse>(
+                var body = await BoundedHttpContent.ReadFromJsonWithLimitAsync<OllamaShowResponse>(
+                    response.Content,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 var supportsTools = body?.Capabilities?.Contains("tools", StringComparer.OrdinalIgnoreCase) == true;

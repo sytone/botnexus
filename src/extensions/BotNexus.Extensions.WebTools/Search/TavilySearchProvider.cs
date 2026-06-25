@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Extensions.WebTools.Search;
 
@@ -32,10 +33,16 @@ internal sealed class TavilySearchProvider : ISearchProvider
         var json = JsonSerializer.Serialize(requestBody);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.PostAsync(ApiEndpoint, content, ct).ConfigureAwait(false);
+        // Use SendAsync with ResponseHeadersRead (PostAsync pre-buffers the body) so the bounded
+        // reader below sees the raw stream and can abort an unbounded/hostile body before it is
+        // materialized.
+        using var request = new HttpRequestMessage(HttpMethod.Post, ApiEndpoint) { Content = content };
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        // The body is an untrusted external search upstream — cap the read so a hostile or
+        // malfunctioning endpoint cannot stream an unbounded body and OOM the gateway.
+        var responseJson = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, cancellationToken: ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(responseJson);
 
         var results = new List<SearchResult>();

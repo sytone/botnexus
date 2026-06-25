@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Extensions.WebTools.Search;
 
@@ -79,10 +80,14 @@ internal sealed class MicrosoftAiSearchProvider : ISearchProvider
         request.Headers.Add("x-apikey", _apiKey);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+        // ResponseHeadersRead so the body is NOT pre-buffered by HttpClient — the bounded reader
+        // below must see the raw stream to abort an unbounded/hostile body before it is materialized.
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        // The body is an untrusted external search upstream — cap the read so a hostile or
+        // malfunctioning endpoint cannot stream an unbounded body and OOM the gateway.
+        var responseJson = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, cancellationToken: ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(responseJson);
         var root = doc.RootElement;
 
