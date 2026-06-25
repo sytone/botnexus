@@ -367,6 +367,17 @@ public sealed class RateLimitConfig
 
     /// <summary>Window size in seconds used for request counting.</summary>
     public int WindowSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Maximum number of distinct client windows retained in memory. Bounds the per-client
+    /// tracking dictionary so a flood of distinct client keys cannot drive the gateway to
+    /// memory exhaustion (a DoS against the DoS-protection itself). When the cap is reached,
+    /// stale entries are pruned first, then a window that is not actively rate-limiting a
+    /// client is evicted; if none can be freed, the new request is rejected with 429 rather
+    /// than inserting. Windows actively counting toward a 429 are never evicted, so a flood
+    /// cannot clear an attacker's own throttle. A non-positive value disables the cap.
+    /// </summary>
+    public int MaxEntries { get; set; } = 10_000;
 }
 
 /// <summary>
