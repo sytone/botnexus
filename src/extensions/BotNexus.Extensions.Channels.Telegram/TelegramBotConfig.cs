@@ -73,6 +73,23 @@ public sealed class TelegramBotConfig
     public int MaxMessageLength { get; set; } = 4000;
 
     /// <summary>
+    /// When true (default), outbound messages are sent as Telegram Rich Messages (Bot API 10.1+)
+    /// using Rich Markdown, which natively renders tables, headings, lists, blockquotes, and more.
+    /// If Telegram rejects a rich send (e.g. an older client), the adapter automatically falls back
+    /// to the legacy MarkdownV2 path, then plain text — so content is never dropped. Set to false to
+    /// force the legacy MarkdownV2 path for all messages.
+    /// </summary>
+    public bool RichMessages { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the maximum Rich Message length before payload splitting. Rich Messages allow up
+    /// to 32768 characters (vs 4096 for plain), so the default (32000) stays safely below that limit.
+    /// Only used when <see cref="RichMessages"/> is enabled; the legacy fallback path uses
+    /// <see cref="MaxMessageLength"/>.
+    /// </summary>
+    public int MaxRichMessageLength { get; set; } = 32000;
+
+    /// <summary>
     /// Gets or sets the minimum time in milliseconds between error replies to this bot's chats.
     /// Prevents error spam to users during outages or repeated failures.
     /// </summary>

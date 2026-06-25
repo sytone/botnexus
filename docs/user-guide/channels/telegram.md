@@ -55,6 +55,8 @@ DM your bot and it will respond via the configured agent.
       "pollingTimeoutSeconds": 30,
       "streamingBufferMs": 500,
       "maxMessageLength": 4000,
+      "richMessages": true,
+      "maxRichMessageLength": 32000,
       "processEditedMessages": false,
       "webhookUrl": "string (optional)",
       "webhookSecretToken": "string (optional)"
@@ -71,7 +73,9 @@ DM your bot and it will respond via the configured agent.
 | `allowedUserIds` | number[] | `[]` | Sender user IDs allowed to interact. Empty = allow any sender. |
 | `pollingTimeoutSeconds` | int | `30` | Long poll timeout in seconds. |
 | `streamingBufferMs` | int | `500` | Flush interval for streaming deltas. |
-| `maxMessageLength` | int | `4000` | Characters before splitting long responses. |
+| `maxMessageLength` | int | `4000` | Characters before splitting long responses (legacy/fallback path). |
+| `richMessages` | bool | `true` | Send messages as Telegram Rich Messages (Bot API 10.1+) with native tables/headings/lists. Falls back to MarkdownV2 then plain text if Telegram rejects a rich send. Set `false` to force the legacy MarkdownV2 path. |
+| `maxRichMessageLength` | int | `32000` | Characters before splitting a Rich Message (the rich limit is 32768). Only used when `richMessages` is enabled. |
 | `processEditedMessages` | bool | `false` | When `true`, edited messages are processed as new messages. |
 | `webhookUrl` | string | `null` | Set to enable webhook mode instead of polling (requires a public HTTPS URL). |
 | `webhookSecretToken` | string | `null` | Secret used to authenticate inbound webhook requests. When omitted in webhook mode, a strong token is generated automatically. Only used when `webhookUrl` is set. |
