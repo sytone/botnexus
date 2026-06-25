@@ -187,14 +187,19 @@ public sealed class TelegramMultiBotTests
                     BotToken = "token-larry",
                     AgentId = "agent-b",
                     AllowedChatIds = { 101 },
-                    PollingTimeoutSeconds = 1
+                    PollingTimeoutSeconds = 1,
+                    // This test verifies per-agent bot routing, not rendering. Use the legacy
+                    // sendMessage path so the handler applies; Rich Markdown streaming is covered
+                    // by TelegramChannelAdapterRichTests.
+                    RichMessages = false
                 },
                 ["assistant-bot"] = new TelegramBotConfig
                 {
                     BotToken = "token-assistant",
                     AgentId = "assistant",
                     AllowedChatIds = { 202 },
-                    PollingTimeoutSeconds = 1
+                    PollingTimeoutSeconds = 1,
+                    RichMessages = false
                 }
             }
         };

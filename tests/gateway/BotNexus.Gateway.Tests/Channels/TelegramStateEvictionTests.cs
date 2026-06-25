@@ -22,7 +22,11 @@ public sealed class TelegramStateEvictionTests
         {
             BotToken = "123:ABC",
             ErrorCooldownMs = errorCooldownMs,
-            AllowedChatIds = { 41, 42, 43, 44, 45, 46 }
+            AllowedChatIds = { 41, 42, 43, 44, 45, 46 },
+            // These tests exercise streaming-state eviction, which is path-agnostic. Use the legacy
+            // streaming path (sendMessage/editMessageText) so the stub OK handler applies; Rich
+            // Markdown streaming is covered by TelegramChannelAdapterRichTests.
+            RichMessages = false
         });
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
         return new TelegramChannelAdapter(

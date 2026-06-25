@@ -111,6 +111,112 @@ public sealed class TelegramChannelAdapterRichTests
         json.RootElement.GetProperty("text").GetString().ShouldBe("*bold*");
     }
 
+    // ── Streaming: Rich Message drafts (DM) + finalize ───────────────────────
+
+    [Fact]
+    public async Task Streaming_PrivateChat_SendsDraftsThenFinalizesWithRichMessage()
+    {
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true);
+        var target = StreamTargets.For("42"); // positive chat id = private chat
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        // Delta over the 100-char flush threshold forces a draft flush.
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**" + new string('a', 100) + "**" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        // At least one ephemeral draft preview during streaming...
+        var draft = calls.FirstOrDefault(c => c.Method == "sendRichMessageDraft");
+        draft.ShouldNotBeNull();
+        using var draftJson = JsonDocument.Parse(draft!.Body);
+        draftJson.RootElement.GetProperty("draft_id").GetInt64().ShouldNotBe(0);
+        draftJson.RootElement.GetProperty("rich_message").GetProperty("markdown").GetString().ShouldNotBeNullOrEmpty();
+
+        // ...and exactly one persistent sendRichMessage at the end to keep the message.
+        var finalize = calls.Where(c => c.Method == "sendRichMessage").ToList();
+        finalize.Count.ShouldBe(1);
+        using var finalJson = JsonDocument.Parse(finalize[0].Body);
+        finalJson.RootElement.GetProperty("rich_message").GetProperty("markdown").GetString()
+            .ShouldBe("**" + new string('a', 100) + "**");
+    }
+
+    [Fact]
+    public async Task Streaming_PrivateChat_DraftsReuseSameDraftId()
+    {
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true);
+        var target = StreamTargets.For("42");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamDeltaAsync(target, new string('a', 150));
+        await adapter.SendStreamDeltaAsync(target, new string('b', 150));
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        var draftIds = calls
+            .Where(c => c.Method == "sendRichMessageDraft")
+            .Select(c =>
+            {
+                using var j = JsonDocument.Parse(c.Body);
+                return j.RootElement.GetProperty("draft_id").GetInt64();
+            })
+            .Distinct()
+            .ToList();
+
+        // All draft frames for one stream animate under a single draft id.
+        draftIds.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Streaming_Group_NoDrafts_FinalizesOnceWithRichMessage()
+    {
+        // Drafts are DM-only; a group/supergroup (negative chat id) gets no live preview, just the
+        // final rich message at MessageEnd.
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, allowedChatId: -1001234567890);
+        var target = StreamTargets.For("-1001234567890");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**" + new string('a', 100) + "**" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        calls.ShouldNotContain(c => c.Method == "sendRichMessageDraft");
+        calls.Count(c => c.Method == "sendRichMessage").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Streaming_DraftRejected_StillFinalizes()
+    {
+        // If a draft is rejected mid-stream, drafting stops but the message is still finalized.
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, draftSucceeds: false);
+        var target = StreamTargets.For("42");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('a', 150) });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        // A draft was attempted (and rejected), but the persistent rich message still went out.
+        calls.ShouldContain(c => c.Method == "sendRichMessageDraft");
+        calls.Count(c => c.Method == "sendRichMessage").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Streaming_RichDisabled_UsesLegacyEditPath()
+    {
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, richEnabled: false);
+        var target = StreamTargets.For("42");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**" + new string('a', 100) + "**" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        // Legacy streaming uses sendMessage/editMessageText, never the rich endpoints.
+        calls.ShouldNotContain(c => c.Method == "sendRichMessageDraft");
+        calls.ShouldNotContain(c => c.Method == "sendRichMessage");
+        calls.ShouldContain(c => c.Method == "sendMessage");
+    }
+
     // ── SplitMarkdown: line-boundary chunking ────────────────────────────────
 
     [Fact]
@@ -150,7 +256,8 @@ public sealed class TelegramChannelAdapterRichTests
         List<CapturedCall> calls,
         bool richSucceeds,
         bool richEnabled = true,
-        long allowedChatId = 42)
+        long allowedChatId = 42,
+        bool draftSucceeds = true)
     {
         var handler = new CapturingHandler(async (request, ct) =>
         {
@@ -168,9 +275,22 @@ public sealed class TelegramChannelAdapterRichTests
                 };
             }
 
-            object result = method == "sendRichMessage" || method == "sendMessage"
-                ? new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } }
-                : true;
+            if (method == "sendRichMessageDraft" && !draftSucceeds)
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: DRAFT_REJECTED\"}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+
+            object result = method switch
+            {
+                "sendRichMessage" or "sendMessage" or "editMessageText"
+                    => new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } },
+                _ => true
+            };
             return JsonOk(result);
         });
 
