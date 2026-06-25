@@ -89,6 +89,11 @@ public sealed record AgentStreamEvent
     /// Present when an agent is blocked waiting for user input mid-turn.
     /// </summary>
     public AskUserRequest? UserInputRequest { get; init; }
+    /// <summary>
+    /// Structured payload for <see cref=`AgentStreamEventType.ClaimAudit`/> events. Present when the
+    /// post-turn claim auditor flagged unbacked artifact claims in the agent's final message (#1600).
+    /// </summary>
+    public ClaimAuditSignal? ClaimAudit { get; init; }
 }
 /// <summary>
 /// Types of streaming events from an agent.
@@ -140,5 +145,33 @@ public enum AgentStreamEventType
     /// loop, it is the reliable signal for steer/follow-up/stop control visibility — it does not
     /// flicker between turns or tools the way <see cref="MessageEnd"/>/<see cref="ToolEnd"/> do.
     /// </remarks>
-    RunEnded
+    RunEnded,
+    /// <summary>
+    /// The post-turn claim auditor detected one or more artifact-shaped claims in the agent's
+    /// final message that have no backing tool call (anti-fabrication control, #1600). Carries a
+    /// <see cref="AgentStreamEvent.ClaimAudit"/> payload describing the unbacked claims.
+    /// </summary>
+    ClaimAudit
 }
+
+/// <summary>
+/// A structured, client-visible summary of a post-turn claim-audit finding (#1600). Surfaced on an
+/// <see cref="AgentStreamEvent"/> of type <see cref="AgentStreamEventType.ClaimAudit"/> so that a
+/// fabricated artifact claim is an observable signal rather than only a prose log line.
+/// </summary>
+/// <param name="Blocked">
+/// True when the auditor was configured to block (rather than warn) and at least one unbacked claim
+/// was detected.
+/// </param>
+/// <param name="Claims">The artifact-shaped claims that had no backing tool call.</param>
+public sealed record ClaimAuditSignal(bool Blocked, IReadOnlyList<ClaimAuditClaim> Claims);
+
+/// <summary>
+/// A single unbacked artifact claim detected by the post-turn claim auditor (#1600).
+/// </summary>
+/// <param name="Category">
+/// The claim category (e.g. <c>IssueFiled</c>, <c>PullRequest</c>, <c>ArtifactUrl</c>,
+/// <c>FileWritten</c>, <c>Sent</c>, <c>Deployed</c>, <c>VerifiedAudit</c>).
+/// </param>
+/// <param name="Snippet">A short excerpt of the matched text, for diagnostics.</param>
+public sealed record ClaimAuditClaim(string Category, string Snippet);

@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Agent.Core.Types;
@@ -171,3 +172,22 @@ public sealed record ToolExecutionEndEvent(
     AgentToolResult Result,
     bool IsError,
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.ToolExecutionEnd, Timestamp);
+
+/// <summary>
+/// Raised at the end of a run when the post-turn claim auditor detects one or more
+/// artifact-shaped claims in the agent's final message that have no backing tool call
+/// (#1600). This is the structured, observable anti-fabrication signal: a fabricated
+/// "I filed issue #N" (with no tool call that turn) surfaces here rather than only as a
+/// prose log line.
+/// </summary>
+/// <param name="Result">The audit result, including the detected unbacked claims and whether the turn should be blocked.</param>
+/// <param name="FinalMessage">The assistant message that was audited.</param>
+/// <param name="Timestamp">The event timestamp.</param>
+/// <remarks>
+/// Emitted just before <see cref="AgentEndEvent"/> when <see cref="ClaimAuditResult.HasUnbackedClaims"/>
+/// is true. Listeners (e.g. the gateway) decide how to surface a warn vs. block.
+/// </remarks>
+public sealed record ClaimAuditEvent(
+    ClaimAuditResult Result,
+    AssistantAgentMessage FinalMessage,
+    DateTimeOffset Timestamp) : AgentEvent(AgentEventType.ClaimAudit, Timestamp);

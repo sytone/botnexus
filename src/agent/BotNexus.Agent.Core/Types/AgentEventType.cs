@@ -54,4 +54,10 @@ public enum AgentEventType
     /// Signals completion of a tool execution.
     /// </summary>
     ToolExecutionEnd,
+
+    /// <summary>
+    /// Signals that the post-turn claim auditor detected one or more artifact-shaped
+    /// claims in the agent's final message that lack a backing tool call (#1600).
+    /// </summary>
+    ClaimAudit,
 }
