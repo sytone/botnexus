@@ -465,6 +465,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     _activeLoopTracker?.TrackStart();
                     try
                     {
+                    // #1598: write-time cap on per-tool-result size persisted to history.
+                    // Reads gateway:toolResultPersistence. The cap defaults ON (16 KiB) when the
+                    // section is absent (matching ToolResultPersistenceConfig defaults); it is
+                    // disabled (0) only when Enabled=false or MaxBytes<=0.
+                    var toolResultCfg = _platformConfig?.Value.Gateway?.ToolResultPersistence ?? new ToolResultPersistenceConfig();
+                    var maxPersistedToolResultBytes = toolResultCfg is { Enabled: true, MaxBytes: > 0 }
+                        ? toolResultCfg.MaxBytes
+                        : 0;
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
                         session,
@@ -529,7 +537,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                         _logger.LogWarning(ex, "SignalR observer fan-out failed for address {Address}. Skipping.", observerTarget.ChannelAddress);
                                     }
                                 }
-                            }),
+                            },
+                        MaxPersistedToolResultBytes: maxPersistedToolResultBytes),
                         _sessionLifecycleEvents,
                         cancellationToken);
                     }

@@ -476,6 +476,157 @@ public sealed class StreamingSessionHelperTests
         session.History.Any(e => e.Role == MessageRole.System && e.Content!.Contains("Provider stall detected")).ShouldBeTrue();
     }
 
+    // ── Tool-result write-time size cap tests (#1598) ───────────────────────
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_OversizedToolResult_IsTruncatedWithMarkerAtWriteTime()
+    {
+        // Arrange: a tool result far larger than the configured byte cap.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var big = new string('x', 5000);
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "shell", ToolResult = big }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(MaxPersistedToolResultBytes: 1000));
+
+        // The persisted entry must NOT contain the full 5000-byte result.
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        entry.Role.ShouldBe(MessageRole.Tool);
+        System.Text.Encoding.UTF8.GetByteCount(entry.Content!).ShouldBeLessThan(big.Length);
+        entry.Content.ShouldContain("[truncated");
+        entry.Content.ShouldContain("bytes]");
+        // The same truncated entry must be what landed in session history (write-time, not display-only).
+        session.History.ShouldHaveSingleItem();
+        session.History[0].Content.ShouldBe(entry.Content);
+        System.Text.Encoding.UTF8.GetByteCount(session.History[0].Content!).ShouldBeLessThan(big.Length);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_TruncationMarker_ReportsOmittedByteCount()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-2"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var big = new string('a', 4000);
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "read", ToolResult = big }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(MaxPersistedToolResultBytes: 1000));
+
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        // Marker reports how many bytes were dropped (original 4000 - retained ~1000 = ~3000).
+        var match = System.Text.RegularExpressions.Regex.Match(entry.Content!, @"\[truncated (\d+) bytes\]");
+        match.Success.ShouldBeTrue();
+        var omitted = int.Parse(match.Groups[1].Value);
+        omitted.ShouldBeGreaterThan(0);
+        omitted.ShouldBeLessThan(4000);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_UnderCapToolResult_IsNotTruncated()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-3"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "clock", ToolResult = "12:00" }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(MaxPersistedToolResultBytes: 1000));
+
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        entry.Content.ShouldBe("12:00");
+        entry.Content.ShouldNotContain("[truncated");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_CapDisabled_LeavesOversizedResultIntact()
+    {
+        // Default StreamingSessionOptions (MaxPersistedToolResultBytes = 0) disables the cap.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-4"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var big = new string('z', 5000);
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "shell", ToolResult = big }
+            ]),
+            session,
+            store.Object);
+
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        entry.Content.ShouldBe(big);
+        entry.Content.ShouldNotContain("[truncated");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_TruncationCountsBytesNotChars_ForMultibyteContent()
+    {
+        // Multibyte UTF-8 content: each 'あ' is 3 bytes. A 1000-char string is 3000 bytes,
+        // so a 1000-byte cap must truncate it even though the char count is at the boundary.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-5"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var multibyte = new string('\u3042', 1000); // 3000 UTF-8 bytes
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "read", ToolResult = multibyte }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(MaxPersistedToolResultBytes: 1000));
+
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        entry.Content.ShouldContain("[truncated");
+        // Retained content (excluding the marker) must be within the byte cap.
+        System.Text.Encoding.UTF8.GetByteCount(entry.Content!).ShouldBeLessThan(3000);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_Truncation_DoesNotLeaveLoneSurrogate()
+    {
+        // A run of astral (surrogate-pair) emoji straddling the byte cap must never leave a
+        // dangling high surrogate at the cut — the slice must fall on a rune boundary.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-cap-6"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var emoji = string.Concat(Enumerable.Repeat("\U0001F600", 1000)); // 4 UTF-8 bytes each
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolCallId = "tc1", ToolName = "shell", ToolResult = emoji }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(MaxPersistedToolResultBytes: 1003)); // off-boundary cap
+
+        var entry = result.HistoryEntries.ShouldHaveSingleItem();
+        // No char in the persisted content may be a high surrogate without a following low surrogate.
+        var content = entry.Content!;
+        for (int i = 0; i < content.Length; i++)
+        {
+            if (char.IsHighSurrogate(content[i]))
+                (i + 1 < content.Length && char.IsLowSurrogate(content[i + 1])).ShouldBeTrue($"lone high surrogate at index {i}");
+            if (char.IsLowSurrogate(content[i]))
+                (i > 0 && char.IsHighSurrogate(content[i - 1])).ShouldBeTrue($"lone low surrogate at index {i}");
+        }
+    }
+
     private static async IAsyncEnumerable<AgentStreamEvent> StallAfterFirst()
     {
         yield return new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "partial" };

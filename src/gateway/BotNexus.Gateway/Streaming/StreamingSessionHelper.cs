@@ -94,10 +94,14 @@ public static class StreamingSessionHelper
                     }
                     break;
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
+                    var toolEndContent = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed.");
+                    // Cap oversized tool results at write time (#1598) so the full blob never
+                    // lands in session_history nor gets re-sent to the model on the next turn.
+                    toolEndContent = TruncateToolResult(toolEndContent, options.MaxPersistedToolResultBytes);
                     streamedHistory.Add(new SessionEntry
                     {
                         Role = MessageRole.Tool,
-                        Content = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed."),
+                        Content = toolEndContent,
                         ToolName = evt.ToolName,
                         ToolCallId = evt.ToolCallId,
                         ToolIsError = evt.ToolIsError == true
@@ -208,6 +212,46 @@ public static class StreamingSessionHelper
 
         return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries);
     }
+
+    /// <summary>
+    /// Caps an oversized tool result at write time (#1598). When the UTF-8 byte size of
+    /// <paramref name="content"/> exceeds <paramref name="maxBytes"/>, the content is cut on a
+    /// rune boundary (never splitting a surrogate pair or a multi-byte UTF-8 sequence) and an
+    /// explicit <c>[truncated N bytes]</c> marker reporting the number of omitted bytes is
+    /// appended. A non-positive <paramref name="maxBytes"/> disables truncation.
+    /// </summary>
+    /// <param name="content">The raw tool result content.</param>
+    /// <param name="maxBytes">Maximum UTF-8 byte budget for the retained content; <c>0</c> or negative disables the cap.</param>
+    /// <returns>The original content when within budget; otherwise a rune-safe truncated form with a marker.</returns>
+    public static string TruncateToolResult(string content, int maxBytes)
+    {
+        if (maxBytes <= 0 || string.IsNullOrEmpty(content))
+            return content;
+
+        var totalBytes = Encoding.UTF8.GetByteCount(content);
+        if (totalBytes <= maxBytes)
+            return content;
+
+        // Walk runes, accumulating UTF-8 byte cost, and stop before the budget is exceeded.
+        // Cutting on a Rune boundary guarantees no lone surrogate and no split multi-byte sequence.
+        var span = content.AsSpan();
+        var retainedBytes = 0;
+        var retainedChars = 0;
+        while (retainedChars < span.Length
+            && Rune.DecodeFromUtf16(span[retainedChars..], out var rune, out var charsConsumed) == System.Buffers.OperationStatus.Done)
+        {
+            var runeBytes = rune.Utf8SequenceLength;
+            if (retainedBytes + runeBytes > maxBytes)
+                break;
+            retainedBytes += runeBytes;
+            retainedChars += charsConsumed;
+        }
+
+        var omittedBytes = totalBytes - retainedBytes;
+        // Edge case: if even the first rune does not fit the budget, retainedChars is 0 and the
+        // result is just the marker — still strictly smaller than the original oversized blob.
+        return string.Concat(span[..retainedChars], $"\n…[truncated {omittedBytes} bytes]");
+    }
 }
 
 /// <summary>
@@ -222,10 +266,18 @@ public static class StreamingSessionHelper
 /// inactivity timeout detection that synthesizes an error event if the provider
 /// stops responding.
 /// </param>
+/// <param name="MaxPersistedToolResultBytes">
+/// Maximum UTF-8 byte size of a single tool result persisted to session history. When a
+/// result exceeds this cap it is truncated at write time (on a rune boundary) and an explicit
+/// <c>[truncated N bytes]</c> marker is appended, so the oversized blob never lands in
+/// <c>session_history</c> nor gets re-sent to the model on the next turn. <c>0</c> (the default)
+/// disables the cap. See issue #1598.
+/// </param>
 public sealed record StreamingSessionOptions(
     bool IncludeErrorsInHistory = false,
     Func<AgentStreamEvent, CancellationToken, ValueTask>? OnEventAsync = null,
-    ProviderStallWatchdog? StallWatchdog = null);
+    ProviderStallWatchdog? StallWatchdog = null,
+    int MaxPersistedToolResultBytes = 0);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.

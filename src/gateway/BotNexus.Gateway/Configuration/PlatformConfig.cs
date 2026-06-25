@@ -110,6 +110,8 @@ public sealed class GatewaySettingsConfig
     public SessionStoreConfig? SessionStore { get; set; }
     /// <summary>Session compaction settings.</summary>
     public CompactionOptions? Compaction { get; set; }
+    /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
+    public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>
@@ -185,6 +187,28 @@ public sealed class GatewaySettingsConfig
     /// notifications, canvas rendering, and optionally remote command execution.
     /// </summary>
     public Dictionary<string, SatelliteConfig>? Satellites { get; set; }
+}
+
+/// <summary>
+/// Write-time tool-result size cap (#1598). Large tool results (e.g. a recursive directory
+/// listing or a session-history dump) are otherwise persisted into <c>session_history</c> at
+/// full size and re-sent to the model on every subsequent turn, consuming context budget with
+/// zero ongoing value. When enabled, a result exceeding <see cref="MaxBytes"/> UTF-8 bytes is
+/// truncated at write time (on a rune boundary) with an explicit <c>[truncated N bytes]</c> marker.
+/// </summary>
+public sealed class ToolResultPersistenceConfig
+{
+    /// <summary>
+    /// Whether the write-time tool-result cap is enabled. Defaults to <see langword="true"/>.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Maximum UTF-8 byte size of a single persisted tool result. Results larger than this are
+    /// truncated at write time with a <c>[truncated N bytes]</c> marker. Defaults to 16384 (16 KiB).
+    /// A value of 0 or less disables truncation even when <see cref="Enabled"/> is true.
+    /// </summary>
+    public int MaxBytes { get; set; } = 16_384;
 }
 
 /// <summary>
