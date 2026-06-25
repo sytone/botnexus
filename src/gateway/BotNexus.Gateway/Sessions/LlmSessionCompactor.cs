@@ -76,16 +76,28 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var estimatedTokens = EstimateVisibleTokenCount(session);
         var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
-        var shouldCompact = estimatedTokens > threshold;
+        var tokenTrigger = estimatedTokens > threshold;
+
+        // #1599: bloat-aware trigger. A session can be dominated by a small number of enormous
+        // low-value entries (e.g. a raw transcript dump) whose total still sits under the token
+        // threshold. Make a single oversized *visible* entry eligible for compaction on its own.
+        // Additive: whichever of the token-count or per-entry-byte signal trips first wins.
+        var (bloatTrigger, largestEntryBytes) = EvaluateLargestVisibleEntryBytes(session, options.LargestEntryBytesThreshold);
+
+        var shouldCompact = tokenTrigger || bloatTrigger;
 
         _logger.LogDebug(
             "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens, " +
-            "threshold {Threshold} (window {Window} * ratio {Ratio}), result: {ShouldCompact}",
+            "threshold {Threshold} (window {Window} * ratio {Ratio}), largestVisibleEntry {LargestBytes} bytes " +
+            "(byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), result: {ShouldCompact}",
             session.SessionId,
             estimatedTokens,
             threshold,
             options.ContextWindowTokens,
             options.TokenThresholdRatio,
+            largestEntryBytes,
+            options.LargestEntryBytesThreshold,
+            bloatTrigger,
             shouldCompact);
 
         return shouldCompact;
@@ -745,6 +757,46 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             .Where(SessionContextProjector.IsVisibleInLiveContext)
             .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
+    }
+
+    /// <summary>
+    /// #1599 bloat-aware trigger: finds the largest single LLM-visible entry by UTF-8 byte size and
+    /// reports whether it meets or exceeds <paramref name="thresholdBytes"/>. Only visible entries are
+    /// considered (historical / already-summarised entries are hidden from the LLM and excluded, matching
+    /// the token-count trigger). UTF-8 bytes are measured rather than UTF-16 char count so multibyte
+    /// payloads (which cost more real context) are accounted for accurately. A threshold &lt;= 0 disables
+    /// the signal entirely (returns <c>(false, 0)</c>) without scanning, preserving pre-#1599 behaviour.
+    /// </summary>
+    /// <returns>A tuple of (whether the bloat trigger fires, the largest visible entry's byte size).</returns>
+    private static (bool exceeds, long largestBytes) EvaluateLargestVisibleEntryBytes(Session session, int thresholdBytes)
+    {
+        if (thresholdBytes <= 0)
+        {
+            return (false, 0);
+        }
+
+        long largest = 0;
+        foreach (var entry in session.History)
+        {
+            if (!SessionContextProjector.IsVisibleInLiveContext(entry))
+            {
+                continue;
+            }
+
+            var content = entry.Content;
+            if (string.IsNullOrEmpty(content))
+            {
+                continue;
+            }
+
+            var bytes = Encoding.UTF8.GetByteCount(content);
+            if (bytes > largest)
+            {
+                largest = bytes;
+            }
+        }
+
+        return (largest >= thresholdBytes, largest);
     }
 
     /// <summary>
