@@ -695,6 +695,29 @@ The gateway registers its SignalR hub with **explicit** transport limits rather 
 The `signalR` section is optional — when absent, the secure defaults are applied automatically. Any non-positive override is ignored in favour of the default so a misconfiguration can never disable the bound.
 
 
+#### Tool Result Persistence
+
+Large tool results (for example a recursive directory listing or a session-history dump) are otherwise written into `session_history` at full size and re-sent to the model on every subsequent turn — consuming context budget with no ongoing value. The `toolResultPersistence` section caps the size of an individual tool result **at write time**: a result whose UTF-8 byte size exceeds `maxBytes` is truncated on a rune boundary (never splitting a surrogate pair or a multi-byte UTF-8 sequence) and an explicit `[truncated N bytes]` marker is appended before the entry is persisted, so the oversized blob never lands in history nor reaches the next turn's context window.
+
+```json
+{
+  "gateway": {
+    "toolResultPersistence": {
+      "enabled": true,
+      "maxBytes": 16384
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `toolResultPersistence.enabled` | bool | `true` | Enables the write-time tool-result size cap. |
+| `toolResultPersistence.maxBytes` | int | 16384 (16 KiB) | Maximum UTF-8 byte size of a single persisted tool result. Larger results are truncated with a `[truncated N bytes]` marker. A value of 0 or less disables truncation even when `enabled` is true. |
+
+The section is optional — when absent, the default 16 KiB cap is applied. This is independent of (and complementary to) session compaction: the cap prevents oversized results from ever being persisted, while compaction summarises accumulated context over time.
+
+
 #### Shell Execution Settings
 
 Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).
