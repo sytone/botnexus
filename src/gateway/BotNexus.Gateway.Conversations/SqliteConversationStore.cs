@@ -1224,7 +1224,11 @@ public sealed class SqliteConversationStore : IConversationStore
 
         var presentIds = byId.Keys.ToList();
 
-        // 2) All bindings for the present conversations, grouped in memory.
+        // 2) All bindings for the present conversations, accumulated into per-conversation lists.
+        //    The lists are built locally and assigned wholesale below; the entity's `.ChannelBindings`
+        //    list is never mutated in place (mirrors the P9-F wholesale-assignment idiom that the
+        //    per-conversation loader uses via LoadBindingsAsync -> `conversation.ChannelBindings = ...`).
+        var bindingsById = new Dictionary<string, List<ChannelBinding>>(byId.Count);
         await using (var command = connection.CreateCommand())
         {
             var inClause = BuildIdInClause(command, presentIds);
@@ -1239,12 +1243,23 @@ public sealed class SqliteConversationStore : IConversationStore
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var conversationId = reader.GetString(0);
-                if (byId.TryGetValue(conversationId, out var conversation))
-                    conversation.ChannelBindings.Add(MapBinding(reader, offset: 1));
+                if (!byId.ContainsKey(conversationId))
+                    continue;
+                if (!bindingsById.TryGetValue(conversationId, out var list))
+                {
+                    list = [];
+                    bindingsById[conversationId] = list;
+                }
+                list.Add(MapBinding(reader, offset: 1));
             }
         }
 
-        // 3) All participants for the present conversations, grouped in memory.
+        // 3) All participants for the present conversations, accumulated into per-conversation lists.
+        //    Same wholesale-assignment discipline as bindings above: build locally, assign once.
+        //    Going through `conversation.Participants.Add(...)` would violate the P9-F atomic-merge
+        //    contract (enforced by ConversationParticipantsMutationArchitectureTests); the
+        //    single-conversation loader assigns the result of LoadParticipantsAsync wholesale.
+        var participantsById = new Dictionary<string, List<SessionParticipant>>(byId.Count);
         await using (var command = connection.CreateCommand())
         {
             var inClause = BuildIdInClause(command, presentIds);
@@ -1259,12 +1274,28 @@ public sealed class SqliteConversationStore : IConversationStore
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var conversationId = reader.GetString(0);
-                if (byId.TryGetValue(conversationId, out var conversation)
-                    && MapParticipant(reader, offset: 1) is { } participant)
+                if (!byId.ContainsKey(conversationId)
+                    || MapParticipant(reader, offset: 1) is not { } participant)
                 {
-                    conversation.Participants.Add(participant);
+                    continue;
                 }
+                if (!participantsById.TryGetValue(conversationId, out var list))
+                {
+                    list = [];
+                    participantsById[conversationId] = list;
+                }
+                list.Add(participant);
             }
+        }
+
+        // 4) Assign the grouped child collections wholesale. Conversations with no bindings /
+        //    participants keep the empty list assigned at materialisation (step 1).
+        foreach (var (conversationId, conversation) in byId)
+        {
+            if (bindingsById.TryGetValue(conversationId, out var bindings))
+                conversation.ChannelBindings = bindings;
+            if (participantsById.TryGetValue(conversationId, out var participants))
+                conversation.Participants = participants;
         }
 
         return byId;
