@@ -2049,6 +2049,93 @@ public sealed class TelegramChannelAdapterTests
         };
     }
 
+    // ── SplitMessage / SplitMarkdown: surrogate-pair-safe chunking (#1596) ──────────────
+
+    /// <summary>
+    /// A string containing only an ASCII run never trips the surrogate-safety logic; chunking
+    /// stays exactly at <c>maxLength</c> code units (regression guard for the common path).
+    /// </summary>
+    [Fact]
+    public void SplitMessage_AsciiOnly_ChunksAtExactLength()
+    {
+        var content = new string('a', 25);
+        var result = TelegramChannelAdapter.SplitMessage(content, 10).ToList();
+        result.Count.ShouldBe(3);
+        result[0].ShouldBe(new string('a', 10));
+        result[1].ShouldBe(new string('a', 10));
+        result[2].ShouldBe(new string('a', 5));
+        string.Concat(result).ShouldBe(content);
+    }
+
+    /// <summary>
+    /// When an astral (surrogate-pair) emoji straddles the <c>maxLength</c> boundary, the pair must
+    /// move whole into the next chunk rather than being split into a lone high surrogate. This is
+    /// the core #1596 defect: a code-unit <c>Substring</c> keeps only the high surrogate at the end
+    /// of one chunk, producing invalid UTF-16 that Telegram rejects.
+    /// </summary>
+    [Fact]
+    public void SplitMessage_EmojiStraddlesBoundary_MovesPairWhole_NoLoneSurrogate()
+    {
+        // "aaa" + 😀 (U+1F600, 2 UTF-16 code units) + "bbb". With maxLength 4 the naive slice
+        // would cut after "aaa" + high surrogate, leaving a lone �.
+        var content = "aaa\U0001F600bbb";
+        var result = TelegramChannelAdapter.SplitMessage(content, 4).ToList();
+
+        AssertNoLoneSurrogateAcrossChunks(result);
+        // Reassembly must be lossless — no characters dropped, no replacement chars introduced.
+        string.Concat(result).ShouldBe(content);
+        // The emoji must appear intact in exactly one chunk.
+        result.Count(c => c.Contains("\U0001F600")).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A run of consecutive emoji that all land near chunk boundaries must each move whole; no chunk
+    /// may end on a dangling high surrogate and the concatenation must be byte-for-byte lossless.
+    /// </summary>
+    [Fact]
+    public void SplitMessage_ManyEmoji_NeverSplitsAnyPair()
+    {
+        var content = string.Concat(Enumerable.Repeat("\U0001F600", 50)); // 50 emoji = 100 code units
+        // maxLength 3 is deliberately misaligned with the 2-code-unit emoji width.
+        var result = TelegramChannelAdapter.SplitMessage(content, 3).ToList();
+
+        AssertNoLoneSurrogateAcrossChunks(result);
+        string.Concat(result).ShouldBe(content);
+    }
+
+    /// <summary>
+    /// <c>SplitMarkdown</c>'s last-resort hard-split (a single line longer than the limit) must also
+    /// be surrogate-safe — it shares the same code-unit slice hazard as <c>SplitMessage</c>.
+    /// </summary>
+    [Fact]
+    public void SplitMarkdown_OverLimitLineWithEmoji_HardSplitIsSurrogateSafe()
+    {
+        // A single line (no '\n') longer than maxLength forces the hard-split branch.
+        var line = "aaa\U0001F600" + new string('b', 20);
+        var result = TelegramChannelAdapter.SplitMarkdown(line, 4).ToList();
+
+        AssertNoLoneSurrogateAcrossChunks(result);
+        string.Concat(result).ShouldBe(line);
+        result.Count(c => c.Contains("\U0001F600")).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Asserts the OpenClaw invariant: no chunk ends on an unpaired high surrogate, and no chunk
+    /// begins on an unpaired low surrogate — i.e. no surrogate pair was severed across a boundary.
+    /// </summary>
+    private static void AssertNoLoneSurrogateAcrossChunks(IReadOnlyList<string> chunks)
+    {
+        foreach (var chunk in chunks)
+        {
+            if (chunk.Length == 0)
+                continue;
+            char.IsHighSurrogate(chunk[^1]).ShouldBeFalse(
+                $"chunk ends on a lone high surrogate: '{chunk}'");
+            char.IsLowSurrogate(chunk[0]).ShouldBeFalse(
+                $"chunk begins on a lone low surrogate: '{chunk}'");
+        }
+    }
+
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
