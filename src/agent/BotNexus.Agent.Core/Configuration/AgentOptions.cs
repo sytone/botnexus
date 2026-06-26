@@ -29,6 +29,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="ToolTimeout">
 /// Per-tool execution timeout. Defaults to 120 seconds. Set to null to disable (not recommended).
 /// </param>
+/// <param name="ClaimAudit">
+/// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState — changes to InitialState after construction have no effect.
@@ -51,4 +54,5 @@ public record AgentOptions(
     string? SessionId = null,
     Action<string>? OnDiagnostic = null,
     int? MaxRetryDelayMs = null,
-    TimeSpan? ToolTimeout = null);
+    TimeSpan? ToolTimeout = null,
+    Diagnostics.ClaimAuditOptions? ClaimAudit = null);

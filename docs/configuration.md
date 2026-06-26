@@ -751,6 +751,33 @@ The `compaction` section tunes when and how a session's history is summarised to
 The section is optional — when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
 
 
+#### Claim Auditor (anti-fabrication)
+
+The claim auditor is a post-turn verification control that inverts the trust model for side-effecting claims. After a run settles, it scans the agent's final user-facing message for **artifact-shaped claims** — "filed issue #N", "opened PR #N", a GitHub issue/PR URL, "wrote `path`", "sent", "deployed", "ran the audit … all checks passed" — and cross-checks each against the set of tools that were actually invoked during the run. A claim with no plausible backing tool call (for example narrating "I filed issue #1234" when no `shell`/`exec`/`github` tool ran that turn) is reported as an **unbacked claim**.
+
+This exists because every other anti-fabrication guardrail lives in the system prompt — the exact layer that is bypassed when a model drifts. The auditor *verifies* instead of trusting narration, so it catches fabrication even when the prompt instructions were ignored. Detection is deliberately conservative to keep false positives near zero: because GitHub work in BotNexus runs through the generic `shell`/`exec` tools, a genuine `gh issue create` is never flagged; a pure narration with no side-effecting tool always is.
+
+When an unbacked claim is detected, the auditor emits a structured `claimAudit` stream event (observable to clients and logs, not just a prose log line). In `warn` mode the turn is unaffected; in `block` mode the event additionally marks the turn as one that should be blocked.
+
+```json
+{
+  "gateway": {
+    "claimAudit": {
+      "enabled": true,
+      "mode": "warn"
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `claimAudit.enabled` | bool | `true` | Enables the post-turn claim auditor. |
+| `claimAudit.mode` | string | `"warn"` | Reaction on detecting an unbacked claim: `"warn"` (emit the `claimAudit` signal only) or `"block"` (also mark the turn for blocking). Unrecognised values fall back to `"warn"`. |
+
+The section is optional — when absent, the auditor runs in `warn` mode. Setting `claimAudit.enabled` to `false` turns it off entirely (no scan).
+
+
 #### Shell Execution Settings
 
 Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).

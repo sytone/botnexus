@@ -112,6 +112,8 @@ public sealed class GatewaySettingsConfig
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
     public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
+    /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
+    public ClaimAuditConfig? ClaimAudit { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>
@@ -209,6 +211,29 @@ public sealed class ToolResultPersistenceConfig
     /// A value of 0 or less disables truncation even when <see cref="Enabled"/> is true.
     /// </summary>
     public int MaxBytes { get; set; } = 16_384;
+}
+
+/// <summary>
+/// Configuration for the post-turn claim auditor (#1600, control #1 of #1551). The auditor scans
+/// the agent's final user-facing message for artifact-shaped claims (a GitHub issue was filed, a PR
+/// opened, a file written, something sent/deployed, an audit "verified") and flags any claim that
+/// has no backing tool call among the tools actually invoked during the run. This inverts the
+/// trust model that failed when an agent narrated "filed issue #N" with no tool call that turn:
+/// it verifies rather than trusting narration.
+/// </summary>
+public sealed class ClaimAuditConfig
+{
+    /// <summary>
+    /// Whether the post-turn claim auditor runs. Defaults to <see langword="true"/>.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Reaction on detecting an unbacked claim: <c>"warn"</c> (emit an observable signal only,
+    /// the safe default) or <c>"block"</c> (also mark the turn as one that should be blocked).
+    /// Unrecognised values fall back to <c>"warn"</c>.
+    /// </summary>
+    public string Mode { get; set; } = "warn";
 }
 
 /// <summary>

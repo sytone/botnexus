@@ -520,7 +520,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId.Value,
-            ToolTimeout: ResolveToolTimeout(descriptor));
+            ToolTimeout: ResolveToolTimeout(descriptor),
+            ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit));
 
         var agent = new BotNexus.Agent.Core.Agent(options);
         var inProcessHandle = new InProcessAgentHandle(
@@ -579,6 +580,28 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             descriptor.AgentId,
             raw);
         return null;
+    }
+
+    /// <summary>
+    /// Builds the post-turn claim-auditor options (#1600) from gateway configuration. When the
+    /// <c>gateway:claimAudit</c> section is absent the auditor is enabled in warn mode (matching
+    /// the documented config defaults), so fabricated artifact claims are caught out of the box.
+    /// Returns <see langword="null"/> only when the section explicitly disables the auditor, which
+    /// turns it off entirely (no scan).
+    /// </summary>
+    private static BotNexus.Agent.Core.Diagnostics.ClaimAuditOptions? ResolveClaimAuditOptions(ClaimAuditConfig? config)
+    {
+        // Absent section => on-by-default (warn). Explicitly disabled => null (off).
+        if (config is { Enabled: false })
+        {
+            return null;
+        }
+
+        var mode = string.Equals(config?.Mode, "block", StringComparison.OrdinalIgnoreCase)
+            ? BotNexus.Agent.Core.Diagnostics.ClaimAuditMode.Block
+            : BotNexus.Agent.Core.Diagnostics.ClaimAuditMode.Warn;
+
+        return BotNexus.Agent.Core.Diagnostics.ClaimAuditOptions.CreateDefault() with { Enabled = true, Mode = mode };
     }
 
     private static bool TryConvertPositiveSeconds(object raw, out int seconds)
@@ -984,6 +1007,17 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 },
             TurnEndEvent
                 => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
+            ClaimAuditEvent claimAudit
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ClaimAudit,
+                    MessageId = messageId,
+                    ClaimAudit = new ClaimAuditSignal(
+                        claimAudit.Result.ShouldBlock,
+                        claimAudit.Result.UnbackedClaims
+                            .Select(c => new ClaimAuditClaim(c.Category.ToString(), c.Snippet))
+                            .ToList())
+                },
             _ => null
         };
 

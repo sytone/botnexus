@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -131,6 +132,12 @@ public static class AgentLoopRunner
         var messages = currentContext.Messages.ToList();
         IReadOnlyList<AgentMessage> followUpSeed = [];
 
+        // Post-turn claim auditor (#1600): accumulate the names of every tool that
+        // actually executed during the run and remember the last assistant message, so
+        // the final user-facing message can be cross-checked against the tools invoked.
+        var invokedToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AssistantAgentMessage? lastAssistantMessage = null;
+
         while (true)
         {
             var pendingMessages = followUpSeed.Count > 0
@@ -188,6 +195,7 @@ public static class AgentLoopRunner
                 }
 
                 newMessages.Add(assistantMessage);
+                lastAssistantMessage = assistantMessage;
 
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
                 {
@@ -219,6 +227,7 @@ public static class AgentLoopRunner
                 {
                     messages.Add(toolResult);
                     newMessages.Add(toolResult);
+                    invokedToolNames.Add(toolResult.ToolName);
                 }
 
                 metrics.IncrementTurns();
@@ -243,7 +252,41 @@ public static class AgentLoopRunner
         }
 
         var endTime2 = DateTimeOffset.UtcNow;
+        await AuditClaimsAsync(config, lastAssistantMessage, invokedToolNames, emit).ConfigureAwait(false);
         await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime2), endTime2)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the post-turn claim auditor (#1600) over the run's final assistant message and
+    /// emits a <see cref="ClaimAuditEvent"/> when one or more artifact-shaped claims have no
+    /// backing tool call. No-op when the auditor is not configured, is disabled, the run
+    /// produced no assistant message, or the final message was an error/abort placeholder.
+    /// </summary>
+    private static async Task AuditClaimsAsync(
+        AgentLoopConfig config,
+        AssistantAgentMessage? finalMessage,
+        IReadOnlySet<string> invokedToolNames,
+        Func<AgentEvent, Task> emit)
+    {
+        if (config.ClaimAudit is not { Enabled: true } options || finalMessage is null)
+        {
+            return;
+        }
+
+        // Only audit a real, completed user-facing message. Error/abort placeholders are
+        // surfaced through their own paths and are not narration to verify.
+        if (finalMessage.FinishReason is StopReason.Error or StopReason.Aborted)
+        {
+            return;
+        }
+
+        var result = ClaimAuditor.Audit(finalMessage.Content, invokedToolNames, options);
+        if (!result.HasUnbackedClaims)
+        {
+            return;
+        }
+
+        await emit(new ClaimAuditEvent(result, finalMessage, DateTimeOffset.UtcNow)).ConfigureAwait(false);
     }
 
     private static async Task<SimpleStreamOptions> BuildStreamOptionsAsync(
