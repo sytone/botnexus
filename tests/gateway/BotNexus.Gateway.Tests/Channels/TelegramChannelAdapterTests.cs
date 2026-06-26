@@ -2119,6 +2119,100 @@ public sealed class TelegramChannelAdapterTests
         result.Count(c => c.Contains("\U0001F600")).ShouldBe(1);
     }
 
+    // ── FlushLegacyMarkdownV2Async streaming-buffer drain: surrogate-safe (#1616) ────────
+    // The mid-stream draft/streaming flush drains the StringBuilder buffer in maxLength-sized
+    // chunks. A fixed code-unit slice (Buffer.ToString(0, maxLength) + Buffer.Remove(0, maxLength))
+    // severs an emoji straddling the boundary — the same hazard #1596/#1606 fixed for the final-send
+    // chunkers, but on a different code path. DrainStreamingBuffer is the surrogate-safe drainer.
+
+    /// <summary>
+    /// An ASCII-only buffer drains in fixed maxLength chunks (the common path is unaffected by the
+    /// surrogate-safety back-off). Regression guard that the rewrite did not change normal chunking.
+    /// </summary>
+    [Fact]
+    public void DrainStreamingBuffer_AsciiOnly_DrainsAtExactLength()
+    {
+        var buffer = new StringBuilder("abcdefghijabcdefghijX"); // 20 ASCII + 1 trailing unit = 21
+        var chunks = DrainLoopChunks(buffer, 10);
+        // The while-loop drains while Length > maxLength: two full 10-unit chunks; the 1-unit
+        // remainder "X" is left for the final flush (loop stops at Length == 1 <= 10).
+        chunks.ShouldBe(new[] { "abcdefghij", "abcdefghij" });
+        buffer.ToString().ShouldBe("X");
+    }
+
+    /// <summary>
+    /// When an astral (surrogate-pair) emoji straddles the <c>maxLength</c> boundary, the streaming
+    /// drain must move the whole pair into the next chunk rather than emitting a lone high surrogate
+    /// and orphaning the low surrogate at the head of the buffer. This is the core #1616 defect.
+    /// </summary>
+    [Fact]
+    public void DrainStreamingBuffer_EmojiStraddlesBoundary_MovesPairWhole_NoLoneSurrogate()
+    {
+        // "aaa" + 😀 (2 code units) + "bbb"; maxLength 4 would cut after "aaa" + high surrogate.
+        var buffer = new StringBuilder("aaa\U0001F600bbb");
+        var chunks = DrainLoopChunks(buffer, 4);
+        AssertNoLoneSurrogateAcrossChunks(chunks);
+        // The emoji survives intact across the drain; reassembling drained chunks + the buffered
+        // remainder is lossless and the pair is never severed.
+        AssertNoLoneSurrogateAcrossChunks([buffer.ToString()]);
+        (string.Concat(chunks) + buffer.ToString()).ShouldBe("aaa\U0001F600bbb");
+        (string.Concat(chunks) + buffer.ToString()).Count(c => c == '\uD83D').ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A dense run of emoji drained against a misaligned <c>maxLength</c> must never sever any pair
+    /// across the many chunk boundaries, and the drained chunks plus remainder must reassemble
+    /// byte-for-byte.
+    /// </summary>
+    [Fact]
+    public void DrainStreamingBuffer_ManyEmoji_NeverSplitsAnyPair()
+    {
+        var content = string.Concat(Enumerable.Repeat("\U0001F600", 50)); // 50 emoji = 100 code units
+        var buffer = new StringBuilder(content);
+        var chunks = DrainLoopChunks(buffer, 3); // 3 is misaligned with the 2-unit pairs
+        AssertNoLoneSurrogateAcrossChunks(chunks);
+        AssertNoLoneSurrogateAcrossChunks([buffer.ToString()]);
+        (string.Concat(chunks) + buffer.ToString()).ShouldBe(content);
+        (string.Concat(chunks) + buffer.ToString()).Count(c => c == '\uD83D').ShouldBe(50);
+    }
+
+    /// <summary>
+    /// The drain only emits full chunks while the buffer still exceeds <c>maxLength</c>; the trailing
+    /// remainder (≤ maxLength) is left in the buffer for the final flush, exactly as the legacy loop
+    /// does. A pair must not be severed when the boundary lands inside the trailing remainder.
+    /// </summary>
+    [Fact]
+    public void DrainStreamingBuffer_LeavesTrailingRemainderInBuffer()
+    {
+        var buffer = new StringBuilder("aaaaa\U0001F600"); // 5 ASCII + emoji (2 units) = 7 units
+        var chunks = DrainLoopChunks(buffer, 6);
+        AssertNoLoneSurrogateAcrossChunks(chunks);
+        // First drain backs off the boundary so it does not split the pair; the emoji is deferred
+        // wholly into the remainder, which stays buffered (Length <= maxLength means loop stops).
+        char.IsHighSurrogate(buffer.ToString()[^1]).ShouldBeFalse(
+            "buffer must not be left ending on a lone high surrogate");
+        (string.Concat(chunks) + buffer.ToString()).ShouldBe("aaaaa\U0001F600");
+    }
+
+    /// <summary>
+    /// Runs the surrogate-safe drain one chunk at a time via the production helper while the buffer
+    /// still exceeds <paramref name="maxLength"/>, mirroring the <c>FlushLegacyMarkdownV2Async</c>
+    /// while-loop. The trailing remainder (≤ maxLength) is intentionally left in
+    /// <paramref name="buffer"/> — the production code flushes it separately as the final message —
+    /// so reassembly assertions must add <c>buffer.ToString()</c> to the returned chunks.
+    /// </summary>
+    private static List<string> DrainLoopChunks(StringBuilder buffer, int maxLength)
+    {
+        var chunks = new List<string>();
+        while (buffer.Length > maxLength)
+        {
+            var before = buffer.Length;
+            chunks.Add(TelegramChannelAdapter.DrainStreamingBuffer(buffer, maxLength));
+            buffer.Length.ShouldBeLessThan(before, "each drain must make forward progress");
+        }
+        return chunks;
+    }
+
     /// <summary>
     /// Asserts the OpenClaw invariant: no chunk ends on an unpaired high surrogate, and no chunk
     /// begins on an unpaired low surrogate — i.e. no surrogate pair was severed across a boundary.
