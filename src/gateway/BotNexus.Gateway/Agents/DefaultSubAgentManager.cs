@@ -841,8 +841,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // (2) Count-cap backstop: oldest retired records beyond the cap, regardless of age.
         if (maxRetained > 0 && retired.Count > maxRetained)
         {
+            // Order by (RetiredAt, Sequence) so the eviction is a *total* order: when two records
+            // share an identical RetiredAt (same-tick completions under TimeProvider.System), the
+            // strictly-increasing spawn Sequence breaks the tie deterministically and the
+            // oldest-spawned record is evicted first -- never a coin-flip on enumeration order (#1654).
             var overflow = retired
                 .OrderBy(entry => entry.RetiredAt)
+                .ThenBy(entry => entry.Record.Sequence)
                 .Take(retired.Count - maxRetained)
                 .Select(entry => entry.Id);
             foreach (var id in overflow)
@@ -888,10 +893,26 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// </summary>
     private sealed class SubAgentRecord(SubAgentInfo info, AgentId parentAgentId, AgentId childAgentId)
     {
+        // Process-wide monotonic spawn counter. Assigned once per record at construction so every
+        // record carries a strictly-increasing "spawn age" that is independent of wall-clock
+        // resolution. Used as the deterministic tie-break in the count-cap eviction so that two
+        // records sharing an identical RetiredAt (a real possibility under TimeProvider.System when
+        // sub-agents complete within the same tick) evict the oldest-spawned one first, instead of
+        // letting ConcurrentDictionary enumeration order pick a non-deterministic victim (#1654).
+        private static long _spawnSequenceCounter;
+
         private SubAgentInfo _info = info;
         private int _completionProcessed;
         private int _cleanupStarted;
         private long _retiredAtTicks;
+
+        /// <summary>
+        /// Strictly-increasing spawn-order sequence, assigned once at construction. Provides a total,
+        /// deterministic order for retired records when their <see cref="RetiredAt"/> timestamps tie
+        /// (the count-cap eviction orders by <c>(RetiredAt, Sequence)</c> so the oldest-spawned record
+        /// is always the one evicted). Lower means spawned earlier.
+        /// </summary>
+        public long Sequence { get; } = Interlocked.Increment(ref _spawnSequenceCounter);
 
         /// <summary>Parent agent id captured at spawn. Immutable for the record's lifetime.</summary>
         public AgentId ParentAgentId { get; } = parentAgentId;
