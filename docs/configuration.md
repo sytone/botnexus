@@ -716,7 +716,39 @@ Large tool results (for example a recursive directory listing or a session-histo
 | `toolResultPersistence.enabled` | bool | `true` | Enables the write-time tool-result size cap. |
 | `toolResultPersistence.maxBytes` | int | 16384 (16 KiB) | Maximum UTF-8 byte size of a single persisted tool result. Larger results are truncated with a `[truncated N bytes]` marker. A value of 0 or less disables truncation even when `enabled` is true. |
 
-The section is optional — when absent, the default 16 KiB cap is applied. This is independent of (and complementary to) session compaction: the cap prevents oversized results from ever being persisted, while compaction summarises accumulated context over time.
+The section is optional - when absent, the default 16 KiB cap is applied. This is independent of (and complementary to) session compaction: the cap prevents oversized results from ever being persisted, while compaction summarises accumulated context over time.
+
+
+#### Session Compaction
+
+The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):
+
+- **Token-count threshold** — the estimated LLM-visible token total exceeds `contextWindowTokens × tokenThresholdRatio`.
+- **Bloat-aware (largest-entry) threshold** — a *single* visible history entry is at or above `largestEntryBytesThreshold` UTF-8 bytes. A session can accumulate a small number of enormous low-value entries (for example a raw transcript dump or a directory listing) whose total still sits under the token threshold while the visible tail is dominated by dead weight; this signal makes such a session eligible for compaction so the oversized entry gets summarised away instead of being re-sent on every turn.
+
+```json
+{
+  "gateway": {
+    "compaction": {
+      "preservedTurns": 3,
+      "tokenThresholdRatio": 0.6,
+      "contextWindowTokens": 128000,
+      "largestEntryBytesThreshold": 65536
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `preservedTurns` | int | 3 | Number of most recent user turns preserved verbatim (never summarised). |
+| `maxSummaryChars` | int | 16000 | Maximum characters for the compaction summary. |
+| `tokenThresholdRatio` | double | 0.6 | Fraction of the context window (0.0–1.0) at which the token-count trigger fires. |
+| `contextWindowTokens` | int | 128000 | Approximate context window size (tokens) used for the token-count trigger. |
+| `largestEntryBytesThreshold` | int | 65536 (64 KiB) | A single visible entry at or above this UTF-8 byte size triggers compaction on its own, independently of the token-count threshold. Measured in bytes (not characters) so multibyte payloads are accounted for accurately. A value of 0 or less disables the bloat-aware trigger, leaving only the token-count threshold. |
+| `circuitBreakerCooldownSeconds` | int | 600 | How long the per-session compaction circuit breaker stays open after repeated failures before retrying. |
+
+The section is optional — when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
 
 
 #### Shell Execution Settings
