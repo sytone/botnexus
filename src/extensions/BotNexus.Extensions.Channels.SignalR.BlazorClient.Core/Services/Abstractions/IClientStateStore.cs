@@ -14,6 +14,15 @@ public interface IClientStateStore
     /// <summary>Fire <see cref="OnChanged"/> to trigger UI re-render.</summary>
     void NotifyChanged();
 
+    /// <summary>
+    /// Request a UI re-render via <see cref="OnChanged"/>, time-coalesced for the high-frequency
+    /// streaming-delta path: a burst of calls collapses to at most one render per throttle window
+    /// so a long streamed response does not trigger one re-render per token (#1620). Use this only
+    /// for content/thinking deltas; discrete lifecycle events must use <see cref="NotifyChanged"/>
+    /// so they are never delayed.
+    /// </summary>
+    void NotifyChangedThrottled();
+
     // ── Agent-level ──────────────────────────────────────────────────────────
 
     /// <summary>All known agents keyed by agent ID.</summary>
@@ -334,11 +343,51 @@ public sealed class ConversationStreamState
     /// </remarks>
     public bool IsRunActive { get; set; }
 
-    /// <summary>Accumulated content delta buffer during streaming.</summary>
-    public string Buffer { get; set; } = "";
+    /// <summary>Accumulated content delta buffer during streaming. Backed by a
+    /// <see cref="System.Text.StringBuilder"/> so accumulating thousands of streamed deltas via
+    /// <see cref="AppendBuffer"/> is amortised O(1) per delta rather than an O(n) copy of the
+    /// growing reply on every token (#1620). The setter replaces the whole buffer (used for test
+    /// seeding and bulk resets) and is NOT on the streaming hot path.</summary>
+    public string Buffer
+    {
+        get => _buffer.ToString();
+        set { _buffer.Clear(); if (!string.IsNullOrEmpty(value)) _buffer.Append(value); }
+    }
 
-    /// <summary>Accumulated thinking-content buffer during streaming.</summary>
-    public string ThinkingBuffer { get; set; } = "";
+    /// <summary>Accumulated thinking-content buffer during streaming. Backed by a
+    /// <see cref="System.Text.StringBuilder"/> for the same reason as <see cref="Buffer"/>.</summary>
+    public string ThinkingBuffer
+    {
+        get => _thinkingBuffer.ToString();
+        set { _thinkingBuffer.Clear(); if (!string.IsNullOrEmpty(value)) _thinkingBuffer.Append(value); }
+    }
+
+    private readonly System.Text.StringBuilder _buffer = new();
+    private readonly System.Text.StringBuilder _thinkingBuffer = new();
+
+    /// <summary>Append a content delta to <see cref="Buffer"/>. A <see langword="null"/>
+    /// delta is treated as empty. O(1) amortised -- does not copy the accumulated reply.</summary>
+    public void AppendBuffer(string? delta)
+    {
+        if (!string.IsNullOrEmpty(delta))
+            _buffer.Append(delta);
+    }
+
+    /// <summary>Append a thinking-content delta to <see cref="ThinkingBuffer"/>. A
+    /// <see langword="null"/> delta is treated as empty. O(1) amortised.</summary>
+    public void AppendThinking(string? delta)
+    {
+        if (!string.IsNullOrEmpty(delta))
+            _thinkingBuffer.Append(delta);
+    }
+
+    /// <summary>Clear the content and thinking buffers without touching the streaming flags.
+    /// Used at the start of a fresh streamed message (<see cref="IsStreaming"/> stays asserted).</summary>
+    public void ClearBuffers()
+    {
+        _buffer.Clear();
+        _thinkingBuffer.Clear();
+    }
 
     /// <summary>In-progress tool calls for this conversation keyed by tool-call ID.</summary>
     public Dictionary<string, ActiveToolCall> ActiveToolCalls { get; } = new();
@@ -361,8 +410,8 @@ public sealed class ConversationStreamState
     public void Reset()
     {
         IsStreaming = false;
-        Buffer = "";
-        ThinkingBuffer = "";
+        _buffer.Clear();
+        _thinkingBuffer.Clear();
     }
 
     /// <summary>
