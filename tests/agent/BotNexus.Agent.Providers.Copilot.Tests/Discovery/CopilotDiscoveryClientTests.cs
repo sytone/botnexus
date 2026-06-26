@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Agent.Providers.Copilot.Discovery;
+using BotNexus.Agent.Providers.Core.Utilities;
 using Shouldly;
 
 namespace BotNexus.Agent.Providers.Copilot.Tests.Discovery;
@@ -181,6 +182,110 @@ public class CopilotDiscoveryClientTests
         await Should.ThrowAsync<ArgumentException>(() => client.GetModelsAsync("https://x", ""));
     }
 
+    // --- #1653: untrusted Copilot discovery JSON bodies must be size-bounded (OOM-DoS guard) ---
+    // The discovery host is config/auth-derived (endpoints.api from auth.json, see #1639), so a
+    // hostile / MITM'd / malfunctioning endpoint streaming a multi-GB body must be aborted before
+    // it is buffered. These tests prove the reads route through BoundedHttpContent rather than the
+    // unbounded ReadFromJsonAsync. They use an INFINITE stream so a regression (unbounded read)
+    // surfaces as an abort-or-hang, not a silently passing large allocation.
+
+    [Fact]
+    public async Task GetUserAsync_OverCapBody_AbortsWithoutBufferingWholeBody()
+    {
+        var stream = new NeverEndingStream();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = OverCapJsonContent(stream)
+        });
+        using var http = new HttpClient(handler);
+        var client = new CopilotDiscoveryClient(http);
+
+        // A declared Content-Length over the cap is rejected before a single body byte is pulled.
+        await Should.ThrowAsync<ResponseContentTooLargeException>(() => client.GetUserAsync("ghu_test_token_value"));
+        stream.BytesRead.ShouldBe(0L);
+    }
+
+    [Fact]
+    public async Task GetUserAsync_UnboundedNoLengthBody_AbortsMidFlight()
+    {
+        var stream = new NeverEndingStream();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            // No Content-Length (chunked / lying endpoint): the streaming read itself must abort.
+            Content = new StreamContent(stream)
+        });
+        using var http = new HttpClient(handler);
+        var client = new CopilotDiscoveryClient(http);
+
+        await Should.ThrowAsync<ResponseContentTooLargeException>(() => client.GetUserAsync("ghu_test_token_value"));
+        // Bounded to roughly one chunk past the cap, never the full (infinite) body.
+        stream.BytesRead.ShouldBeGreaterThan(0L);
+        stream.BytesRead.ShouldBeLessThan(BoundedHttpContent.DefaultMaxResponseBytes + (10L * 1024 * 1024));
+    }
+
+    [Fact]
+    public async Task GetModelsAsync_OverCapBody_AbortsWithoutBufferingWholeBody()
+    {
+        var stream = new NeverEndingStream();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = OverCapJsonContent(stream)
+        });
+        using var http = new HttpClient(handler);
+        var client = new CopilotDiscoveryClient(http);
+
+        await Should.ThrowAsync<ResponseContentTooLargeException>(
+            () => client.GetModelsAsync("https://api.example.githubcopilot.com/", "tid=fake_session_token"));
+        stream.BytesRead.ShouldBe(0L);
+    }
+
+    [Fact]
+    public async Task GetUserAsync_NormalBody_StillDeserializesAfterBounding()
+    {
+        // Regression guard: bounding must not change deserialization semantics for legitimate bodies
+        // (the discovery client passes its own CamelCase JsonOptions to the bounded reader).
+        var fixtureJson = await File.ReadAllTextAsync(Path.Combine(FixturesDir, "user-enterprise.json"));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(fixtureJson, System.Text.Encoding.UTF8, "application/json")
+        });
+        using var http = new HttpClient(handler);
+        var client = new CopilotDiscoveryClient(http);
+
+        var info = await client.GetUserAsync("ghu_test_token_value");
+
+        info.Login.ShouldBe("octocat");
+        info.CopilotPlan.ShouldBe("enterprise");
+        info.Endpoints!.Api.ShouldBe("https://api.example.githubcopilot.com");
+    }
+
+    [Fact]
+    public async Task GetModelsAsync_NormalBody_StillDeserializesAfterBounding()
+    {
+        var fixtureJson = await File.ReadAllTextAsync(Path.Combine(FixturesDir, "models-three.json"));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(fixtureJson, System.Text.Encoding.UTF8, "application/json")
+        });
+        using var http = new HttpClient(handler);
+        var client = new CopilotDiscoveryClient(http);
+
+        var resp = await client.GetModelsAsync("https://api.example.githubcopilot.com/", "tid=fake_session_token");
+
+        resp.Data!.Count.ShouldBe(3);
+        resp.Data.ShouldContain(m => m.Id == "claude-sonnet-4.5");
+    }
+
+    // Builds a response body whose declared Content-Length is over the bounded-read cap. Backed by
+    // an infinite stream so any unbounded read would hang rather than pass.
+    private static StreamContent OverCapJsonContent(Stream backing)
+    {
+        var content = new StreamContent(backing);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        content.Headers.ContentLength = BoundedHttpContent.DefaultMaxResponseBytes + 1;
+        return content;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -199,5 +304,40 @@ public class CopilotDiscoveryClientTests
             LastRequest = request;
             return Task.FromResult(_responder(request));
         }
+    }
+
+    /// <summary>
+    /// A read stream that returns bytes forever -- stands in for a hostile endpoint streaming an
+    /// unbounded body. Records how many bytes were actually pulled so a test can prove the bounded
+    /// reader aborted (or rejected up front) instead of draining it.
+    /// </summary>
+    private sealed class NeverEndingStream : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            Array.Fill(buffer, (byte)'a', offset, count);
+            BytesRead += count;
+            return count;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            buffer.Span.Fill((byte)'a');
+            BytesRead += buffer.Length;
+            return ValueTask.FromResult(buffer.Length);
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
