@@ -441,8 +441,17 @@ public sealed class LlmSessionCompactorTests
             ("user", new string('a', 100_000)),
             ("assistant", new string('b', 100_000)));
         var compactor = CreateCompactor("summary");
-        // Set threshold high enough that the session should NOT trigger compaction
-        var options = new CompactionOptions { ContextWindowTokens = 1_000_000, TokenThresholdRatio = 0.5 };
+        // Set threshold high enough that the session should NOT trigger compaction.
+        // #1599: disable the bloat-aware per-entry byte trigger here so this test isolates the
+        // TOKEN-count path only — each 100K-char ASCII entry is ~97.6 KiB, which would otherwise
+        // (correctly) trip the default 64 KiB largest-entry trigger. The bloat-aware trigger is
+        // covered by its own dedicated tests above.
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 0
+        };
         // 200K chars / 4 = 50K estimated tokens < 500K threshold
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
     }
@@ -630,6 +639,137 @@ public sealed class LlmSessionCompactorTests
 
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
             "historical entries must not contribute to the token budget");
+    }
+
+    // ─── Issue #1599: bloat-aware compaction trigger (byte / largest-entry) ──────────
+
+    /// <summary>
+    /// #1599 core: a single oversized low-value entry must make the session eligible for
+    /// compaction even when the global token-count threshold is nowhere near crossed. The
+    /// canonical failure (live session 5ae3d91c) had ~51K tokens (below the token trigger)
+    /// but two rows carrying 117 KB of dead weight — compaction never fired.
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_OversizedSingleEntry_BelowTokenThreshold_TriggersOnBytes()
+    {
+        var session = CreateSession(
+            ("user", "tiny"),
+            ("assistant", "also tiny"),
+            ("tool", new string('x', 70 * 1024)),   // 70 KiB single dead-weight tool result
+            ("user", "latest"));
+        var compactor = CreateCompactor("summary");
+        // Huge context window so the token-count trigger is NOT crossed: ~70 KiB / 4 ≈ 17.9K tokens,
+        // threshold = 1,000,000 * 0.5 = 500,000 tokens. Token path alone would return false.
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue(
+            "a single >64 KiB visible entry must trigger the bloat-aware path even below the token threshold");
+    }
+
+    /// <summary>
+    /// #1599: the byte-aware trigger must be visibility-aware, exactly like the token trigger —
+    /// an oversized entry that is already historical (folded into a prior summary) is hidden
+    /// from the LLM and must NOT re-trigger compaction.
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_OversizedHistoricalEntry_DoesNotTriggerOnBytes()
+    {
+        var session = CreateSession(("user", "tiny"));
+        var entries = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.Tool, Content = new string('x', 70 * 1024), IsHistory = true },
+            new() { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
+            new() { Role = MessageRole.User, Content = "tiny" }
+        };
+        session.ReplaceHistory(entries);
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "a historical oversized entry is hidden from the LLM and must not trigger the bloat path");
+    }
+
+    /// <summary>
+    /// #1599: the bloat-aware trigger is opt-out via threshold &lt;= 0. With it disabled, an
+    /// oversized entry below the token threshold must NOT trigger (preserves pre-#1599 behavior).
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_BloatThresholdDisabled_DoesNotTriggerOnBytes()
+    {
+        var session = CreateSession(
+            ("user", "tiny"),
+            ("tool", new string('x', 70 * 1024)),
+            ("user", "latest"));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 0   // disabled
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "with the bloat threshold disabled, only the token-count trigger applies");
+    }
+
+    /// <summary>
+    /// #1599: no false positives — many small entries that are individually well under the byte
+    /// threshold and collectively under the token threshold must NOT trigger. The bloat path only
+    /// fires on a genuinely oversized single entry, never on an accumulation of normal-sized ones.
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_AllEntriesUnderByteThreshold_BelowTokenThreshold_ReturnsFalse()
+    {
+        var entries = Enumerable.Range(0, 20)
+            .Select(i => (i % 2 == 0 ? "user" : "assistant", new string('a', 1024)))
+            .ToArray();
+        var session = CreateSession(entries);
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "normal-sized entries under the per-entry byte threshold must not trip the bloat path");
+    }
+
+    /// <summary>
+    /// #1599: the bloat trigger measures UTF-8 BYTES, not UTF-16 char count. A multibyte payload
+    /// whose char count is below the threshold but whose byte count exceeds it must trigger.
+    /// (e.g. the Japanese character あ is 3 UTF-8 bytes; 24K of them = 24K chars but ~72 KiB.)
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_OversizedEntry_MeasuresUtf8Bytes_NotCharCount()
+    {
+        // 24,000 chars of a 3-byte character = 24K chars (< 64K char) but ~72 KiB (> 64 KiB byte).
+        var multibyte = new string('あ', 24_000);
+        var session = CreateSession(
+            ("user", "tiny"),
+            ("tool", multibyte),
+            ("user", "latest"));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue(
+            "a multibyte entry under the char threshold but over the byte threshold must trigger");
     }
 
     // ─── Issue #665: Session compactor continuity audit ──────────────────────

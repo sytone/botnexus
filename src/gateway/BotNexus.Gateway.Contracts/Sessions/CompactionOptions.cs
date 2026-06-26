@@ -19,6 +19,19 @@ public sealed record CompactionOptions
     /// <summary>Approximate context window size in tokens for the model (default: 128000).</summary>
     public int ContextWindowTokens { get; init; } = 128_000;
 
+    /// <summary>
+    /// Per-entry size (in UTF-8 bytes) at or above which a single visible history entry makes the
+    /// session eligible for compaction, independently of the token-count threshold (#1599 — bloat-aware
+    /// trigger). A session can accumulate a small number of enormous low-value entries (e.g. a raw
+    /// transcript dump or a directory listing) whose total still sits under <see cref="TokenThresholdRatio"/>
+    /// while the visible tail is dominated by dead weight. This signal is <b>additive</b>: whichever of the
+    /// token-count threshold or this per-entry byte threshold trips first triggers compaction. Only
+    /// LLM-visible entries are considered (historical / already-summarised entries are excluded, exactly
+    /// like the token trigger). Default: 65536 (64 KiB). Values &lt;= 0 disable the byte-based trigger,
+    /// restoring the pre-#1599 token-count-only behaviour.
+    /// </summary>
+    public int LargestEntryBytesThreshold { get; init; } = 65_536;
+
     /// <summary>Model to use for summarization. If null, uses the session's model.</summary>
     public string? SummarizationModel { get; init; }
 
