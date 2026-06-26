@@ -38,6 +38,23 @@ public sealed class SqliteConversationStore : IConversationStore
     private readonly BoundedLruCache<string, Conversation> _cache;
     private bool _initialized;
 
+    // Read round-trip counter (issue #1626). Incremented once per database query issued by the
+    // batched list path of THIS store instance, so the N+1 regression guard can assert that a
+    // list of N conversations does not fan out per-row. Instance-scoped (not static) so parallel
+    // test classes never interfere; best-effort (Interlocked, no ordering needs) and negligible
+    // cost. Only inspected by tests via the internal hooks below.
+    private long _readRoundTrips;
+
+    /// <summary>
+    /// Test hook (issue #1626): number of database read round-trips issued by this store's batched
+    /// list loader since construction (or the last <see cref="ResetReadRoundTripCount"/>). Used by
+    /// the N+1 regression guard to assert list endpoints do not issue a per-row query fan-out.
+    /// </summary>
+    internal long ReadRoundTripCount => Interlocked.Read(ref _readRoundTrips);
+
+    /// <summary>Test hook (issue #1626): resets <see cref="ReadRoundTripCount"/> to zero.</summary>
+    internal void ResetReadRoundTripCount() => Interlocked.Exchange(ref _readRoundTrips, 0);
+
     /// <summary>Default bound for the in-memory conversation cache (entries).</summary>
     public const int DefaultConversationCacheCapacity = 1000;
 
@@ -127,27 +144,14 @@ public sealed class SqliteConversationStore : IConversationStore
         if (agentId is not null)
             command.Parameters.AddWithValue("$agentId", agentId.Value.Value);
 
-        var conversations = new List<Conversation>();
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        var orderedIds = new List<string>();
+        await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
         {
-            var id = reader.GetString(0);
-            Conversation conversation;
-            if (_cache.TryGet(id, out var cached))
-            {
-                conversation = CloneConversation(cached);
-            }
-            else
-            {
-                conversation = await LoadConversationAsync(connection, ConversationId.From(id), ct).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
-                _cache.Set(id, CloneConversation(conversation));
-            }
-
-            conversations.Add(BackfillWorldId(conversation)!);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                orderedIds.Add(reader.GetString(0));
         }
 
-        return conversations;
+        return await MaterializeOrderedAsync(connection, orderedIds, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -185,27 +189,14 @@ public sealed class SqliteConversationStore : IConversationStore
         command.Parameters.AddWithValue("$citizenKind", citizen.Kind.ToString());
         command.Parameters.AddWithValue("$citizenIdValue", citizen.Value);
 
-        var conversations = new List<Conversation>();
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        var orderedIds = new List<string>();
+        await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
         {
-            var id = reader.GetString(0);
-            Conversation conversation;
-            if (_cache.TryGet(id, out var cached))
-            {
-                conversation = CloneConversation(cached);
-            }
-            else
-            {
-                conversation = await LoadConversationAsync(connection, ConversationId.From(id), ct).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
-                _cache.Set(id, CloneConversation(conversation));
-            }
-
-            conversations.Add(BackfillWorldId(conversation)!);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                orderedIds.Add(reader.GetString(0));
         }
 
-        return conversations;
+        return await MaterializeOrderedAsync(connection, orderedIds, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -1105,6 +1096,23 @@ public sealed class SqliteConversationStore : IConversationStore
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
             return null;
 
+        var conversation = MapConversationRow(reader);
+
+        await reader.DisposeAsync().ConfigureAwait(false);
+        conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
+        conversation.Participants = await LoadParticipantsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
+        return conversation;
+    }
+
+    /// <summary>
+    /// Maps the current row of a <c>conversations</c> reader to a <see cref="Conversation"/>.
+    /// The column projection must match the <c>SELECT</c> in <see cref="LoadConversationAsync(SqliteConnection, ConversationId, CancellationToken)"/>
+    /// and the batched loader (<see cref="LoadConversationsByIdsAsync"/>) so single-row and
+    /// batch reads hydrate identically. Child collections (bindings / participants) are NOT
+    /// populated here — the caller attaches them.
+    /// </summary>
+    private static Conversation MapConversationRow(SqliteDataReader reader)
+    {
         var conversation = new Conversation
         {
             ConversationId = ConversationId.From(reader.GetString(0)),
@@ -1128,11 +1136,156 @@ public sealed class SqliteConversationStore : IConversationStore
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
-
-        await reader.DisposeAsync().ConfigureAwait(false);
-        conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
-        conversation.Participants = await LoadParticipantsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
         return conversation;
+    }
+
+    /// <summary>
+    /// Resolves an ordered list of conversation ids to fully-hydrated <see cref="Conversation"/>
+    /// objects, consulting the read-through cache first and batch-loading only the misses in a
+    /// bounded number of queries (issue #1626). Preserves the supplied id order and applies
+    /// <see cref="BackfillWorldId"/> to each result. This is the single seam shared by
+    /// <see cref="ListAsync"/> and <see cref="ListForCitizenAsync"/> so the read-through-cache
+    /// enumeration is not duplicated across them.
+    /// </summary>
+    private async Task<List<Conversation>> MaterializeOrderedAsync(
+        SqliteConnection connection,
+        IReadOnlyList<string> orderedIds,
+        CancellationToken ct)
+    {
+        if (orderedIds.Count == 0)
+            return [];
+
+        // Split cache hits from misses up front; only the misses hit the database, and they do
+        // so in one batched pass rather than a per-row LoadConversationAsync fan-out.
+        var missing = new List<string>();
+        foreach (var id in orderedIds)
+        {
+            if (!_cache.TryGet(id, out _))
+                missing.Add(id);
+        }
+
+        if (missing.Count > 0)
+        {
+            var loaded = await LoadConversationsByIdsAsync(connection, missing, ct).ConfigureAwait(false);
+            foreach (var (id, conversation) in loaded)
+                _cache.Set(id, CloneConversation(conversation));
+        }
+
+        var result = new List<Conversation>(orderedIds.Count);
+        foreach (var id in orderedIds)
+        {
+            if (!_cache.TryGet(id, out var cached))
+                throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
+            result.Add(BackfillWorldId(CloneConversation(cached))!);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Batch-loads conversations for the supplied ids in a fixed number of queries
+    /// (issue #1626): one for the conversation rows, one for all their channel bindings, and one
+    /// for all their participants — grouping the child collections in memory by conversation id.
+    /// Replaces the previous <c>1 + 3N</c> per-row <see cref="LoadConversationAsync(SqliteConnection, ConversationId, CancellationToken)"/>
+    /// fan-out used by the list endpoints. Rows are returned keyed by id; missing ids are simply
+    /// absent from the result. Hydration is identical to the single-row path (shared mappers).
+    /// </summary>
+    private async Task<Dictionary<string, Conversation>> LoadConversationsByIdsAsync(
+        SqliteConnection connection,
+        IReadOnlyList<string> ids,
+        CancellationToken ct)
+    {
+        var byId = new Dictionary<string, Conversation>(ids.Count);
+        if (ids.Count == 0)
+            return byId;
+
+        // 1) Conversation rows.
+        await using (var command = connection.CreateCommand())
+        {
+            var inClause = BuildIdInClause(command, ids);
+            command.CommandText = $"""
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json
+                FROM conversations
+                WHERE id IN ({inClause})
+                """;
+            Interlocked.Increment(ref _readRoundTrips);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var conversation = MapConversationRow(reader);
+                conversation.ChannelBindings = [];
+                conversation.Participants = [];
+                byId[conversation.ConversationId.Value] = conversation;
+            }
+        }
+
+        if (byId.Count == 0)
+            return byId;
+
+        var presentIds = byId.Keys.ToList();
+
+        // 2) All bindings for the present conversations, grouped in memory.
+        await using (var command = connection.CreateCommand())
+        {
+            var inClause = BuildIdInClause(command, presentIds);
+            command.CommandText = $"""
+                SELECT conversation_id, binding_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at
+                FROM conversation_bindings
+                WHERE conversation_id IN ({inClause})
+                ORDER BY conversation_id ASC, binding_id ASC
+                """;
+            Interlocked.Increment(ref _readRoundTrips);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var conversationId = reader.GetString(0);
+                if (byId.TryGetValue(conversationId, out var conversation))
+                    conversation.ChannelBindings.Add(MapBinding(reader, offset: 1));
+            }
+        }
+
+        // 3) All participants for the present conversations, grouped in memory.
+        await using (var command = connection.CreateCommand())
+        {
+            var inClause = BuildIdInClause(command, presentIds);
+            command.CommandText = $"""
+                SELECT conversation_id, citizen_kind, citizen_id, role
+                FROM conversation_participants
+                WHERE conversation_id IN ({inClause})
+                ORDER BY conversation_id ASC, citizen_kind ASC, citizen_id ASC
+                """;
+            Interlocked.Increment(ref _readRoundTrips);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var conversationId = reader.GetString(0);
+                if (byId.TryGetValue(conversationId, out var conversation)
+                    && MapParticipant(reader, offset: 1) is { } participant)
+                {
+                    conversation.Participants.Add(participant);
+                }
+            }
+        }
+
+        return byId;
+    }
+
+    /// <summary>
+    /// Builds a parameterised <c>IN (...)</c> placeholder list for the supplied ids and binds each
+    /// value on <paramref name="command"/>. Parameterised (never interpolated) so ids are never
+    /// concatenated into SQL. Callers must ensure <paramref name="ids"/> is non-empty.
+    /// </summary>
+    private static string BuildIdInClause(SqliteCommand command, IReadOnlyList<string> ids)
+    {
+        var placeholders = new string[ids.Count];
+        for (var i = 0; i < ids.Count; i++)
+        {
+            var name = $"$id{i}";
+            placeholders[i] = name;
+            command.Parameters.AddWithValue(name, ids[i]);
+        }
+
+        return string.Join(", ", placeholders);
     }
 
     private static async Task<List<SessionParticipant>> LoadParticipantsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
@@ -1150,19 +1303,32 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            var kindRaw = reader.GetString(0);
-            var idValue = reader.GetString(1);
-            var role = reader.IsDBNull(2) ? null : reader.GetString(2);
-            if (!TryComposeCitizen(kindRaw, idValue, out var citizen))
-                continue;
-            participants.Add(new SessionParticipant
-            {
-                CitizenId = citizen,
-                Role = role
-            });
+            if (MapParticipant(reader, offset: 0) is { } participant)
+                participants.Add(participant);
         }
 
         return participants;
+    }
+
+    /// <summary>
+    /// Maps a <c>conversation_participants</c> row (<c>citizen_kind, citizen_id, role</c>) to a
+    /// <see cref="SessionParticipant"/>, or returns <see langword="null"/> when the citizen kind is
+    /// unknown (the same skip behaviour as the per-conversation read). <paramref name="offset"/>
+    /// shifts the ordinals so the batched loader's <c>conversation_id</c>-prefixed projection can
+    /// share this mapper.
+    /// </summary>
+    private static SessionParticipant? MapParticipant(SqliteDataReader reader, int offset)
+    {
+        var kindRaw = reader.GetString(offset + 0);
+        var idValue = reader.GetString(offset + 1);
+        var role = reader.IsDBNull(offset + 2) ? null : reader.GetString(offset + 2);
+        if (!TryComposeCitizen(kindRaw, idValue, out var citizen))
+            return null;
+        return new SessionParticipant
+        {
+            CitizenId = citizen,
+            Role = role
+        };
     }
 
     private static bool TryComposeCitizen(string kindRaw, string idValue, out CitizenId citizen)
@@ -1198,22 +1364,30 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            bindings.Add(new ChannelBinding
-            {
-                BindingId = BindingId.From(reader.GetString(0)),
-                ChannelType = ChannelKey.From(reader.GetString(1)),
-                ChannelAddress = ChannelAddress.From(reader.GetString(2)),
-                Mode = ParseBindingMode(reader.GetString(3)),
-                ThreadingMode = ParseThreadingMode(reader.GetString(4)),
-                DisplayPrefix = reader.IsDBNull(5) ? null : reader.GetString(5),
-                BoundAt = ParseTimestamp(reader.GetString(6)),
-                LastInboundAt = reader.IsDBNull(7) ? null : ParseTimestamp(reader.GetString(7)),
-                LastOutboundAt = reader.IsDBNull(8) ? null : ParseTimestamp(reader.GetString(8))
-            });
+            bindings.Add(MapBinding(reader, offset: 0));
         }
 
         return bindings;
     }
+
+    /// <summary>
+    /// Maps a <c>conversation_bindings</c> row to a <see cref="ChannelBinding"/>. <paramref name="offset"/>
+    /// shifts the column ordinals so a projection that prefixes <c>conversation_id</c> (the batched
+    /// loader) can reuse the same mapper as the per-conversation projection. The trailing column
+    /// order must stay identical to the <c>SELECT</c> in <see cref="LoadBindingsAsync"/>.
+    /// </summary>
+    private static ChannelBinding MapBinding(SqliteDataReader reader, int offset) => new()
+    {
+        BindingId = BindingId.From(reader.GetString(offset + 0)),
+        ChannelType = ChannelKey.From(reader.GetString(offset + 1)),
+        ChannelAddress = ChannelAddress.From(reader.GetString(offset + 2)),
+        Mode = ParseBindingMode(reader.GetString(offset + 3)),
+        ThreadingMode = ParseThreadingMode(reader.GetString(offset + 4)),
+        DisplayPrefix = reader.IsDBNull(offset + 5) ? null : reader.GetString(offset + 5),
+        BoundAt = ParseTimestamp(reader.GetString(offset + 6)),
+        LastInboundAt = reader.IsDBNull(offset + 7) ? null : ParseTimestamp(reader.GetString(offset + 7)),
+        LastOutboundAt = reader.IsDBNull(offset + 8) ? null : ParseTimestamp(reader.GetString(offset + 8))
+    };
 
     private static async Task SaveConversationAsync(SqliteConnection connection, Conversation conversation, bool upsert, CancellationToken ct)
     {
