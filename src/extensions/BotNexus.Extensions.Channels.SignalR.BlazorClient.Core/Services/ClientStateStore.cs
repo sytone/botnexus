@@ -10,6 +10,21 @@ public sealed class ClientStateStore : IClientStateStore
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
     private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
+    // High-frequency streaming deltas (content/thinking) route through NotifyChangedThrottled,
+    // which coalesces a burst into at most one render per window so a long streamed response
+    // does not trigger one StateHasChanged per token (#1620). Discrete lifecycle events keep
+    // using the immediate NotifyChanged. The window is computed from an injectable clock so the
+    // coalescing is deterministically testable (mirrors the repo's TimeProvider test pattern).
+    private static readonly TimeSpan ThrottleWindow = TimeSpan.FromMilliseconds(50);
+    private readonly TimeProvider _clock;
+    private DateTimeOffset _lastNotifyUtc = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Creates the store. <paramref name="clock"/> drives the streaming-render coalescing
+    /// window; it defaults to <see cref="TimeProvider.System"/> and is only overridden in tests.
+    /// </summary>
+    public ClientStateStore(TimeProvider? clock = null) => _clock = clock ?? TimeProvider.System;
+
     // ── IClientStateStore ────────────────────────────────────────────────────
 
     /// <inheritdoc />
@@ -273,7 +288,7 @@ public sealed class ClientStateStore : IClientStateStore
         if (conv is null)
             return;
 
-        conv.StreamState.Buffer += delta;
+        conv.StreamState.AppendBuffer(delta);
         NotifyChanged();
     }
 
@@ -297,9 +312,7 @@ public sealed class ClientStateStore : IClientStateStore
             });
         }
 
-        conv.StreamState.Buffer = "";
-        conv.StreamState.ThinkingBuffer = "";
-        conv.StreamState.IsStreaming = false;
+        conv.StreamState.Reset();
 
         // Keep agent-level state in sync
         foreach (var agent in _agents.Values)
@@ -473,6 +486,30 @@ public sealed class ClientStateStore : IClientStateStore
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public void NotifyChanged() => OnChanged?.Invoke();
+    public void NotifyChanged()
+    {
+        // Immediate render for discrete lifecycle events (tool start/end, message complete,
+        // run end, etc.). Resets the coalescing window so any change accumulated by a throttled
+        // delta is now on screen and the next streamed delta fires on its leading edge.
+        _lastNotifyUtc = _clock.GetUtcNow();
+        OnChanged?.Invoke();
+    }
+
+    /// <inheritdoc />
+    public void NotifyChangedThrottled()
+    {
+        // Leading-edge + coalesce: the first notify in a window renders immediately; further
+        // notifies inside the same window are dropped (coalesced) so a burst of streamed tokens
+        // collapses to at most one render per window. The trailing accumulated state is always
+        // flushed by the next window's leading edge or by a discrete NotifyChanged (which every
+        // stream terminates with: message-end / turn-end / commit). This avoids a background
+        // timer entirely, keeping the path allocation-free and deterministically testable.
+        var now = _clock.GetUtcNow();
+        if (now - _lastNotifyUtc < ThrottleWindow)
+            return;
+
+        _lastNotifyUtc = now;
+        OnChanged?.Invoke();
+    }
 }
 

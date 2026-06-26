@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -23,6 +24,11 @@ namespace BotNexus.Agent.Core.Configuration;
 /// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
 /// <param name="ToolTimeout">Per-tool execution timeout. Null = no timeout (not recommended). Defaults to 120 seconds.</param>
+/// <param name="ClaimAudit">
+/// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
+/// When provided and enabled, the agent's final message is audited for artifact-shaped claims that
+/// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -41,4 +47,5 @@ public record AgentLoopConfig(
     SimpleStreamOptions GenerationSettings,
     int? MaxRetryDelayMs = null,
     bool SkipInitialSteeringPoll = false,
-    TimeSpan? ToolTimeout = null);
+    TimeSpan? ToolTimeout = null,
+    ClaimAuditOptions? ClaimAudit = null);
