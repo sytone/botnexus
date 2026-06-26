@@ -29,6 +29,18 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private readonly GatewayAuthManager? _authManager;
 
     /// <summary>
+    /// Resolves the per-provider API-endpoint override (e.g. enterprise vs individual GitHub
+    /// Copilot) used to rewrite a candidate model's <see cref="LlmModel.BaseUrl"/> before the
+    /// summarization call. Mirrors the override the live agent path applies in
+    /// <c>InProcessIsolationStrategy</c> (#1635): without it, a model registered with the static
+    /// individual Copilot BaseUrl is POSTed to the wrong host on an enterprise account, returns
+    /// HTTP 421 Misdirected Request, the summary comes back empty, and the session is wedged.
+    /// Defaults to <see cref="GatewayAuthManager.GetApiEndpoint"/>; null when no auth manager is
+    /// available (the static BaseUrl is then used unchanged).
+    /// </summary>
+    private readonly Func<string, string?>? _endpointResolver;
+
+    /// <summary>
     /// Tracks consecutive compaction failures per session for circuit breaker logic.
     /// After <see cref="MaxConsecutiveFailures"/> consecutive failures the breaker opens for that
     /// session, but only for a bounded cooldown window (see <see cref="BreakerState"/> and
@@ -70,6 +82,30 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         _redactor = redactor;
         _platformConfig = platformConfig;
         _authManager = authManager;
+        // The endpoint override is the same one the live agent path applies; derive it from the
+        // auth manager so the compaction call targets the correct provider endpoint (#1635).
+        _endpointResolver = authManager is not null ? authManager.GetApiEndpoint : null;
+    }
+
+    /// <summary>
+    /// Test seam (#1635): constructs the compactor with an explicit endpoint resolver so the
+    /// BaseUrl-override behaviour can be unit-tested without a concrete <see cref="GatewayAuthManager"/>
+    /// (which reads auth.json). Production code uses the public constructor, which derives the
+    /// resolver from the auth manager.
+    /// </summary>
+    internal LlmSessionCompactor(
+        LlmClient llmClient,
+        ILogger<LlmSessionCompactor> logger,
+        Func<string, string?>? endpointResolver,
+        ISecretRedactor? redactor = null,
+        IOptionsMonitor<PlatformConfig>? platformConfig = null)
+    {
+        _llmClient = llmClient;
+        _logger = logger;
+        _redactor = redactor;
+        _platformConfig = platformConfig;
+        _authManager = null;
+        _endpointResolver = endpointResolver;
     }
 
     public bool ShouldCompact(Session session, CompactionOptions options)
@@ -658,6 +694,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         void Add(LlmModel? model)
         {
             if (model is null) return;
+            // #1635: rewrite the candidate's BaseUrl to the per-provider endpoint override (e.g.
+            // enterprise vs individual GitHub Copilot) so the summarization request targets the same
+            // host the live agent path uses. Applied at the single funnel so the primary AND every
+            // fallback candidate inherit the override uniformly.
+            model = ApplyEndpointOverride(model, _endpointResolver);
             // De-dupe on provider+id so we don't retry the identical endpoint.
             var key = $"{model.Provider}::{model.Id}";
             if (seen.Add(key))
@@ -677,6 +718,27 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// Applies the per-provider API-endpoint override to a model's <see cref="LlmModel.BaseUrl"/>
+    /// (#1635). When <paramref name="endpointResolver"/> yields a non-empty endpoint for the model's
+    /// provider, the model is returned with that BaseUrl; otherwise the model is returned unchanged.
+    /// This mirrors the override the live agent path applies (<c>InProcessIsolationStrategy</c>),
+    /// ensuring the summarization request hits the same host (e.g. enterprise vs individual GitHub
+    /// Copilot) rather than the static built-in BaseUrl. Pure and null-safe so it is trivially
+    /// unit-testable and never throws for a missing resolver.
+    /// </summary>
+    internal static LlmModel ApplyEndpointOverride(LlmModel model, Func<string, string?>? endpointResolver)
+    {
+        if (endpointResolver is null)
+            return model;
+
+        var endpoint = endpointResolver(model.Provider);
+        if (string.IsNullOrWhiteSpace(endpoint) || string.Equals(endpoint, model.BaseUrl, StringComparison.Ordinal))
+            return model;
+
+        return model with { BaseUrl = endpoint };
     }
 
     private LlmModel ResolveModel(string? requestedModelId, string? preferredProvider = null)
