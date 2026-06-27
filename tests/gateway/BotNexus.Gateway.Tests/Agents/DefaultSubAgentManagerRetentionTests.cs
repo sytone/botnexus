@@ -86,6 +86,47 @@ public sealed class DefaultSubAgentManagerRetentionTests
     }
 
     [Fact]
+    public async Task CountCap_WhenRetirementTimestampsTie_EvictsOldestSpawnedDeterministically()
+    {
+        // Regression for the flaky CountCap eviction (#1654): when two retired records share an
+        // identical RetiredAt (the clock is NOT advanced between the two spawns, so both retire at
+        // the same instant), the count-cap eviction must still be a *total* order -- the
+        // oldest-spawned record is evicted, deterministically. Before the monotonic spawn-sequence
+        // tie-break, OrderBy(RetiredAt) tied and the ConcurrentDictionary enumeration order decided
+        // the victim, so this could evict the *newer* record ~half the time.
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-06-16T00:00:00Z"));
+        var options = new SubAgentOptions { CompletedRecordRetentionMinutes = 0, MaxRetainedCompletedRecords = 1 };
+        var manager = CreateManager(CreateSuccessfulHandle(), options, clock);
+
+        var first = await manager.SpawnAsync(CreateSpawnRequest());
+        await WaitUntilAsync(async () => (await manager.GetAsync(first.SubAgentId))?.Status == SubAgentStatus.Completed,
+            TimeSpan.FromSeconds(2));
+
+        // Deliberately do NOT advance the clock -- `second` retires at the same instant as `first`,
+        // forcing an exact RetiredAt tie that only the spawn-order tie-break can resolve.
+        var second = await manager.SpawnAsync(CreateSpawnRequest());
+        await WaitUntilAsync(async () => (await manager.GetAsync(second.SubAgentId))?.Status == SubAgentStatus.Completed,
+            TimeSpan.FromSeconds(2));
+
+        // Wait until the cap-driven reap has fired with *both* records retired (exactly one of the
+        // two survives under cap=1). Each GetAsync triggers a reap, so this also drives it.
+        await WaitUntilAsync(
+            async () =>
+            {
+                var firstPresent = (await manager.GetAsync(first.SubAgentId)) is not null;
+                var secondPresent = (await manager.GetAsync(second.SubAgentId)) is not null;
+                return !(firstPresent && secondPresent); // one has been evicted
+            },
+            TimeSpan.FromSeconds(2));
+
+        // The oldest-spawned record (`first`) must be the one evicted, every run.
+        var olderAfter = await manager.GetAsync(first.SubAgentId);
+        var newerAfter = await manager.GetAsync(second.SubAgentId);
+        olderAfter.ShouldBeNull();
+        newerAfter.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task Kill_AfterCompletionCleanup_DoesNotThrow_TimeoutSourceDisposedIdempotently()
     {
         var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-06-16T00:00:00Z"));
