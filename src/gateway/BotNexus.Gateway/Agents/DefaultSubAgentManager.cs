@@ -64,6 +64,43 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Eagerly pins the freshly-created child session to the parent's conversation BEFORE
+    /// <see cref="SpawnAsync"/> returns, so concurrent lookups
+    /// (<see cref="ISessionStore.ListByConversationAsync"/>, /api/conversations/{id}/history,
+    /// canvas resolvers) never observe the child as an orphan. Prior to this the pin ran inside the
+    /// fire-and-forget <c>Task.Run</c> at the end of <c>SpawnAsync</c>, opening an orphan window
+    /// between the method returning and the background task being scheduled (Phase 4 / F-6).
+    /// </summary>
+    /// <remarks>
+    /// No-op when no <see cref="ISessionStore"/> is wired, or when the child session row does not
+    /// yet exist in the store. Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
+    /// named, awaited unit on the orchestration path (#1630); the eager (not lazy) ordering is
+    /// guarded by the architecture/behaviour tests. Declared BEFORE <c>SpawnAsync</c> so the
+    /// <c>.ConversationId =</c> mutation lexically precedes the fire-and-forget <c>Task.Run</c> in
+    /// the orchestrator -- the F-6 architecture fence
+    /// (SubAgentEagerPinArchitectureTests.NoConversationIdMutation_InsideTaskRun) is a source-position
+    /// check, so the eager-pin helper must sit above the queue point even though it is awaited first.
+    /// </remarks>
+    /// <param name="request">The spawn request carrying the inherited conversation id.</param>
+    /// <param name="childSessionId">The minted child session to bind to the parent conversation.</param>
+    /// <param name="ct">Cancellation token for the store reads/writes.</param>
+    private async Task PinChildConversationAsync(
+        SubAgentSpawnRequest request,
+        SessionId childSessionId,
+        CancellationToken ct)
+    {
+        if (_sessionStore is null)
+            return;
+
+        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
+        if (childSession is not null)
+        {
+            childSession.ConversationId = request.InheritedConversationId;
+            await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+        }
+    }
+
     /// <inheritdoc />
     public async Task<SubAgentInfo> SpawnAsync(SubAgentSpawnRequest request, CancellationToken ct = default)
     {
@@ -95,53 +132,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         // Validate tool grants against parent's deny-list (privilege escalation
         // prevention). Runs AFTER plan resolution so it reads the typed `toolIds`
-        // resolved from Mode, not a deleted top-level request field.
-        if (_policyProvider is not null && toolIds is { Count: > 0 })
-        {
-            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
-            if (parentDenyList.Count > 0)
-            {
-                var denied = toolIds
-                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
-                    .ToList();
-                if (denied.Count > 0)
-                    throw new InvalidOperationException(
-                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
-            }
-        }
+        // resolved from Mode, not a deleted top-level request field. See ValidateToolGrants.
+        ValidateToolGrants(request, toolIds);
 
-        // Build file access policy for workspace isolation.
-        // By default, sub-agents can only access their own temp workspace.
-        // ShareWorkspace grants read+write to the parent's workspace.
-        // GrantedPaths adds read-only access to specific directories.
-        FileAccessPolicy? childFileAccess = null;
-        if (request.ShareWorkspace || request.GrantedPaths is { Count: > 0 })
-        {
-            var allowedRead = new List<string>();
-            var allowedWrite = new List<string>();
-
-            if (request.ShareWorkspace && _workspaceManager is not null)
-            {
-                var parentWorkspace = _workspaceManager.GetWorkspacePath(request.ParentAgentId.Value);
-                allowedRead.Add(parentWorkspace);
-                allowedWrite.Add(parentWorkspace);
-            }
-
-            if (request.GrantedPaths is { Count: > 0 })
-            {
-                foreach (var grantedPath in request.GrantedPaths)
-                {
-                    if (!string.IsNullOrWhiteSpace(grantedPath))
-                        allowedRead.Add(Path.GetFullPath(grantedPath));
-                }
-            }
-
-            childFileAccess = new FileAccessPolicy
-            {
-                AllowedReadPaths = allowedRead,
-                AllowedWritePaths = allowedWrite
-            };
-        }
+        // Build file access policy for workspace isolation. Null means "fully isolated" -
+        // the child falls back to the base descriptor's FileAccess below. See
+        // BuildChildFileAccessPolicy.
+        var childFileAccess = BuildChildFileAccessPolicy(request);
 
         if (!_registry.Contains(childAgentId))
         {
@@ -157,20 +154,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
         // Eager conversation pinning (Phase 4 / F-6): pin the child session to the
-        // parent conversation BEFORE returning, so concurrent lookups (e.g.
-        // ISessionStore.ListByConversationAsync, /api/conversations/{id}/history,
-        // canvas resolvers) never see the child as an orphan. Prior to this, the pin
-        // ran inside the fire-and-forget Task.Run below, opening an orphan window
-        // between SpawnAsync returning and the background task being scheduled.
-        if (_sessionStore is not null)
-        {
-            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
-            if (childSession is not null)
-            {
-                childSession.ConversationId = request.InheritedConversationId;
-                await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
-            }
-        }
+        // parent conversation BEFORE returning, so concurrent lookups never see the
+        // child as an orphan. See PinChildConversationAsync.
+        await PinChildConversationAsync(request, childSessionId, ct).ConfigureAwait(false);
 
         var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
             ? null
@@ -357,6 +343,92 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
                     + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
         }
+    }
+
+    /// <summary>
+    /// Rejects a spawn whose child would be granted a tool the parent is denied - the
+    /// privilege-escalation guard on the security-critical spawn path. A sub-agent must never
+    /// hold authority the parent itself lacks, so any requested tool that intersects the parent's
+    /// effective deny-list aborts the spawn before any session, descriptor, or record is created.
+    /// </summary>
+    /// <remarks>
+    /// No-op when there is no policy provider, the child requests no tools, or the parent's
+    /// effective deny-list is empty - none of those can escalate. The deny match is
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> so casing cannot defeat the check. Must run
+    /// AFTER <see cref="ResolveSpawnPlan"/> because <paramref name="toolIds"/> is the typed list
+    /// resolved from <see cref="SubAgentSpawnRequest.Mode"/>. Extracted from <see cref="SpawnAsync"/>
+    /// so the escalation-rejection boundary is independently unit-testable (#1630).
+    /// </remarks>
+    /// <param name="request">The spawn request whose parent supplies the deny-list.</param>
+    /// <param name="toolIds">The resolved tools the child would be granted, or <c>null</c>/empty.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when one or more requested tools appear in the parent's effective deny-list.
+    /// </exception>
+    internal void ValidateToolGrants(SubAgentSpawnRequest request, IReadOnlyList<string>? toolIds)
+    {
+        if (_policyProvider is null || toolIds is not { Count: > 0 })
+            return;
+
+        var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
+        if (parentDenyList.Count == 0)
+            return;
+
+        var denied = toolIds
+            .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (denied.Count > 0)
+            throw new InvalidOperationException(
+                $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
+    }
+
+    /// <summary>
+    /// Composes the child's <see cref="FileAccessPolicy"/> for workspace isolation, or returns
+    /// <c>null</c> when the child should stay fully isolated (the caller then falls back to the
+    /// base descriptor's <see cref="AgentDescriptor.FileAccess"/>). By default a sub-agent can only
+    /// reach its own temporary workspace; <see cref="SubAgentSpawnRequest.ShareWorkspace"/> adds
+    /// read+write access to the parent's workspace, and <see cref="SubAgentSpawnRequest.GrantedPaths"/>
+    /// adds read-only access to specific directories.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>null</c> (not an empty policy) when neither <c>ShareWorkspace</c> nor any granted
+    /// path is requested, preserving the descriptor-inheritance fallback at the call site. The
+    /// parent-workspace grant is skipped when no <see cref="IAgentWorkspaceManager"/> is wired.
+    /// Blank/whitespace granted paths are filtered so they cannot silently widen access, and each
+    /// kept path is resolved via <see cref="Path.GetFullPath(string)"/>. Extracted from
+    /// <see cref="SpawnAsync"/> so the policy composition (read/write split, blank filtering, the
+    /// isolated -> null contract) is independently unit-testable (#1630).
+    /// </remarks>
+    /// <param name="request">The spawn request carrying the share-workspace flag and granted paths.</param>
+    /// <returns>The composed policy, or <c>null</c> when the child stays fully isolated.</returns>
+    internal FileAccessPolicy? BuildChildFileAccessPolicy(SubAgentSpawnRequest request)
+    {
+        if (!request.ShareWorkspace && request.GrantedPaths is not { Count: > 0 })
+            return null;
+
+        var allowedRead = new List<string>();
+        var allowedWrite = new List<string>();
+
+        if (request.ShareWorkspace && _workspaceManager is not null)
+        {
+            var parentWorkspace = _workspaceManager.GetWorkspacePath(request.ParentAgentId.Value);
+            allowedRead.Add(parentWorkspace);
+            allowedWrite.Add(parentWorkspace);
+        }
+
+        if (request.GrantedPaths is { Count: > 0 })
+        {
+            foreach (var grantedPath in request.GrantedPaths)
+            {
+                if (!string.IsNullOrWhiteSpace(grantedPath))
+                    allowedRead.Add(Path.GetFullPath(grantedPath));
+            }
+        }
+
+        return new FileAccessPolicy
+        {
+            AllowedReadPaths = allowedRead,
+            AllowedWritePaths = allowedWrite
+        };
     }
 
     /// <inheritdoc />

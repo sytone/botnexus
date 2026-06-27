@@ -59,6 +59,41 @@ public static class SystemPromptBuilder
     private const string MemoryPromptInjectionNone = "none";
     private const bool IncludeReplyTagsSectionByDefault = false;
 
+    /// <summary>
+    /// Declarative ordering for the prompt pipeline sections. Each value is the sort key passed to
+    /// <see cref="LambdaPromptSection"/>; the section with the lowest key renders first. Naming the
+    /// keys (rather than scattering bare int literals across the pipeline) makes the section order
+    /// readable and keeps the gaps that leave room for future sections to slot in between.
+    /// </summary>
+    private static class PromptOrder
+    {
+        public const int Tooling = 10;
+        public const int Safety = 40;
+        public const int Cli = 42;
+        public const int Memory = 60;
+        public const int SelfUpdate = 70;
+        public const int ModelAliases = 80;
+        public const int Workspace = 90;
+        public const int Docs = 100;
+        public const int UserIdentity = 110;
+        public const int Time = 120;
+        public const int ConversationContext = 125;
+        public const int ConversationInstructions = 127;
+        public const int ConversationTodo = 128;
+        public const int WorkspaceFilesHeader = 130;
+        public const int ReplyTags = 140;
+        public const int Messaging = 150;
+        public const int Voice = 160;
+        public const int Reasoning = 170;
+        public const int StableProjectContext = 180;
+        public const int SilentReplies = 190;
+        public const int CacheBoundary = 200;
+        public const int DynamicProjectContext = 210;
+        public const int ExtraSystemPrompt = 220;
+        public const int Heartbeat = 230;
+        public const int Runtime = 240;
+    }
+
         public static string Build(SystemPromptParams @params)
     {
         ArgumentNullException.ThrowIfNull(@params);
@@ -81,7 +116,7 @@ public static class SystemPromptBuilder
         var inlineButtonsEnabled = runtimeCapabilities.Contains("inlinebuttons", StringComparer.Ordinal);
 
         var contextFiles = (@params.ContextFiles ?? []).Where(static file => !string.IsNullOrWhiteSpace(file.Path)).ToList();
-        var orderedContextFiles = sortContextFilesForPrompt(contextFiles);
+        var orderedContextFiles = SortContextFilesForPrompt(contextFiles);
         var stableContextFiles = orderedContextFiles.Where(static file => !IsDynamicContextFile(file.Path)).ToList();
         var dynamicContextFiles = orderedContextFiles.Where(static file => IsDynamicContextFile(file.Path)).ToList();
 
@@ -114,53 +149,47 @@ public static class SystemPromptBuilder
         };
 
         var pipeline = new PromptPipeline()
-            .Add(new LambdaPromptSection(10, BuildToolingSection, xmlTag: "tooling"))
+            .Add(new LambdaPromptSection(PromptOrder.Tooling, BuildToolingSection, xmlTag: "tooling"))
             .Add(ToolEnforcementSection.Create())
             .Add(ShellEfficiencySection.Create())
-            .Add(new LambdaPromptSection(40, BuildSafetySection, xmlTag: "safety"))
-            .Add(new LambdaPromptSection(42, BuildCliSection, xmlTag: "cli"))
+            .Add(new LambdaPromptSection(PromptOrder.Safety, BuildSafetySection, xmlTag: "safety"))
+            .Add(new LambdaPromptSection(PromptOrder.Cli, BuildCliSection, xmlTag: "cli"))
             .Add(SkillsGuidanceSection.Create())
-            .Add(new LambdaPromptSection(60, static context => buildMemorySection(
-                GetGatewayData(context).IsMinimal,
-                GetGatewayData(context).Parameters.MemoryPromptInjection,
-                GetGatewayData(context).NormalizedTools), xmlTag: "memory"))
-            .Add(new LambdaPromptSection(70, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
-            .Add(new LambdaPromptSection(80, BuildModelAliasesSection))
-            .Add(new LambdaPromptSection(90, BuildWorkspaceSection, xmlTag: "workspace"))
-            .Add(new LambdaPromptSection(100, static context => buildDocsSection(GetGatewayData(context).Parameters.DocsPath, GetGatewayData(context).IsMinimal, GetGatewayData(context).ReadToolName)))
-            .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
-            .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
-            .Add(new LambdaPromptSection(125, BuildConversationContextSection, HasConversationContext))
-            .Add(new LambdaPromptSection(127, BuildConversationInstructionsSection, HasConversationInstructions))
-            .Add(new LambdaPromptSection(128, BuildConversationTodoSection, HasConversationTodo, xmlTag: "conversation_todo"))
-            .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
+            .Add(new LambdaPromptSection(PromptOrder.Memory, BuildMemoryGuidanceSection, xmlTag: "memory"))
+            .Add(new LambdaPromptSection(PromptOrder.SelfUpdate, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(PromptOrder.ModelAliases, BuildModelAliasesSection))
+            .Add(new LambdaPromptSection(PromptOrder.Workspace, BuildWorkspaceSection, xmlTag: "workspace"))
+            .Add(new LambdaPromptSection(PromptOrder.Docs, BuildDocsGuidanceSection))
+            .Add(new LambdaPromptSection(PromptOrder.UserIdentity, BuildUserIdentityGuidanceSection))
+            .Add(new LambdaPromptSection(PromptOrder.Time, BuildTimeGuidanceSection))
+            .Add(new LambdaPromptSection(PromptOrder.ConversationContext, BuildConversationContextSection, HasConversationContext))
+            .Add(new LambdaPromptSection(PromptOrder.ConversationInstructions, BuildConversationInstructionsSection, HasConversationInstructions))
+            .Add(new LambdaPromptSection(PromptOrder.ConversationTodo, BuildConversationTodoSection, HasConversationTodo, xmlTag: "conversation_todo"))
+            .Add(new LambdaPromptSection(PromptOrder.WorkspaceFilesHeader, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(ModelGuidanceSection.Create())
-            .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
-            .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled), xmlTag: "messaging"))
-            .Add(new LambdaPromptSection(160, static context => buildVoiceSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).Parameters.TtsHint)))
-            .Add(new LambdaPromptSection(170, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
-            .Add(new LambdaPromptSection(180, static context => buildProjectContextSection(GetGatewayData(context).StableContextFiles, "# Project Context", dynamic: false)))
-            .Add(new LambdaPromptSection(190, BuildSilentRepliesSection, static context => !GetGatewayData(context).IsMinimal, xmlTag: "silent_replies"))
-            .Add(new LambdaPromptSection(200, static _ => [SystemPromptCacheBoundary]))
-            .Add(new LambdaPromptSection(210, static context => buildProjectContextSection(
-                GetGatewayData(context).DynamicContextFiles,
-                GetGatewayData(context).StableContextFiles.Count > 0 ? "# Dynamic Project Context" : "# Project Context",
-                dynamic: true)))
-            .Add(new LambdaPromptSection(220, BuildExtraSystemPromptSection))
-            .Add(new LambdaPromptSection(230, BuildHeartbeatSection, static context => !GetGatewayData(context).IsMinimal))
-            .Add(new LambdaPromptSection(240, BuildRuntimeSection, xmlTag: "runtime"));
+            .Add(new LambdaPromptSection(PromptOrder.ReplyTags, BuildReplyTagsGuidanceSection, static _ => IncludeReplyTagsSectionByDefault))
+            .Add(new LambdaPromptSection(PromptOrder.Messaging, BuildMessagingGuidanceSection, xmlTag: "messaging"))
+            .Add(new LambdaPromptSection(PromptOrder.Voice, BuildVoiceGuidanceSection))
+            .Add(new LambdaPromptSection(PromptOrder.Reasoning, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
+            .Add(new LambdaPromptSection(PromptOrder.StableProjectContext, BuildStableProjectContextSection))
+            .Add(new LambdaPromptSection(PromptOrder.SilentReplies, BuildSilentRepliesSection, static context => !GetGatewayData(context).IsMinimal, xmlTag: "silent_replies"))
+            .Add(new LambdaPromptSection(PromptOrder.CacheBoundary, static _ => [SystemPromptCacheBoundary]))
+            .Add(new LambdaPromptSection(PromptOrder.DynamicProjectContext, BuildDynamicProjectContextSection))
+            .Add(new LambdaPromptSection(PromptOrder.ExtraSystemPrompt, BuildExtraSystemPromptSection))
+            .Add(new LambdaPromptSection(PromptOrder.Heartbeat, BuildHeartbeatSection, static context => !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(PromptOrder.Runtime, BuildRuntimeSection, xmlTag: "runtime"));
 
         var lines = pipeline.BuildLines(promptContext);
         return string.Join("\n", lines.Where(static line => !string.IsNullOrEmpty(line)));
     }
-    public static IReadOnlyList<ContextFile> sortContextFilesForPrompt(IReadOnlyList<ContextFile> contextFiles)
+    public static IReadOnlyList<ContextFile> SortContextFilesForPrompt(IReadOnlyList<ContextFile> contextFiles)
     {
         return ContextFileOrdering.SortForPrompt(contextFiles.Select(static file => new BotNexus.Gateway.Prompts.ContextFile(file.Path, file.Content)).ToList())
             .Select(static file => new ContextFile(file.Path, file.Content))
             .ToList();
     }
 
-    public static IReadOnlyList<string> buildProjectContextSection(IReadOnlyList<ContextFile> files, string heading, bool dynamic)
+    public static IReadOnlyList<string> BuildProjectContextSection(IReadOnlyList<ContextFile> files, string heading, bool dynamic)
     {
         if (files.Count == 0)
             return [];
@@ -193,12 +222,12 @@ public static class SystemPromptBuilder
     }
 
 
-    public static IReadOnlyList<string> buildMemorySection(bool isMinimal, IReadOnlySet<string> availableTools)
+    public static IReadOnlyList<string> BuildMemorySection(bool isMinimal, IReadOnlySet<string> availableTools)
     {
-        return buildMemorySection(isMinimal, null, availableTools);
+        return BuildMemorySection(isMinimal, null, availableTools);
     }
 
-    public static IReadOnlyList<string> buildMemorySection(bool isMinimal, string? promptInjectionMode, IReadOnlySet<string> availableTools)
+    public static IReadOnlyList<string> BuildMemorySection(bool isMinimal, string? promptInjectionMode, IReadOnlySet<string> availableTools)
     {
         if (isMinimal)
             return [];
@@ -229,7 +258,7 @@ public static class SystemPromptBuilder
         ];
     }
 
-    public static IReadOnlyList<string> buildUserIdentitySection(string? ownerLine, bool isMinimal)
+    public static IReadOnlyList<string> BuildUserIdentitySection(string? ownerLine, bool isMinimal)
     {
         if (string.IsNullOrWhiteSpace(ownerLine) || isMinimal)
             return [];
@@ -237,7 +266,7 @@ public static class SystemPromptBuilder
         return ["## Authorized Senders", ownerLine.Trim(), ""];
     }
 
-    public static IReadOnlyList<string> buildTimeSection(string? userTimezone)
+    public static IReadOnlyList<string> BuildTimeSection(string? userTimezone)
     {
         if (string.IsNullOrWhiteSpace(userTimezone))
             return [];
@@ -245,7 +274,7 @@ public static class SystemPromptBuilder
         return ["## Current Date & Time", $"Time zone: {userTimezone.Trim()}", ""];
     }
 
-    public static IReadOnlyList<string> buildReplyTagsSection(bool isMinimal)
+    public static IReadOnlyList<string> BuildReplyTagsSection(bool isMinimal)
     {
         if (isMinimal)
             return [];
@@ -263,7 +292,7 @@ public static class SystemPromptBuilder
         ];
     }
 
-    public static IReadOnlyList<string> buildMessagingSection(
+    public static IReadOnlyList<string> BuildMessagingSection(
         bool isMinimal,
         IReadOnlySet<string> availableTools,
         string? runtimeChannel,
@@ -300,7 +329,7 @@ public static class SystemPromptBuilder
         return lines.Where(static line => !string.IsNullOrWhiteSpace(line)).ToList();
     }
 
-    public static IReadOnlyList<string> buildVoiceSection(bool isMinimal, string? ttsHint)
+    public static IReadOnlyList<string> BuildVoiceSection(bool isMinimal, string? ttsHint)
     {
         if (isMinimal)
             return [];
@@ -312,7 +341,7 @@ public static class SystemPromptBuilder
         return ["## Voice (TTS)", hint, ""];
     }
 
-    public static IReadOnlyList<string> buildDocsSection(string? docsPath, bool isMinimal, string readToolName)
+    public static IReadOnlyList<string> BuildDocsSection(string? docsPath, bool isMinimal, string readToolName)
     {
         _ = readToolName;
         var normalizedDocsPath = NormalizeStructuredPromptSection(docsPath);
@@ -333,7 +362,7 @@ public static class SystemPromptBuilder
         ];
     }
 
-    public static string buildRuntimeLine(RuntimeInfo? runtime)
+    public static string BuildRuntimeLine(RuntimeInfo? runtime)
     {
         return RuntimeLineFormatter.BuildRuntimeLine(runtime is null ? null : new PromptRuntimeInfo
         {
@@ -352,7 +381,7 @@ public static class SystemPromptBuilder
         });
     }
 
-    public static IReadOnlyList<string> buildOverridablePromptSection(string? overrideValue, IReadOnlyList<string> fallback)
+    public static IReadOnlyList<string> BuildOverridablePromptSection(string? overrideValue, IReadOnlyList<string> fallback)
     {
         var overrideSection = NormalizeStructuredPromptSection(overrideValue);
         if (!string.IsNullOrWhiteSpace(overrideSection))
@@ -366,6 +395,67 @@ public static class SystemPromptBuilder
     private static GatewayPromptData GetGatewayData(PromptContext context)
         => context.Get<GatewayPromptData>(GatewayPromptDataKey)
             ?? throw new InvalidOperationException("Gateway prompt context data is missing.");
+
+    // The following adapters bridge the pipeline's PromptContext to the primitive-argument section
+    // builders. Each hoists GetGatewayData(context) once (rather than re-resolving it per argument)
+    // so they are consistent in shape with the extracted Build*Section methods below.
+
+    private static IReadOnlyList<string> BuildMemoryGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildMemorySection(data.IsMinimal, data.Parameters.MemoryPromptInjection, data.NormalizedTools);
+    }
+
+    private static IReadOnlyList<string> BuildDocsGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildDocsSection(data.Parameters.DocsPath, data.IsMinimal, data.ReadToolName);
+    }
+
+    private static IReadOnlyList<string> BuildUserIdentityGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildUserIdentitySection(data.Parameters.OwnerIdentity, data.IsMinimal);
+    }
+
+    private static IReadOnlyList<string> BuildTimeGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildTimeSection(data.Parameters.UserTimezone);
+    }
+
+    private static IReadOnlyList<string> BuildReplyTagsGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildReplyTagsSection(data.IsMinimal);
+    }
+
+    private static IReadOnlyList<string> BuildMessagingGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildMessagingSection(data.IsMinimal, data.NormalizedTools, data.RuntimeChannel, data.InlineButtonsEnabled);
+    }
+
+    private static IReadOnlyList<string> BuildVoiceGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildVoiceSection(data.IsMinimal, data.Parameters.TtsHint);
+    }
+
+    private static IReadOnlyList<string> BuildStableProjectContextSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildProjectContextSection(data.StableContextFiles, "# Project Context", dynamic: false);
+    }
+
+    private static IReadOnlyList<string> BuildDynamicProjectContextSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildProjectContextSection(
+            data.DynamicContextFiles,
+            data.StableContextFiles.Count > 0 ? "# Dynamic Project Context" : "# Project Context",
+            dynamic: true);
+    }
 
     private static IReadOnlyList<string> BuildToolingSection(PromptContext context)
     {
@@ -406,7 +496,7 @@ public static class SystemPromptBuilder
         lines.Add("If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.");
         lines.Add("Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).");
         lines.Add(string.Empty);
-        lines.Add(buildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled));
+        lines.Add(BuildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled));
         lines.Add("Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.");
         lines.Add("Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.");
         lines.Add("When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.");
@@ -550,7 +640,7 @@ public static class SystemPromptBuilder
         return
         [
             RuntimeLineFormatter.RuntimeContextBeginDelimiter,
-            buildRuntimeLine(data.Parameters.Runtime),
+            BuildRuntimeLine(data.Parameters.Runtime),
             $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.",
             RuntimeLineFormatter.RuntimeContextEndDelimiter
         ];
@@ -650,7 +740,7 @@ public static class SystemPromptBuilder
         public bool IsMinimal => Parameters.PromptMode is PromptMode.Minimal;
     }
 
-    private static string buildExecApprovalPromptGuidance(string? runtimeChannel, bool inlineButtonsEnabled)
+    private static string BuildExecApprovalPromptGuidance(string? runtimeChannel, bool inlineButtonsEnabled)
     {
         var usesNativeApprovalUi = string.Equals(runtimeChannel, "webchat", StringComparison.OrdinalIgnoreCase)
             || inlineButtonsEnabled;
