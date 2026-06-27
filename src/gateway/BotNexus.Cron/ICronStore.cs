@@ -28,9 +28,12 @@ public interface ICronStore
     Task<ConversationId?> TrySetConversationIdAsync(JobId jobId, ConversationId conversationId, CancellationToken ct = default);
 
     /// <summary>
-    /// Purges completed and failed run records older than <paramref name="cutoff"/>.
-    /// Never deletes runs with status "running" to avoid removing in-progress work.
-    /// Returns the number of rows deleted.
+    /// Purges terminal cron run records older than <paramref name="cutoff"/>. A run is
+    /// terminal when its status is one of the scheduler-written outcomes
+    /// <see cref="CronRunStatus.Ok"/>, <see cref="CronRunStatus.Error"/>, or
+    /// <see cref="CronRunStatus.TimedOut"/> and its completed_at timestamp is earlier than
+    /// the cutoff. In-flight runs (<see cref="CronRunStatus.Running"/>) are never deleted,
+    /// regardless of age, so in-progress work is preserved. Returns the number of rows deleted.
     /// </summary>
     Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default);
 }

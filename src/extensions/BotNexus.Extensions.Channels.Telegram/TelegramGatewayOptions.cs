@@ -89,6 +89,13 @@ public sealed class TelegramGatewayOptions
     public bool RichMessages { get; set; } = true;
 
     /// <summary>
+    /// When true (default), tool executions are surfaced to the chat as compact standalone status
+    /// messages as the agent runs, so the user can see which tools are being called. Set to false to
+    /// suppress them. Mirrored into the synthesised default bot.
+    /// </summary>
+    public bool ShowToolActivity { get; set; } = true;
+
+    /// <summary>
     /// Maximum Rich Message length before payload splitting. Rich Messages allow up to 32768
     /// characters; the default (32000) stays safely below that. Only used when
     /// <see cref="RichMessages"/> is enabled.
@@ -137,6 +144,7 @@ public sealed class TelegramGatewayOptions
             StreamingBufferMs = StreamingBufferMs,
             MaxMessageLength = MaxMessageLength,
             RichMessages = RichMessages,
+            ShowToolActivity = ShowToolActivity,
             MaxRichMessageLength = MaxRichMessageLength,
             ErrorCooldownMs = ErrorCooldownMs,
             ProcessEditedMessages = ProcessEditedMessages

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Gateway.Models;
 using BotNexus.Extensions.Channels.Telegram;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
@@ -250,6 +251,89 @@ public sealed class TelegramChannelAdapterRichTests
         string.Concat(result).ShouldBe(content);
     }
 
+    // ── Tool activity: must survive message-boundary churn (the "eaten" bug) ──
+
+    [Fact]
+    public async Task ToolActivity_SurvivesNextAssistantMessage_DeliveredAsStandaloneMessage()
+    {
+        // Reproduces the bug in the GROUP path (negative chat id), where streaming content is buffered
+        // SILENTLY and only sent at MessageEnd (rich drafts are DM-only). A tool-using turn emits:
+        //   [MessageStart preamble][ContentDelta][MessageEnd]   <- assistant 1 finalised, state removed
+        //   [ToolStart][ToolEnd]                                <- tool cycle, fresh state
+        //   [MessageStart followup][ContentDelta][MessageEnd]   <- assistant 2
+        // Old behaviour appended the tool line to the (silent) content buffer of the fresh state; the
+        // followup MessageStart then reset it away before any send -> the tool annotation was "eaten"
+        // (ZERO outbound messages carried it). New behaviour sends each tool event as its own message,
+        // so it survives.
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, allowedChatId: -1001);
+        var target = StreamTargets.For("-1001"); // negative id = group/supergroup, no live drafts
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Let me check that." });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "read", ToolCallId = "call-1" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolName = "read", ToolCallId = "call-1", ToolIsError = false });
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Here's what I found." });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        // Tool activity delivered as standalone sendMessage(s) carrying the canonical glyph.
+        var toolMessages = AllSentText(calls).Where(t => t.Contains("read")).ToList();
+        toolMessages.ShouldNotBeEmpty(); // the bug: this was empty (tool lines eaten)
+        toolMessages.ShouldContain(t => t.Contains(ToolGlyphs.ForTool("read"))); // canonical glyph for read on every channel
+
+        // The followup assistant reply still arrives intact (the fix doesn't disturb content delivery).
+        AllSentText(calls).ShouldContain(t => t.Contains("Here's what I found."));
+    }
+
+    [Fact]
+    public async Task ToolActivity_ErrorResult_UsesWarningGlyphAndFailedStatus()
+    {
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, allowedChatId: -1001);
+        var target = StreamTargets.For("-1001");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "shell", ToolCallId = "c2" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolName = "shell", ToolCallId = "c2", ToolIsError = true });
+
+        var texts = AllSentText(calls);
+        texts.ShouldContain(t => t.Contains(ToolGlyphs.ForTool("shell")) && t.Contains("shell")); // start uses the tool glyph
+        texts.ShouldContain(t => t.Contains("\u26A0") && t.Contains("failed")); // failed end uses warning glyph (U+26A0)
+    }
+
+    [Fact]
+    public async Task ToolActivity_Disabled_SendsNoToolMessages()
+    {
+        var calls = new List<CapturedCall>();
+        var adapter = CreateRichAdapter(calls, richSucceeds: true, allowedChatId: -1001, showToolActivity: false);
+        var target = StreamTargets.For("-1001");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "read", ToolCallId = "c3" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ToolEnd, ToolName = "read", ToolCallId = "c3", ToolIsError = false });
+
+        AllSentText(calls).Where(t => t.Contains("read")).ShouldBeEmpty();
+    }
+
+    // Collects the user-visible text from every outbound message variant (plain sendMessage, edited
+    // text, and rich markdown) so assertions don't depend on which delivery path a chat type uses.
+    private static List<string> AllSentText(List<CapturedCall> calls)
+    {
+        var texts = new List<string>();
+        foreach (var c in calls)
+        {
+            using var j = JsonDocument.Parse(c.Body);
+            var root = j.RootElement;
+            if (root.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                texts.Add(t.GetString() ?? string.Empty);
+            else if (root.TryGetProperty("rich_message", out var rm) && rm.TryGetProperty("markdown", out var md) && md.ValueKind == JsonValueKind.String)
+                texts.Add(md.GetString() ?? string.Empty);
+        }
+        return texts;
+    }
+
     // ── harness ──────────────────────────────────────────────────────────────
 
     private static TelegramChannelAdapter CreateRichAdapter(
@@ -257,7 +341,8 @@ public sealed class TelegramChannelAdapterRichTests
         bool richSucceeds,
         bool richEnabled = true,
         long allowedChatId = 42,
-        bool draftSucceeds = true)
+        bool draftSucceeds = true,
+        bool showToolActivity = true)
     {
         var handler = new CapturingHandler(async (request, ct) =>
         {
@@ -298,7 +383,8 @@ public sealed class TelegramChannelAdapterRichTests
         {
             BotToken = "token",
             AllowedChatIds = { allowedChatId },
-            RichMessages = richEnabled
+            RichMessages = richEnabled,
+            ShowToolActivity = showToolActivity
         };
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
         return new TelegramChannelAdapter(NullLogger<TelegramChannelAdapter>.Instance, Options.Create(options), factory);
