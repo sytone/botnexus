@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.Json.Nodes;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
@@ -375,7 +375,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
         };
         store.RegisterSession("agent-1", "sess-1");
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -418,7 +418,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
         };
         store.RegisterSession("agent-1", "sess-1");
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         // Spawn first
         handler.HandleSubAgentSpawned(new SubAgentEventPayload(

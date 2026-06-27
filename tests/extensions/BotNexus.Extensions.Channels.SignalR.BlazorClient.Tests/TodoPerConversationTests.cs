@@ -24,8 +24,8 @@ public sealed class TodoPerConversationTests
 
     public TodoPerConversationTests()
     {
-        _handler = new GatewayEventHandler(_store, _hub);
-        _interaction = new AgentInteractionService(_store, _hub, _restClient);
+        _handler = new GatewayEventHandler(_store, _hub, Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        _interaction = new AgentInteractionService(_store, _hub, _restClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentInteractionService>.Instance);
     }
 
     private AgentState SeedAgent(string agentId)

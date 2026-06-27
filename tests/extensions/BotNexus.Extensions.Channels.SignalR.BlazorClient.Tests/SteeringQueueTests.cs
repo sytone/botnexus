@@ -185,7 +185,7 @@ public sealed class SteeringQueueTests : IDisposable
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "Do this instead", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
 
         // Simulate SteeringFeedback.Injected via the event handler
-        var handler = new GatewayEventHandler(_store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         handler.HandleSteeringFeedback(new SteeringFeedbackPayload(
             AgentId: "agent-1",
@@ -214,7 +214,7 @@ public sealed class SteeringQueueTests : IDisposable
         // Add a pending entry
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "Queue this", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
 
-        var handler = new GatewayEventHandler(_store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         handler.HandleSteeringFeedback(new SteeringFeedbackPayload(
             AgentId: "agent-1",
