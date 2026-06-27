@@ -27,6 +27,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // mid-turn (breaks stream event routing -- issue #456).
     private readonly HashSet<string> _pendingConversationRefresh = new();
 
+    // Both HashSets above are mutated from SignalR client callbacks (reconnect lifecycle and
+    // ConversationChanged), which are NOT guaranteed to be invoked serially. A concurrent
+    // enumerate-while-mutate can throw InvalidOperationException or tear the set's internal state,
+    // so every Add/Remove/Clear/enumerate of either set is serialized through this gate (#1621).
+    // When a snapshot-then-act pattern is needed the snapshot is taken under the lock and the async
+    // work runs outside it -- the lock is never held across an await.
+    private readonly object _stateGate = new();
+
     public GatewayEventHandler(IClientStateStore store, GatewayHubConnection hub, ILogger<GatewayEventHandler> logger)
     {
         _store = store;
@@ -682,7 +690,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         foreach (var agent in _store.Agents.Values)
         {
             if (agent.IsStreaming)
-                _streamingWhenDisconnected.Add(agent.AgentId);
+            {
+                lock (_stateGate)
+                    _streamingWhenDisconnected.Add(agent.AgentId);
+            }
             agent.IsConnected = false;
         }
 
@@ -707,7 +718,16 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         // Clear stale streaming state unconditionally (even if SubscribeAllAsync failed).
         // The portal must never get stuck in a perpetual streaming indicator (#759).
-        foreach (var agentId in _streamingWhenDisconnected)
+        // Snapshot + clear the shared set under the lock, then apply the store mutations OUTSIDE the
+        // lock so we never hold _stateGate across the per-agent work (#1621).
+        string[] staleStreamingAgents;
+        lock (_stateGate)
+        {
+            staleStreamingAgents = _streamingWhenDisconnected.ToArray();
+            _streamingWhenDisconnected.Clear();
+        }
+
+        foreach (var agentId in staleStreamingAgents)
         {
             if (_store.GetAgent(agentId) is { } agent)
             {
@@ -725,7 +745,6 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             }
         }
 
-        _streamingWhenDisconnected.Clear();
         _store.NotifyChanged();
     }
 
@@ -1019,7 +1038,29 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     // ── Hub event wiring (called when hub reconnects) ─────────────────────
 
-    private void HandleReconnected() => _ = HandleReconnectedAsync();
+    private void HandleReconnected() => SafeFireAsync(() => HandleReconnectedAsync(), "reconnect-recovery");
+
+    // Launches fire-and-forget async work from a synchronous SignalR callback while OBSERVING the
+    // resulting Task: any exception (synchronous or faulted-task) is caught and logged instead of
+    // becoming an unobserved task exception that silently vanishes (#1621). The happy path is
+    // unchanged -- observation and logging only happen on failure. The launching callback never sees
+    // the exception, so a failing reconnect/refresh cannot tear down the hub callback thread.
+    private void SafeFireAsync(Func<Task> work, string context)
+    {
+        _ = RunObservedAsync(work, context);
+
+        async Task RunObservedAsync(Func<Task> inner, string ctx)
+        {
+            try
+            {
+                await inner().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fire-and-forget operation failed: {Context}", ctx);
+            }
+        }
+    }
 
     public void HandleConversationChanged(ConversationChangedPayload payload)
     {
@@ -1049,11 +1090,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var streamingAgent = _store.GetAgent(agentId);
         if (streamingAgent?.IsStreaming == true)
         {
-            _pendingConversationRefresh.Add(agentId);
+            lock (_stateGate)
+                _pendingConversationRefresh.Add(agentId);
             return;
         }
 
-        _ = RefreshConversationsAsync(agentId);
+        SafeFireAsync(() => RefreshConversationsAsync(agentId), "conversation-refresh");
     }
 
     // Injected async refresh delegate — wired by AgentInteractionService or PortalLoadService.
@@ -1064,9 +1106,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private void DrainPendingConversationRefreshes(string agentId)
     {
-        if (!_pendingConversationRefresh.Remove(agentId))
+        bool wasPending;
+        lock (_stateGate)
+            wasPending = _pendingConversationRefresh.Remove(agentId);
+
+        if (!wasPending)
             return;
-        _ = RefreshConversationsAsync(agentId);
+
+        SafeFireAsync(() => RefreshConversationsAsync(agentId), "conversation-refresh-drain");
     }
 
     public void Dispose()
