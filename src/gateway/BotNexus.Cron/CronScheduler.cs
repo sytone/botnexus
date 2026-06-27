@@ -204,8 +204,8 @@ public sealed class CronScheduler(
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Aborted while waiting for the per-job lock (another same-job run held it during a
-            // shutdown/cancel). The run was already stamped "running" by RecordRunStartAsync above,
-            // so record the abort here too - otherwise it stays stuck in "running". CancellationToken.None
+            // shutdown/cancel). The run was already stamped Running by RecordRunStartAsync above,
+            // so record the abort here too - otherwise it stays stuck Running. CancellationToken.None
             // for the write since `ct` is cancelled.
             await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
             throw;
@@ -228,97 +228,58 @@ public sealed class CronScheduler(
             };
 
             var timeoutSeconds = ResolveJobTimeout(jobForRun);
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
             // Opt-in ephemeral cleanup (#1561): once the action has run, delete the run's
             // cron-scoped session + transcript when the job requested it, exactly once, across
-            // every terminal path (ok / timed_out / aborted / error). The inner finally fires
-            // before the outer error catch, so the error path is covered too without a second
-            // cleanup. Uses the per-run scope's ISessionStore (same seam as ReconcileCasLoserAsync).
+            // every terminal path (ok / timed_out / aborted / error). The finally fires before
+            // the outer error catch, so the error path is covered too without a second cleanup.
+            // Uses the per-run scope's ISessionStore (same seam as ReconcileCasLoserAsync).
             try
             {
-            try
-            {
-                await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
-            {
-                _logger.LogWarning(
-                    "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
-                    timeoutSeconds, job.Id, job.ActionType);
-                await _cronStore.RecordRunCompleteAsync(run.Id, "timed_out", $"Job exceeded {timeoutSeconds}s timeout", ct: ct).ConfigureAwait(false);
+                // Run the action under its timeout. The helper discriminates timeout-vs-host-cancel:
+                // a host abort rethrows (handled by the catch below); a timeout returns its error
+                // string; success returns null. This keeps the timeout/cancel discrimination out of
+                // the body (no doubled try/try) so the terminal-status mapping is a flat decision.
+                var timeoutError = await ExecuteActionWithTimeoutAsync(action, context, timeoutSeconds, ct)
+                    .ConfigureAwait(false);
 
-                var timedOutLatest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? jobForRun;
-                await _cronStore.UpdateAsync(timedOutLatest with
+                if (timeoutError is not null)
                 {
-                    LastRunAt = triggeredAt,
-                    LastRunStatus = "timed_out",
-                    LastRunError = $"Job exceeded {timeoutSeconds}s timeout"
-                }, ct).ConfigureAwait(false);
-                return run with { Status = "timed_out", CompletedAt = DateTimeOffset.UtcNow, Error = $"Job exceeded {timeoutSeconds}s timeout" };
+                    await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.TimedOut, timeoutError, ct: ct)
+                        .ConfigureAwait(false);
+                    await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, CronRunStatus.TimedOut, timeoutError, ct: ct)
+                        .ConfigureAwait(false);
+                    return run with { Status = CronRunStatus.TimedOut, CompletedAt = DateTimeOffset.UtcNow, Error = timeoutError };
+                }
+
+                _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
+                    jobForRun.Name, jobForRun.Id, jobForRun.ActionType, triggerType);
+                await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Ok, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
+
+                // Pinback via CAS: if the trigger created a new conversation for this run and the job
+                // has no pinned ConversationId yet, atomically stamp ours onto the job. If another
+                // run won the race (multi-process), archive ours and rebind our session to the winner.
+                var winningConversationId = await TryPinConversationAsync(job.Id, jobForRun, context, scope.ServiceProvider, ct)
+                    .ConfigureAwait(false);
+
+                await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, CronRunStatus.Ok, error: null,
+                    conversationId: winningConversationId, ct: ct).ConfigureAwait(false);
+
+                return run with { Status = CronRunStatus.Ok, CompletedAt = DateTimeOffset.UtcNow, SessionId = context.SessionId };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // The run was aborted via the host token (gateway shutdown, scheduler stop, or an
                 // explicit cancel of a manual run) rather than the per-job timeout. Without this
-                // branch the cancellation escapes BOTH catch guards below (whose `when` clauses are
-                // false once `ct` is cancelled), leaving the run permanently in the "running" state
-                // it was stamped with at RecordRunStartAsync - a silent non-success that masquerades
-                // as never having finished. Record it as a failed run so the abort is visible, then
+                // branch the cancellation would leave the run permanently in the Running state it
+                // was stamped with at RecordRunStartAsync - a silent non-success that masquerades as
+                // never having finished. Record it as a failed run so the abort is visible, then
                 // rethrow to preserve cancellation semantics for the caller/host shutdown.
                 _logger.LogWarning(
                     "Cron job aborted (cancellation requested). JobId: {JobId}, ActionType: {ActionType}",
                     job.Id, job.ActionType);
                 await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
                 throw;
-            }
-
-            _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
-                jobForRun.Name, jobForRun.Id, jobForRun.ActionType, triggerType);
-            await _cronStore.RecordRunCompleteAsync(run.Id, "ok", sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
-
-            // Re-read after action so we don't clobber concurrent edits (schedule updates etc.).
-            var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? jobForRun;
-
-            // Pinback via CAS: if the trigger created a new conversation for this run and the job
-            // has no pinned ConversationId yet, atomically stamp ours onto the job. If another
-            // run won the race (multi-process), archive ours and rebind our session to the winner.
-            var winningConversationId = context.ConversationId;
-            if (context.ConversationId.HasValue && !latest.ConversationId.HasValue)
-            {
-                var winner = await _cronStore.TrySetConversationIdAsync(job.Id, context.ConversationId.Value, ct)
-                    .ConfigureAwait(false);
-
-                if (winner.HasValue && winner.Value == context.ConversationId.Value)
-                {
-                    _logger.LogInformation(
-                        "Cron job pinned conversation. JobName: {JobName}, JobId: {JobId}, ConversationId: {ConversationId}",
-                        jobForRun.Name, jobForRun.Id, context.ConversationId.Value);
-                }
-                else if (winner.HasValue)
-                {
-                    winningConversationId = winner;
-                    await ReconcileCasLoserAsync(
-                        scope.ServiceProvider,
-                        loserConversationId: context.ConversationId.Value,
-                        winnerConversationId: winner.Value,
-                        sessionId: context.SessionId,
-                        ct: ct).ConfigureAwait(false);
-                }
-                // winner.HasValue == false means the job was deleted while we ran — leave the
-                // conversation orphaned; the operator deleted the job so they no longer want it.
-            }
-
-            await _cronStore.UpdateAsync(latest with
-            {
-                LastRunAt = triggeredAt,
-                LastRunStatus = "ok",
-                LastRunError = null,
-                ConversationId = winningConversationId ?? latest.ConversationId
-            }, ct).ConfigureAwait(false);
-
-            return run with { Status = "ok", CompletedAt = DateTimeOffset.UtcNow, SessionId = context.SessionId };
             }
             finally
             {
@@ -328,16 +289,9 @@ public sealed class CronScheduler(
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
-            await _cronStore.RecordRunCompleteAsync(run.Id, "error", ex.Message, ct: ct).ConfigureAwait(false);
-
-            var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? job;
-            await _cronStore.UpdateAsync(latest with
-            {
-                LastRunAt = triggeredAt,
-                LastRunStatus = "error",
-                LastRunError = ex.ToString()
-            }, ct).ConfigureAwait(false);
-            return run with { Status = "error", CompletedAt = DateTimeOffset.UtcNow, Error = ex.Message };
+            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
+            await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, ex.ToString(), ct: ct).ConfigureAwait(false);
+            return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = ex.Message };
         }
         finally
         {
@@ -346,26 +300,128 @@ public sealed class CronScheduler(
     }
 
     /// <summary>
+    /// Executes the action under its per-job timeout, discriminating a <i>timeout</i> from a
+    /// <i>host cancellation</i>. Returns <c>null</c> on success, the timeout error message when the
+    /// action exceeded <paramref name="timeoutSeconds"/>, and rethrows <see cref="OperationCanceledException"/>
+    /// when the host token (<paramref name="ct"/>) was cancelled (gateway shutdown / scheduler stop /
+    /// explicit cancel) so the caller can record the abort and propagate cancellation.
+    /// </summary>
+    private async Task<string?> ExecuteActionWithTimeoutAsync(
+        ICronAction action,
+        CronExecutionContext context,
+        int timeoutSeconds,
+        CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        try
+        {
+            await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
+            return null;
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
+                timeoutSeconds, context.Job.Id, context.Job.ActionType);
+            return $"Job exceeded {timeoutSeconds}s timeout";
+        }
+    }
+
+    /// <summary>
+    /// CAS pinback for a run that created a new conversation: when the job has no pinned
+    /// <c>ConversationId</c> yet, atomically stamp this run's conversation onto the job. If another
+    /// run (in another process) won the race, archive ours and rebind our session to the winner.
+    /// Returns the conversation id that should be persisted onto the job (the winner, our own, or
+    /// the existing value when nothing was created).
+    /// </summary>
+    private async Task<ConversationId?> TryPinConversationAsync(
+        JobId jobId,
+        CronJob jobForRun,
+        CronExecutionContext context,
+        IServiceProvider services,
+        CancellationToken ct)
+    {
+        if (!context.ConversationId.HasValue)
+        {
+            return null;
+        }
+
+        // Re-read after action so we don't observe a stale pin (concurrent same-job runs / edits).
+        var latest = await _cronStore.GetAsync(jobId, ct).ConfigureAwait(false) ?? jobForRun;
+        if (latest.ConversationId.HasValue)
+        {
+            return context.ConversationId;
+        }
+
+        var winner = await _cronStore.TrySetConversationIdAsync(jobId, context.ConversationId.Value, ct)
+            .ConfigureAwait(false);
+
+        if (winner.HasValue && winner.Value == context.ConversationId.Value)
+        {
+            _logger.LogInformation(
+                "Cron job pinned conversation. JobName: {JobName}, JobId: {JobId}, ConversationId: {ConversationId}",
+                jobForRun.Name, jobForRun.Id, context.ConversationId.Value);
+            return context.ConversationId;
+        }
+
+        if (winner.HasValue)
+        {
+            await ReconcileCasLoserAsync(
+                services,
+                loserConversationId: context.ConversationId.Value,
+                winnerConversationId: winner.Value,
+                sessionId: context.SessionId,
+                ct: ct).ConfigureAwait(false);
+            return winner;
+        }
+
+        // winner.HasValue == false means the job was deleted while we ran — leave the conversation
+        // orphaned; the operator deleted the job so they no longer want it.
+        return context.ConversationId;
+    }
+
+    /// <summary>
+    /// The single "re-read latest job → <see cref="ICronStore.UpdateAsync"/> with the terminal
+    /// <c>LastRun*</c> fields" write-back shared by every terminal path (ok / timed_out / error /
+    /// aborted). Re-reading inside the write avoids clobbering concurrent edits (schedule updates).
+    /// Optionally carries a resolved <paramref name="conversationId"/> for the success path's CAS
+    /// pinback; all other paths leave the existing conversation untouched.
+    /// </summary>
+    private async Task FinalizeRunAsync(
+        JobId jobId,
+        CronJob fallback,
+        DateTimeOffset triggeredAt,
+        string status,
+        string? error,
+        ConversationId? conversationId = null,
+        CancellationToken ct = default)
+    {
+        var latest = await _cronStore.GetAsync(jobId, ct).ConfigureAwait(false) ?? fallback;
+        await _cronStore.UpdateAsync(latest with
+        {
+            LastRunAt = triggeredAt,
+            LastRunStatus = status,
+            LastRunError = error,
+            ConversationId = conversationId ?? latest.ConversationId
+        }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Records a cron run that was aborted via the host cancellation token (gateway shutdown,
     /// scheduler stop, or an explicit cancel) as a failed run. The run was already stamped
-    /// <c>running</c> by <see cref="ICronStore.RecordRunStartAsync"/>, so this surfaces the abort
-    /// as an <c>error</c> status instead of leaving it stuck in <c>running</c> forever (a silent
-    /// non-success). The bookkeeping writes use <see cref="CancellationToken.None"/> because the
-    /// caller's token is already cancelled - passing it would cancel the very writes that record
-    /// the failure.
+    /// <see cref="CronRunStatus.Running"/> by <see cref="ICronStore.RecordRunStartAsync"/>, so this
+    /// surfaces the abort as <see cref="CronRunStatus.Error"/> instead of leaving it stuck
+    /// <see cref="CronRunStatus.Running"/> forever (a silent non-success). The bookkeeping writes use
+    /// <see cref="CancellationToken.None"/> because the caller's token is already cancelled - passing
+    /// it would cancel the very writes that record the failure.
     /// </summary>
     private async Task RecordAbortedRunAsync(RunId runId, CronJob job, DateTimeOffset triggeredAt)
     {
         const string abortReason = "Cron run aborted before completion.";
-        await _cronStore.RecordRunCompleteAsync(runId, "error", abortReason, ct: CancellationToken.None).ConfigureAwait(false);
-
-        var latest = await _cronStore.GetAsync(job.Id, CancellationToken.None).ConfigureAwait(false) ?? job;
-        await _cronStore.UpdateAsync(latest with
-        {
-            LastRunAt = triggeredAt,
-            LastRunStatus = "error",
-            LastRunError = abortReason
-        }, CancellationToken.None).ConfigureAwait(false);
+        await _cronStore.RecordRunCompleteAsync(runId, CronRunStatus.Error, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
+        await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
