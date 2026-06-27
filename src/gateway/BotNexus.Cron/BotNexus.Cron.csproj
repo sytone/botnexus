@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="CronJob.cs" />
     <Compile Include="CronRun.cs" />
+    <Compile Include="CronRunStatus.cs" />
     <Compile Include="ICronAction.cs" />
     <Compile Include="ICronStore.cs" />
     <Compile Include="SqliteCronStore.cs" />

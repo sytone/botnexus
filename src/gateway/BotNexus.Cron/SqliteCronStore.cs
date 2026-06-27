@@ -391,7 +391,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 Id = RunId.Create(),
                 JobId = jobId,
                 StartedAt = now,
-                Status = "running"
+                Status = CronRunStatus.Running
             };
 
             await using var connection = CreateConnection();
@@ -414,11 +414,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await using var updateJob = connection.CreateCommand();
             updateJob.CommandText = """
                 UPDATE cron_jobs
-                SET last_run_status = 'running',
+                SET last_run_status = $status,
                     last_run_error = NULL,
                     last_run_at = $lastRunAt
                 WHERE id = $jobId
                 """;
+            updateJob.Parameters.AddWithValue("$status", run.Status);
             updateJob.Parameters.AddWithValue("$lastRunAt", now.ToString("O"));
             updateJob.Parameters.AddWithValue("$jobId", jobId.Value);
             await updateJob.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

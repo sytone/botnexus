@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Providers.Copilot.Discovery;
 
@@ -25,6 +26,15 @@ public sealed class CopilotDiscoveryClient
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
+
+    /// <summary>
+    /// Byte cap for discovery JSON bodies. The user-info and model-list payloads are small
+    /// (a few KiB to low MiB), so the shared 16 MiB cap is generous while still aborting a
+    /// hostile / MITM'd / malfunctioning endpoint streaming a multi-GB body before it is
+    /// buffered. The discovery host is config/auth-derived (<c>endpoints.api</c> from
+    /// <c>auth.json</c>), so these reads sit on a trust boundary worth bounding (issue #1653).
+    /// </summary>
+    private const long MaxDiscoveryResponseBytes = BoundedHttpContent.DefaultMaxResponseBytes;
 
     private readonly HttpClient _httpClient;
 
@@ -54,7 +64,12 @@ public sealed class CopilotDiscoveryClient
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var info = await response.Content.ReadFromJsonAsync<CopilotUserInfo>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        // Bounded read: a hostile/malfunctioning endpoint cannot force the whole body to buffer
+        // before parsing (OOM-DoS guard, #1653). JsonOptions is passed so deserialization semantics
+        // (CamelCase + case-insensitive) are unchanged from the prior ReadFromJsonAsync call.
+        var info = await BoundedHttpContent
+            .ReadFromJsonWithLimitAsync<CopilotUserInfo>(response.Content, JsonOptions, MaxDiscoveryResponseBytes, cancellationToken)
+            .ConfigureAwait(false);
         return info ?? throw new InvalidOperationException("Copilot user-info response was empty.");
     }
 
@@ -93,7 +108,11 @@ public sealed class CopilotDiscoveryClient
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var models = await response.Content.ReadFromJsonAsync<CopilotModelsResponse>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        // Bounded read (OOM-DoS guard, #1653) -- see GetUserAsync for rationale. JsonOptions passed
+        // so deserialization semantics are unchanged from the prior ReadFromJsonAsync call.
+        var models = await BoundedHttpContent
+            .ReadFromJsonWithLimitAsync<CopilotModelsResponse>(response.Content, JsonOptions, MaxDiscoveryResponseBytes, cancellationToken)
+            .ConfigureAwait(false);
         return models ?? throw new InvalidOperationException("Copilot models response was empty.");
     }
 }

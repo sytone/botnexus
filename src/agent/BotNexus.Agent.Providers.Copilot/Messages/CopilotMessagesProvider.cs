@@ -23,6 +23,13 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
     private const string ApiVersion = "2023-06-01";
     public const string ApiId = "github-copilot-messages";
 
+    /// <summary>
+    /// Byte cap for the untrusted error-response body (64 KiB). Error payloads are tiny in
+    /// practice; bounding prevents a hostile/malfunctioning endpoint from streaming a huge body on
+    /// the failure path. Mirrors OpenClaw's <c>COPILOT_ERROR_BODY_LIMIT_BYTES</c> (issue #1653).
+    /// </summary>
+    private const long ErrorBodyLimitBytes = 64L * 1024;
+
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     public string Api => ApiId;
@@ -201,7 +208,21 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
 
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(effectiveCt);
+            // Bound the untrusted error body so a hostile/malfunctioning endpoint cannot stream a
+            // huge body on the failure path (OOM-DoS guard, #1653). A truncation here must not mask
+            // the real HTTP failure -- on over-cap, fall back to a short placeholder so
+            // ThrowForFailedResponse still surfaces the status code.
+            string errorBody;
+            try
+            {
+                errorBody = await BoundedHttpContent.ReadStringWithLimitAsync(
+                    response.Content, ErrorBodyLimitBytes, effectiveCt);
+            }
+            catch (ResponseContentTooLargeException)
+            {
+                errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
+            }
+
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Messages");
         }
 

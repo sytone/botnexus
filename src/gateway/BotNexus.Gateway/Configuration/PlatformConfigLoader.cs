@@ -91,10 +91,7 @@ public static class PlatformConfigLoader
         PlatformConfig config;
         try
         {
-            config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
-                ?? new PlatformConfig();
-            config = MigrateLegacyGatewaySettings(config, rawJson);
-            ExtractAgentDefaults(config, rawJson);
+            config = MaterializeConfig(rawJson);
         }
         catch (JsonException ex)
         {
@@ -116,6 +113,34 @@ public static class PlatformConfigLoader
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
         EmitVersionWarning(config);
+        return config;
+    }
+
+    /// <summary>
+    /// The single deserialize &#8594; migrate &#8594; extract materialisation core shared by the primary
+    /// load pipeline (<see cref="FinishLoad"/>) and backup recovery (<see cref="TryRecoverFromBackup"/>).
+    /// </summary>
+    /// <remarks>
+    /// Parses the raw JSON document <em>once</em> and threads the root element into both
+    /// <see cref="MigrateLegacyGatewaySettings(PlatformConfig, JsonElement)"/> and
+    /// <see cref="ExtractAgentDefaults(PlatformConfig, JsonElement)"/> instead of letting each re-parse
+    /// the same string. Centralising the sequence here means a new migration/extraction step is applied
+    /// identically to primary loads and recovered backups -- the divergence hazard that previously existed
+    /// because <c>TryRecoverFromBackup</c> hand-duplicated this sequence inline.
+    /// </remarks>
+    /// <exception cref="JsonException">The raw JSON is not valid (callers translate this as needed).</exception>
+    private static PlatformConfig MaterializeConfig(string rawJson)
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
+            ?? new PlatformConfig();
+
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return config;
+
+        using var document = JsonDocument.Parse(rawJson);
+        var root = document.RootElement;
+        config = MigrateLegacyGatewaySettings(config, root);
+        ExtractAgentDefaults(config, root);
         return config;
     }
 
@@ -290,10 +315,7 @@ public static class PlatformConfigLoader
                 if (rawJson.Length < MinHealthyConfigLength)
                     continue;
 
-                var config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
-                    ?? new PlatformConfig();
-                config = MigrateLegacyGatewaySettings(config, rawJson);
-                ExtractAgentDefaults(config, rawJson);
+                var config = MaterializeConfig(rawJson);
 
                 if (IsConfigSuspicious(config, rawJson))
                     continue;
@@ -430,10 +452,22 @@ public static class PlatformConfigLoader
             return;
 
         using var document = JsonDocument.Parse(rawJson);
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        ExtractAgentDefaults(config, document.RootElement);
+    }
+
+    /// <summary>
+    /// Parse-once overload of <see cref="ExtractAgentDefaults(PlatformConfig, string)"/>: consumes a
+    /// root <see cref="JsonElement"/> already parsed by the load pipeline rather than re-parsing the raw
+    /// JSON string. The string overload is retained for external callers and delegates here after a
+    /// single parse.
+    /// </summary>
+    internal static void ExtractAgentDefaults(PlatformConfig config, JsonElement root)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (root.ValueKind != JsonValueKind.Object)
             return;
 
-        if (!document.RootElement.TryGetProperty("agents", out var agentsElement) ||
+        if (!root.TryGetProperty("agents", out var agentsElement) ||
             agentsElement.ValueKind != JsonValueKind.Object)
             return;
 
@@ -479,10 +513,21 @@ public static class PlatformConfigLoader
             return config;
 
         using var document = JsonDocument.Parse(rawJson);
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        return MigrateLegacyGatewaySettings(config, document.RootElement);
+    }
+
+    /// <summary>
+    /// Parse-once overload of <see cref="MigrateLegacyGatewaySettings(PlatformConfig, string)"/>: consumes
+    /// a root <see cref="JsonElement"/> already parsed by the load pipeline rather than re-parsing the raw
+    /// JSON string. The string overload is retained for external callers and delegates here after a
+    /// single parse.
+    /// </summary>
+    internal static PlatformConfig MigrateLegacyGatewaySettings(PlatformConfig config, JsonElement root)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (root.ValueKind != JsonValueKind.Object)
             return config;
 
-        var root = document.RootElement;
         var gateway = config.Gateway ?? new GatewaySettingsConfig();
         var migrated = false;
 
