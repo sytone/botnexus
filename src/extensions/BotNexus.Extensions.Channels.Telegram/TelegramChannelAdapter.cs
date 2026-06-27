@@ -591,11 +591,10 @@ public sealed class TelegramChannelAdapter(
         var maxLength = Math.Max(1, runtime.Config.MaxMessageLength);
         while (state.Buffer.Length > maxLength)
         {
-            var rawChunk = state.Buffer.ToString(0, maxLength);
+            var rawChunk = DrainStreamingBuffer(state.Buffer, maxLength);
             var formattedChunk = TelegramMarkdownFormatter.Convert(rawChunk);
             await SendOrEditStreamingMessageAsync(runtime, state, formattedChunk, cancellationToken);
             state.MessageId = null;
-            state.Buffer.Remove(0, maxLength);
         }
 
         if (!force && !ShouldFlush(state, runtime.Config))
@@ -939,6 +938,39 @@ public sealed class TelegramChannelAdapter(
         }
 
         return content.Substring(offset, length);
+    }
+
+    /// <summary>
+    /// Removes and returns a leading chunk of at most <paramref name="maxLength"/> UTF-16 code units
+    /// from the front of the streaming <paramref name="buffer"/>, never severing a surrogate pair at
+    /// the chunk boundary. Used by the mid-stream MarkdownV2 flush (<see cref="FlushLegacyMarkdownV2Async"/>)
+    /// to drain an over-length buffer one message at a time.
+    /// </summary>
+    /// <remarks>
+    /// The previous implementation sliced and removed a fixed <paramref name="maxLength"/> code units
+    /// (<c>Buffer.ToString(0, maxLength)</c> + <c>Buffer.Remove(0, maxLength)</c>), which severed an
+    /// emoji / astral glyph straddling the boundary into a lone high surrogate (this chunk) and an
+    /// orphaned low surrogate (left at the head of the buffer) — both invalid UTF-16 that Telegram
+    /// rejects. This shares the same boundary-safe back-off as <see cref="SliceSurrogateSafe"/>: if the
+    /// cut would land between a surrogate pair, the cut is shortened by one so the whole pair moves
+    /// into the next chunk. The buffer is advanced by the actual chunk length, so the deferred code
+    /// unit is never skipped, and at least one code unit is always drained (forward progress).
+    /// </remarks>
+    internal static string DrainStreamingBuffer(StringBuilder buffer, int maxLength)
+    {
+        var available = Math.Min(maxLength, buffer.Length);
+        var length = available;
+
+        // Back off by one if the cut would split a surrogate pair (last code unit is a high surrogate
+        // whose low half is still in the buffer). Keep at least one unit so the drain always advances.
+        if (length > 1 && length < buffer.Length && char.IsHighSurrogate(buffer[length - 1]))
+        {
+            length--;
+        }
+
+        var chunk = buffer.ToString(0, length);
+        buffer.Remove(0, length);
+        return chunk;
     }
 
     /// <summary>
