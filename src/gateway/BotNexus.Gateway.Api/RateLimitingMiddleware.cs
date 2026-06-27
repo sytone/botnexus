@@ -13,6 +13,7 @@ public sealed class RateLimitingMiddleware
 {
     private const int DefaultRequestsPerMinute = 300;
     private const int DefaultWindowSeconds = 60;
+    private const int MaxEvictionAttempts = 8;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumRetryAfter = TimeSpan.FromSeconds(1);
 
@@ -59,12 +60,24 @@ public sealed class RateLimitingMiddleware
         var windowSeconds = configuredRateLimit?.WindowSeconds > 0
             ? configuredRateLimit.WindowSeconds
             : DefaultWindowSeconds;
+        // A non-positive cap disables entry-count bounding (pre-#1614 behaviour).
+        var maxEntries = configuredRateLimit?.MaxEntries > 0
+            ? configuredRateLimit.MaxEntries
+            : 0;
 
         var now = DateTimeOffset.UtcNow;
         var windowLength = TimeSpan.FromSeconds(windowSeconds);
         TryCleanupStaleEntries(now, windowLength);
         var clientKey = GetClientKey(context);
-        var clientWindow = _clientWindows.GetOrAdd(clientKey, _ => new ClientWindow(now));
+        var clientWindow = TryAcquireWindow(clientKey, now, windowLength, requestsPerMinute, maxEntries);
+        if (clientWindow is null)
+        {
+            // The tracking dictionary is at capacity and no idle/non-limiting entry could be
+            // freed for this new client key. Reject rather than grow without bound. Existing
+            // clients (already tracked) are never affected by this path.
+            WriteOverflowResponse(context, requestsPerMinute, windowLength, now);
+            return;
+        }
 
         bool isLimited;
         TimeSpan retryAfter;
@@ -123,6 +136,88 @@ public sealed class RateLimitingMiddleware
             if (now - lastAccessed > staleThreshold)
                 _clientWindows.TryRemove(pair.Key, out _);
         }
+    }
+
+    /// <summary>
+    /// Resolves the tracking window for <paramref name="clientKey"/>, enforcing the configured
+    /// entry cap for new keys. Existing keys always resolve. When the dictionary is at capacity
+    /// and the key is new, this prunes stale entries and then evicts a single window that is not
+    /// actively rate-limiting a client to make room. Returns <c>null</c> only when the cap is
+    /// reached and no room can be freed without evicting an actively-limiting window -- in which
+    /// case the caller rejects the request rather than growing the dictionary without bound.
+    /// </summary>
+    private ClientWindow? TryAcquireWindow(
+        string clientKey,
+        DateTimeOffset now,
+        TimeSpan windowLength,
+        int requestsPerMinute,
+        int maxEntries)
+    {
+        // Existing clients always keep their window; the cap only gates new key insertion.
+        if (_clientWindows.TryGetValue(clientKey, out var existing))
+            return existing;
+
+        // Cap disabled, or there is headroom: insert (or pick up a racing insert) directly.
+        if (maxEntries <= 0 || _clientWindows.Count < maxEntries)
+            return _clientWindows.GetOrAdd(clientKey, _ => new ClientWindow(now));
+
+        // At capacity for a new key: try to reclaim a slot, then re-check headroom. Loop a
+        // bounded number of times because a concurrent insert could re-fill the freed slot.
+        for (var attempt = 0; attempt < MaxEvictionAttempts; attempt++)
+        {
+            if (_clientWindows.TryGetValue(clientKey, out var raced))
+                return raced;
+            if (_clientWindows.Count < maxEntries)
+                return _clientWindows.GetOrAdd(clientKey, _ => new ClientWindow(now));
+            if (!TryEvictNonLimitingEntry(now, windowLength, requestsPerMinute))
+                return null; // every retained window is actively limiting -- refuse the new key.
+        }
+
+        return _clientWindows.Count < maxEntries
+            ? _clientWindows.GetOrAdd(clientKey, _ => new ClientWindow(now))
+            : null;
+    }
+
+    /// <summary>
+    /// Evicts a single window that is NOT actively rate-limiting a client (its window has
+    /// expired, or it is under the request limit). Windows actively counting toward a 429 are
+    /// preserved so a flood of new keys cannot clear an attacker's own throttle. Returns
+    /// <c>true</c> if an entry was removed.
+    /// </summary>
+    private bool TryEvictNonLimitingEntry(DateTimeOffset now, TimeSpan windowLength, int requestsPerMinute)
+    {
+        foreach (var pair in _clientWindows)
+        {
+            var window = pair.Value;
+            bool activelyLimiting;
+            lock (window.Sync)
+            {
+                var windowExpired = now - window.WindowStart >= windowLength;
+                // "Actively limiting" = still inside its window AND at/over the threshold, so the
+                // next request from this client would be (or already is being) 429'd.
+                activelyLimiting = !windowExpired && window.RequestCount >= requestsPerMinute;
+            }
+
+            if (!activelyLimiting && _clientWindows.TryRemove(pair.Key, out _))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void WriteOverflowResponse(
+        HttpContext context,
+        int requestsPerMinute,
+        TimeSpan windowLength,
+        DateTimeOffset now)
+    {
+        var retryAfter = windowLength < MinimumRetryAfter ? MinimumRetryAfter : windowLength;
+        var resetEpoch = (now + windowLength).ToUnixTimeSeconds();
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.Response.Headers.RetryAfter = Math.Ceiling(retryAfter.TotalSeconds).ToString();
+        context.Response.Headers["X-RateLimit-Limit"] = requestsPerMinute.ToString();
+        context.Response.Headers["X-RateLimit-Remaining"] = "0";
+        context.Response.Headers["X-RateLimit-Reset"] = resetEpoch.ToString();
     }
 
     private static string GetClientKey(HttpContext context)

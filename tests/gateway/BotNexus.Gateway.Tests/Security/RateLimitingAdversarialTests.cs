@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Http;
@@ -81,7 +82,97 @@ public sealed class RateLimitingAdversarialTests
         thirdRequest.Response.StatusCode.ShouldBe(StatusCodes.Status200OK);
     }
 
-    private static IOptions<PlatformConfig> CreateConfig(int requestsPerMinute, int windowSeconds)
+    // ── Entry-cap exhaustion (issue #1614) ───────────────────────────────────────
+    // The per-client window dictionary must not grow without bound: an attacker who
+    // churns distinct client keys faster than the lazy stale-eviction reclaims them
+    // could otherwise drive the gateway to OOM. The fix caps the dictionary and, when
+    // full, evicts only entries that are NOT actively rate-limiting a client.
+
+    [Fact]
+    public async Task InvokeAsync_FloodOfDistinctKeys_DictionarySizeNeverExceedsCap()
+    {
+        const int cap = 16;
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 100, windowSeconds: 60, maxEntries: cap));
+
+        // Mint far more distinct client keys than the cap allows, all within one window
+        // so the once-per-60s idle cleanup cannot reclaim anything.
+        for (var i = 1; i <= 500; i++)
+        {
+            var request = CreateContext($"10.{i / 256 % 256}.{i % 256}.7");
+            await middleware.InvokeAsync(request);
+            GetWindowCount(middleware).ShouldBeLessThanOrEqualTo(
+                cap,
+                $"dictionary exceeded the cap after {i} distinct keys");
+        }
+
+        GetWindowCount(middleware).ShouldBeLessThanOrEqualTo(cap);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_EntryCap_PreservesActivelyLimitedClientUnderFlood()
+    {
+        const int cap = 8;
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 1, windowSeconds: 60, maxEntries: cap));
+
+        // Drive a victim client into an active rate-limited state (over its limit).
+        const string victimIp = "172.16.0.1";
+        await middleware.InvokeAsync(CreateContext(victimIp));
+        var blocked = CreateContext(victimIp);
+        await middleware.InvokeAsync(blocked);
+        blocked.Response.StatusCode.ShouldBe(StatusCodes.Status429TooManyRequests);
+
+        // Now flood with many distinct keys, forcing repeated cap-eviction.
+        for (var i = 1; i <= 300; i++)
+            await middleware.InvokeAsync(CreateContext($"10.{i / 256 % 256}.{i % 256}.9"));
+
+        // The actively-limited victim must still be throttled: a flood must not clear
+        // an attacker's (or any active client's) own block by evicting its window.
+        var stillBlocked = CreateContext(victimIp);
+        await middleware.InvokeAsync(stillBlocked);
+        stillBlocked.Response.StatusCode.ShouldBe(StatusCodes.Status429TooManyRequests);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_EntryCapDisabled_DoesNotEvict()
+    {
+        // maxEntries <= 0 disables the cap (back-compat with the pre-#1614 behaviour):
+        // every distinct key keeps its own window for the life of the window.
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 100, windowSeconds: 60, maxEntries: 0));
+
+        const int distinctKeys = 250;
+        for (var i = 1; i <= distinctKeys; i++)
+            await middleware.InvokeAsync(CreateContext($"10.{i / 256 % 256}.{i % 256}.11"));
+
+        GetWindowCount(middleware).ShouldBe(distinctKeys);
+    }
+
+    [Fact]
+    public void RateLimit_MaxEntries_DefaultsToTenThousand()
+    {
+        new RateLimitConfig().MaxEntries.ShouldBe(10_000);
+    }
+
+    [Fact]
+    public void RateLimit_MaxEntries_IsReadFromGatewaySettings()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                RateLimit = new RateLimitConfig { MaxEntries = 250 }
+            }
+        };
+
+        config.Gateway?.RateLimit?.MaxEntries.ShouldBe(250);
+    }
+
+    private static IOptions<PlatformConfig> CreateConfig(int requestsPerMinute, int windowSeconds, int? maxEntries = null)
         => Options.Create(new PlatformConfig()
         {
             Gateway = new GatewaySettingsConfig
@@ -90,10 +181,21 @@ public sealed class RateLimitingAdversarialTests
                 {
                     Enabled = true,
                     RequestsPerMinute = requestsPerMinute,
-                    WindowSeconds = windowSeconds
+                    WindowSeconds = windowSeconds,
+                    MaxEntries = maxEntries ?? new RateLimitConfig().MaxEntries
                 }
             }
         });
+
+    private static int GetWindowCount(RateLimitingMiddleware middleware)
+    {
+        var windows = typeof(RateLimitingMiddleware)
+            .GetField("_clientWindows", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(middleware)!;
+        return (int)windows.GetType()
+            .GetProperty("Count", BindingFlags.Instance | BindingFlags.Public)!
+            .GetValue(windows)!;
+    }
 
     private static DefaultHttpContext CreateContext(string remoteIpAddress, string? xForwardedFor = null)
     {
