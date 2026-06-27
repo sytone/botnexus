@@ -64,6 +64,43 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Eagerly pins the freshly-created child session to the parent's conversation BEFORE
+    /// <see cref="SpawnAsync"/> returns, so concurrent lookups
+    /// (<see cref="ISessionStore.ListByConversationAsync"/>, /api/conversations/{id}/history,
+    /// canvas resolvers) never observe the child as an orphan. Prior to this the pin ran inside the
+    /// fire-and-forget <c>Task.Run</c> at the end of <c>SpawnAsync</c>, opening an orphan window
+    /// between the method returning and the background task being scheduled (Phase 4 / F-6).
+    /// </summary>
+    /// <remarks>
+    /// No-op when no <see cref="ISessionStore"/> is wired, or when the child session row does not
+    /// yet exist in the store. Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
+    /// named, awaited unit on the orchestration path (#1630); the eager (not lazy) ordering is
+    /// guarded by the architecture/behaviour tests. Declared BEFORE <c>SpawnAsync</c> so the
+    /// <c>.ConversationId =</c> mutation lexically precedes the fire-and-forget <c>Task.Run</c> in
+    /// the orchestrator -- the F-6 architecture fence
+    /// (SubAgentEagerPinArchitectureTests.NoConversationIdMutation_InsideTaskRun) is a source-position
+    /// check, so the eager-pin helper must sit above the queue point even though it is awaited first.
+    /// </remarks>
+    /// <param name="request">The spawn request carrying the inherited conversation id.</param>
+    /// <param name="childSessionId">The minted child session to bind to the parent conversation.</param>
+    /// <param name="ct">Cancellation token for the store reads/writes.</param>
+    private async Task PinChildConversationAsync(
+        SubAgentSpawnRequest request,
+        SessionId childSessionId,
+        CancellationToken ct)
+    {
+        if (_sessionStore is null)
+            return;
+
+        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
+        if (childSession is not null)
+        {
+            childSession.ConversationId = request.InheritedConversationId;
+            await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+        }
+    }
+
     /// <inheritdoc />
     public async Task<SubAgentInfo> SpawnAsync(SubAgentSpawnRequest request, CancellationToken ct = default)
     {
@@ -392,39 +429,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             AllowedReadPaths = allowedRead,
             AllowedWritePaths = allowedWrite
         };
-    }
-
-    /// <summary>
-    /// Eagerly pins the freshly-created child session to the parent's conversation BEFORE
-    /// <see cref="SpawnAsync"/> returns, so concurrent lookups
-    /// (<see cref="ISessionStore.ListByConversationAsync"/>, /api/conversations/{id}/history,
-    /// canvas resolvers) never observe the child as an orphan. Prior to this the pin ran inside the
-    /// fire-and-forget <c>Task.Run</c> at the end of <c>SpawnAsync</c>, opening an orphan window
-    /// between the method returning and the background task being scheduled (Phase 4 / F-6).
-    /// </summary>
-    /// <remarks>
-    /// No-op when no <see cref="ISessionStore"/> is wired, or when the child session row does not
-    /// yet exist in the store. Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
-    /// named, awaited unit on the orchestration path (#1630); the eager (not lazy) ordering is
-    /// guarded by the architecture/behaviour tests.
-    /// </remarks>
-    /// <param name="request">The spawn request carrying the inherited conversation id.</param>
-    /// <param name="childSessionId">The minted child session to bind to the parent conversation.</param>
-    /// <param name="ct">Cancellation token for the store reads/writes.</param>
-    private async Task PinChildConversationAsync(
-        SubAgentSpawnRequest request,
-        SessionId childSessionId,
-        CancellationToken ct)
-    {
-        if (_sessionStore is null)
-            return;
-
-        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
-        if (childSession is not null)
-        {
-            childSession.ConversationId = request.InheritedConversationId;
-            await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
-        }
     }
 
     /// <inheritdoc />
