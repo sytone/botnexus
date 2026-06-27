@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Gateway.Models;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -1765,10 +1766,14 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "memory_save" });
         await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
+        // Tool activity is now delivered as its own standalone sendMessage (decoupled from the content
+        // buffer so it survives message-boundary resets) using the canonical cross-channel glyph. The
+        // tool name's underscore must still be MarkdownV2-escaped since the status line is sent with
+        // parse_mode MarkdownV2.
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
-        // [memory_save] started → brackets escaped as \[ \], underscore escaped as \_
-        text.ShouldContain("\\[memory\\_save\\] started");
+        text.ShouldContain(ToolGlyphs.ForTool("memory_save")); // shared icon (\U0001F4BE)
+        text.ShouldContain("memory\\_save"); // underscore escaped for MarkdownV2
     }
 
     [Fact]
@@ -1799,9 +1804,13 @@ public sealed class TelegramChannelAdapterTests
         });
         await adapter.SendStreamEventAsync(StreamTargets.For("42"), new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
+        // A failed tool end is delivered as a standalone status message with the warning glyph and a
+        // "failed" suffix; the tool name's underscore is still MarkdownV2-escaped.
         sendCall.ShouldNotBeNull();
         var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
-        text.ShouldContain("\\[read\\_file\\] failed");
+        text.ShouldContain("\u26A0"); // warning glyph for an errored tool
+        text.ShouldContain("read\\_file"); // underscore escaped for MarkdownV2
+        text.ShouldContain("failed");
     }
 
     [Fact]

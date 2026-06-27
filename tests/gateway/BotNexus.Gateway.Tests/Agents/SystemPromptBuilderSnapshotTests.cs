@@ -348,6 +348,58 @@ public sealed class SystemPromptBuilderSnapshotTests
         AssertMatchesSnapshot("gateway-no-tools.prompt.txt", prompt);
     }
 
+    [Fact]
+    public void PublicStaticMembers_AreAllPascalCase()
+    {
+        // #1633(b): every public member of SystemPromptBuilder must follow .NET PascalCase. The
+        // section builders were camelCase port artifacts (buildXxx); this guards against regressing.
+        var camelCase = typeof(SystemPromptBuilder)
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly)
+            .Where(m => !m.IsSpecialName) // exclude property/operator accessors
+            .Select(m => m.Name)
+            .Where(name => name.Length > 0 && char.IsLower(name[0]))
+            .Distinct()
+            .ToList();
+
+        camelCase.ShouldBeEmpty(
+            "SystemPromptBuilder public static methods must be PascalCase; found camelCase: " + string.Join(", ", camelCase));
+    }
+
+    [Fact]
+    public void Build_FullPrompt_RendersSectionsInDeclaredOrder()
+    {
+        // #1633(c): replacing the scattered magic ordering ints with named PromptOrder constants must
+        // preserve the existing section sequence. Assert a representative set of section anchors render
+        // in the declared order (Tooling -> Safety -> ... -> cache boundary -> dynamic context -> runtime).
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read", "exec", "gateway", "memory_save"],
+            PromptMode = PromptMode.Full,
+            OwnerIdentity = "owner: Test User",
+            UserTimezone = "America/Los_Angeles",
+            Runtime = new RuntimeInfo { AgentId = "agent-a", Channel = "signalr" }
+        });
+
+        int IndexOf(string anchor)
+        {
+            var i = prompt.IndexOf(anchor, StringComparison.Ordinal);
+            i.ShouldBeGreaterThanOrEqualTo(0, $"expected prompt to contain section anchor '{anchor}'");
+            return i;
+        }
+
+        var tooling = IndexOf("<tooling>");
+        var safety = IndexOf("<safety>");
+        var workspace = IndexOf("<workspace>");
+        var cacheBoundary = IndexOf("BOTNEXUS_CACHE_BOUNDARY");
+        var runtime = IndexOf("<runtime>");
+
+        tooling.ShouldBeLessThan(safety);
+        safety.ShouldBeLessThan(workspace);
+        workspace.ShouldBeLessThan(cacheBoundary);
+        cacheBoundary.ShouldBeLessThan(runtime);
+    }
+
     private static void AssertMatchesSnapshot(string fileName, string actual)
     {
         var expectedPath = Path.Combine(
@@ -399,9 +451,9 @@ public sealed class SystemPromptBuilderSnapshotTests
         var availableTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "memory_save", "memory_search" };
         var methods = typeof(SystemPromptBuilder)
             .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-            .Where(method => string.Equals(method.Name, "buildMemorySection", StringComparison.Ordinal))
+            .Where(method => string.Equals(method.Name, "BuildMemorySection", StringComparison.Ordinal))
             .ToList();
-        methods.ShouldNotBeEmpty("SystemPromptBuilder.buildMemorySection should exist.");
+        methods.ShouldNotBeEmpty("SystemPromptBuilder.BuildMemorySection should exist.");
 
         var threeArgMethod = methods.SingleOrDefault(method =>
         {
@@ -429,12 +481,12 @@ public sealed class SystemPromptBuilderSnapshotTests
         if (twoArgMethod is not null)
         {
             if (!string.Equals(promptInjection, "full", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("SystemPromptBuilder.buildMemorySection must support memory.promptInjection (full/summary/none).");
+                throw new InvalidOperationException("SystemPromptBuilder.BuildMemorySection must support memory.promptInjection (full/summary/none).");
             var result = twoArgMethod.Invoke(null, [isMinimal, availableTools]);
             result.ShouldNotBeNull();
             return (IReadOnlyList<string>)result!;
         }
 
-        throw new InvalidOperationException("No supported SystemPromptBuilder.buildMemorySection overload found.");
+        throw new InvalidOperationException("No supported SystemPromptBuilder.BuildMemorySection overload found.");
     }
 }

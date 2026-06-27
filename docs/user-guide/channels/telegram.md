@@ -56,6 +56,7 @@ DM your bot and it will respond via the configured agent.
       "streamingBufferMs": 500,
       "maxMessageLength": 4000,
       "richMessages": true,
+      "showToolActivity": true,
       "maxRichMessageLength": 32000,
       "processEditedMessages": false,
       "webhookUrl": "string (optional)",
@@ -75,6 +76,7 @@ DM your bot and it will respond via the configured agent.
 | `streamingBufferMs` | int | `500` | Flush interval for streaming deltas. |
 | `maxMessageLength` | int | `4000` | Characters before splitting long responses (legacy/fallback path). |
 | `richMessages` | bool | `true` | Send messages as Telegram Rich Messages (Bot API 10.1+) with native tables/headings/lists. Falls back to MarkdownV2 then plain text if Telegram rejects a rich send. Set `false` to force the legacy MarkdownV2 path. |
+| `showToolActivity` | bool | `true` | Surface tool executions to the chat as compact standalone status messages (e.g. `📄 read done`) as the agent runs, so you can see which tools are being called. Each tool is delivered as its own message using a shared cross-channel icon. Set `false` to show only the agent's replies. |
 | `maxRichMessageLength` | int | `32000` | Characters before splitting a Rich Message (the rich limit is 32768). Only used when `richMessages` is enabled. |
 | `processEditedMessages` | bool | `false` | When `true`, edited messages are processed as new messages. |
 | `webhookUrl` | string | `null` | Set to enable webhook mode instead of polling (requires a public HTTPS URL). |

@@ -132,11 +132,11 @@ public static class AgentLoopRunner
         var messages = currentContext.Messages.ToList();
         IReadOnlyList<AgentMessage> followUpSeed = [];
 
-        // Post-turn claim auditor (#1600): accumulate the names of every tool that
-        // actually executed during the run and remember the last assistant message, so
-        // the final user-facing message can be cross-checked against the tools invoked.
-        var invokedToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        AssistantAgentMessage? lastAssistantMessage = null;
+        // Post-turn claim auditor (#1600, #1661): each completed turn is audited against the
+        // tools that executed ON THAT TURN, so a no-tool fabrication turn is flagged even
+        // when an earlier turn in the same run used a backing tool. Auditing is turn-scoped
+        // rather than run-scoped to match the prompt trip-wire ("a matching tool result in
+        // THIS turn"); the final turn is audited by the same per-turn pass.
 
         while (true)
         {
@@ -195,7 +195,6 @@ public static class AgentLoopRunner
                 }
 
                 newMessages.Add(assistantMessage);
-                lastAssistantMessage = assistantMessage;
 
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
                 {
@@ -223,11 +222,12 @@ public static class AgentLoopRunner
                         .ConfigureAwait(false)
                     : [];
 
+                var turnToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var toolResult in toolResults)
                 {
                     messages.Add(toolResult);
                     newMessages.Add(toolResult);
-                    invokedToolNames.Add(toolResult.ToolName);
+                    turnToolNames.Add(toolResult.ToolName);
                 }
 
                 metrics.IncrementTurns();
@@ -236,6 +236,11 @@ public static class AgentLoopRunner
 
                 await emit(new TurnEndEvent(assistantMessage, toolResults, DateTimeOffset.UtcNow))
                     .ConfigureAwait(false);
+
+                // Audit this turn's user-facing message against the tools that ran on THIS
+                // turn only (#1661). Run-scoped auditing previously let an earlier tool turn
+                // "back" a later no-tool fabrication turn for the whole run.
+                await AuditClaimsAsync(config, assistantMessage, turnToolNames, emit).ConfigureAwait(false);
 
                 pendingMessages = (await GetMessagesAsync(config.GetSteeringMessages, cancellationToken).ConfigureAwait(false))
                     .ToList();
@@ -252,41 +257,45 @@ public static class AgentLoopRunner
         }
 
         var endTime2 = DateTimeOffset.UtcNow;
-        await AuditClaimsAsync(config, lastAssistantMessage, invokedToolNames, emit).ConfigureAwait(false);
         await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime2), endTime2)).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Runs the post-turn claim auditor (#1600) over the run's final assistant message and
-    /// emits a <see cref="ClaimAuditEvent"/> when one or more artifact-shaped claims have no
-    /// backing tool call. No-op when the auditor is not configured, is disabled, the run
-    /// produced no assistant message, or the final message was an error/abort placeholder.
+    /// Runs the post-turn claim auditor (#1600, #1661) over a single completed turn's
+    /// user-facing assistant message and emits a <see cref="ClaimAuditEvent"/> when one or
+    /// more artifact-shaped claims have no backing tool call <em>on that turn</em>. No-op
+    /// when the auditor is not configured, is disabled, the turn produced no assistant
+    /// message, or the message was an error/abort placeholder.
     /// </summary>
+    /// <param name="config">The loop configuration carrying the auditor options.</param>
+    /// <param name="turnMessage">The assistant message produced on the turn being audited.</param>
+    /// <param name="turnToolNames">The names of the tools that executed on this turn only.</param>
+    /// <param name="emit">The event emission callback.</param>
     private static async Task AuditClaimsAsync(
         AgentLoopConfig config,
-        AssistantAgentMessage? finalMessage,
-        IReadOnlySet<string> invokedToolNames,
+        AssistantAgentMessage? turnMessage,
+        IReadOnlySet<string> turnToolNames,
         Func<AgentEvent, Task> emit)
     {
-        if (config.ClaimAudit is not { Enabled: true } options || finalMessage is null)
+        if (config.ClaimAudit is not { Enabled: true } options || turnMessage is null)
         {
             return;
         }
 
         // Only audit a real, completed user-facing message. Error/abort placeholders are
         // surfaced through their own paths and are not narration to verify.
-        if (finalMessage.FinishReason is StopReason.Error or StopReason.Aborted)
+        if (turnMessage.FinishReason is StopReason.Error or StopReason.Aborted)
         {
             return;
         }
 
-        var result = ClaimAuditor.Audit(finalMessage.Content, invokedToolNames, options);
+        var result = ClaimAuditor.Audit(turnMessage.Content, turnToolNames, options);
         if (!result.HasUnbackedClaims)
         {
             return;
         }
 
-        await emit(new ClaimAuditEvent(result, finalMessage, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        await emit(new ClaimAuditEvent(result, turnMessage, DateTimeOffset.UtcNow)).ConfigureAwait(false);
     }
 
     private static async Task<SimpleStreamOptions> BuildStreamOptionsAsync(

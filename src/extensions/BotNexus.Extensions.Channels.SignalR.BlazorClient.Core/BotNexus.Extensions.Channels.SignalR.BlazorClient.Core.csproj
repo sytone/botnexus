@@ -10,4 +10,8 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
+  </ItemGroup>
+
 </Project>

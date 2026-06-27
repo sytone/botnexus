@@ -1,3 +1,4 @@
+using BotNexus.Cron;
 using BotNexus.Cron.Tests.TestInfrastructure;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,7 +15,7 @@ public sealed class CronRunRetentionHostedServiceTests
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
 
         var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
-        await context.Store.RecordRunCompleteAsync(run.Id, "completed");
+        await context.Store.RecordRunCompleteAsync(run.Id, CronRunStatus.Ok);
 
         // Backdate the run to 45 days ago
         await BackdateRunCompletedAt(context.DbPath, run.Id, DateTimeOffset.UtcNow.AddDays(-45));
@@ -35,7 +36,7 @@ public sealed class CronRunRetentionHostedServiceTests
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
 
         var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
-        await context.Store.RecordRunCompleteAsync(run.Id, "completed");
+        await context.Store.RecordRunCompleteAsync(run.Id, CronRunStatus.Ok);
 
         var options = Options.Create(new CronRunRetentionOptions { RetentionDays = 30 });
         var service = new CronRunRetentionHostedService(
@@ -62,7 +63,7 @@ public sealed class CronRunRetentionHostedServiceTests
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
 
         var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
-        await context.Store.RecordRunCompleteAsync(run.Id, "completed");
+        await context.Store.RecordRunCompleteAsync(run.Id, CronRunStatus.Ok);
 
         // Backdate to 10 days ago
         await BackdateRunCompletedAt(context.DbPath, run.Id, DateTimeOffset.UtcNow.AddDays(-10));
