@@ -60,8 +60,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
         var conv = _store.GetConversation(convIdNow);
         if (conv is null) return;
 
-        conv.Messages.Add(new ChatMessage("User", content, DateTimeOffset.UtcNow));
-        _store.NotifyChanged();
+        // Route the local user echo through the single append path so every call site
+        // (send, steer, redirect) adds the user message and notifies identically.
+        AppendUserMessage(agentId, content);
 
         try
         {
@@ -547,109 +548,20 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
+            // Virtual sessions (cron/soul projections) read the raw session transcript;
+            // regular conversations read the merged conversation history with boundaries.
             if (conv.IsVirtualSession && conv.ActiveSessionId is { Length: > 0 } sessionId)
             {
-                const int virtualHistoryLimit = 200;
-                var sessionResponse = await _restClient.GetSessionHistoryAsync(sessionId, limit: virtualHistoryLimit);
-                conv.Messages.Clear();
-                if (sessionResponse?.Entries is { Count: > 0 })
-                {
-                    foreach (var entry in sessionResponse.Entries)
-                    {
-                        var role = MapRole(entry.Role ?? "system");
-                        conv.Messages.Add(new ChatMessage(role, entry.Content ?? string.Empty, entry.Timestamp)
-                        {
-                            ToolName = entry.ToolName,
-                            ToolCallId = entry.ToolCallId,
-                            ToolArgs = entry.ToolArgs,
-                            ToolIsError = entry.ToolIsError,
-                            ThinkingContent = entry.ThinkingContent,
-                            IsToolCall = entry.ToolName is not null,
-                            ToolResult = entry.ToolName is not null ? AnsiStripper.Strip(entry.Content) : null
-                        });
-                    }
-                }
-
-                conv.HistoryLoaded = true;
-                return;
+                await LoadVirtualHistoryAsync(conv, sessionId);
             }
-
-            const int historyLimit = 200;
-            var response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit);
-
-            if (response?.Entries is { Count: > 0 })
+            else
             {
-                conv.Messages.Clear();
-
-                foreach (var entry in response.Entries)
-                {
-                    if (entry.Kind == "boundary")
-                    {
-                        var label = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}";
-                        conv.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
-                        {
-                            Kind = "boundary",
-                            BoundaryLabel = label,
-                            BoundarySessionId = entry.SessionId
-                        });
-                    }
-                    else if (entry.Kind == "compaction")
-                    {
-                        var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
-                        conv.Messages.Add(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
-                        {
-                            Kind = "compaction",
-                            BoundaryLabel = label,
-                            BoundarySessionId = entry.SessionId
-                        });
-                    }
-                    else
-                    {
-                        var isToolCall = entry.ToolName is not null;
-                        conv.Messages.Add(new ChatMessage(
-                            MapRole(entry.Role ?? "system"),
-                            entry.Content ?? string.Empty,
-                            entry.Timestamp)
-                        {
-                            ToolName = entry.ToolName,
-                            ToolCallId = entry.ToolCallId,
-                            IsToolCall = isToolCall,
-                            ToolResult = isToolCall ? AnsiStripper.Strip(entry.Content) : null,
-                            ToolArgs = entry.ToolArgs,
-                            ToolIsError = entry.ToolIsError,
-                            ThinkingContent = entry.ThinkingContent
-                        });
-                    }
-                }
+                await LoadRegularHistoryAsync(agent, conv, conversationId);
             }
-
-            conv.HistoryLoaded = true;
-
-            // Sync session ID
-            if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
-                agent.SessionId = conv.ActiveSessionId;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", Sanitise(conversationId));
-            agent.Conversations.Remove(conversationId);
-            if (agent.ActiveConversationId == conversationId)
-            {
-                var nextConversationId = agent.Conversations.Values
-                    .OrderByDescending(c => c.IsDefault)
-                    .ThenByDescending(c => c.UpdatedAt)
-                    .Select(c => c.ConversationId)
-                    .FirstOrDefault();
-                if (nextConversationId is not null)
-                {
-                    _store.SetActiveConversation(agentId, nextConversationId);
-                }
-                else
-                {
-                    agent.ActiveConversationId = null;
-                    _store.NotifyChanged();
-                }
-            }
+            HandleHistoryNotFound(agent, agentId, conversationId, ex);
         }
         catch (Exception ex)
         {
@@ -660,6 +572,104 @@ public sealed class AgentInteractionService : IAgentInteractionService
         {
             conv.IsLoadingHistory = false;
             _store.NotifyChanged();
+        }
+    }
+
+    /// <summary>
+    /// Loads transcript entries for a virtual-session conversation (cron/soul/sub-agent
+    /// projections) from the session-history endpoint and replaces the displayed messages.
+    /// </summary>
+    private async Task LoadVirtualHistoryAsync(ConversationState conv, string sessionId)
+    {
+        const int virtualHistoryLimit = 200;
+        var sessionResponse = await _restClient.GetSessionHistoryAsync(sessionId, limit: virtualHistoryLimit);
+        conv.Messages.Clear();
+        if (sessionResponse?.Entries is { Count: > 0 })
+        {
+            foreach (var message in sessionResponse.Entries.Select(ToChatMessage))
+                conv.Messages.Add(message);
+        }
+
+        conv.HistoryLoaded = true;
+    }
+
+    /// <summary>
+    /// Loads merged conversation history (including session-boundary and compaction
+    /// dividers) from the conversation-history endpoint and replaces the displayed
+    /// messages, then syncs the agent-global session pointer when this conversation
+    /// is the active one.
+    /// </summary>
+    private async Task LoadRegularHistoryAsync(AgentState agent, ConversationState conv, string conversationId)
+    {
+        const int historyLimit = 200;
+        var response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit);
+
+        if (response?.Entries is { Count: > 0 })
+        {
+            conv.Messages.Clear();
+
+            foreach (var entry in response.Entries)
+            {
+                if (entry.Kind == "boundary")
+                {
+                    var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
+                    conv.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
+                    {
+                        Kind = "boundary",
+                        BoundaryLabel = label,
+                        BoundarySessionId = entry.SessionId
+                    });
+                }
+                else if (entry.Kind == "compaction")
+                {
+                    var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
+                    conv.Messages.Add(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
+                    {
+                        Kind = "compaction",
+                        BoundaryLabel = label,
+                        BoundarySessionId = entry.SessionId
+                    });
+                }
+                else
+                {
+                    conv.Messages.Add(ToChatMessage(entry));
+                }
+            }
+        }
+
+        conv.HistoryLoaded = true;
+
+        // Sync session ID
+        if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
+            agent.SessionId = conv.ActiveSessionId;
+    }
+
+    /// <summary>
+    /// Recovers from a 404 on history load: the conversation no longer exists server-side,
+    /// so it is dropped locally and - when it was the active conversation - the most recent
+    /// remaining conversation (default first, then newest) is selected, or the active
+    /// pointer cleared when none remain.
+    /// </summary>
+    private void HandleHistoryNotFound(AgentState agent, string agentId, string conversationId, HttpRequestException ex)
+    {
+        _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", Sanitise(conversationId));
+        agent.Conversations.Remove(conversationId);
+        if (agent.ActiveConversationId == conversationId)
+        {
+            var nextConversationId = agent.Conversations.Values
+                .OrderByDescending(c => c.IsDefault)
+                .ThenByDescending(c => c.UpdatedAt)
+                .Select(c => c.ConversationId)
+                .FirstOrDefault();
+            if (nextConversationId is not null)
+            {
+                _store.SetActiveConversation(agentId, nextConversationId);
+            }
+            else
+            {
+                agent.ActiveConversationId = null;
+                _store.NotifyChanged();
+            }
         }
     }
 
@@ -706,22 +716,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
             conv.Messages.Clear();
             if (response?.Entries is { Count: > 0 })
             {
-                foreach (var entry in response.Entries)
-                {
-                    conv.Messages.Add(new ChatMessage(
-                        MapRole(entry.Role ?? "system"),
-                        entry.Content ?? string.Empty,
-                        entry.Timestamp)
-                    {
-                        ToolName = entry.ToolName,
-                        ToolCallId = entry.ToolCallId,
-                        ToolArgs = entry.ToolArgs,
-                            ToolIsError = entry.ToolIsError,
-                            ThinkingContent = entry.ThinkingContent,
-                        ToolResult = entry.ToolName is not null ? AnsiStripper.Strip(entry.Content) : null,
-                        IsToolCall = entry.ToolName is not null
-                    });
-                }
+                foreach (var message in response.Entries.Select(ToChatMessage))
+                    conv.Messages.Add(message);
             }
 
             conv.HistoryLoaded = true;
@@ -808,4 +804,67 @@ public sealed class AgentInteractionService : IAgentInteractionService
         "system" => "System",
         _ => role
     };
+
+    /// <summary>
+    /// Single source of truth for projecting a session-history transcript entry into a
+    /// displayable <see cref="ChatMessage"/>. Used by the virtual-session loader and the
+    /// sub-agent loader (both read <see cref="SessionHistoryEntryDto"/>); the conversation
+    /// loader uses the <see cref="ConversationHistoryEntryDto"/> overload. Internal so the
+    /// projection contract (tool-call flag, ANSI-stripped result, role mapping) can be
+    /// asserted directly in tests.
+    /// </summary>
+    internal static ChatMessage ToChatMessage(SessionHistoryEntryDto entry) =>
+        ToChatMessage(
+            entry.Role,
+            entry.Content,
+            entry.Timestamp,
+            entry.ToolName,
+            entry.ToolCallId,
+            entry.ToolArgs,
+            entry.ToolIsError,
+            entry.ThinkingContent);
+
+    /// <summary>
+    /// Single source of truth for projecting a conversation-history transcript entry
+    /// (the non-boundary, non-compaction case) into a displayable <see cref="ChatMessage"/>.
+    /// Boundary and compaction entries are handled by the conversation loader itself and
+    /// are not routed through this factory.
+    /// </summary>
+    internal static ChatMessage ToChatMessage(ConversationHistoryEntryDto entry) =>
+        ToChatMessage(
+            entry.Role,
+            entry.Content,
+            entry.Timestamp,
+            entry.ToolName,
+            entry.ToolCallId,
+            entry.ToolArgs,
+            entry.ToolIsError,
+            entry.ThinkingContent);
+
+    // Shared projection logic for both transcript-entry DTO shapes. An entry is treated
+    // as a tool call when it carries a tool name; only then is its content surfaced as the
+    // (ANSI-stripped) tool result. AnsiStripper.Strip is null-safe and preserves a null
+    // content unchanged, matching the pre-refactor inline projections exactly.
+    private static ChatMessage ToChatMessage(
+        string? role,
+        string? content,
+        DateTimeOffset timestamp,
+        string? toolName,
+        string? toolCallId,
+        string? toolArgs,
+        bool toolIsError,
+        string? thinkingContent)
+    {
+        var isToolCall = toolName is not null;
+        return new ChatMessage(MapRole(role ?? "system"), content ?? string.Empty, timestamp)
+        {
+            ToolName = toolName,
+            ToolCallId = toolCallId,
+            ToolArgs = toolArgs,
+            ToolIsError = toolIsError,
+            ThinkingContent = thinkingContent,
+            IsToolCall = isToolCall,
+            ToolResult = isToolCall ? AnsiStripper.Strip(content) : null
+        };
+    }
 }

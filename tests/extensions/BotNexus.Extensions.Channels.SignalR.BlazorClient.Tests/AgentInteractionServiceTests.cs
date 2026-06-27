@@ -609,4 +609,81 @@ public sealed class AgentInteractionServiceTests
         Assert.Single(conv.Messages);
         Assert.Equal("running tool", conv.Messages[0].Content);
     }
+
+    // -- ToChatMessage projection factory tests (#1623) --
+    // These lock the single-source projection contract shared by the virtual, regular,
+    // and sub-agent history loaders: tool-call detection, ANSI-stripped tool result,
+    // and role mapping.
+
+    [Fact]
+    public void ToChatMessage_ToolCallEntry_MapsRole_FlagsToolCall_AndStripsAnsiResult()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var entry = new SessionHistoryEntryDto
+        {
+            Role = "tool",
+            Content = "\u001b[31mred\u001b[0m output",
+            Timestamp = timestamp,
+            ToolName = "exec",
+            ToolCallId = "call-1",
+            ToolArgs = "{\"cmd\":\"ls\"}",
+            ToolIsError = true,
+            ThinkingContent = "deliberating"
+        };
+
+        var message = AgentInteractionService.ToChatMessage(entry);
+
+        message.Role.ShouldBe("Tool");
+        message.IsToolCall.ShouldBeTrue();
+        // ANSI escape sequences are stripped from the surfaced tool result.
+        message.ToolResult.ShouldBe("red output");
+        message.ToolName.ShouldBe("exec");
+        message.ToolCallId.ShouldBe("call-1");
+        message.ToolArgs.ShouldBe("{\"cmd\":\"ls\"}");
+        message.ToolIsError.ShouldBe(true);
+        message.ThinkingContent.ShouldBe("deliberating");
+        message.Content.ShouldBe("\u001b[31mred\u001b[0m output");
+        message.Timestamp.ShouldBe(timestamp);
+    }
+
+    [Fact]
+    public void ToChatMessage_NonToolEntry_MapsRole_AndLeavesToolResultNull()
+    {
+        var entry = new SessionHistoryEntryDto
+        {
+            Role = "assistant",
+            Content = "plain assistant reply",
+            Timestamp = DateTimeOffset.UtcNow,
+            ToolName = null
+        };
+
+        var message = AgentInteractionService.ToChatMessage(entry);
+
+        message.Role.ShouldBe("Assistant");
+        message.IsToolCall.ShouldBeFalse();
+        message.ToolResult.ShouldBeNull();
+        message.Content.ShouldBe("plain assistant reply");
+    }
+
+    [Fact]
+    public void ToChatMessage_ConversationEntryOverload_AppliesSameProjection()
+    {
+        var entry = new ConversationHistoryEntryDto
+        {
+            Kind = "message",
+            SessionId = "s1",
+            Role = "tool",
+            Content = "\u001b[32mok\u001b[0m",
+            Timestamp = DateTimeOffset.UtcNow,
+            ToolName = "read",
+            ToolIsError = false
+        };
+
+        var message = AgentInteractionService.ToChatMessage(entry);
+
+        message.Role.ShouldBe("Tool");
+        message.IsToolCall.ShouldBeTrue();
+        message.ToolResult.ShouldBe("ok");
+        message.ToolName.ShouldBe("read");
+    }
 }
