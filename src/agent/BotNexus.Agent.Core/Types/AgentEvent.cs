@@ -174,17 +174,18 @@ public sealed record ToolExecutionEndEvent(
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.ToolExecutionEnd, Timestamp);
 
 /// <summary>
-/// Raised at the end of a run when the post-turn claim auditor detects one or more
-/// artifact-shaped claims in the agent's final message that have no backing tool call
-/// (#1600). This is the structured, observable anti-fabrication signal: a fabricated
-/// "I filed issue #N" (with no tool call that turn) surfaces here rather than only as a
-/// prose log line.
+/// Raised when the post-turn claim auditor detects one or more artifact-shaped claims in a
+/// completed turn's user-facing message that have no backing tool call on that turn
+/// (#1600, #1661). This is the structured, observable anti-fabrication signal: a fabricated
+/// "I filed issue #N" (with no tool call on that turn) surfaces here rather than only as a
+/// prose log line. Auditing is per-turn, so a no-tool fabrication turn is caught even when
+/// an earlier turn in the same run used a backing tool.
 /// </summary>
 /// <param name="Result">The audit result, including the detected unbacked claims and whether the turn should be blocked.</param>
-/// <param name="FinalMessage">The assistant message that was audited.</param>
+/// <param name="FinalMessage">The assistant message that was audited (the message of the turn that produced the claim).</param>
 /// <param name="Timestamp">The event timestamp.</param>
 /// <remarks>
-/// Emitted just before <see cref="AgentEndEvent"/> when <see cref="ClaimAuditResult.HasUnbackedClaims"/>
+/// Emitted after a turn's <see cref="TurnEndEvent"/> when <see cref="ClaimAuditResult.HasUnbackedClaims"/>
 /// is true. Listeners (e.g. the gateway) decide how to surface a warn vs. block.
 /// </remarks>
 public sealed record ClaimAuditEvent(
