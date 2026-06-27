@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
@@ -280,25 +281,33 @@ public sealed class TelegramChannelAdapter(
 
                 case AgentStreamEventType.ToolStart:
                 {
-                    var toolName = streamEvent.ToolName ?? "tool";
-                    AppendLineIfNeeded(state.Buffer);
-                    state.Buffer.Append("[");
-                    state.Buffer.Append(toolName);
-                    state.Buffer.Append("] started");
-                    state.PendingCharacterCount += toolName.Length + 10;
+                    // Tool annotations are delivered as their OWN dedicated message, NOT appended to the
+                    // streaming content buffer. The buffer is reset on every MessageStart and the whole
+                    // StreamingState is torn down (TryRemove) at MessageEnd -- and in the agent loop the
+                    // sequence for a tool-using turn is [MessageEnd of the preamble] -> [ToolStart/ToolEnd]
+                    // -> [MessageStart of the follow-up]. So a tool line buffered here would be wiped by the
+                    // follow-up's MessageStart before it was ever flushed to a real message (the "tool
+                    // messages eaten by the next assistant message" bug). Sending it immediately as a
+                    // standalone message decouples it from the resettable buffer's lifecycle entirely.
+                    if (!runtime.Config.ShowToolActivity)
+                        break;
+                    var toolName = streamEvent.ToolName ?? streamEvent.ToolCallId ?? "tool";
+                    // Escape the tool name for MarkdownV2 (status messages are sent with that parse mode);
+                    // names like memory_save contain underscores that would otherwise be read as italics.
+                    await SendToolActivityAsync(runtime, state, $"{ToolGlyphs.ForTool(streamEvent.ToolName)} {TelegramMarkdownFormatter.EscapeMarkdownV2(toolName)}", cancellationToken);
                     break;
                 }
 
                 case AgentStreamEventType.ToolEnd:
                 {
-                    var status = streamEvent.ToolIsError == true ? "failed" : "completed";
+                    // See ToolStart: delivered as a standalone message so it survives the MessageStart/
+                    // MessageEnd state churn that surrounds a tool cycle.
+                    if (!runtime.Config.ShowToolActivity)
+                        break;
+                    var glyph = streamEvent.ToolIsError == true ? "\u26A0\uFE0F" : ToolGlyphs.ForTool(streamEvent.ToolName);
+                    var status = streamEvent.ToolIsError == true ? "failed" : "done";
                     var toolName = streamEvent.ToolName ?? streamEvent.ToolCallId ?? "tool";
-                    AppendLineIfNeeded(state.Buffer);
-                    state.Buffer.Append("[");
-                    state.Buffer.Append(toolName);
-                    state.Buffer.Append("] ");
-                    state.Buffer.Append(status);
-                    state.PendingCharacterCount += toolName.Length + status.Length + 3;
+                    await SendToolActivityAsync(runtime, state, $"{glyph} {TelegramMarkdownFormatter.EscapeMarkdownV2(toolName)} {status}", cancellationToken);
                     break;
                 }
 
@@ -1035,6 +1044,46 @@ public sealed class TelegramChannelAdapter(
 
             if (isLast && builder.Length > 0)
                 yield return builder.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Sends a tool-activity status line (e.g. "\U0001F4C4 read done") as its own standalone Telegram
+    /// message, so the user can watch tool execution as the agent runs.
+    /// </summary>
+    /// <remarks>
+    /// This intentionally bypasses the streaming content buffer. Tool events arrive at the seams
+    /// between assistant messages, where the buffer is reset (MessageStart) and the StreamingState is
+    /// removed (MessageEnd); a buffered tool line would be eaten by the follow-up message before it
+    /// was ever delivered. Before sending, any pending buffered content is force-flushed so the tool
+    /// status appears AFTER the preamble that preceded it (preserving chronological order). The glyph
+    /// is supplied by the caller from the cross-channel <see cref="ToolGlyphs"/> map. Sent as plain
+    /// text (no markdown parsing) since the line is a short fixed-format status, not model output.
+    /// Failures are swallowed: a dropped status line must never abort the agent run or the reply.
+    /// </remarks>
+    private async Task SendToolActivityAsync(BotRuntime runtime, StreamingState state, string line, CancellationToken cancellationToken)
+    {
+        // Flush any preamble content first so ordering stays chronological (content -> tool status).
+        if (state.Buffer.Length > 0)
+        {
+            try
+            {
+                await FlushStreamingStateAsync(runtime, state, force: true, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "{DisplayName} bot '{BotName}' failed to flush pending content before tool-activity message for chat {ChatId}", DisplayName, runtime.BotName, state.ChatId);
+            }
+        }
+
+        try
+        {
+            await runtime.ApiClient.SendMessageAsync(state.ChatId, line, state.MessageThreadId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: never let a tool-status line break the run or the reply.
+            _logger.LogDebug(ex, "{DisplayName} bot '{BotName}' failed to send tool-activity message for chat {ChatId}", DisplayName, runtime.BotName, state.ChatId);
         }
     }
 

@@ -69,6 +69,14 @@ public static class ToolDescriptionFormatter
         return $"{emoji} {detail}";
     }
 
+    /// <summary>
+    /// Per-tool emoji glyph. This is a deliberate MIRROR of the canonical cross-channel map
+    /// <c>BotNexus.Domain.Gateway.Models.ToolGlyphs.ForTool</c>. The Blazor WebAssembly client is
+    /// intentionally decoupled from <c>BotNexus.Domain</c> (the domain assembly must not ship in the
+    /// WASM payload), so it cannot reference <c>ToolGlyphs</c> directly and keeps this copy instead.
+    /// A unit test (<c>ToolGlyphsSyncTests</c>) asserts the two stay identical -- if you change a glyph
+    /// here or in <c>ToolGlyphs</c>, update the other or the test fails.
+    /// </summary>
     private static string GetEmoji(string toolName) => toolName switch
     {
         "read" => "📄",

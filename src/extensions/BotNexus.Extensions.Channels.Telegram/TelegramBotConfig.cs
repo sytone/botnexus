@@ -82,6 +82,19 @@ public sealed class TelegramBotConfig
     public bool RichMessages { get; set; } = true;
 
     /// <summary>
+    /// When true (default), tool executions are surfaced to the chat as compact standalone status
+    /// messages (e.g. "\U0001F4C4 read done") as the agent runs, so the user can see which tools are
+    /// being called. Each tool start/end is delivered as its own message rather than being mixed into
+    /// the assistant's streamed reply -- this is deliberate: the streaming content buffer is reset at
+    /// every message boundary, so an inlined tool note is wiped by the follow-up assistant message
+    /// before it is ever sent. Set to false to suppress tool-activity messages and show only the
+    /// agent's replies. The glyph for each tool comes from the cross-channel
+    /// <see cref="BotNexus.Domain.Gateway.Models.ToolGlyphs"/> map so the icon is identical on every
+    /// channel.
+    /// </summary>
+    public bool ShowToolActivity { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the maximum Rich Message length before payload splitting. Rich Messages allow up
     /// to 32768 characters (vs 4096 for plain), so the default (32000) stays safely below that limit.
     /// Only used when <see cref="RichMessages"/> is enabled; the legacy fallback path uses
