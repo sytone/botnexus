@@ -86,6 +86,37 @@ public sealed class AgentInteractionServiceLoggingTests
     }
 
     [Fact]
+    public async Task LoggedConversationId_is_sanitised_against_log_forging()
+    {
+        // #1653-class follow-up to #1624 (CodeQL cs/log-forging): conversation/agent ids reach this
+        // service as raw client strings, so any value interpolated into a log template must have its
+        // CR/LF stripped before it is rendered, or an attacker could inject forged log lines.
+        var forgedId = "conv-1\r\nFATAL injected admin login from 10.0.0.1";
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations[forgedId] = new ConversationState
+        {
+            ConversationId = forgedId,
+            Title = "Forged",
+            HistoryLoaded = true // isolate the canvas best-effort catch
+        };
+
+        var boom = new InvalidOperationException("canvas endpoint 500");
+        _restClient.GetConversationCanvasAsync("agent-1", forgedId, Arg.Any<CancellationToken>())
+            .Returns<Task<string?>>(_ => throw boom);
+
+        await Should.NotThrowAsync(async () => await _service.SelectConversationAsync("agent-1", forgedId));
+
+        var debug = _logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Debug && e.Exception == boom);
+        debug.ShouldNotBeNull("Best-effort canvas hydration failure must be logged at Debug.");
+        // The rendered message must NOT carry the injected newlines that would forge a separate log line.
+        debug!.Message.ShouldNotContain("\r");
+        debug.Message.ShouldNotContain("\n");
+        // The id payload survives (newlines collapsed to a space) so the entry is still diagnosable.
+        debug.Message.ShouldContain("conv-1");
+        debug.Message.ShouldContain("FATAL injected admin login");
+    }
+
+    [Fact]
     public void Service_has_no_console_error_writes_remaining()
     {
         // Guard against regression to Console.Error in this service's source.

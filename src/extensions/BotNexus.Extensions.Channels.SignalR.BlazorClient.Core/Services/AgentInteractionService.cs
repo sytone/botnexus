@@ -26,6 +26,17 @@ public sealed class AgentInteractionService : IAgentInteractionService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Strips carriage-return and newline characters from a client-supplied value before it is
+    /// used in a log message template, preventing log forging / injected log lines
+    /// (CodeQL: cs/log-forging). Conversation, agent and sub-agent identifiers arrive as raw
+    /// strings from the UI/transport layer here (not the validated domain value-types), so they
+    /// are untrusted at this seam. Null-safe.
+    /// </summary>
+    private static string? Sanitise(string? value) =>
+        value?.Replace("\r", string.Empty, StringComparison.Ordinal)
+              .Replace("\n", " ", StringComparison.Ordinal);
+
     // ── Messaging ─────────────────────────────────────────────────────────
 
     public async Task SendMessageAsync(string agentId, string content)
@@ -264,7 +275,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "CreateConversation failed for {AgentId}", agentId);
+            _logger.LogError(ex, "CreateConversation failed for {AgentId}", Sanitise(agentId));
             return null;
         }
     }
@@ -292,7 +303,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", conversationId); }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", Sanitise(conversationId)); }
         }
 
         // Fetch todo state from REST if not already loaded (#1464 step 5). Mirrors canvas hydration
@@ -309,7 +320,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort todo hydration failed for {ConversationId}", conversationId); }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort todo hydration failed for {ConversationId}", Sanitise(conversationId)); }
         }
 
         // Hydrate a pending ask_user prompt from REST (#1488). A reloaded tab, a newly-opened window,
@@ -328,7 +339,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort pending ask_user hydration failed for {ConversationId}", conversationId); }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort pending ask_user hydration failed for {ConversationId}", Sanitise(conversationId)); }
         }
 
         // Fix #789: if the conversation was streaming when the user navigated away, a
@@ -362,7 +373,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "RenameConversation failed for {ConversationId}", conversationId);
+            _logger.LogError(ex, "RenameConversation failed for {ConversationId}", Sanitise(conversationId));
         }
     }
 
@@ -382,7 +393,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
             if (!success)
             {
-                _logger.LogWarning("Conversation cleanup returned failure for {ConversationId}", conversationId);
+                _logger.LogWarning("Conversation cleanup returned failure for {ConversationId}", Sanitise(conversationId));
                 return;
             }
 
@@ -409,7 +420,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "ArchiveConversation failed for {ConversationId}", conversationId);
+            _logger.LogError(ex, "ArchiveConversation failed for {ConversationId}", Sanitise(conversationId));
         }
     }
 
@@ -620,7 +631,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", conversationId);
+            _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", Sanitise(conversationId));
             agent.Conversations.Remove(conversationId);
             if (agent.ActiveConversationId == conversationId)
             {
@@ -642,7 +653,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LoadHistory failed for {ConversationId}", conversationId);
+            _logger.LogError(ex, "LoadHistory failed for {ConversationId}", Sanitise(conversationId));
             conv.HistoryLoaded = true; // don't retry
         }
         finally
@@ -717,7 +728,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LoadSubAgentHistory failed for {SubAgentId}", subAgentId);
+            _logger.LogError(ex, "LoadSubAgentHistory failed for {SubAgentId}", Sanitise(subAgentId));
             conv.HistoryLoaded = true;
         }
         finally
@@ -755,14 +766,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         activeConv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
                     }
                 }
-                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", activeConvId); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", Sanitise(activeConvId)); }
             }
 
             _store.NotifyChanged();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "RefreshConversations failed for {AgentId}", agentId);
+            _logger.LogError(ex, "RefreshConversations failed for {AgentId}", Sanitise(agentId));
         }
     }
 
