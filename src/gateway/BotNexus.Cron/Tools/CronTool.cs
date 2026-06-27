@@ -135,9 +135,7 @@ public sealed class CronTool(
         catch { /* invalid schedule — will be caught by scheduler */ }
 
         var targetAgentIdString = ReadString(arguments, "agentId");
-        var targetAgentId = string.IsNullOrWhiteSpace(targetAgentIdString)
-            ? _agentId
-            : AgentId.From(targetAgentIdString);
+        var targetAgentId = ResolveTargetAgentId(targetAgentIdString, _agentId);
 
         var job = new CronJob
         {
@@ -182,7 +180,7 @@ public sealed class CronTool(
         var newAgentIdString = ReadString(arguments, "agentId");
         var newAgentId = string.IsNullOrWhiteSpace(newAgentIdString)
             ? existing.AgentId
-            : AgentId.From(newAgentIdString);
+            : ResolveTargetAgentId(newAgentIdString, _agentId);
 
         var updated = existing with
         {
@@ -253,6 +251,22 @@ public sealed class CronTool(
 
         var runs = await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+    }
+
+    // Scopes the target agent for create/update. When cross-agent cron is disabled (the
+    // default), an explicit foreign agentId is rejected so an agent cannot create a job that
+    // runs AS another agent, nor retarget an owned job onto another agent (issue #1667).
+    // A blank/omitted agentId is treated as "the calling agent" and is always allowed.
+    private AgentId ResolveTargetAgentId(string? requestedAgentId, AgentId callingAgent)
+    {
+        if (string.IsNullOrWhiteSpace(requestedAgentId))
+            return callingAgent;
+
+        var requested = AgentId.From(requestedAgentId);
+        if (!allowCrossAgentCron && requested != callingAgent)
+            throw new UnauthorizedAccessException("Cron jobs may only target the calling agent.");
+
+        return requested;
     }
 
     private void EnsureCanManage(CronJob job)
