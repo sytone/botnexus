@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
@@ -23,6 +25,13 @@ public sealed class PlatformConfig
     /// JsonPropertyName keeps config.json reading from the "version" key.
     /// </remarks>
     [JsonPropertyName("version")]
+    [Display(
+        Name = "Config schema version",
+        Description = "Configuration schema version for forward compatibility. Bumped only when the config shape changes incompatibly.",
+        GroupName = "General",
+        Order = 0)]
+    [DefaultValue(1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "general", Order = 0)]
     public int PlatformVersion { get; set; } = 1;
 
     /// <summary>Gateway-specific settings.</summary>
@@ -71,15 +80,40 @@ public sealed class PlatformConfig
 public sealed class ProviderConfig
 {
     /// <summary>Whether this provider is enabled. Disabled providers are hidden from API.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this provider is enabled. Disabled providers are hidden from the API.",
+        GroupName = "Provider",
+        Order = 0)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>API key or reference to auth.json entry.</summary>
+    [Display(
+        Name = "API key",
+        Description = "API key for this provider, or a reference to an auth.json entry. Sensitive: stored and shown masked.",
+        GroupName = "Provider",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "provider", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
 
     /// <summary>Base URL override.</summary>
+    [Display(
+        Name = "Base URL",
+        Description = "Optional base URL override for this provider's API endpoint.",
+        GroupName = "Provider",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 2)]
     public string? BaseUrl { get; set; }
 
     /// <summary>Default model for this provider.</summary>
+    [Display(
+        Name = "Default model",
+        Description = "Default model identifier used for this provider when an agent does not specify one.",
+        GroupName = "Provider",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 3)]
     public string? DefaultModel { get; set; }
 
     /// <summary>Allowed model IDs for this provider. Null means all models, empty means none.</summary>
@@ -99,8 +133,20 @@ public sealed class ProviderConfig
 public sealed class GatewaySettingsConfig
 {
     /// <summary>Gateway HTTP listen URL.</summary>
+    [Display(
+        Name = "Listen URL",
+        Description = "HTTP(S) URL the gateway binds to (for example http://localhost:5005). Supports Kestrel wildcards such as http://+:5000.",
+        GroupName = "Gateway",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 0)]
     public string? ListenUrl { get; set; }
     /// <summary>Default agent to route to when none specified.</summary>
+    [Display(
+        Name = "Default agent",
+        Description = "Agent ID to route to when an incoming message does not specify one.",
+        GroupName = "Gateway",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 1)]
     public string? DefaultAgentId { get; set; }
     /// <summary>Path to agents configuration directory.</summary>
     public string? AgentsDirectory { get; set; }
@@ -121,6 +167,12 @@ public sealed class GatewaySettingsConfig
     /// <summary>Explicit SignalR hub transport limits (frame size, parallel invocations, stream buffer).</summary>
     public SignalRConfig? SignalR { get; set; }
     /// <summary>Logging level override.</summary>
+    [Display(
+        Name = "Log level",
+        Description = "Minimum log level override. One of Trace, Debug, Information, Warning, Error, Critical.",
+        GroupName = "Gateway",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "gateway", Order = 2)]
     public string? LogLevel { get; set; }
     /// <summary>Multi-tenant API keys keyed by key ID.</summary>
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
@@ -167,6 +219,12 @@ public sealed class GatewaySettingsConfig
     /// Falls back to UTC when null or invalid.
     /// Example: <c>"America/Los_Angeles"</c>.
     /// </summary>
+    [Display(
+        Name = "Default timezone",
+        Description = "Server-wide default IANA timezone ID used when an agent has no timezone configured. Falls back to UTC when blank or invalid.",
+        GroupName = "Gateway",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "gateway", Order = 3)]
     public string? DefaultTimezone { get; set; }
 
     /// <summary>
@@ -174,6 +232,13 @@ public sealed class GatewaySettingsConfig
     /// Auth headers are always redacted. Response bodies are not buffered for streaming calls.
     /// Off by default; enable only for debugging unexpected provider responses.
     /// </summary>
+    [Display(
+        Name = "Log provider requests",
+        Description = "When on, all provider HTTP requests and responses are logged at Debug level. Auth headers are always redacted. For debugging only.",
+        GroupName = "Gateway",
+        Order = 4)]
+    [DefaultValue(false)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "gateway", Order = 4)]
     public bool EnableProviderRequestLogging { get; set; } = false;
 
     /// <summary>
@@ -244,9 +309,24 @@ public sealed class ClaimAuditConfig
 public sealed class AutoUpdateConfig
 {
     /// <summary>Enables background GitHub polling and the update endpoint. Defaults to false.</summary>
+    [Display(
+        Name = "Enable auto-update",
+        Description = "Enables background GitHub polling and the self-update endpoint.",
+        GroupName = "Auto-update",
+        Order = 0)]
+    [DefaultValue(false)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "auto-update", Order = 0)]
     public bool Enabled { get; set; } = false;
 
     /// <summary>How often to poll GitHub for a new commit. Minimum 5. Defaults to 60.</summary>
+    [Display(
+        Name = "Check interval (minutes)",
+        Description = "How often to poll GitHub for a new commit, in minutes. Minimum 5.",
+        GroupName = "Auto-update",
+        Order = 1)]
+    [DefaultValue(60)]
+    [Range(5, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "auto-update", Order = 1)]
     public int CheckIntervalMinutes { get; set; } = 60;
 
     /// <summary>GitHub repository owner. Defaults to <c>sytone</c>.</summary>
@@ -385,9 +465,24 @@ public sealed class CorsConfig
 public sealed class RateLimitConfig
 {
     /// <summary>Whether rate limiting is active. Defaults to false (disabled).</summary>
+    [Display(
+        Name = "Enable rate limiting",
+        Description = "Whether per-client request rate limiting is active.",
+        GroupName = "Rate limit",
+        Order = 0)]
+    [DefaultValue(false)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "rate-limit", Order = 0)]
     public bool Enabled { get; set; }
 
     /// <summary>Maximum requests allowed in a window for a single client.</summary>
+    [Display(
+        Name = "Requests per minute",
+        Description = "Maximum requests allowed within a window for a single client.",
+        GroupName = "Rate limit",
+        Order = 1)]
+    [DefaultValue(300)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "rate-limit", Order = 1)]
     public int RequestsPerMinute { get; set; } = 300;
 
     /// <summary>Window size in seconds used for request counting.</summary>
@@ -437,9 +532,24 @@ public sealed class SignalRConfig
 public sealed class CronConfig
 {
     /// <summary>Whether the cron scheduler is enabled.</summary>
+    [Display(
+        Name = "Enable cron",
+        Description = "Whether the cron scheduler runs scheduled jobs.",
+        GroupName = "Cron",
+        Order = 0)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cron", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>Scheduler polling interval in seconds.</summary>
+    [Display(
+        Name = "Tick interval (seconds)",
+        Description = "How often the scheduler wakes to evaluate due jobs, in seconds.",
+        GroupName = "Cron",
+        Order = 1)]
+    [DefaultValue(60)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "cron", Order = 1)]
     public int TickIntervalSeconds { get; set; } = 60;
 
     /// <summary>Optional job definitions keyed by stable job ID.</summary>
@@ -544,12 +654,24 @@ public sealed class AgentDefinitionConfig
     /// <summary>Provider name (e.g. 'copilot').</summary>
     public string? Provider { get; set; }
     /// <summary>Human-readable display name.</summary>
+    [Display(
+        Name = "Display name",
+        Description = "Human-readable display name shown for this agent in clients.",
+        GroupName = "Agent",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 1)]
     public string? DisplayName { get; set; }
     /// <summary>Optional emoji shown alongside the agent name in clients.</summary>
     public string? Emoji { get; set; }
     /// <summary>Description of the agent's purpose.</summary>
     public string? Description { get; set; }
     /// <summary>Model identifier (e.g. 'gpt-4.1').</summary>
+    [Display(
+        Name = "Model",
+        Description = "Model identifier this agent uses (for example gpt-4.1).",
+        GroupName = "Agent",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 2)]
     public string? Model { get; set; }
     /// <summary>Model IDs this agent is allowed to use. Null means unrestricted within provider allowlist.</summary>
     public List<string>? AllowedModels { get; set; }
@@ -577,6 +699,13 @@ public sealed class AgentDefinitionConfig
     /// <summary>Strategy-specific isolation options.</summary>
     public JsonElement? IsolationOptions { get; set; }
     /// <summary>Whether this agent is enabled.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this agent is enabled and available for routing.",
+        GroupName = "Agent",
+        Order = 3)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "agent", Order = 3)]
     public bool Enabled { get; set; } = true;
     /// <summary>Memory system configuration for this agent.</summary>
     public MemoryAgentConfig? Memory { get; set; }
@@ -669,6 +798,13 @@ public sealed class ChannelConfig
     /// <summary>Channel type (e.g. 'signalr', 'slack').</summary>
     public string? Type { get; set; }
     /// <summary>Whether this channel is enabled.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this channel is enabled.",
+        GroupName = "Channel",
+        Order = 1)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "channel", Order = 1)]
     public bool Enabled { get; set; } = true;
     /// <summary>Adapter-specific settings.</summary>
     public Dictionary<string, string>? Settings { get; set; }
@@ -689,6 +825,12 @@ public sealed class SessionStoreConfig
 public sealed class ApiKeyConfig
 {
     /// <summary>The raw API key value.</summary>
+    [Display(
+        Name = "API key",
+        Description = "The raw API key value used for gateway authentication. Sensitive: stored and shown masked.",
+        GroupName = "API key",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "api-key", Order = 0, Secret = true)]
     public string? ApiKey { get; set; }
     /// <summary>Tenant identifier for multi-tenant isolation.</summary>
     public string? TenantId { get; set; }
