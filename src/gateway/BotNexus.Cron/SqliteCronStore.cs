@@ -622,13 +622,20 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
+        // Only terminal runs are purged, and only the statuses the scheduler actually writes
+        // (ok / error / timed_out). These are bound from the CronRunStatus constants so the
+        // filter cannot drift from the producers. In-flight 'running' runs (and any other
+        // non-terminal status) are never deleted; completed_at < cutoff enforces retention.
         command.CommandText = """
             DELETE FROM cron_runs
             WHERE completed_at IS NOT NULL
               AND completed_at < $cutoff
-              AND status IN ('completed', 'failed')
+              AND status IN ($statusOk, $statusError, $statusTimedOut)
             """;
         command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
+        command.Parameters.AddWithValue("$statusOk", CronRunStatus.Ok);
+        command.Parameters.AddWithValue("$statusError", CronRunStatus.Error);
+        command.Parameters.AddWithValue("$statusTimedOut", CronRunStatus.TimedOut);
         var deleted = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         if (deleted > 0)
             _logger.LogDebug("Purged {Count} cron run record(s) older than {Cutoff}.", deleted, cutoff);
