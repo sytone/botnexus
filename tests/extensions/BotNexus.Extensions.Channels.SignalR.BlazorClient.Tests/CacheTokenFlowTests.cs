@@ -28,7 +28,7 @@ public sealed class CacheTokenFlowTests
         };
         store.RegisterSession("agent-1", "sess-1");
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
         return (handler, store);
     }
 

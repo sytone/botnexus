@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -18,6 +19,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private readonly IClientStateStore _store;
     private readonly GatewayHubConnection _hub;
+    private readonly ILogger<GatewayEventHandler> _logger;
     private readonly HashSet<string> _streamingWhenDisconnected = new();
 
     // Conversation refreshes that arrive during a streaming turn are deferred
@@ -25,10 +27,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // mid-turn (breaks stream event routing -- issue #456).
     private readonly HashSet<string> _pendingConversationRefresh = new();
 
-    public GatewayEventHandler(IClientStateStore store, GatewayHubConnection hub)
+    public GatewayEventHandler(IClientStateStore store, GatewayHubConnection hub, ILogger<GatewayEventHandler> logger)
     {
         _store = store;
         _hub = hub;
+        _logger = logger;
 
         _hub.OnConnected += HandleConnected;
         _hub.OnRunStarted += HandleRunStarted;
@@ -699,7 +702,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"GatewayEventHandler: reconnect recovery failed: {ex.Message}");
+            _logger.LogError(ex, "Reconnect recovery (SubscribeAll) failed");
         }
 
         // Clear stale streaming state unconditionally (even if SubscribeAllAsync failed).

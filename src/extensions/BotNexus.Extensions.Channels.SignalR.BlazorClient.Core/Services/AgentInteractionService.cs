@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -11,12 +12,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
     private readonly IClientStateStore _store;
     private readonly GatewayHubConnection _hub;
     private readonly IGatewayRestClient _restClient;
+    private readonly ILogger<AgentInteractionService> _logger;
 
-    public AgentInteractionService(IClientStateStore store, GatewayHubConnection hub, IGatewayRestClient restClient)
+    public AgentInteractionService(
+        IClientStateStore store,
+        GatewayHubConnection hub,
+        IGatewayRestClient restClient,
+        ILogger<AgentInteractionService> logger)
     {
         _store = store;
         _hub = hub;
         _restClient = restClient;
+        _logger = logger;
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────
@@ -257,7 +264,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: CreateConversation failed for {agentId}: {ex.Message}");
+            _logger.LogError(ex, "CreateConversation failed for {AgentId}", agentId);
             return null;
         }
     }
@@ -285,7 +292,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch { /* canvas fetch is best-effort */ }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", conversationId); }
         }
 
         // Fetch todo state from REST if not already loaded (#1464 step 5). Mirrors canvas hydration
@@ -302,7 +309,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch { /* todo fetch is best-effort */ }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort todo hydration failed for {ConversationId}", conversationId); }
         }
 
         // Hydrate a pending ask_user prompt from REST (#1488). A reloaded tab, a newly-opened window,
@@ -321,7 +328,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     _store.NotifyChanged();
                 }
             }
-            catch { /* pending ask_user hydration is best-effort */ }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort pending ask_user hydration failed for {ConversationId}", conversationId); }
         }
 
         // Fix #789: if the conversation was streaming when the user navigated away, a
@@ -355,7 +362,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: RenameConversation failed: {ex.Message}");
+            _logger.LogError(ex, "RenameConversation failed for {ConversationId}", conversationId);
         }
     }
 
@@ -375,7 +382,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
             if (!success)
             {
-                Console.Error.WriteLine($"AgentInteractionService: Conversation cleanup returned failure for {conversationId}");
+                _logger.LogWarning("Conversation cleanup returned failure for {ConversationId}", conversationId);
                 return;
             }
 
@@ -402,7 +409,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: ArchiveConversation failed: {ex.Message}");
+            _logger.LogError(ex, "ArchiveConversation failed for {ConversationId}", conversationId);
         }
     }
 
@@ -436,7 +443,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: RefreshAgents failed: {ex.Message}");
+            _logger.LogError(ex, "RefreshAgents failed");
         }
     }
 
@@ -613,7 +620,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            Console.Error.WriteLine($"AgentInteractionService: History 404 for conversation {conversationId}: {ex.Message}");
+            _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", conversationId);
             agent.Conversations.Remove(conversationId);
             if (agent.ActiveConversationId == conversationId)
             {
@@ -635,7 +642,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: LoadHistory failed for {conversationId}: {ex.Message}");
+            _logger.LogError(ex, "LoadHistory failed for {ConversationId}", conversationId);
             conv.HistoryLoaded = true; // don't retry
         }
         finally
@@ -710,7 +717,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: LoadSubAgentHistory failed for {subAgentId}: {ex.Message}");
+            _logger.LogError(ex, "LoadSubAgentHistory failed for {SubAgentId}", subAgentId);
             conv.HistoryLoaded = true;
         }
         finally
@@ -748,14 +755,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         activeConv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
                     }
                 }
-                catch { /* canvas fetch is best-effort */ }
+                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", activeConvId); }
             }
 
             _store.NotifyChanged();
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"AgentInteractionService: RefreshConversations failed for {agentId}: {ex.Message}");
+            _logger.LogError(ex, "RefreshConversations failed for {AgentId}", agentId);
         }
     }
 

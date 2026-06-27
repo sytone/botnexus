@@ -13,7 +13,7 @@ public sealed class InterruptAndSteerTests
 
     public InterruptAndSteerTests()
     {
-        _service = new AgentInteractionService(_store, new GatewayHubConnection(), _restClient);
+        _service = new AgentInteractionService(_store, new GatewayHubConnection(), _restClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentInteractionService>.Instance);
         _store.UpsertAgent(new AgentState
         {
             AgentId = "agent-1",

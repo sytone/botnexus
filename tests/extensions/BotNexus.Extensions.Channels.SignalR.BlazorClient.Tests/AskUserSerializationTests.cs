@@ -13,7 +13,7 @@ public sealed class AskUserSerializationTests
     public void HandleUserInputRequired_sets_pending_when_payload_present()
     {
         var store = new ClientStateStore();
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         store.UpsertAgent(new AgentState
         {
@@ -71,7 +71,7 @@ public sealed class AskUserSerializationTests
     public void HandleUserInputRequired_skips_when_inputType_null()
     {
         var store = new ClientStateStore();
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection());
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
 
         store.UpsertAgent(new AgentState
         {
