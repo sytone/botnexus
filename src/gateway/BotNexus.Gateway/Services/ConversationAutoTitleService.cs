@@ -27,16 +27,58 @@ public sealed class ConversationAutoTitleService
     private readonly LlmClient _llmClient;
     private readonly ILogger _logger;
 
+    /// <summary>
+    /// Resolves the per-provider API-endpoint override (e.g. enterprise vs individual GitHub
+    /// Copilot) used to rewrite the resolved titling model's <see cref="LlmModel.BaseUrl"/> before
+    /// the <c>CompleteSimpleAsync</c> call. Mirrors the override the live agent path applies in
+    /// <c>InProcessIsolationStrategy</c> and the compactor applies after #1635/PR #1638: without it
+    /// a model registered with the static individual Copilot BaseUrl is POSTed to the wrong host on
+    /// an enterprise account, returns HTTP 421 Misdirected Request, auto-titling silently fails, and
+    /// the conversation keeps the default title. Defaults to
+    /// <see cref="GatewayAuthManager.GetApiEndpoint"/>; null when no auth manager is available (the
+    /// static BaseUrl is then used unchanged).
+    /// </summary>
+    private readonly Func<string, string?>? _endpointResolver;
+
+    /// <summary>
+    /// Creates the auto-title service. When an <paramref name="authManager"/> is supplied the
+    /// resolved titling model inherits the same per-provider API-endpoint override the live agent
+    /// path applies (#1636); otherwise the model's static BaseUrl is used unchanged.
+    /// </summary>
     public ConversationAutoTitleService(
         IConversationStore store,
         LlmClient llmClient,
         ILogger logger,
-        IConversationChangeNotifier? notifier = null)
+        IConversationChangeNotifier? notifier = null,
+        GatewayAuthManager? authManager = null)
     {
         _store = store;
         _llmClient = llmClient;
         _logger = logger;
         _notifier = notifier;
+        // The endpoint override is the same one the live agent path applies; derive it from the
+        // auth manager so the titling call targets the correct provider endpoint (#1636).
+        _endpointResolver = authManager is not null ? authManager.GetApiEndpoint : null;
+    }
+
+    /// <summary>
+    /// Test seam (#1636): constructs the service with an explicit endpoint resolver so the
+    /// BaseUrl-override behaviour can be unit-tested without a concrete
+    /// <see cref="GatewayAuthManager"/> (which reads auth.json). Production code uses the public
+    /// constructor, which derives the resolver from the auth manager.
+    /// </summary>
+    internal ConversationAutoTitleService(
+        IConversationStore store,
+        LlmClient llmClient,
+        ILogger logger,
+        IConversationChangeNotifier? notifier,
+        Func<string, string?>? endpointResolver)
+    {
+        _store = store;
+        _llmClient = llmClient;
+        _logger = logger;
+        _notifier = notifier;
+        _endpointResolver = endpointResolver;
     }
 
     /// <summary>
@@ -237,7 +279,7 @@ public sealed class ConversationAutoTitleService
         {
             var preferred = FindModel(preferredModelId);
             if (preferred is not null)
-                return preferred;
+                return ApplyEndpointOverride(preferred, _endpointResolver);
 
             _logger.LogWarning(
                 "Auto-title: configured titling model '{ModelId}' not found; falling back to first available",
@@ -251,8 +293,35 @@ public sealed class ConversationAutoTitleService
             .SelectMany(p => _llmClient.Models.GetModels(p))
             .FirstOrDefault();
 
-        return fallback
-               ?? throw new InvalidOperationException("No models are registered for auto-title generation.");
+        if (fallback is null)
+            throw new InvalidOperationException("No models are registered for auto-title generation.");
+
+        // #1636: rewrite the resolved model's BaseUrl to the per-provider endpoint override (e.g.
+        // enterprise vs individual GitHub Copilot) so the titling request targets the same host the
+        // live agent path uses. Applied at the single ResolveModel funnel so both the preferred and
+        // fallback models inherit the override uniformly.
+        return ApplyEndpointOverride(fallback, _endpointResolver);
+    }
+
+    /// <summary>
+    /// Applies the per-provider API-endpoint override to a model's <see cref="LlmModel.BaseUrl"/>
+    /// (#1636). When <paramref name="endpointResolver"/> yields a non-empty endpoint for the model's
+    /// provider, the model is returned with that BaseUrl; otherwise the model is returned unchanged.
+    /// This mirrors the override the live agent path applies (<c>InProcessIsolationStrategy</c>) and
+    /// the compactor applies after #1635, ensuring the titling request hits the same host (e.g.
+    /// enterprise vs individual GitHub Copilot) rather than the static built-in BaseUrl. Pure and
+    /// null-safe so it is trivially unit-testable and never throws for a missing resolver.
+    /// </summary>
+    internal static LlmModel ApplyEndpointOverride(LlmModel model, Func<string, string?>? endpointResolver)
+    {
+        if (endpointResolver is null)
+            return model;
+
+        var endpoint = endpointResolver(model.Provider);
+        if (string.IsNullOrWhiteSpace(endpoint) || string.Equals(endpoint, model.BaseUrl, StringComparison.Ordinal))
+            return model;
+
+        return model with { BaseUrl = endpoint };
     }
 
     private LlmModel? FindModel(string modelId)

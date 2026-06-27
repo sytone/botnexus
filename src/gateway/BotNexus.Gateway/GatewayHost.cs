@@ -65,6 +65,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly ConversationAutoTitleService? _autoTitleService;
     private readonly IActivityTracker? _activityTracker;
     private readonly IActiveLoopTracker? _activeLoopTracker;
+    private readonly GatewayAuthManager? _authManager;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -89,7 +90,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         LlmClient? llmClient = null,
         IConversationChangeNotifier? conversationChangeNotifier = null,
         IActivityTracker? activityTracker = null,
-        IActiveLoopTracker? activeLoopTracker = null)
+        IActiveLoopTracker? activeLoopTracker = null,
+        GatewayAuthManager? authManager = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -110,14 +112,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _platformConfig = platformConfig;
         _activityTracker = activityTracker;
         _activeLoopTracker = activeLoopTracker;
-        // Wire up the auto-title service when the required dependencies are present.
+        _authManager = authManager;
+        // Wire up the auto-title service when the required dependencies are present. The auth
+        // manager is threaded through so the titling call applies the same per-provider
+        // API-endpoint override the live agent path uses (#1636).
         if (llmClient is not null && conversationStore is not null)
         {
             _autoTitleService = new ConversationAutoTitleService(
                 conversationStore,
                 llmClient,
                 _logger,
-                conversationChangeNotifier);
+                conversationChangeNotifier,
+                _authManager);
         }
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
