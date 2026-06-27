@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Domain.Gateway.Models;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.Tui;
@@ -135,9 +136,9 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             AgentStreamEventType.ThinkingDelta when streamEvent.ThinkingContent is not null
                 => Console.Out.WriteAsync($"\n💭 {streamEvent.ThinkingContent}"),
             AgentStreamEventType.ToolStart when streamEvent.ToolName is not null
-                => Console.Out.WriteLineAsync($"\n🔧 [{DisplayName}:{label}] Tool start: {streamEvent.ToolName}"),
+                => Console.Out.WriteLineAsync($"\n{ToolGlyphs.ForTool(streamEvent.ToolName)} [{DisplayName}:{label}] Tool start: {streamEvent.ToolName}"),
             AgentStreamEventType.ToolEnd
-                => Console.Out.WriteLineAsync($"\n✅ [{DisplayName}:{label}] Tool complete: {streamEvent.ToolCallId ?? "unknown"}"),
+                => Console.Out.WriteLineAsync($"\n{(streamEvent.ToolIsError == true ? "\u26A0\uFE0F" : ToolGlyphs.ForTool(streamEvent.ToolName))} [{DisplayName}:{label}] Tool complete: {streamEvent.ToolName ?? streamEvent.ToolCallId ?? "unknown"}"),
             AgentStreamEventType.Error when streamEvent.ErrorMessage is not null
                 => Console.Out.WriteLineAsync($"\n❌ [{DisplayName}:{label}] {streamEvent.ErrorMessage}"),
             _ => Task.CompletedTask
