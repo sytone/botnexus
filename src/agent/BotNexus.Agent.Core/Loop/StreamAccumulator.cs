@@ -211,7 +211,7 @@ internal static class StreamAccumulator
                     break;
 
                 case DoneEvent done:
-                    final = MessageConverter.ToAgentMessage(done.Message);
+                    final = StripNonExecutableToolCalls(MessageConverter.ToAgentMessage(done.Message));
                     ReplacePartialWithFinal(contextMessages, final, partialAddedToContext);
                     if (!_startEmitted)
                     {
@@ -242,7 +242,7 @@ internal static class StreamAccumulator
         }
 
         var result = await stream.GetResultAsync().ConfigureAwait(false);
-        final = MessageConverter.ToAgentMessage(result);
+        final = StripNonExecutableToolCalls(MessageConverter.ToAgentMessage(result));
         ReplacePartialWithFinal(contextMessages, final, partialAddedToContext);
 
         if (!_startEmitted)
@@ -252,6 +252,42 @@ internal static class StreamAccumulator
 
         await emit(new MessageEndEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
         return final;
+    }
+
+    /// <summary>
+    /// Removes non-executable tool-call content from a finalized assistant message (#1666).
+    /// A turn that did not terminate with <see cref="StopReason.ToolUse"/> -- truncation
+    /// (<see cref="StopReason.Length"/>), a content filter, or a stream that ended without a
+    /// terminal event -- can still carry a parsed but half-formed tool call. Returning the
+    /// message with that tool call intact would let a later code path re-dispatch it with
+    /// incomplete arguments, so the tool call is stripped from both
+    /// <see cref="AssistantAgentMessage.ToolCalls"/> and the <c>ContentBlocks</c> mirror.
+    /// The visible text, finish reason, and all other content blocks are retained. A genuine
+    /// <see cref="StopReason.ToolUse"/> turn is returned unchanged.
+    /// </summary>
+    private static AssistantAgentMessage StripNonExecutableToolCalls(AssistantAgentMessage message)
+    {
+        if (message.FinishReason == StopReason.ToolUse)
+        {
+            return message;
+        }
+
+        var hasToolCallContent = message.ToolCalls is { Count: > 0 }
+            || (message.ContentBlocks?.OfType<ToolCallContent>().Any() ?? false);
+        if (!hasToolCallContent)
+        {
+            return message;
+        }
+
+        var strippedBlocks = message.ContentBlocks
+            ?.Where(block => block is not ToolCallContent)
+            .ToList();
+
+        return message with
+        {
+            ToolCalls = null,
+            ContentBlocks = strippedBlocks,
+        };
     }
 
     private static void UpdateContextPartial(

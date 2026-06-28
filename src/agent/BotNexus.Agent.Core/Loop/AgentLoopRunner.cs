@@ -206,7 +206,14 @@ public static class AgentLoopRunner
                     return;
                 }
 
-                hasMoreToolCalls = assistantMessage.ToolCalls is { Count: > 0 };
+                // #1666: dispatch tool calls only when the provider terminated the turn with
+                // a ToolUse stop reason. A truncated turn (Length/content filter/stream EOF)
+                // can still surface a parsed -- but half-formed -- tool call; executing it
+                // would run with incomplete/garbled arguments. Every provider promotes a
+                // legitimate, complete tool call to ToolUse at the parser/provider layer, so
+                // this guard blocks only the truncated case and never a real tool turn.
+                hasMoreToolCalls = assistantMessage.FinishReason == StopReason.ToolUse
+                    && assistantMessage.ToolCalls is { Count: > 0 };
                 var executionContext = new AgentContext(
                     currentContext.SystemPrompt,
                     messages,
