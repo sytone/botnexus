@@ -219,6 +219,37 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task PromptAsync_WhenProviderAuthFails_SurfacesActionableErrorMessage()
+    {
+        // A provider auth failure (401/403) carries an actionable, user-facing message. Because
+        // Agent.cs copies the terminal exception's Message verbatim into the synthetic error
+        // assistant message (StopReason.Error / ErrorMessage), that actionable text reaches the
+        // channel instead of a generic "stream failed" -- this is the user-visible payoff of
+        // classifying 401/403 as a typed ProviderAuthenticationException.
+        var actionable =
+            "Authentication failed for provider 'openai' (HTTP 401): the provider rejected your " +
+            "credentials. Check or rotate the API key for 'openai', or switch to a model whose provider is configured.";
+        using var provider = TestHelpers.RegisterProvider(
+            new TestApiProvider(
+                "test-api",
+                simpleStreamFactory: (_, _, _) =>
+                    throw new BotNexus.Agent.Providers.Core.ProviderAuthenticationException(actionable, 401, "openai")));
+        var agent = new BotNexus.Agent.Core.Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
+
+        var runResult = await agent.PromptAsync("hello");
+
+        var failure = agent.State.Messages.Last().ShouldBeOfType<AssistantAgentMessage>();
+        failure.FinishReason.ShouldBe(BotNexus.Agent.Providers.Core.Models.StopReason.Error);
+        // ShouldBe on the full actionable string proves the verbatim message (which itself names
+        // the provider and tells the user to rotate the API key) reaches ErrorMessage.
+        failure.ErrorMessage.ShouldBe(actionable);
+        actionable.ShouldContain("API key");
+        actionable.ShouldContain("openai");
+        runResult.ShouldHaveSingleItem().ShouldBe(failure);
+        agent.State.ErrorMessage.ShouldBe(actionable);
+    }
+
+    [Fact]
     public async Task PromptAsync_WhenCancelled_EmitsAbortedAgentEndAndDoesNotThrow()
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

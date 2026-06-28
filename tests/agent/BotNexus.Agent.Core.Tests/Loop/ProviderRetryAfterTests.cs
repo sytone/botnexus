@@ -106,6 +106,48 @@ public class ProviderRetryAfterTests
         ex.RetryAfter.ShouldBe(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task RunAsync_ProviderAuthenticationException_IsNotRetried_AndPropagatesActionableMessage()
+    {
+        // A 401/auth failure is terminal -- retrying with the same bad key is pointless.
+        // Unlike a rate-limit, it is NOT classified as transient, so the loop attempts exactly
+        // once and propagates the (actionable) exception for the surfacing layer (Agent.cs) to
+        // turn into a StopReason.Error message. This is the inverse of the rate-limit retry test.
+        var attempts = 0;
+        using var _ = RegisterProvider("auth-fail-test", (_, _, _) =>
+        {
+            Interlocked.Increment(ref attempts);
+            throw new ProviderAuthenticationException(
+                "Authentication failed for provider 'auth-fail-test' (HTTP 401): the provider rejected your credentials. Check or rotate the API key.",
+                401,
+                "auth-fail-test");
+        });
+
+        var config = CreateConfig("auth-fail-test");
+
+        var ex = await Should.ThrowAsync<ProviderAuthenticationException>(async () =>
+            await AgentLoopRunner.RunAsync(
+                [new AgentUserMessage("test")],
+                new AgentContext(null, [], []),
+                config,
+                _ => Task.CompletedTask,
+                CancellationToken.None));
+
+        attempts.ShouldBe(1, "a 401 auth failure must not be retried");
+        ex.ProviderName.ShouldBe("auth-fail-test");
+        ex.Message.ShouldContain("auth-fail-test");
+        ex.Message.ShouldContain("API key");
+    }
+
+    [Fact]
+    public void ProviderAuthenticationException_InheritsFromHttpRequestException()
+    {
+        var ex = new ProviderAuthenticationException("bad creds", 401, "OpenAI");
+        ex.ShouldBeAssignableTo<HttpRequestException>();
+        ex.StatusCode.ShouldBe(System.Net.HttpStatusCode.Unauthorized);
+        ex.ProviderName.ShouldBe("OpenAI");
+    }
+
     [Theory]
     [InlineData("5", 5000)]
     [InlineData("30", 30000)]
