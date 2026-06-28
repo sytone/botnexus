@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Api.Configuration;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
@@ -42,6 +43,17 @@ public sealed class ConfigController : ControllerBase
         RedactSecrets(response);
         return Ok(response);
     }
+
+    /// <summary>
+    /// Get the read-only UI schema for the platform configuration tree. Reflects over the annotated
+    /// <see cref="PlatformConfig"/> model (labels, descriptions, widgets, groups, ordering, defaults,
+    /// validation bounds, secret flags, enum options) so a settings renderer can draw an editor
+    /// without hand-written form code. Versioned and stable (config-parity PBI 2/6 of #1579).
+    /// </summary>
+    /// <returns>The versioned config UI schema document.</returns>
+    [HttpGet("schema")]
+    public ActionResult<JsonObject> GetSchema()
+        => Ok(ConfigSchemaBuilder.Build());
 
     /// <summary>
     /// Get the raw platform configuration from disk (secrets redacted).
