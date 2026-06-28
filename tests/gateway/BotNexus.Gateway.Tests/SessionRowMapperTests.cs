@@ -58,6 +58,10 @@ public sealed class SessionRowMapperTests
         row.Session.Metadata["k"]!.ToString().ShouldBe("v");
         row.Session.CreatedAt.ShouldBe(DateTimeOffset.Parse("2026-01-02T03:04:05.0000000+00:00"));
         row.Session.UpdatedAt.ShouldBe(DateTimeOffset.Parse("2026-02-03T04:05:06.0000000+00:00"));
+        // #1627: SessionRow surfaces the row's updated_at directly so the store can re-stamp
+        // it without reaching through to Session.UpdatedAt (F-9). It must equal Session.UpdatedAt.
+        row.UpdatedAt.ShouldBe(DateTimeOffset.Parse("2026-02-03T04:05:06.0000000+00:00"));
+        row.UpdatedAt.ShouldBe(row.Session.UpdatedAt);
         row.Session.ConversationId.ShouldBe(ConversationId.From("conv-9"));
         row.CallerId.ShouldBe("caller-7");
     }

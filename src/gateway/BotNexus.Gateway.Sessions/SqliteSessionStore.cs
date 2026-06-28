@@ -994,8 +994,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
             session.AddEntries(entries);
 
         // #1627: re-stamp the persisted UpdatedAt after AddEntries so adding history rows
-        // does not bump it past the value loaded from the sessions row.
-        session.UpdatedAt = mapped.Session.UpdatedAt;
+        // does not bump it past the value loaded from the sessions row. SessionRow surfaces the
+        // row's updated_at directly (mapped.UpdatedAt) so we read it without reaching through to
+        // the inner record's Session.UpdatedAt - that reach-through is banned by F-9 / Phase 7.
+        session.UpdatedAt = mapped.UpdatedAt;
 
         // P9-I (#674): hydrate AgentId from Conversation.AgentId before returning. Every
         // load path (GetAsync, GetOrCreateAsync, EnumerateSessionsAsync, ListByConversationAsync)

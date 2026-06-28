@@ -34,9 +34,12 @@ internal static class SessionRowMapper
     /// <summary>
     /// The mapped result of a single <c>sessions</c> row: the hydrated domain <see cref="Session"/>
     /// plus the raw <c>caller_id</c>, which the store stamps onto the wrapping
-    /// <see cref="GatewaySession"/> (it is not a property of <see cref="Session"/> itself).
+    /// <see cref="GatewaySession"/> (it is not a property of <see cref="Session"/> itself). The
+    /// row's <c>updated_at</c> is surfaced directly (<see cref="UpdatedAt"/>) so the store can
+    /// re-stamp the persisted timestamp after AddEntries without reaching through to
+    /// <c>Session.UpdatedAt</c> (F-9 / Phase 7).
     /// </summary>
-    internal readonly record struct SessionRow(Session Session, string? CallerId);
+    internal readonly record struct SessionRow(Session Session, string? CallerId, DateTimeOffset UpdatedAt);
 
     /// <summary>
     /// A single raw <c>sessions</c> summary row (transcript-free listing). The store applies the
@@ -85,7 +88,7 @@ internal static class SessionRowMapper
         if (!reader.IsDBNull(conversationOrdinal))
             session.ConversationId = ConversationId.From(reader.GetString(conversationOrdinal));
 
-        return new SessionRow(session, GetNullableString(reader, "caller_id"));
+        return new SessionRow(session, GetNullableString(reader, "caller_id"), updatedAt);
     }
 
     /// <summary>
