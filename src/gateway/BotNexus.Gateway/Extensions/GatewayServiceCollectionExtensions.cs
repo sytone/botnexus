@@ -97,7 +97,8 @@ public static class GatewayServiceCollectionExtensions
                     LargestEntryBytesThreshold = ParseInt(compactionSection["largestEntryBytesThreshold"], new CompactionOptions().LargestEntryBytesThreshold),
                     SummarizationModel = ParseString(compactionSection["summarizationModel"], new CompactionOptions().SummarizationModel),
                     SummarizationProvider = ParseString(compactionSection["summarizationProvider"], new CompactionOptions().SummarizationProvider),
-                    CircuitBreakerCooldownSeconds = ParseInt(compactionSection["circuitBreakerCooldownSeconds"], new CompactionOptions().CircuitBreakerCooldownSeconds)
+                    CircuitBreakerCooldownSeconds = ParseInt(compactionSection["circuitBreakerCooldownSeconds"], new CompactionOptions().CircuitBreakerCooldownSeconds),
+                    CronLlmIdleTimeoutMs = ParseInt(compactionSection["cronLlmIdleTimeoutMs"], new CompactionOptions().CronLlmIdleTimeoutMs)
                 };
                 services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(configuredCompaction));
                 services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(

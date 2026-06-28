@@ -598,6 +598,27 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     }
 
     /// <summary>
+    /// Resolves the stream-setup idle cap (StreamSetupTimeoutMs, milliseconds) for a single
+    /// compaction summarization attempt (#1652). Returns the configured
+    /// <see cref="CompactionOptions.CronLlmIdleTimeoutMs"/> for CLOUD providers so a stalled
+    /// first token fails fast (well inside the outer <see cref="CompactionOptions.TimeoutSeconds"/>
+    /// watchdog, leaving time for the fallback chain to try the next candidate), and 0 (disabled)
+    /// for LOCAL/self-hosted providers (localhost / 127.0.0.1 - e.g. ollama, vllm, lmstudio,
+    /// sglang) which are legitimately slow to warm up. A non-positive configured value also
+    /// disables the cap. The cloud-vs-local decision uses the resolved model BaseUrl (which has
+    /// already had any per-provider endpoint override applied in BuildCandidateModels).
+    /// </summary>
+    internal static int ResolveStreamSetupTimeoutMs(LlmModel model, CompactionOptions options)
+    {
+        if (options.CronLlmIdleTimeoutMs <= 0)
+            return 0;
+
+        return ProviderEndpointClassifier.IsLocalProviderBaseUrl(model.BaseUrl)
+            ? 0
+            : options.CronLlmIdleTimeoutMs;
+    }
+
+    /// <summary>
     /// Attempts a single summarization call against one model. Returns the trimmed summary text (or
     /// empty if none) and whether the attempt failed transiently (timeout / provider error). A
     /// per-attempt timeout is treated as a transient failure of <em>this</em> model, not a caller
@@ -620,9 +641,16 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 .ConfigureAwait(false);
         }
 
-        var streamOptions = apiKey is not null
-            ? new SimpleStreamOptions { ApiKey = apiKey, CancellationToken = cancellationToken }
-            : null;
+        // #1652: wire the otherwise-inert StreamSetupTimeoutMs first-token watchdog for this
+        // background (non-interactive) compaction call. Always build the options so the cap is
+        // applied even when apiKey is null (a null ApiKey falls back to environment keys in the
+        // provider, exactly as passing null options did before - behaviour-preserving for auth).
+        var streamOptions = new SimpleStreamOptions
+        {
+            ApiKey = apiKey,
+            CancellationToken = cancellationToken,
+            StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options)
+        };
 
         // Create a timeout-linked token so hung provider calls are cancelled after
         // CompactionOptions.TimeoutSeconds. The linked token fires on whichever

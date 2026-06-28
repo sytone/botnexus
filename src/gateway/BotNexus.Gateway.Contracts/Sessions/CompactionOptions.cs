@@ -56,6 +56,24 @@ public sealed record CompactionOptions
     /// </summary>
     public int CircuitBreakerCooldownSeconds { get; init; } = 600;
 
+    /// <summary>
+    /// Stream-setup idle cap (milliseconds) applied to the compaction summarization model call when
+    /// the resolved candidate is a CLOUD provider (default: 60000 = 60s, mirroring OpenClaw's
+    /// CRON_LLM_IDLE_TIMEOUT_MS). This wires the otherwise-inert
+    /// <c>StreamOptions.StreamSetupTimeoutMs</c> first-token watchdog so a cloud model that stalls
+    /// mid-stream (or never emits a first token) is aborted early. Compaction is a background
+    /// (non-interactive) call that already has an outer per-attempt watchdog
+    /// (<see cref="TimeoutSeconds"/>); the stream stall must fail well INSIDE that window so the
+    /// model fallback chain still has time to try the next candidate rather than the whole attempt
+    /// timing out. The cap is intentionally NOT applied to LOCAL/self-hosted providers (localhost /
+    /// 127.0.0.1 - e.g. ollama, vllm, lmstudio, sglang) because those endpoints are legitimately slow
+    /// to warm up; the cloud-vs-local decision is made via
+    /// <c>ProviderEndpointClassifier.IsLocalProviderBaseUrl</c> from the resolved model BaseUrl.
+    /// Values &lt;= 0 disable the cap entirely (restores the pre-#1652 behaviour where no setup-phase
+    /// timeout is enforced).
+    /// </summary>
+    public int CronLlmIdleTimeoutMs { get; init; } = 60_000;
+
     /// <summary>Pre-compaction memory flush configuration.</summary>
     public MemoryFlushOptions MemoryFlush { get; init; } = new();
 }
