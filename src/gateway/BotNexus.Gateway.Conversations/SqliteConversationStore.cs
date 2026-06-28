@@ -20,7 +20,7 @@ namespace BotNexus.Gateway.Conversations;
 public sealed class SqliteConversationStore : IConversationStore
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
@@ -499,7 +499,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 c.active_session_id,
                 c.created_at,
                 c.updated_at,
-                COUNT(b.binding_id),
+                COUNT(b.binding_id) AS binding_count,
                 c.instructions,
                 c.kind,
                 c.is_pinned,
@@ -517,25 +517,11 @@ public sealed class SqliteConversationStore : IConversationStore
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var conversationId = reader.GetString(0);
-            summaries.Add(new ConversationSummary(
-                conversationId,
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetInt64(4) != 0,
-                reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                checked((int)reader.GetInt64(9)),
-                ParseTimestamp(reader.GetString(7)),
-                ParseTimestamp(reader.GetString(8)),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.FieldCount > 11 && !reader.IsDBNull(11)
-                    ? reader.GetString(11)
-                    : ConversationKind.HumanAgent.ToString(),
-                reader.FieldCount > 12 && !reader.IsDBNull(12) && reader.GetInt64(12) != 0,
-                reader.FieldCount > 13 && !reader.IsDBNull(13) ? ParseTimestamp(reader.GetString(13)) : null,
-                // #1427: attach the participant roster so SQLite-backed listings match the
-                // InMemory reference shape. Resolved once via a single batch query above to
-                // avoid an N+1 per-conversation participant lookup.
+            // #1627: the summary row ordinals live in ConversationRowMapper.MapSummary - the
+            // single source of truth shared with the full-conversation mapper. The roster is
+            // resolved once via the batch query above (#1427) to avoid an N+1 participant lookup.
+            summaries.Add(ConversationRowMapper.MapSummary(
+                reader,
                 rosters.TryGetValue(conversationId, out var roster) ? roster : []));
         }
 
@@ -565,15 +551,14 @@ public sealed class SqliteConversationStore : IConversationStore
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var conversationId = reader.GetString(0);
-            var kind = reader.GetString(1);
-            var id = reader.GetString(2);
-            var role = reader.IsDBNull(3) ? null : reader.GetString(3);
             if (!rosters.TryGetValue(conversationId, out var list))
             {
                 list = [];
                 rosters[conversationId] = list;
             }
-            list.Add(new ParticipantSummary(kind, id, role));
+            // #1627: kind/id/role ordinals (offset past the leading conversation_id) live in
+            // ConversationRowMapper.MapParticipantSummary - one source of truth for this shape.
+            list.Add(ConversationRowMapper.MapParticipantSummary(reader, offset: 1));
         }
 
         return rosters.ToDictionary(
@@ -1068,13 +1053,6 @@ public sealed class SqliteConversationStore : IConversationStore
         return initiator.Value.ToString();
     }
 
-    private static CitizenId? DeserializeInitiator(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-        return CitizenId.TryParse(raw, out var citizen) ? citizen : null;
-    }
-
     private async Task<Conversation?> LoadConversationAsync(ConversationId conversationId, CancellationToken ct)
     {
         await using var connection = CreateConnection();
@@ -1096,7 +1074,7 @@ public sealed class SqliteConversationStore : IConversationStore
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
             return null;
 
-        var conversation = MapConversationRow(reader);
+        var conversation = ConversationRowMapper.MapConversation(reader);
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
@@ -1104,40 +1082,6 @@ public sealed class SqliteConversationStore : IConversationStore
         return conversation;
     }
 
-    /// <summary>
-    /// Maps the current row of a <c>conversations</c> reader to a <see cref="Conversation"/>.
-    /// The column projection must match the <c>SELECT</c> in <see cref="LoadConversationAsync(SqliteConnection, ConversationId, CancellationToken)"/>
-    /// and the batched loader (<see cref="LoadConversationsByIdsAsync"/>) so single-row and
-    /// batch reads hydrate identically. Child collections (bindings / participants) are NOT
-    /// populated here — the caller attaches them.
-    /// </summary>
-    private static Conversation MapConversationRow(SqliteDataReader reader)
-    {
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.From(reader.GetString(0)),
-            AgentId = AgentId.From(reader.GetString(1)),
-            Title = reader.GetString(2),
-            Purpose = reader.IsDBNull(3) ? null : reader.GetString(3),
-            IsDefault = reader.GetInt64(4) != 0,
-            Status = ParseConversationStatus(reader.GetString(5)),
-            Metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7)),
-            CreatedAt = ParseTimestamp(reader.GetString(8)),
-            UpdatedAt = ParseTimestamp(reader.GetString(9)),
-            Instructions = reader.IsDBNull(10) ? null : reader.GetString(10),
-            CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
-            Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null,
-            Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent,
-            WorldId = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : string.Empty,
-            IsPinned = reader.FieldCount > 15 && !reader.IsDBNull(15) && reader.GetInt64(15) != 0,
-            PinnedAt = reader.FieldCount > 16 && !reader.IsDBNull(16) ? ParseTimestamp(reader.GetString(16)) : null,
-            TodoJson = reader.FieldCount > 17 && !reader.IsDBNull(17) ? reader.GetString(17) : null,
-            PendingAskUserJson = reader.FieldCount > 18 && !reader.IsDBNull(18) ? reader.GetString(18) : null
-        };
-        if (!reader.IsDBNull(6))
-            conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
-        return conversation;
-    }
 
     /// <summary>
     /// Resolves an ordered list of conversation ids to fully-hydrated <see cref="Conversation"/>
@@ -1212,7 +1156,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                var conversation = MapConversationRow(reader);
+                var conversation = ConversationRowMapper.MapConversation(reader);
                 conversation.ChannelBindings = [];
                 conversation.Participants = [];
                 byId[conversation.ConversationId.Value] = conversation;
@@ -1250,7 +1194,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     list = [];
                     bindingsById[conversationId] = list;
                 }
-                list.Add(MapBinding(reader, offset: 1));
+                list.Add(ConversationRowMapper.MapBinding(reader, offset: 1));
             }
         }
 
@@ -1275,7 +1219,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var conversationId = reader.GetString(0);
                 if (!byId.ContainsKey(conversationId)
-                    || MapParticipant(reader, offset: 1) is not { } participant)
+                    || ConversationRowMapper.MapParticipant(reader, offset: 1) is not { } participant)
                 {
                     continue;
                 }
@@ -1334,51 +1278,13 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            if (MapParticipant(reader, offset: 0) is { } participant)
+            if (ConversationRowMapper.MapParticipant(reader, offset: 0) is { } participant)
                 participants.Add(participant);
         }
 
         return participants;
     }
 
-    /// <summary>
-    /// Maps a <c>conversation_participants</c> row (<c>citizen_kind, citizen_id, role</c>) to a
-    /// <see cref="SessionParticipant"/>, or returns <see langword="null"/> when the citizen kind is
-    /// unknown (the same skip behaviour as the per-conversation read). <paramref name="offset"/>
-    /// shifts the ordinals so the batched loader's <c>conversation_id</c>-prefixed projection can
-    /// share this mapper.
-    /// </summary>
-    private static SessionParticipant? MapParticipant(SqliteDataReader reader, int offset)
-    {
-        var kindRaw = reader.GetString(offset + 0);
-        var idValue = reader.GetString(offset + 1);
-        var role = reader.IsDBNull(offset + 2) ? null : reader.GetString(offset + 2);
-        if (!TryComposeCitizen(kindRaw, idValue, out var citizen))
-            return null;
-        return new SessionParticipant
-        {
-            CitizenId = citizen,
-            Role = role
-        };
-    }
-
-    private static bool TryComposeCitizen(string kindRaw, string idValue, out CitizenId citizen)
-    {
-        citizen = default;
-        if (!Enum.TryParse<CitizenKind>(kindRaw, ignoreCase: true, out var kind))
-            return false;
-        switch (kind)
-        {
-            case CitizenKind.User:
-                citizen = CitizenId.Of(UserId.From(idValue));
-                return true;
-            case CitizenKind.Agent:
-                citizen = CitizenId.Of(AgentId.From(idValue));
-                return true;
-            default:
-                return false;
-        }
-    }
 
     private static async Task<List<ChannelBinding>> LoadBindingsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
     {
@@ -1395,30 +1301,12 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            bindings.Add(MapBinding(reader, offset: 0));
+            bindings.Add(ConversationRowMapper.MapBinding(reader, offset: 0));
         }
 
         return bindings;
     }
 
-    /// <summary>
-    /// Maps a <c>conversation_bindings</c> row to a <see cref="ChannelBinding"/>. <paramref name="offset"/>
-    /// shifts the column ordinals so a projection that prefixes <c>conversation_id</c> (the batched
-    /// loader) can reuse the same mapper as the per-conversation projection. The trailing column
-    /// order must stay identical to the <c>SELECT</c> in <see cref="LoadBindingsAsync"/>.
-    /// </summary>
-    private static ChannelBinding MapBinding(SqliteDataReader reader, int offset) => new()
-    {
-        BindingId = BindingId.From(reader.GetString(offset + 0)),
-        ChannelType = ChannelKey.From(reader.GetString(offset + 1)),
-        ChannelAddress = ChannelAddress.From(reader.GetString(offset + 2)),
-        Mode = ParseBindingMode(reader.GetString(offset + 3)),
-        ThreadingMode = ParseThreadingMode(reader.GetString(offset + 4)),
-        DisplayPrefix = reader.IsDBNull(offset + 5) ? null : reader.GetString(offset + 5),
-        BoundAt = ParseTimestamp(reader.GetString(offset + 6)),
-        LastInboundAt = reader.IsDBNull(offset + 7) ? null : ParseTimestamp(reader.GetString(offset + 7)),
-        LastOutboundAt = reader.IsDBNull(offset + 8) ? null : ParseTimestamp(reader.GetString(offset + 8))
-    };
 
     private static async Task SaveConversationAsync(SqliteConnection connection, Conversation conversation, bool upsert, CancellationToken ct)
     {
@@ -1527,39 +1415,6 @@ public sealed class SqliteConversationStore : IConversationStore
         };
 
         return connection;
-    }
-
-    private static DateTimeOffset ParseTimestamp(string? value)
-        => DateTimeOffset.TryParse(value, out var parsed)
-            ? parsed
-            : DateTimeOffset.UtcNow;
-
-    private static ConversationStatus ParseConversationStatus(string? value)
-        => Enum.TryParse<ConversationStatus>(value, ignoreCase: true, out var parsed)
-            ? parsed
-            : ConversationStatus.Active;
-
-    private static ConversationKind ParseConversationKind(string? value)
-        => Enum.TryParse<ConversationKind>(value, ignoreCase: true, out var parsed)
-            ? parsed
-            : ConversationKind.HumanAgent;
-
-    private static BindingMode ParseBindingMode(string? value)
-        => Enum.TryParse<BindingMode>(value, ignoreCase: true, out var parsed)
-            ? parsed
-            : BindingMode.Interactive;
-
-    private static ThreadingMode ParseThreadingMode(string? value)
-        => Enum.TryParse<ThreadingMode>(value, ignoreCase: true, out var parsed)
-            ? parsed
-            : ThreadingMode.Single;
-
-    private static Dictionary<string, object?> DeserializeMetadata(string? metadataJson)
-    {
-        if (string.IsNullOrWhiteSpace(metadataJson))
-            return [];
-
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions) ?? [];
     }
 
     private static Conversation CloneConversation(Conversation conversation)
