@@ -45,7 +45,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     private readonly BoundedLruCache<SessionId, GatewaySession> _cache;
     private bool _initialized;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
@@ -287,25 +287,22 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
             // Read raw rows first; resolving the agent per row touches the conversation
             // store and must not happen while the data reader holds the connection.
-            var rows = new List<(string Id, ChannelKey? Channel, SessionType Type, SessionStatus Status,
-                DateTimeOffset Created, DateTimeOffset Updated, string? ConversationId, int Count)>();
+            var rows = new List<SessionRowMapper.SessionSummaryRow>();
+
 
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    var updated = ParseTimestamp(reader.GetString(5));
-                    if (updated < updatedAfter)
+                    // #1627: the summary-row ordinals live in SessionRowMapper.MapSummaryRow.
+                    // The updatedAfter bound is applied on the parsed value (not in SQL) because
+                    // timestamps preserve their original UTC offset, so a lexicographic compare
+                    // would be wrong across rows written at different offsets.
+                    var row = SessionRowMapper.MapSummaryRow(reader);
+                    if (row.Updated < updatedAfter)
                         continue;
+                    rows.Add(row);
 
-                    var id = reader.GetString(0);
-                    ChannelKey? channel = reader.IsDBNull(1) ? (ChannelKey?)null : ChannelKey.From(reader.GetString(1));
-                    var type = ParseSessionType(reader.IsDBNull(2) ? null : reader.GetString(2), SessionId.From(id), channel);
-                    var status = ParseStatus(reader.IsDBNull(3) ? null : reader.GetString(3));
-                    var created = ParseTimestamp(reader.GetString(4));
-                    var conversationId = reader.IsDBNull(6) ? null : reader.GetString(6);
-                    var count = reader.IsDBNull(7) ? 0 : (int)reader.GetInt64(7);
-                    rows.Add((id, channel, type, status, created, updated, conversationId, count));
                 }
             }
 
@@ -952,43 +949,19 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        var createdAt = ParseTimestamp(reader.GetString(7));
-        var updatedAt = ParseTimestamp(reader.GetString(8));
-        var metadata = DeserializeMetadata(reader.IsDBNull(6) ? null : reader.GetString(6));
-        var status = ParseStatus(reader.IsDBNull(5) ? null : reader.GetString(5));
-        ChannelKey? channelType = default;
-        if (!reader.IsDBNull(1))
-            channelType = ChannelKey.From(reader.GetString(1));
-        var sessionType = ParseSessionType(reader.IsDBNull(3) ? null : reader.GetString(3), sessionId, channelType);
-        // P9-F (#657): participants_json column is intentionally read-and-discarded — the
-        // legacy column is preserved for the one-shot startup backfill into the
-        // conversation store (BackfillParticipantsToConversationsAsync) and as a rollback
-        // source. Participants are no longer persisted on Session.
-
-        var domainSession = new Session
-        {
-            SessionId = SessionId.From(reader.GetString(0)),
-            ChannelType = channelType,
-            SessionType = sessionType,
-            Status = status,
-            CreatedAt = createdAt,
-            UpdatedAt = updatedAt,
-            Metadata = metadata
-            // ConversationId is intentionally omitted when the column is NULL --
-            // the property defaults to an uninitialized ConversationId (the "unset" sentinel)
-            // and HydrateAgentIdAsync throws on it below. Writing `default(ConversationId)`
-            // explicitly is prohibited by Vogen analyzer VOG009.
-        };
-        if (!reader.IsDBNull(9))
-            domainSession.ConversationId = ConversationId.From(reader.GetString(9));
-        var session = new GatewaySession(domainSession, _redactor)
+        // #1627: the per-session row ordinals live in SessionRowMapper.MapSession - the single
+        // source of truth for this shape. participants_json is read-and-discarded there (P9-F);
+        // a NULL conversation_id leaves Session.ConversationId at its uninitialized sentinel.
+        var mapped = SessionRowMapper.MapSession(reader);
+        var session = new GatewaySession(mapped.Session, _redactor)
         {
             // P9-I (#674): AgentId is no longer sourced from a legacy column on the
-            // session row — it's hydrated immediately below via HydrateAgentIdAsync
+            // session row - it's hydrated immediately below via HydrateAgentIdAsync
             // from Conversation.AgentId. We construct GatewaySession with the
             // CallerId from the row and leave AgentId to HydrateAgentId(...).
-            CallerId = reader.IsDBNull(2) ? null : reader.GetString(2)
+            CallerId = mapped.CallerId
         };
+
 
         await reader.DisposeAsync().ConfigureAwait(false);
 
@@ -1005,25 +978,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         var entries = new List<SessionEntry>();
         while (await historyReader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            entries.Add(new SessionEntry
-            {
-                Role = MessageRole.FromString(historyReader.IsDBNull(0) ? "user" : historyReader.GetString(0)),
-                Content = historyReader.IsDBNull(1) ? string.Empty : historyReader.GetString(1),
-                Timestamp = ParseTimestamp(historyReader.IsDBNull(2) ? null : historyReader.GetString(2)),
-                ToolName = historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
-                ToolCallId = historyReader.IsDBNull(4) ? null : historyReader.GetString(4),
-                IsCompactionSummary = !historyReader.IsDBNull(5) && historyReader.GetInt64(5) != 0,
-                ToolArgs = historyReader.FieldCount > 6 && !historyReader.IsDBNull(6) ? historyReader.GetString(6) : null,
-                ToolIsError = historyReader.FieldCount > 7 && !historyReader.IsDBNull(7) && historyReader.GetInt64(7) != 0,
-                IsCrashSentinel = historyReader.FieldCount > 8 && !historyReader.IsDBNull(8) && historyReader.GetInt64(8) != 0,
-                IsHistory = historyReader.FieldCount > 9 && !historyReader.IsDBNull(9) && historyReader.GetInt64(9) != 0,
-                Trigger = historyReader.FieldCount > 10 && !historyReader.IsDBNull(10)
-                    ? TriggerType.FromString(historyReader.GetString(10))
-                    : null,
-                ThinkingContent = historyReader.FieldCount > 11 && !historyReader.IsDBNull(11)
-                    ? historyReader.GetString(11)
-                    : null
-            });
+            // #1627: all 12 history-column ordinals live in SessionRowMapper.MapHistoryEntry.
+            entries.Add(SessionRowMapper.MapHistoryEntry(historyReader));
+
         }
 
         // Phase 3a (#531): the full transcript is preserved in storage; the LLM-visible
@@ -1036,7 +993,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (entries.Count > 0)
             session.AddEntries(entries);
 
-        session.UpdatedAt = updatedAt;
+        // #1627: re-stamp the persisted UpdatedAt after AddEntries so adding history rows
+        // does not bump it past the value loaded from the sessions row. SessionRow surfaces the
+        // row's updated_at directly (mapped.UpdatedAt) so we read it without reaching through to
+        // the inner record's Session.UpdatedAt - that reach-through is banned by F-9 / Phase 7.
+        session.UpdatedAt = mapped.UpdatedAt;
 
         // P9-I (#674): hydrate AgentId from Conversation.AgentId before returning. Every
         // load path (GetAsync, GetOrCreateAsync, EnumerateSessionsAsync, ListByConversationAsync)
@@ -1201,10 +1162,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
             maxAttempts,
             cancellationToken).ConfigureAwait(false);
 
-    private static DateTimeOffset ParseTimestamp(string? timestamp)
-        => DateTimeOffset.TryParse(timestamp, out var parsed)
-            ? parsed
-            : DateTimeOffset.UtcNow;
 
     private static SessionStatus ParseStatus(string? status)
         => status?.Trim().ToLowerInvariant() switch
@@ -1214,13 +1171,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
             _ => SessionStatus.Active
         };
 
-    private static SessionType ParseSessionType(string? raw, SessionId sessionId, ChannelKey? channelType)
-    {
-        if (!string.IsNullOrWhiteSpace(raw))
-            return SessionType.FromString(raw);
-
-        return InferSessionType(sessionId, channelType);
-    }
 
     private static List<SessionParticipant> DeserializeParticipants(string? participantsJson)
     {
@@ -1230,13 +1180,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
         return JsonSerializer.Deserialize<List<SessionParticipant>>(participantsJson, JsonOptions) ?? [];
     }
 
-    private static Dictionary<string, object?> DeserializeMetadata(string? metadataJson)
-    {
-        if (string.IsNullOrWhiteSpace(metadataJson))
-            return [];
-
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions) ?? [];
-    }
 
     /// <inheritdoc />
     public override async Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
@@ -1306,20 +1249,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         var results = new List<SubAgentSessionSummary>();
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var endedAt = reader.IsDBNull(6)
-                ? (DateTimeOffset?)null
-                : ParseTimestamp(reader.GetString(6));
-            results.Add(new SubAgentSessionSummary
-            {
-                SubAgentId      = reader.GetString(0),
-                ParentSessionId = reader.GetString(1),
-                ParentAgentId   = reader.GetString(2),
-                ChildAgentId    = reader.GetString(3),
-                Archetype       = reader.IsDBNull(4) ? null : reader.GetString(4),
-                StartedAt       = ParseTimestamp(reader.GetString(5)),
-                EndedAt         = endedAt,
-                Status          = reader.GetString(7),
-            });
+            // #1627: the sub_agent_sessions ordinals live in SessionRowMapper.MapSubAgentSession.
+            results.Add(SessionRowMapper.MapSubAgentSession(reader));
+
         }
         return results;
     }

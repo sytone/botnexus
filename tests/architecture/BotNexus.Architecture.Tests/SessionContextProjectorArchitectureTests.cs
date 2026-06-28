@@ -57,6 +57,11 @@ public sealed class SessionContextProjectorArchitectureTests
             // Storage layer: persists both flags on the SessionEntry row. The projection
             // happens elsewhere; here we just round-trip the raw state.
             "SqliteSessionStore.cs",
+            // Storage layer (#1627): the per-row mapper extracted out of SqliteSessionStore.
+            // MapHistoryEntry round-trips both flags as independent column reads - it does
+            // not combine them into a projection predicate, so it shares SqliteSessionStore's
+            // allowlist rationale. The projection still lives in SessionContextProjector.
+            "SessionRowMapper.cs",
             // Documentation comment only; the actual projection is delegated to the
             // projector via SessionCompaction.ApplyLegacyHistoryProjection.
             "FileSessionStore.cs",
