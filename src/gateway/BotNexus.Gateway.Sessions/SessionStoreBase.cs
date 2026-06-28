@@ -160,7 +160,7 @@ public abstract class SessionStoreBase : ISessionStore
             AgentId = agentId
         };
 
-    protected static SessionType InferSessionType(SessionId sessionId, ChannelKey? channelType)
+    internal static SessionType InferSessionType(SessionId sessionId, ChannelKey? channelType)
     {
         // P9-E (#645): the legacy Soul/Cron/Heartbeat SessionType discriminators are
         // collapsed. Triggers stamp the proxy origin onto SessionEntry.Trigger; here
