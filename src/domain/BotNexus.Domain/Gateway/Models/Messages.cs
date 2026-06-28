@@ -95,6 +95,29 @@ public sealed record InboundMessage
     /// <see cref="SessionEntry.Trigger"/>. See P9-E (#645) / directive G-3.
     /// </summary>
     public TriggerType? Trigger { get; init; }
+
+    /// <summary>
+    /// Optional override for the role this message should be recorded under when an
+    /// agent posts it into a channel. <c>null</c> (the default) means "no override" --
+    /// the role is derived from the sender kind downstream (see #1547 Step 2/3).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Foundation for post-as-assistant (<c>#1649</c>, Step 1/3 of <c>#1547</c>). Today
+    /// agent-initiated posts (e.g. the conversation tool, cross-channel relays) are
+    /// hard-stamped as <see cref="MessageRole.User"/>. Per the Hybrid approach agreed on
+    /// <c>#1547</c>, an agent should default to <see cref="MessageRole.Assistant"/> when
+    /// speaking as itself, with an explicit <see cref="MessageRole.User"/> override for
+    /// the on-behalf-of-user kickoff case. This field carries that intended role onto the
+    /// inbound path so the role-stamp step has a value to read.
+    /// </para>
+    /// <para>
+    /// This is purely additive plumbing: no consumer reads <see cref="SpeakAs"/> yet, so
+    /// the field has no behavioural effect on its own. Step 2/3 (<c>#1650</c>) wires the
+    /// role derivation; Step 3/3 (<c>#1651</c>) makes the render honour the assistant role.
+    /// </para>
+    /// </remarks>
+    public MessageRole? SpeakAs { get; init; }
 }
 
 /// <summary>
