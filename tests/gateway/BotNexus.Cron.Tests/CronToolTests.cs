@@ -513,6 +513,207 @@ public sealed class CronToolTests
         ex.ShouldNotBeOfType<UnauthorizedAccessException>();
     }
 
+    // -- Issue #1667: create/update target-agent scoping (security) --------
+
+    [Fact]
+    public async Task ExecuteAsync_Create_WithForeignAgentId_AndCrossAgentDisabled_Denied()
+    {
+        // Agent A must not be able to create a job that runs AS agent B.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Cross-agent job",
+            ["schedule"] = "*/5 * * * *",
+            ["message"] = "run as someone else",
+            ["agentId"] = "agent-b"
+        });
+
+        var ex = await act.ShouldThrowAsync<UnauthorizedAccessException>();
+        ex.Message.ShouldContain("Cron jobs may only target the calling agent.");
+        store.Verify(s => s.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Create_WithOwnAgentId_AndCrossAgentDisabled_Succeeds()
+    {
+        // Explicitly naming yourself is fine even with cross-agent disabled.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        CronJob? created = null;
+        store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => created = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Self job",
+            ["schedule"] = "*/5 * * * *",
+            ["message"] = "hello",
+            ["agentId"] = "agent-a"
+        });
+
+        created.ShouldNotBeNull();
+        created!.AgentId!.Value.Value.ShouldBe("agent-a");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Create_WithBlankAgentId_DefaultsToCallingAgent()
+    {
+        // An omitted/blank agentId keeps defaulting to the caller.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        CronJob? created = null;
+        store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => created = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Default job",
+            ["schedule"] = "*/5 * * * *",
+            ["message"] = "hello"
+        });
+
+        created.ShouldNotBeNull();
+        created!.AgentId!.Value.Value.ShouldBe("agent-a");
+        created.CreatedBy.ShouldBe("agent-a");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Create_WithForeignAgentId_AndCrossAgentEnabled_Succeeds()
+    {
+        // When cross-agent cron is explicitly enabled, a foreign target is allowed.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        CronJob? created = null;
+        store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => created = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: true);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Cross-agent job",
+            ["schedule"] = "*/5 * * * *",
+            ["message"] = "run elsewhere",
+            ["agentId"] = "agent-b"
+        });
+
+        created.ShouldNotBeNull();
+        created!.AgentId!.Value.Value.ShouldBe("agent-b");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_RetargetToForeignAgent_AndCrossAgentDisabled_Denied()
+    {
+        // An agent owning a job must not be able to retarget it to run AS another agent.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "agent-a", agentId: "agent-a");
+        store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["agentId"] = "agent-b"
+        });
+
+        var ex = await act.ShouldThrowAsync<UnauthorizedAccessException>();
+        ex.Message.ShouldContain("Cron jobs may only target the calling agent.");
+        store.Verify(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_RetargetToOwnAgent_AndCrossAgentDisabled_Succeeds()
+    {
+        // Naming yourself as the target on update is fine with cross-agent disabled.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "agent-a", agentId: "agent-a");
+        store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["agentId"] = "agent-a"
+        });
+
+        saved.ShouldNotBeNull();
+        saved!.AgentId!.Value.Value.ShouldBe("agent-a");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_WithoutAgentId_AndCrossAgentDisabled_KeepsExistingTarget()
+    {
+        // Omitting agentId on update keeps the existing target without tripping the guard.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "agent-a", agentId: "agent-a");
+        store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: false);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["name"] = "Renamed"
+        });
+
+        saved.ShouldNotBeNull();
+        saved!.Name.ShouldBe("Renamed");
+        saved.AgentId!.Value.Value.ShouldBe("agent-a");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_RetargetToForeignAgent_AndCrossAgentEnabled_Succeeds()
+    {
+        // When cross-agent cron is enabled, retargeting to a foreign agent is allowed.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "agent-a", agentId: "agent-a");
+        store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: true);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["agentId"] = "agent-b"
+        });
+
+        saved.ShouldNotBeNull();
+        saved!.AgentId!.Value.Value.ShouldBe("agent-b");
+    }
+
     // ── History ─────────────────────────────────────────────────────────────────
 
     [Fact]

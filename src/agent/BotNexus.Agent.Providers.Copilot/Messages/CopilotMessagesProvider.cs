@@ -227,7 +227,6 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);
-        using var reader = new StreamReader(responseStream, Encoding.UTF8);
 
         Action? onFirstToken = setupTimeoutCts is not null
             ? () =>
@@ -237,8 +236,10 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
             }
             : null;
 
+        // The parser owns the streaming byte guard (#1668): hand it the raw response stream and it
+        // wraps it in a ByteCountingStream before reading, bounding the untrusted SSE body.
         var (usage, responseId, stopReason) = await CopilotMessagesStreamParser.ProcessStreamAsync(
-            reader,
+            responseStream,
             model,
             stream,
             contentBlocks,

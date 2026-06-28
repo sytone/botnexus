@@ -5,6 +5,7 @@ using BotNexus.Agent.Providers.Copilot.Telemetry;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Copilot.Streaming;
 
 namespace BotNexus.Agent.Providers.Copilot.Messages;
 
@@ -16,8 +17,18 @@ namespace BotNexus.Agent.Providers.Copilot.Messages;
 /// </summary>
 internal static class CopilotMessagesStreamParser
 {
+    // Total success-body cap (16 MiB). Mirrors BoundedHttpContent.DefaultMaxResponseBytes from
+    // #1653 so the streaming and non-streaming Copilot paths agree on a legitimate body size, and
+    // a hostile/broken endpoint streaming an unbounded SSE body cannot exhaust memory (#1668).
+    private const long MaxResponseBytes = BoundedHttpContent.DefaultMaxResponseBytes;
+
+    // Per-frame cap (64 KiB): an SSE frame / data: line that cannot find its boundary within this
+    // many bytes is hostile/broken, so a single never-terminating data: line is rejected long
+    // before it could approach the total cap.
+    private const long MaxFrameBytes = 64L * 1024;
+
     internal static async Task<(Usage Usage, string? ResponseId, StopReason StopReason)> ProcessStreamAsync(
-        StreamReader reader,
+        Stream responseStream,
         LlmModel model,
         LlmStream stream,
         List<ContentBlock> contentBlocks,
@@ -27,6 +38,14 @@ internal static class CopilotMessagesStreamParser
         CancellationToken ct,
         Action? onFirstToken = null)
     {
+        // Bound the untrusted SSE body before a single byte reaches the line loop below. Every byte
+        // the StreamReader consumes flows through the ByteCountingStream, so an unbounded body or a
+        // single never-terminating data: line trips the cap regardless of how the reader buffers
+        // internally (#1668). Leave the inner stream open -- the caller owns its lifetime.
+        using var boundedStream = new ByteCountingStream(
+            responseStream, MaxResponseBytes, MaxFrameBytes, leaveOpen: true);
+        using var reader = new StreamReader(boundedStream, Encoding.UTF8);
+
         var usage = initialUsage;
         var blockTypes = new Dictionary<int, string>();
         var textAccumulators = new Dictionary<int, StringBuilder>();
