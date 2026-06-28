@@ -76,7 +76,7 @@ public sealed class AgentInteractionServiceTests
             Title = "One",
             HistoryLoaded = true
         };
-        agent.Conversations["conv-1"].Messages.Add(new ChatMessage("User", "hello", DateTimeOffset.UtcNow));
+        agent.Conversations["conv-1"].AppendMessage(new ChatMessage("User", "hello", DateTimeOffset.UtcNow));
 
         _service.ClearLocalMessages("agent-1");
 
@@ -582,7 +582,7 @@ public sealed class AgentInteractionServiceTests
         var conv = agent.Conversations["conv-active"];
         conv.StreamState.IsStreaming = true;
         conv.StreamState.Buffer = "in progress";
-        conv.Messages.Add(new ChatMessage("Tool", "running tool", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("Tool", "running tool", DateTimeOffset.UtcNow));
 
         // Trigger SelectConversation which internally calls LoadConversationHistoryAsync
         // But fix #789 resets IsStreaming first, so we need to test the direct path.

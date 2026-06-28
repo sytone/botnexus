@@ -229,7 +229,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 var notificationText = result.Succeeded
                     ? $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_"
                     : $"_[Compaction failed: {result.FailureReason ?? "unknown error"}]_";
-                conv.Messages.Add(new ChatMessage("System", notificationText, DateTimeOffset.UtcNow));
+                conv.AppendMessage(new ChatMessage("System", notificationText, DateTimeOffset.UtcNow));
                 _store.NotifyChanged();
             }
 
@@ -518,9 +518,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
         var conv = agent.Conversations.GetValueOrDefault(agent.ActiveConversationId);
         if (conv is null) return;
 
-        conv.Messages.Clear();
+        conv.ClearMessages();
         conv.HistoryLoaded = false;
-        conv.Messages.Add(new ChatMessage("System", "Local messages cleared.", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("System", "Local messages cleared.", DateTimeOffset.UtcNow));
         _store.NotifyChanged();
     }
 
@@ -583,11 +583,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         const int virtualHistoryLimit = 200;
         var sessionResponse = await _restClient.GetSessionHistoryAsync(sessionId, limit: virtualHistoryLimit);
-        conv.Messages.Clear();
+        conv.ClearMessages();
         if (sessionResponse?.Entries is { Count: > 0 })
         {
             foreach (var message in sessionResponse.Entries.Select(ToChatMessage))
-                conv.Messages.Add(message);
+                conv.AppendMessage(message);
         }
 
         conv.HistoryLoaded = true;
@@ -606,14 +606,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         if (response?.Entries is { Count: > 0 })
         {
-            conv.Messages.Clear();
+            conv.ClearMessages();
 
             foreach (var entry in response.Entries)
             {
                 if (entry.Kind == "boundary")
                 {
                     var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
-                    conv.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
+                    conv.AppendMessage(new ChatMessage("System", string.Empty, entry.Timestamp)
                     {
                         Kind = "boundary",
                         BoundaryLabel = label,
@@ -623,7 +623,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 else if (entry.Kind == "compaction")
                 {
                     var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
-                    conv.Messages.Add(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
+                    conv.AppendMessage(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
                     {
                         Kind = "compaction",
                         BoundaryLabel = label,
@@ -632,7 +632,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 }
                 else
                 {
-                    conv.Messages.Add(ToChatMessage(entry));
+                    conv.AppendMessage(ToChatMessage(entry));
                 }
             }
         }
@@ -713,11 +713,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
             // rather than the ephemeral sub-agent run ID to avoid 404s.
             var sessionIdForHistory = agent.SessionId ?? subAgentId;
             var response = await _restClient.GetSessionHistoryAsync(sessionIdForHistory, limit: 50);
-            conv.Messages.Clear();
+            conv.ClearMessages();
             if (response?.Entries is { Count: > 0 })
             {
                 foreach (var message in response.Entries.Select(ToChatMessage))
-                    conv.Messages.Add(message);
+                    conv.AppendMessage(message);
             }
 
             conv.HistoryLoaded = true;
@@ -779,7 +779,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         var convId = agent?.ActiveConversationId;
         if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv) return;
 
-        conv.Messages.Add(new ChatMessage("User", content, DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("User", content, DateTimeOffset.UtcNow));
         _store.NotifyChanged();
     }
 
@@ -789,7 +789,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         var convId = agent?.ActiveConversationId;
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("Error", message, DateTimeOffset.UtcNow));
+            conv.AppendMessage(new ChatMessage("Error", message, DateTimeOffset.UtcNow));
         }
 
         _store.NotifyChanged();
