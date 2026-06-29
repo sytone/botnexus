@@ -135,6 +135,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
+        // Surface the connecting client kind (e.g. SignalR "mobile" vs "desktop") on the runtime
+        // line when the execution context carries it. Absent -> null, which the runtime-line
+        // builder omits, so desktop / no-hint sessions render an unchanged line (#1209).
+        var clientKind = ResolveClientKindParameter(executionContext);
+
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
         {
             WorkspaceDir = workspacePath,
@@ -148,6 +153,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
                 Provider = descriptor.ApiProvider,
                 Model = descriptor.ModelId,
                 Channel = "signalr",
+                ClientKind = clientKind,
                 SessionId = executionContext?.SessionId.Value
             },
             HeartbeatPrompt = descriptor.Heartbeat?.Enabled == true
@@ -177,6 +183,26 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     /// </summary>
     public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
         => BuildSystemPromptAsync(descriptor, null, cancellationToken);
+
+    /// <summary>
+    /// Reads the connecting client kind from the execution-context parameter bag, if present.
+    /// Returns <see langword="null"/> when no kind was carried so the runtime-line builder omits
+    /// the field for desktop / no-hint sessions (#1209 AC#5).
+    /// </summary>
+    /// <param name="executionContext">The execution context, or <see langword="null"/>.</param>
+    /// <returns>The client kind string, or <see langword="null"/> when absent.</returns>
+    private static string? ResolveClientKindParameter(AgentExecutionContext? executionContext)
+    {
+        if (executionContext is not null
+            && executionContext.Parameters.TryGetValue("clientKind", out var raw)
+            && raw is string clientKind
+            && !string.IsNullOrWhiteSpace(clientKind))
+        {
+            return clientKind;
+        }
+
+        return null;
+    }
 
     private async Task<ConversationContext?> ResolveConversationContextAsync(
         AgentDescriptor descriptor,

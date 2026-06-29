@@ -12,8 +12,11 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tests.Dispatching;
 using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Services;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -756,12 +759,121 @@ public sealed class SignalRHubTests
     /// <summary>
     /// Exposed for cross-class test usage (e.g. auth verification tests).
     /// </summary>
+
+    // ---- Client-kind connection metadata (#1209) ----
+
+    [Fact]
+    public async Task GatewayHub_OnConnected_WithMobileClientQuery_StoresClientKind()
+    {
+        var hub = CreateHubForOnConnected(connectionId: "conn-1", clientQueryValue: "mobile");
+
+        await hub.OnConnectedAsync();
+
+        hub.Context.Items["clientKind"].ShouldBe("mobile");
+    }
+
+    [Fact]
+    public async Task GatewayHub_OnConnected_NoClientQuery_DefaultsClientKindToDesktop()
+    {
+        // Back-compat (AC#5): the existing desktop client connects WITHOUT a client hint
+        // and must still resolve to a stable, non-"mobile" kind.
+        var hub = CreateHubForOnConnected(connectionId: "conn-1", clientQueryValue: null);
+
+        await hub.OnConnectedAsync();
+
+        hub.Context.Items["clientKind"].ShouldBe("desktop");
+    }
+
+    [Fact]
+    public async Task GatewayHub_OnConnected_NormalizesClientKindToLowercase()
+    {
+        var hub = CreateHubForOnConnected(connectionId: "conn-1", clientQueryValue: "Mobile");
+
+        await hub.OnConnectedAsync();
+
+        hub.Context.Items["clientKind"].ShouldBe("mobile");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_WithMobileClientQuery_StampsClientKindIntoMetadata()
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", clientQueryValue: "mobile");
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        dispatched.Metadata.ContainsKey("clientKind").ShouldBeTrue();
+        dispatched.Metadata["clientKind"].ShouldBe("mobile");
+        // The existing messageType entry must be preserved alongside clientKind.
+        dispatched.Metadata["messageType"].ShouldBe("message");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_NoClientQuery_DefaultsClientKindToDesktopInMetadata()
+    {
+        // Back-compat (AC#5): a desktop client that sends no hint still carries a stable kind.
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", clientQueryValue: null);
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        dispatched.Metadata["clientKind"].ShouldBe("desktop");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessageWithMedia_StampsClientKindIntoMetadata()
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", clientQueryValue: "mobile");
+
+        var parts = new List<MediaContentPartDto>
+        {
+            new() { MimeType = "text/plain", Text = "hello" }
+        };
+
+        await hub.SendMessageWithMedia(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello", parts);
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        dispatched.Metadata["clientKind"].ShouldBe("mobile");
+        dispatched.Metadata["messageType"].ShouldBe("message-with-media");
+    }
+
     internal static GatewayHub CreateHubForTest(
         IInboundMessageOrchestrator? orchestrator = null,
         ISessionStore? sessions = null,
         string connectionId = "conn-test",
         string? userIdentifier = "user")
         => CreateHub(orchestrator: orchestrator, sessions: sessions, connectionId: connectionId, userIdentifier: userIdentifier);
+
+    // Builds a hub wired with the minimal Clients/registry/activity mocks that
+    // OnConnectedAsync touches, so client-kind connect tests can exercise the real
+    // OnConnectedAsync path (which reads the connect-time query) without NREs (#1209).
+    private static GatewayHub CreateHubForOnConnected(string connectionId, string? clientQueryValue)
+    {
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.Connected(It.IsAny<ConnectedPayload>())).Returns(Task.CompletedTask);
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
+        clients.SetupGet(value => value.Caller).Returns(caller.Object);
+
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(value => value.GetAll()).Returns([]);
+
+        var activity = new Mock<IActivityBroadcaster>();
+        activity.Setup(value => value.PublishAsync(It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        return CreateHub(
+            clients: clients.Object,
+            registry: registry.Object,
+            activity: activity.Object,
+            connectionId: connectionId,
+            clientQueryValue: clientQueryValue);
+    }
 
     private static GatewayHub CreateHub(
         IHubCallerClients<IGatewayHubClient>? clients = null,
@@ -779,7 +891,8 @@ public sealed class SignalRHubTests
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
         string connectionId = "conn-test",
-        string? userIdentifier = "user")
+        string? userIdentifier = "user",
+        string? clientQueryValue = null)
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
         var convStore = conversationStore ?? new InMemoryConversationStore();
@@ -819,23 +932,50 @@ public sealed class SignalRHubTests
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
-            Context = new TestHubCallerContext(connectionId, userIdentifier)
+            Context = new TestHubCallerContext(connectionId, userIdentifier, clientQueryValue)
         };
 
         return hub;
     }
 
-    private sealed class TestHubCallerContext(string connectionId, string? userIdentifier = "user") : HubCallerContext
+    private sealed class TestHubCallerContext : HubCallerContext
     {
         private readonly Dictionary<object, object?> _items = [];
 
-        public override string ConnectionId { get; } = connectionId;
-        public override string? UserIdentifier { get; } = userIdentifier;
+        public TestHubCallerContext(string connectionId, string? userIdentifier = "user", string? clientQueryValue = null)
+        {
+            ConnectionId = connectionId;
+            UserIdentifier = userIdentifier;
+
+            var features = new FeatureCollection();
+            // Mirror the production transport: the hub reads the connect-time query string
+            // via Context.GetHttpContext()?.Request.Query, which resolves through the
+            // IHttpContextFeature. Stage a DefaultHttpContext carrying the client query param
+            // so OnConnectedAsync can read it back (#1209).
+            var httpContext = new DefaultHttpContext();
+            if (clientQueryValue is not null)
+            {
+                httpContext.Request.Query = new QueryCollection(new Dictionary<string, StringValues>
+                {
+                    ["client"] = clientQueryValue
+                });
+            }
+            features.Set<IHttpContextFeature>(new HttpContextFeature { HttpContext = httpContext });
+            Features = features;
+        }
+
+        public override string ConnectionId { get; }
+        public override string? UserIdentifier { get; }
         public override ClaimsPrincipal? User { get; } = new();
         public override IDictionary<object, object?> Items => _items;
-        public override IFeatureCollection Features { get; } = new FeatureCollection();
+        public override IFeatureCollection Features { get; }
         public override CancellationToken ConnectionAborted { get; } = CancellationToken.None;
         public override void Abort() { }
+
+        private sealed class HttpContextFeature : IHttpContextFeature
+        {
+            public HttpContext? HttpContext { get; set; }
+        }
     }
 
     // IsBenignConnectionException classification tests

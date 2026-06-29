@@ -302,6 +302,7 @@ else
     {
         var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
         var hubUrl = $"{origin}/hub/gateway";
+        PortalLoad.ClientKind = "mobile";
         await PortalLoad.InitializeAsync(hubUrl);
         await ApplyRouteSelectionAsync();
     }

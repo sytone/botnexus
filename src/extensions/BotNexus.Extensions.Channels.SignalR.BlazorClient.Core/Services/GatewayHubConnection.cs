@@ -113,13 +113,19 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// and starts the connection.
     /// </summary>
     /// <param name="hubUrl">Absolute URL of the Gateway hub (e.g. <c>https://localhost:5000/hub/gateway</c>).</param>
-    public async Task ConnectAsync(string hubUrl)
+    /// <param name="clientKind">
+    /// The connecting client kind ("desktop" or "mobile"). Appended as a <c>client</c> query
+    /// parameter so the gateway can distinguish device classes per connection (#1209).
+    /// Defaults to "desktop" to preserve the historical desktop-portal behaviour; a
+    /// null/blank value is omitted so the hub falls back to its own default.
+    /// </param>
+    public async Task ConnectAsync(string hubUrl, string clientKind = "desktop")
     {
         if (_connection is not null)
             await _connection.DisposeAsync();
 
         _connection = new HubConnectionBuilder()
-            .WithUrl(hubUrl)
+            .WithUrl(AppendClientKindQuery(hubUrl, clientKind))
             .WithAutomaticReconnect()
             .Build();
 
@@ -157,6 +163,26 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     }
 
     // ── Client → Server invocations ─────────────────────────────────────
+
+    /// <summary>
+    /// Appends the connect-time <c>client</c> query parameter to <paramref name="hubUrl"/> so the
+    /// gateway can distinguish device classes (e.g. "mobile" vs "desktop") per SignalR connection
+    /// (#1209). The kind is lower-cased for a stable wire value. The separator is chosen so the
+    /// append works whether or not the hub URL already carries a query string. A null or blank
+    /// kind returns the URL unchanged so the gateway falls back to its own default, keeping the
+    /// no-hint path backward compatible.
+    /// </summary>
+    /// <param name="hubUrl">The hub URL, possibly already containing a query string.</param>
+    /// <param name="clientKind">The client kind to append, or null/blank to skip.</param>
+    /// <returns>The hub URL with the client kind appended, or the original URL when no kind is supplied.</returns>
+    public static string AppendClientKindQuery(string hubUrl, string? clientKind)
+    {
+        if (string.IsNullOrWhiteSpace(clientKind))
+            return hubUrl;
+
+        var separator = hubUrl.Contains('?') ? '&' : '?';
+        return $"{hubUrl}{separator}client={clientKind.Trim().ToLowerInvariant()}";
+    }
 
     /// <summary>Subscribe to all active sessions. Returns current session list.</summary>
     public async Task<SubscribeAllResult> SubscribeAllAsync()

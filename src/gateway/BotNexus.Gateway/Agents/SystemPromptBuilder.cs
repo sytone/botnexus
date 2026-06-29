@@ -22,6 +22,7 @@ public sealed record RuntimeInfo
     public string? DefaultModel { get; init; }
     public string? Shell { get; init; }
     public string? Channel { get; init; }
+    public string? ClientKind { get; init; }
     public IReadOnlyList<string>? Capabilities { get; init; }
     public string? SessionId { get; init; }
     public string? SessionKey { get; init; }
@@ -375,6 +376,7 @@ public static class SystemPromptBuilder
             DefaultModel = runtime.DefaultModel,
             Shell = runtime.Shell,
             Channel = runtime.Channel,
+            ClientKind = runtime.ClientKind,
             Capabilities = runtime.Capabilities,
             SessionId = runtime.SessionId,
             SessionKey = runtime.SessionKey

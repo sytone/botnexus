@@ -42,10 +42,28 @@ public static class RuntimeLineFormatter
             !string.IsNullOrWhiteSpace(runtime?.DefaultModel) ? $"default_model={runtime!.DefaultModel}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Shell) ? $"shell={runtime!.Shell}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Channel) ? $"channel={runtime!.Channel.Trim().ToLowerInvariant()}" : string.Empty,
+            ShouldEmitClientKind(runtime?.ClientKind) ? $"client={runtime!.ClientKind!.Trim().ToLowerInvariant()}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Channel)
                 ? $"capabilities={(normalizedCapabilities.Count > 0 ? string.Join(",", normalizedCapabilities) : "none")}" : string.Empty
         };
 
         return $"Runtime: {string.Join(" | ", parts.Where(static part => !string.IsNullOrWhiteSpace(part)))}";
+    }
+
+    /// <summary>
+    /// Determines whether the client kind should be surfaced on the runtime line. Only a
+    /// present, non-default kind is emitted: the default desktop kind and the "unknown"
+    /// fallback (the value an absent connect-time hint resolves to) are suppressed so that
+    /// existing desktop sessions render an unchanged runtime line (#1209 AC#5).
+    /// </summary>
+    /// <param name="clientKind">The raw client kind, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> when the kind should be emitted; otherwise <see langword="false"/>.</returns>
+    private static bool ShouldEmitClientKind(string? clientKind)
+    {
+        if (string.IsNullOrWhiteSpace(clientKind))
+            return false;
+
+        var normalized = clientKind.Trim().ToLowerInvariant();
+        return normalized is not ("desktop" or "unknown");
     }
 }

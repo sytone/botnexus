@@ -88,6 +88,7 @@ else
             {
                 var baseUri = new Uri(Nav.BaseUri);
                 var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
+                PortalLoad.ClientKind = "desktop";
                 await PortalLoad.InitializeAsync(hubUrl);
             }
             catch (Exception ex)

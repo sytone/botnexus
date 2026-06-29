@@ -17,6 +17,27 @@ public sealed class PortalLoadServiceTests
     }
 
     /// <summary>
+    /// The client kind defaults to "desktop" so a portal that never sets it keeps the
+    /// historical desktop-portal behaviour (#1209 AC#5).
+    /// </summary>
+    [Fact]
+    public void ClientKind_DefaultsToDesktop()
+    {
+        _service.ClientKind.ShouldBe("desktop");
+    }
+
+    /// <summary>
+    /// The client kind is settable so the per-app caller (desktop portal vs mobile app) can
+    /// declare its device class before InitializeAsync forwards it to the hub connection (#1209 AC#1).
+    /// </summary>
+    [Fact]
+    public void ClientKind_IsSettable()
+    {
+        _service.ClientKind = "mobile";
+        _service.ClientKind.ShouldBe("mobile");
+    }
+
+    /// <summary>
     /// Reproduces the exact bug: a stale cron-session projection whose backing session
     /// returns 404 from GetSessionHistoryAsync must NOT abort portal initialization.
     /// Before the fix, this threw HttpRequestException 404 and set LoadError, blocking

@@ -137,4 +137,101 @@ public sealed class RuntimeLineFormatterTests
         RuntimeLineFormatter.RuntimeContextBeginDelimiter
             .ShouldNotBe(RuntimeLineFormatter.RuntimeContextEndDelimiter);
     }
+
+    [Fact]
+    public void BuildRuntimeLine_WithMobileClientKind_EmitsClientField()
+    {
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "mobile"
+        });
+
+        line.ShouldContain("client=mobile");
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_EmitsClientAfterChannel()
+    {
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "mobile"
+        });
+
+        var channelIndex = line.IndexOf("channel=", System.StringComparison.Ordinal);
+        var clientIndex = line.IndexOf("client=", System.StringComparison.Ordinal);
+        channelIndex.ShouldBeGreaterThanOrEqualTo(0);
+        clientIndex.ShouldBeGreaterThan(channelIndex);
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_WithoutClientKind_OmitsClientField()
+    {
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr"
+        });
+
+        line.ShouldNotContain("client=");
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_WithDesktopClientKind_OmitsClientField()
+    {
+        // Back-compat: the default desktop kind is the implied baseline and is not
+        // surfaced, so existing desktop prompts stay byte-identical (AC#5).
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "desktop"
+        });
+
+        line.ShouldNotContain("client=");
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_WithUnknownClientKind_OmitsClientField()
+    {
+        // Back-compat: an absent hint normalizes to "unknown" upstream and must not
+        // emit a client field.
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "unknown"
+        });
+
+        line.ShouldNotContain("client=");
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_WithWhitespaceClientKind_OmitsClientField()
+    {
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "   "
+        });
+
+        line.ShouldNotContain("client=");
+    }
+
+    [Fact]
+    public void BuildRuntimeLine_NormalizesClientKindToLowercase()
+    {
+        var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
+        {
+            AgentId = "farnsworth",
+            Channel = "signalr",
+            ClientKind = "Mobile"
+        });
+
+        line.ShouldContain("client=mobile");
+    }
 }
