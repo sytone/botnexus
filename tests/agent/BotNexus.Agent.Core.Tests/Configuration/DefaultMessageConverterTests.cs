@@ -81,6 +81,21 @@ public class DefaultMessageConverterTests
     }
 
     [Fact]
+    public async Task Create_CompactionSummaryAsUserMessage_ReachesProviderOutput()
+    {
+        // #1694: the compaction summary is mapped to a User message upstream so the
+        // [CONTEXT COMPACTION -- REFERENCE ONLY] wrapper passes this filter; a System
+        // message would be dropped, guaranteeing a manual /compact context wipe.
+        var converter = DefaultMessageConverter.Create();
+        var summary = "[CONTEXT COMPACTION -- REFERENCE ONLY] earlier turns summarised";
+
+        var result = await converter([new AgentUserMessage(summary)], CancellationToken.None);
+
+        result.ShouldHaveSingleItem();
+        result[0].ShouldBeOfType<ProviderUserMessage>();
+    }
+
+    [Fact]
     public async Task Create_ReturnsEmptyForEmptyOrNullMessages()
     {
         var converter = DefaultMessageConverter.Create();

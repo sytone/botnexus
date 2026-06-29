@@ -334,12 +334,15 @@ public sealed class InProcessIsolationStrategyTests
 
 
     [Fact]
-    public async Task CreateAsync_WithCompactionSummaryInHistory_InjectsSummaryAsSystemMessage()
+    public async Task CreateAsync_WithCompactionSummaryInHistory_InjectsSummaryAsUserMessage()
     {
-        // Arrange: simulate a session that has been compacted — history starts with a
+        // Arrange: simulate a session that has been compacted - history starts with a
         // compaction summary entry (Role=System, IsCompactionSummary=true) followed by
         // recent user/assistant turns. After a gateway restart the handle is recreated;
         // the compaction summary must survive so the LLM retains the summarised context.
+        // #1694: a System-role message is filtered out by DefaultMessageConverter before
+        // any provider sees it, which silently wiped context. The compaction summary must
+        // be a User message so it passes the converter filter and reaches every provider.
         var strategy = CreateStrategyWithRegisteredModel();
         var context = new AgentExecutionContext
         {
@@ -349,7 +352,7 @@ public sealed class InProcessIsolationStrategyTests
                 new SessionEntry
                 {
                     Role = BotNexus.Domain.Primitives.MessageRole.System,
-                    Content = "## Summary\nDecisions: picked option A. Open TODOs: deploy by Friday.",
+                    Content = "[CONTEXT COMPACTION -- REFERENCE ONLY]\n## Summary\nDecisions: picked option A. Open TODOs: deploy by Friday.",
                     IsCompactionSummary = true
                 },
                 new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.User, Content = "what was decided?" },
@@ -361,18 +364,21 @@ public sealed class InProcessIsolationStrategyTests
         var handle = await strategy.CreateAsync(CreateDescriptor(), context);
         var messages = GetMessages(handle);
 
-        // Assert: summary injected as a system message before user/assistant turns
+        // Assert: summary injected as a model-visible user message (survives DefaultMessageConverter)
         messages.Count.ShouldBe(3);
-        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("Option A");
+        var summary = messages[0].ShouldBeOfType<AgentCoreUserMessage>();
+        summary.Content.ShouldContain("Option A");
+        summary.Content.ShouldContain("CONTEXT COMPACTION");
         messages[1].ShouldBe(new AgentCoreUserMessage("what was decided?"));
         messages[2].ShouldBe(new AssistantAgentMessage("Option A was chosen."));
     }
 
     [Fact]
-    public async Task CreateAsync_WithOnlyCompactionSummary_InjectsSummaryOnly()
+    public async Task CreateAsync_WithOnlyCompactionSummary_InjectsSummaryAsModelVisibleUserMessage()
     {
-        // Regression: a session with only a compaction summary (no preserved turns yet)
-        // should still have the summary injected so the LLM has prior context.
+        // AC #1694: forced compaction with PreservedTurns=0 yields a session whose only
+        // visible entry is the compaction summary. It must survive as a model-visible user
+        // message - not dropped - so manual /compact does not wipe context.
         var strategy = CreateStrategyWithRegisteredModel();
         var context = new AgentExecutionContext
         {
@@ -382,7 +388,7 @@ public sealed class InProcessIsolationStrategyTests
                 new SessionEntry
                 {
                     Role = BotNexus.Domain.Primitives.MessageRole.System,
-                    Content = "## Summary\nAgent helped user set up CI.",
+                    Content = "[CONTEXT COMPACTION -- REFERENCE ONLY]\n## Summary\nAgent helped user set up CI.",
                     IsCompactionSummary = true
                 }
             ]
@@ -392,7 +398,7 @@ public sealed class InProcessIsolationStrategyTests
         var messages = GetMessages(handle);
 
         messages.Count.ShouldBe(1);
-        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("CI");
+        messages[0].ShouldBeOfType<AgentCoreUserMessage>().Content.ShouldContain("CI");
     }
 
     [Fact]

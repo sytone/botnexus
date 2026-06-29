@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -706,6 +706,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
     private static AgentMessage ConvertSessionEntryToAgentMessage(SessionEntry entry)
     {
+        // #1694: a compaction summary must reach the provider, but DefaultMessageConverter
+        // drops every System-role message (manual /compact => guaranteed context wipe).
+        // The [CONTEXT COMPACTION -- REFERENCE ONLY] wrapper is already in the content, so
+        // mapping the summary entry (and only that entry) to a User message lets it pass the
+        // converter filter and reach every provider. Plain System entries stay system.
+        if (entry.IsCompactionSummary)
+            return new AgentCoreUserMessage(entry.Content);
+
         return entry.Role.Value switch
         {
             "user" => new AgentCoreUserMessage(entry.Content),
