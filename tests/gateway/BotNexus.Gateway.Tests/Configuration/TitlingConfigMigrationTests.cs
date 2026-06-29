@@ -24,6 +24,29 @@ public sealed class TitlingConfigMigrationTests
         Assert.NotNull(config.Gateway?.Auxiliary?.Titling);
         Assert.Equal("gpt-4o-mini", config.Gateway!.Auxiliary!.Titling!.Model);
         Assert.Equal(30, config.Gateway.Auxiliary.Titling.TimeoutSeconds);
+        Assert.True(config.Gateway.Auxiliary.Titling.Enabled);
+    }
+
+    [Fact]
+    public void Load_WithEnabledFalse_DisablesAutoTitling()
+    {
+        var json = """
+        {
+            "version": 1,
+            "gateway": {
+                "auxiliary": {
+                    "titling": { "enabled": false, "model": "gpt-4o-mini", "timeoutSeconds": 45 }
+                }
+            }
+        }
+        """;
+
+        var config = LoadFromJson(json);
+
+        Assert.NotNull(config.Gateway?.Auxiliary?.Titling);
+        Assert.False(config.Gateway!.Auxiliary!.Titling!.Enabled);
+        Assert.Equal("gpt-4o-mini", config.Gateway.Auxiliary.Titling.Model);
+        Assert.Equal(45, config.Gateway.Auxiliary.Titling.TimeoutSeconds);
     }
 
     [Fact]
@@ -45,6 +68,7 @@ public sealed class TitlingConfigMigrationTests
         Assert.NotNull(config.Gateway?.Auxiliary?.Titling);
         Assert.Equal("claude-haiku-3-5", config.Gateway!.Auxiliary!.Titling!.Model);
         Assert.Equal(15, config.Gateway.Auxiliary.Titling.TimeoutSeconds);
+        Assert.True(config.Gateway.Auxiliary.Titling.Enabled); // omitted -> defaults true
     }
 
     [Fact]

@@ -92,6 +92,9 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `sessionStore.connectionString` | string | `null` | SQLite connection string (when type=Sqlite) |
 | `compaction.maxMessagesBeforeCompaction` | int | `100` | Trigger compaction after this many messages |
 | `compaction.retainLastMessages` | int | `20` | Keep this many recent messages after compaction |
+| `auxiliary.titling.enabled` | bool | `true` | Enable conversation auto-titling after the first exchange; false keeps the default title until renamed |
+| `auxiliary.titling.model` | string | `null` | Auxiliary model ID for title generation; null uses the first registered model |
+| `auxiliary.titling.timeoutSeconds` | int | `30` | Per-call titling timeout; non-positive falls back to 30 |
 | `cors.allowedOrigins` | array | `[]` | Allowed CORS origins for browser clients |
 | `rateLimit.requestsPerMinute` | int | `60` | Max requests per client per minute |
 | `rateLimit.windowSeconds` | int | `60` | Rate limit window size in seconds |
