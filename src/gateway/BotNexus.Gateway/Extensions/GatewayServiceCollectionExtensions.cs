@@ -182,7 +182,11 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
         services.TryAddSingleton<CommandRegistry>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
-        services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
+        services.AddSingleton<IGatewayAuthHandler>(sp =>
+            new ApiKeyGatewayAuthHandler(
+                apiKey: null,
+                sp.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
+                sp.GetService<ISecurityEventSink>()));
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
 
         // Hook dispatcher: register as a concrete singleton instance so that
@@ -323,7 +327,8 @@ public static class GatewayServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton<IGatewayAuthHandler>(serviceProvider =>
             new ApiKeyGatewayAuthHandler(
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
-                serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>())));
+                serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
+                serviceProvider.GetService<ISecurityEventSink>())));
 
         var defaultAgentId = config.Gateway?.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId))

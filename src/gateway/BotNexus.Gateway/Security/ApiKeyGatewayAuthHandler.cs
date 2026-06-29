@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
@@ -16,6 +19,14 @@ namespace BotNexus.Gateway.Security;
 /// If keys are configured, callers must provide either <c>Authorization: Bearer {key}</c>
 /// or <c>X-Api-Key: {key}</c>.
 /// </para>
+/// <para>
+/// Step 3/5 of the security-event taxonomy (#1646, part of #1526): every handshake outcome
+/// emits one <see cref="SecurityEvent"/> with <see cref="SecurityEventCategory.Auth"/> to a
+/// trusted <see cref="ISecurityEventSink"/> - accepted is success, rejected is failure.
+/// Emission is best-effort and never participates in the decision: a null sink is a no-op and
+/// a sink fault is swallowed/logged so authentication can never be broken by observability.
+/// These events go only to the trusted sink, never to the public diagnostic stream.
+/// </para>
 /// </remarks>
 public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 {
@@ -23,10 +34,14 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private const string ApiKeyHeader = "X-Api-Key";
     private const string BearerPrefix = "Bearer ";
 
+    /// <summary>The target reference reported on every auth handshake event.</summary>
+    private const string GatewayTarget = "gateway";
+
     private readonly Lock _sync = new();
     private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
+    private readonly ISecurityEventSink? _securityEvents;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiKeyGatewayAuthHandler"/> class.
@@ -42,10 +57,15 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// </summary>
     /// <param name="apiKey">Configured legacy API key. Null or empty enables development mode.</param>
     /// <param name="logger">Logger instance.</param>
-    public ApiKeyGatewayAuthHandler(string? apiKey, ILogger<ApiKeyGatewayAuthHandler> logger)
+    /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
+    public ApiKeyGatewayAuthHandler(
+        string? apiKey,
+        ILogger<ApiKeyGatewayAuthHandler> logger,
+        ISecurityEventSink? securityEvents = null)
     {
         _logger = logger;
         _platformConfig = null;
+        _securityEvents = securityEvents;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
 
@@ -54,11 +74,16 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// </summary>
     /// <param name="platformConfig">Platform config.</param>
     /// <param name="logger">Logger instance.</param>
-    public ApiKeyGatewayAuthHandler(PlatformConfig platformConfig, ILogger<ApiKeyGatewayAuthHandler> logger)
+    /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
+    public ApiKeyGatewayAuthHandler(
+        PlatformConfig platformConfig,
+        ILogger<ApiKeyGatewayAuthHandler> logger,
+        ISecurityEventSink? securityEvents = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = null;
+        _securityEvents = securityEvents;
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
@@ -67,13 +92,16 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// </summary>
     /// <param name="platformConfig">Platform config monitor.</param>
     /// <param name="logger">Logger instance.</param>
+    /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
     public ApiKeyGatewayAuthHandler(
         IOptionsMonitor<PlatformConfig> platformConfig,
-        ILogger<ApiKeyGatewayAuthHandler> logger)
+        ILogger<ApiKeyGatewayAuthHandler> logger,
+        ISecurityEventSink? securityEvents = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = platformConfig;
+        _securityEvents = securityEvents;
         _identitiesByApiKey = BuildIdentityMap(
             platformConfig.CurrentValue.ApiKey,
             platformConfig.CurrentValue.Gateway?.ApiKeys);
@@ -93,6 +121,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         if (identitiesByApiKey.Count == 0)
         {
             _logger.LogDebug("Gateway auth is running in development mode: no API key configured.");
+            EmitOutcome(success: true, actorId: "development");
             return Task.FromResult(GatewayAuthResult.Success(new GatewayCallerIdentity
             {
                 CallerId = "gateway-dev",
@@ -105,11 +134,18 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         var presentedKey = ExtractApiKey(context.Headers);
         if (presentedKey is null)
+        {
+            EmitOutcome(success: false, actorId: "anonymous");
             return Task.FromResult(GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>."));
+        }
 
         if (!identitiesByApiKey.TryGetValue(presentedKey, out var identity))
+        {
+            EmitOutcome(success: false, actorId: presentedKey);
             return Task.FromResult(GatewayAuthResult.Failure("Invalid API key."));
+        }
 
+        EmitOutcome(success: true, actorId: identity.CallerId);
         return Task.FromResult(GatewayAuthResult.Success(identity));
     }
 
@@ -238,5 +274,49 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         value = string.Empty;
         return false;
+    }
+
+    /// <summary>
+    /// Emits one auth-boundary security event to the trusted sink. The actor id is a salted hash
+    /// of the caller/presented credential so the trusted record never carries the raw secret or
+    /// identity. Best-effort: a null sink is a no-op and any sink fault is swallowed/logged so the
+    /// authentication decision is never blocked or altered.
+    /// </summary>
+    private void EmitOutcome(bool success, string actorId)
+    {
+        if (_securityEvents is null)
+            return;
+
+        try
+        {
+            var evt = SecurityEvent.AuthOutcome(
+                success ? "gateway.auth.accepted" : "gateway.auth.rejected",
+                success,
+                actor: new SecurityEventActor(SecurityActorKind.Node, HashActor(actorId)))
+            with
+            {
+                Target = new SecurityEventTarget(SecurityTargetKind.Gateway, GatewayTarget)
+            };
+            _securityEvents.Record(evt);
+        }
+        catch (Exception ex)
+        {
+            // Observability must never break the auth path; swallow and log.
+            _logger.LogWarning(ex, "Failed to record gateway auth security event (success={Success}).", success);
+        }
+    }
+
+    /// <summary>
+    /// Hashes a caller id or presented credential to a short, opaque hex token so security events
+    /// carry a stable pseudonym instead of the raw value. SHA-256 truncated to 8 bytes is enough
+    /// for correlation; it is not reversible and never stores the plaintext.
+    /// </summary>
+    private static string HashActor(string id)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
+        var sb = new StringBuilder(16);
+        for (var i = 0; i < 8; i++)
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
     }
 }

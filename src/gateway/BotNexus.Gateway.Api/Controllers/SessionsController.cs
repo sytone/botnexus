@@ -9,6 +9,10 @@ using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Api;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace BotNexus.Gateway.Api.Controllers;
@@ -25,16 +29,26 @@ public sealed class SessionsController : ControllerBase
 {
     private readonly ISessionStore _sessions;
     private readonly ISubAgentManager _subAgentManager;
+    private readonly ISecurityEventSink? _securityEvents;
+    private readonly ILogger<SessionsController>? _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
     /// </summary>
     /// <param name="sessions">The session store for managing conversation sessions.</param>
     /// <param name="subAgentManager">Sub-agent manager for session-scoped sub-agent lifecycle operations.</param>
-    public SessionsController(ISessionStore sessions, ISubAgentManager? subAgentManager = null)
+    /// <param name="securityEvents">Trusted security-event sink for authorization denials, or null to disable emission.</param>
+    /// <param name="logger">Optional logger for swallowed sink faults.</param>
+    public SessionsController(
+        ISessionStore sessions,
+        ISubAgentManager? subAgentManager = null,
+        ISecurityEventSink? securityEvents = null,
+        ILogger<SessionsController>? logger = null)
     {
         _sessions = sessions;
         _subAgentManager = subAgentManager ?? NoOpSubAgentManager.Instance;
+        _securityEvents = securityEvents;
+        _logger = logger;
     }
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
@@ -410,10 +424,58 @@ public sealed class SessionsController : ControllerBase
             !string.IsNullOrWhiteSpace(identity.CallerId) &&
             !string.Equals(identity.CallerId, session.CallerId, StringComparison.Ordinal))
         {
+            // #1646: a per-session scope-check denial is an authorization boundary event. Emit one
+            // SecurityEvent to the trusted sink (hashed caller, session target); best-effort so the
+            // 403 decision is never blocked or altered by observability.
+            EmitAuthorizationDenied(identity.CallerId, session.SessionId.Value);
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Caller is not authorized for this session." });
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Emits one authorization-denied security event to the trusted sink. The actor id is a salted
+    /// hash of the caller id so the record never carries the raw identity. Best-effort: a null sink
+    /// is a no-op and any sink fault is swallowed/logged so the denial decision is never altered.
+    /// </summary>
+    private void EmitAuthorizationDenied(string callerId, string sessionReference)
+    {
+        if (_securityEvents is null)
+            return;
+
+        try
+        {
+            var evt = new SecurityEvent(
+                SecurityEventCategory.Authorization,
+                "gateway.session.access.denied",
+                SecurityEventOutcome.Denied,
+                SecurityEventSeverity.Medium,
+                Actor: new SecurityEventActor(SecurityActorKind.Operator, HashActor(callerId)),
+                Target: new SecurityEventTarget(SecurityTargetKind.Session, sessionReference),
+                Policy: SecurityPolicyDecision.Deny,
+                Control: SecurityControlFamily.Authorization);
+            _securityEvents.Record(evt);
+        }
+        catch (Exception ex)
+        {
+            // Observability must never break the authorization path; swallow and log.
+            _logger?.LogWarning(ex, "Failed to record session authorization-denied security event.");
+        }
+    }
+
+    /// <summary>
+    /// Hashes a caller id to a short opaque hex token so security events carry a stable pseudonym
+    /// instead of the raw identity. SHA-256 truncated to 8 bytes is enough for correlation; it is
+    /// not reversible and never stores the plaintext.
+    /// </summary>
+    private static string HashActor(string id)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
+        var sb = new StringBuilder(16);
+        for (var i = 0; i < 8; i++)
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
     }
 
     /// <summary>Deletes a session.</summary>
