@@ -112,4 +112,23 @@ public static class AssistantTextSanitizer
         stripped = Regex.Replace(stripped, @"\n{3}", "\n\n");
         return stripped.Trim();
     }
+
+    /// <summary>
+    /// Strips ONLY leaked tool-call XML (invoke/tool_use/function_calls/bare parameter) and the junk
+    /// "court" prefix, preserving thinking blocks. Used on the thinking-display delivery path where
+    /// reasoning is intentionally shown but leaked tool markup must never reach the channel (#1698).
+    /// Returns input unchanged when clean.
+    /// </summary>
+    [return: NotNullIfNotNull(nameof(text))]
+    public static string? StripLeakedToolCalls(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+        if (text.IndexOf('<') < 0)
+            return text;
+        var stripped = CourtJunkPrefixPattern.Replace(text, string.Empty);
+        stripped = ToolCallBlockPattern.Replace(stripped, string.Empty);
+        stripped = ToolCallStrayTagPattern.Replace(stripped, string.Empty);
+        return stripped.Trim();
+    }
 }
