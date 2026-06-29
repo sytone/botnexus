@@ -429,9 +429,19 @@ public sealed class ConversationsController : ControllerBase
         // Canonical reset of the active session (stop supervisor + flush memory bridge +
         // cancel pending ask_user prompts + seal via SaveAsync + clear ActiveSessionId).
         // No expectedActiveSessionId — the REST caller doesn't know which session is active.
+        // Best-effort reset (#1696): a slow supervisor-stop or memory-flush stall must not turn a
+        // DELETE into a 500. Swallow cancellation/timeout (and any reset failure) here and proceed
+        // to archive anyway; the session is sealed lazily on next inbound if the reset did not finish.
         if (_resetService is not null)
         {
-            await _resetService.ResetActiveSessionAsync(conversation.ConversationId, cancellationToken: cancellationToken);
+            try
+            {
+                await _resetService.ResetActiveSessionAsync(conversation.ConversationId, cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Best-effort active-session reset failed for conversation {ConversationId}; archiving anyway.", conversation.ConversationId.Value);
+            }
         }
         else
         {

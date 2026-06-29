@@ -92,6 +92,34 @@ public sealed class ConversationsControllerResetTests
     }
 
     [Fact]
+    public async Task Archive_ResetThrowsTaskCanceled_StillArchivesAndReturns204()
+    {
+        // Issue #1696: a slow active-session reset (supervisor-stop or memory-flush stall) used to
+        // surface as TaskCanceledException and bubble out as a 500. The reset is best-effort, so the
+        // conversation must still archive and DELETE must return 204 even when reset is cancelled.
+        var conversationId = ConversationId.From("conv-reset-canceled");
+        var conversation = new Conversation { ConversationId = conversationId, AgentId = TestAgent, ActiveSessionId = SessionId.From("session-active") };
+        var conversationStore = new Mock<IConversationStore>();
+        conversationStore.Setup(c => c.GetAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
+        conversationStore.Setup(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var resetService = new Mock<IConversationResetService>();
+        resetService
+            .Setup(r => r.ResetActiveSessionAsync(conversationId, null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException());
+
+        var controller = new ConversationsController(
+            conversationStore.Object,
+            new InMemorySessionStore(),
+            resetService: resetService.Object);
+
+        var result = await controller.Archive(conversationId.Value, CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        conversationStore.Verify(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Archive_UnknownConversation_Returns404()
     {
         var conversationStore = new Mock<IConversationStore>();
