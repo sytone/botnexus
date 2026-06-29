@@ -1271,16 +1271,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     }
 
     /// <summary>
-    /// Fires auto-title generation if this is the first user+assistant exchange in the session
-    /// and the conversation title is still at its default value. No-op when auto-title is not
-    /// wired or the conversation is not initialised.
+    /// Fires auto-title generation when the session has at least one user+assistant exchange and
+    /// the conversation title is still at its default value (#1695: no longer one-shot, so a
+    /// conversation that was busy on its first turn can still get titled on a later turn). No-op
+    /// when auto-title is not wired or the conversation is not initialised.
     /// </summary>
     private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
     {
         if (_autoTitleService is null || !session.ConversationId.IsInitialized())
             return;
 
-        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History);
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History, _logger);
         if (userText is null || assistantText is null)
             return;
 
