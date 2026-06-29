@@ -656,8 +656,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // without re-reading the query each time (#1209). Absent hint -> "desktop" (AC#5).
         var clientKind = ResolveClientKind();
         Context.Items["clientKind"] = clientKind;
+        // Both clientVersion and clientKind originate from the connect-time query string and are
+        // fully attacker-controlled. Sanitize them before logging so an embedded CR/LF (or other
+        // control character) cannot forge additional log lines (CodeQL cs/log-forging).
         _logger.LogInformation("Hub OnConnected: connection={ConnectionId} clientVersion={ClientVersion} clientKind={ClientKind}",
-            Context.ConnectionId, clientVersion, clientKind);
+            Context.ConnectionId, SanitizeForLog(clientVersion), SanitizeForLog(clientKind));
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
@@ -751,6 +754,30 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var raw = Context.GetHttpContext()?.Request.Query["client"].FirstOrDefault();
         return string.IsNullOrWhiteSpace(raw) ? "desktop" : raw.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Strips CR, LF and other control characters from a value before it is written to a log so
+    /// that attacker-controlled connect-time query values (client kind, client version) cannot
+    /// inject newlines and forge additional log lines (CodeQL cs/log-forging). Control characters
+    /// are replaced with a single space and the result is trimmed; an empty/whitespace result
+    /// collapses to a stable placeholder so the log line keeps its shape.
+    /// </summary>
+    private static string SanitizeForLog(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "(empty)";
+        }
+
+        var chars = new char[value.Length];
+        for (var i = 0; i < value.Length; i++)
+        {
+            chars[i] = char.IsControl(value[i]) ? ' ' : value[i];
+        }
+
+        var sanitized = new string(chars).Trim();
+        return sanitized.Length == 0 ? "(empty)" : sanitized;
     }
 
     private static SessionId NormalizeSessionId(SessionId sessionId)
