@@ -199,6 +199,18 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
+        // Trusted security-event sink (#1532, #1645): captures approval/auth/tool boundary
+        // decisions for the future trusted diagnostics surface. Deliberately a separate bounded
+        // ring buffer so these never leak onto the public diagnostic stream.
+        services.TryAddSingleton<ISecurityEventSink>(_ => new RingBufferSecurityEventSink());
+
+        // Exec/shell approval boundary. Wired to the trusted sink so every allow/deny/ask decision
+        // emits one SecurityEvent; emission is best-effort and never breaks the approval path.
+        services.TryAddSingleton<IExecApprovalManager>(sp =>
+            new ExecApprovalManager(
+                sp.GetService<ISecurityEventSink>(),
+                sp.GetService<ILogger<ExecApprovalManager>>()));
+
         // Built-in isolation strategies
         services.AddSingleton<IIsolationStrategy, InProcessIsolationStrategy>();
         services.AddSingleton<IIsolationStrategy, SandboxIsolationStrategy>();
