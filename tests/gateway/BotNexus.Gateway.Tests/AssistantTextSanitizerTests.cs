@@ -167,4 +167,45 @@ public sealed class AssistantTextSanitizerTests
         AssistantTextSanitizer.Sanitize(string.Empty).ShouldBe(string.Empty);
         AssistantTextSanitizer.Sanitize(null!).ShouldBeNull();
     }
+
+    [Fact]
+    public void StripLeakedToolCalls_RemovesInvokeBlock_PreservesProse()
+    {
+        var text = "Here is the result.<invoke name=\"read\"><parameter name=\"path\">x</parameter></invoke>";
+        AssistantTextSanitizer.StripLeakedToolCalls(text).ShouldBe("Here is the result.");
+    }
+
+    [Fact]
+    public void StripLeakedToolCalls_PreservesThinkingBlocks()
+    {
+        var text = "<thinking>reason</thinking>Answer.<invoke name=\"shell\">cmd</invoke>";
+        var result = AssistantTextSanitizer.StripLeakedToolCalls(text);
+        result.ShouldContain("<thinking>reason</thinking>");
+        result.ShouldContain("Answer.");
+        result.ShouldNotContain("invoke");
+    }
+
+    [Fact]
+    public void StripLeakedToolCalls_StripsCourtPrefixAndStrayTags()
+    {
+        var text = "court<invoke name=\"x\">y</invoke> done <parameter>z</parameter>";
+        var result = AssistantTextSanitizer.StripLeakedToolCalls(text);
+        result.ShouldNotContain("court");
+        result.ShouldNotContain("invoke");
+        result.ShouldNotContain("parameter");
+    }
+
+    [Fact]
+    public void StripLeakedToolCalls_PlainText_Unchanged()
+    {
+        var text = "A normal reply.";
+        AssistantTextSanitizer.StripLeakedToolCalls(text).ShouldBe(text);
+    }
+
+    [Fact]
+    public void StripLeakedToolCalls_NullOrEmpty_ReturnsUnchanged()
+    {
+        AssistantTextSanitizer.StripLeakedToolCalls(string.Empty).ShouldBe(string.Empty);
+        AssistantTextSanitizer.StripLeakedToolCalls(null!).ShouldBeNull();
+    }
 }

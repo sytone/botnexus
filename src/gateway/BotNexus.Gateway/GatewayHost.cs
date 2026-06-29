@@ -576,9 +576,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         // Detect thinking-only responses: when the model returns only a
                         // reasoning/thinking block with no user-visible content, StripThinkingTags
                         // produces an empty string. Silently skip delivery (#1198).
+                        // Always strip leaked tool-call XML (#1698): some models serialise tool
+                        // calls as <invoke>/<tool_use> markup in the text channel. When thinking is
+                        // displayed, keep reasoning but drop leaked tool XML; otherwise strip both.
                         var outboundContent = ch.SupportsThinkingDisplay
-                            ? response.Content
-                            : AssistantTextSanitizer.StripThinkingTags(response.Content);
+                            ? AssistantTextSanitizer.StripLeakedToolCalls(response.Content)
+                            : AssistantTextSanitizer.Sanitize(response.Content);
 
                         if (!ch.SupportsThinkingDisplay &&
                             string.IsNullOrWhiteSpace(outboundContent) &&
