@@ -163,6 +163,8 @@ Available to all agents. Stored in `~/.botnexus/skills/`.
 
 Use global skills for team-wide standards, shared conventions, and reusable best practices.
 
+> Global skills are visible to every agent, so editing one has a wide blast radius. The `skill_manage` tool can only write here when `AllowSharedSkillManagement` is enabled (default false) and the request uses `scope: shared`; deletion also needs `AllowSkillDeletion`.
+
 ### 2. Per-agent skills
 
 Available only to a specific agent. Stored in `~/.botnexus/agents/{agent-id}/skills/`.
