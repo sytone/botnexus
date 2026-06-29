@@ -1,16 +1,15 @@
-using BotNexus.Agent.Providers.Core.Utilities;
-
-namespace BotNexus.Agent.Providers.Copilot.Streaming;
+namespace BotNexus.Agent.Providers.Core.Utilities;
 
 /// <summary>
 /// A read-only <see cref="Stream"/> wrapper that bounds how much an untrusted SSE response body may
-/// be read, defending the streaming Copilot transport against an unbounded-read OOM-DoS (issue
-/// #1668). It is the streaming complement to <see cref="BoundedHttpContent"/> (issue #1653), which
-/// bounded the non-streaming JSON / error bodies.
+/// be read, defending streaming provider transports against an unbounded-read OOM-DoS (issues #1668
+/// for Copilot, #1685 for the remaining Anthropic / OpenAI-compatible / shared-engine paths). It is
+/// the streaming complement to <see cref="BoundedHttpContent"/> (issue #1653), which bounds the
+/// non-streaming JSON / error bodies.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The streaming parser pulls the SSE body line-by-line through a <see cref="StreamReader"/>. A
+/// Every streaming provider pulls the SSE body line-by-line through a <see cref="StreamReader"/>. A
 /// hostile or broken endpoint can stream a body that never ends, or a single <c>data:</c> line with
 /// no newline, either of which would buffer without limit before the parser ever sees a boundary.
 /// Because every byte the <see cref="StreamReader"/> consumes flows through this wrapper, the cap
@@ -48,7 +47,6 @@ public sealed class ByteCountingStream : Stream
     private readonly bool _leaveOpen;
     private readonly long _maxTotalBytes;
     private readonly long _maxFrameBytes;
-
     private long _totalBytesRead;
     private long _bytesSinceNewline;
 

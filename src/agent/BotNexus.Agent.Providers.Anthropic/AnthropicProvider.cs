@@ -22,6 +22,14 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
 {
     private const string ApiVersion = "2023-06-01";
     private const string ClaudeCodeVersion = "2.1.75";
+    // Total / per-frame caps for the untrusted SSE success body. Mirrors the merged Copilot guard
+    // (#1668) so all transports agree on a legitimate body size; bounds an unbounded body or a
+    // single never-terminating data: line before it can exhaust memory (#1685). 16 MiB / 8 MiB.
+    private const long MaxResponseBytes = BoundedHttpContent.DefaultMaxResponseBytes;
+    private const long MaxFrameBytes = 8L * 1024 * 1024;
+    // Error bodies are far smaller than success streams; cap them tighter so a hostile non-2xx body
+    // cannot be buffered into a string before the throw.
+    private const long ErrorBodyLimitBytes = 64L * 1024;
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     public string Api => "anthropic-messages";
@@ -201,12 +209,25 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
 
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(effectiveCt);
+            string errorBody;
+            try
+            {
+                errorBody = await BoundedHttpContent.ReadStringWithLimitAsync(
+                    response.Content, ErrorBodyLimitBytes, effectiveCt);
+            }
+            catch (ResponseContentTooLargeException)
+            {
+                errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
+            }
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Anthropic");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);
-        using var reader = new StreamReader(responseStream, Encoding.UTF8);
+        // Bound the untrusted SSE body before a byte reaches the parser: every byte the StreamReader
+        // consumes flows through the ByteCountingStream, so an unbounded body or a never-terminating
+        // data: line trips the cap regardless of buffering (#1685). Caller owns the inner stream.
+        using var boundedStream = new ByteCountingStream(responseStream, MaxResponseBytes, MaxFrameBytes, leaveOpen: true);
+        using var reader = new StreamReader(boundedStream, Encoding.UTF8);
 
         // Cancel the setup-phase timeout once the first token arrives.
         Action? onFirstToken = setupTimeoutCts is not null
