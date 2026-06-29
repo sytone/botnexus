@@ -58,6 +58,20 @@ Administrative tool for creating and maintaining skills at runtime.
 | `write_file` | Write a supporting file (references/, templates/, scripts/, assets/) |
 | `remove_file` | Delete a supporting file |
 
+An optional `scope` argument selects where a newly created skill is written: `workspace`
+(default), `agent` (this agent only), or `shared` (the global all-agent directory). For
+edit/patch/delete/write_file/remove_file the existing skill is matched across all scopes.
+
+#### Managing shared (all-agent) skills
+
+By default `skill_manage` can only write to agent and workspace scopes. Writing to the global
+`~/.botnexus/skills/` directory -- visible to every agent -- requires the opt-in gate
+`AllowSharedSkillManagement`. Because a shared skill changes behaviour for all agents, treat
+this as a wide blast radius: enable it only for trusted operator agents. Deleting a shared
+skill (or removing a supporting file from one) additionally requires `AllowSkillDeletion`.
+Symlink, path-traversal, size, and security scans apply to shared skills exactly as they do
+to agent and workspace skills.
+
 ## Prompt Integration
 
 Skills integrate with the prompt pipeline through the `SkillPromptHookHandler`:
@@ -83,6 +97,16 @@ Agents can auto-load specific skills via their configuration:
 ```
 
 Auto-loaded skills are always available without the agent needing to call `skills load`.
+
+### skill_manage gates
+
+These flags live in the agent extension config under `botnexus-skills`:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `AllowSkillCreation` | `true` | Enables `skill_manage` (create/edit/patch/write_file). |
+| `AllowSkillDeletion` | `true` | Allows `delete` and `remove_file`. |
+| `AllowSharedSkillManagement` | `false` | Allows writing to the global all-agent skills dir via `scope: shared`. Wide blast radius -- opt-in. |
 
 ## Skill Directory Structure
 
