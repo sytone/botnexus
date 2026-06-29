@@ -17,12 +17,16 @@ namespace BotNexus.Cli.Tests.Commands;
 public sealed class UpdateCommandGitRunnerTests : IDisposable
 {
     private readonly string _repo;
+    private readonly string _isolatedGlobalConfig;
     private readonly bool _gitAvailable;
 
     public UpdateCommandGitRunnerTests()
     {
         _repo = Path.Combine(Path.GetTempPath(), $"botnexus-git-runner-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_repo);
+        // Empty per-fixture global config so no developer/CI ~/.gitconfig can leak in.
+        _isolatedGlobalConfig = Path.Combine(_repo, ".isolated-gitconfig");
+        File.WriteAllText(_isolatedGlobalConfig, string.Empty);
         _gitAvailable = TryInitRepoWithTwoCommits(_repo);
     }
 
@@ -48,6 +52,20 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
         var count = await NewProbe().CountCommitsBetweenForTestAsync(_repo, "HEAD~1", "HEAD", CancellationToken.None);
 
         count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void SandboxRepo_IsFullyIsolated_AndNotBare()
+    {
+        if (!_gitAvailable)
+            return;
+
+        // Self-defense for #1602: the throwaway repo must be a normal working repo, never bare,
+        // and must use the generic sandbox identity - guaranteeing it can never be the donor for
+        // a host-repo bare flip or a test@example.com co-author trailer.
+        RunGit(_repo, "rev-parse --is-bare-repository").ShouldBe(0);
+        File.ReadAllText(Path.Combine(_repo, ".git", "config"))
+            .ShouldNotContain("test@example.com");
     }
 
     [Fact]
@@ -102,21 +120,27 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
         count.ShouldBe(0);
     }
 
-    private static bool TryInitRepoWithTwoCommits(string repo)
+    private bool TryInitRepoWithTwoCommits(string repo)
     {
         try
         {
             if (RunGit(repo, "init -q") != 0) return false;
-            RunGit(repo, "config user.email test@example.com");
-            RunGit(repo, "config user.name test");
+            // Sandbox identity is intentionally generic and NON-conflicting with the developer's
+            // real identity. It must never resemble the #1602 pollution signature
+            // (user.email=test@example.com / user.name=test), so a leaked write cannot be mistaken
+            // for - or graft onto - the host repo.
+            RunGit(repo, "config user.email botnexus-test@invalid.local");
+            RunGit(repo, "config user.name botnexus-test");
             RunGit(repo, "config commit.gpgsign false");
 
-            File.WriteAllText(Path.Combine(repo, "a.txt"), "1");
-            RunGit(repo, "add a.txt");
+            // Distinct seed filenames (not a.txt/b.txt) so any stray that DOES escape is
+            // immediately traceable to this fixture rather than masquerading as host content.
+            File.WriteAllText(Path.Combine(repo, "seed1.txt"), "1");
+            RunGit(repo, "add seed1.txt");
             if (RunGit(repo, "commit -q -m \"first commit\"") != 0) return false;
 
-            File.WriteAllText(Path.Combine(repo, "b.txt"), "2");
-            RunGit(repo, "add b.txt");
+            File.WriteAllText(Path.Combine(repo, "seed2.txt"), "2");
+            RunGit(repo, "add seed2.txt");
             if (RunGit(repo, "commit -q -m \"second commit\"") != 0) return false;
 
             return true;
@@ -127,7 +151,7 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
         }
     }
 
-    private static int RunGit(string repo, string args)
+    private int RunGit(string repo, string args)
     {
         var psi = new ProcessStartInfo
         {
@@ -138,6 +162,19 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+
+        // Total isolation: a leaked GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_* from a parent process
+        // could otherwise redirect these ops at the real repo even though every command uses -C.
+        // Strip the dir/identity env entirely (so -C is the only locator) and pin config into the
+        // sandbox so the only config that applies is the repo-local config written above.
+        psi.Environment["GIT_CONFIG_GLOBAL"] = _isolatedGlobalConfig;
+        psi.Environment["GIT_CONFIG_SYSTEM"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+        psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        psi.Environment["HOME"] = repo;
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        foreach (var leak in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL" })
+            psi.Environment.Remove(leak);
+
         using var proc = Process.Start(psi);
         if (proc is null) return -1;
         proc.WaitForExit();
