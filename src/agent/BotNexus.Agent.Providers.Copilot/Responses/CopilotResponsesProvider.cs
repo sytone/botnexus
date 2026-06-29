@@ -93,6 +93,7 @@ public sealed class CopilotResponsesProvider(
         ThinkingLevel.Medium => "medium",
         ThinkingLevel.High => "high",
         ThinkingLevel.ExtraHigh => "xhigh",
+        ThinkingLevel.Max => "xhigh",
         _ => "medium"
     };
 }
