@@ -224,25 +224,35 @@ public sealed class SqliteConversationStore : IConversationStore
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
 
+            // #1628: prepare the INSERT command + its parameters ONCE instead of recreating a
+            // fresh SqliteCommand and re-adding all 4 parameters per row. Behaviour is identical
+            // (same SQL, same parameter values, same order, same transaction + commit, same
+            // INSERT OR IGNORE first-add-wins, same invalid-citizen skip); only the per-row
+            // .Value is reset inside the loop. $conversationId is constant for the whole call,
+            // so it is bound once before the loop.
+            await using var insertCommand = connection.CreateCommand();
+            insertCommand.Transaction = transaction;
+            // INSERT OR IGNORE preserves the existing role label when a citizen is already
+            // registered as a participant (first-add wins). New citizens are inserted with
+            // the supplied role.
+            insertCommand.CommandText = """
+                INSERT OR IGNORE INTO conversation_participants
+                    (conversation_id, citizen_kind, citizen_id, role)
+                VALUES ($conversationId, $citizenKind, $citizenId, $role)
+                """;
+            insertCommand.Parameters.AddWithValue("$conversationId", conversationId.Value);
+            var pCitizenKind = insertCommand.Parameters.AddWithValue("$citizenKind", string.Empty);
+            var pCitizenId = insertCommand.Parameters.AddWithValue("$citizenId", string.Empty);
+            var pRole = insertCommand.Parameters.AddWithValue("$role", DBNull.Value);
+
             foreach (var participant in snapshot)
             {
                 if (!participant.CitizenId.IsValid)
                     continue;
 
-                await using var insertCommand = connection.CreateCommand();
-                insertCommand.Transaction = transaction;
-                // INSERT OR IGNORE preserves the existing role label when a citizen is already
-                // registered as a participant (first-add wins). New citizens are inserted with
-                // the supplied role.
-                insertCommand.CommandText = """
-                    INSERT OR IGNORE INTO conversation_participants
-                        (conversation_id, citizen_kind, citizen_id, role)
-                    VALUES ($conversationId, $citizenKind, $citizenId, $role)
-                    """;
-                insertCommand.Parameters.AddWithValue("$conversationId", conversationId.Value);
-                insertCommand.Parameters.AddWithValue("$citizenKind", participant.CitizenId.Kind.ToString());
-                insertCommand.Parameters.AddWithValue("$citizenId", participant.CitizenId.Value);
-                insertCommand.Parameters.AddWithValue("$role", (object?)participant.Role ?? DBNull.Value);
+                pCitizenKind.Value = participant.CitizenId.Kind.ToString();
+                pCitizenId.Value = participant.CitizenId.Value;
+                pRole.Value = (object?)participant.Role ?? DBNull.Value;
                 await insertCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 

@@ -1065,27 +1065,45 @@ public sealed class SqliteSessionStore : SessionStoreBase
         deleteCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
         await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+        // #1628: prepare the INSERT command + its parameters ONCE instead of recreating a
+        // fresh SqliteCommand and re-adding all 13 parameters per row. Behaviour is identical
+        // (same SQL, same parameter values, same order, same transaction + commit); only the
+        // per-row .Value is reset inside the loop. $sessionId is constant for the whole call,
+        // so it is bound once before the loop.
+        await using var insertCommand = connection.CreateCommand();
+        insertCommand.Transaction = transaction;
+        insertCommand.CommandText = """
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent)
+            """;
+        insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
+        var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
+        var pContent = insertCommand.Parameters.AddWithValue("$content", string.Empty);
+        var pTimestamp = insertCommand.Parameters.AddWithValue("$timestamp", string.Empty);
+        var pToolName = insertCommand.Parameters.AddWithValue("$toolName", DBNull.Value);
+        var pToolCallId = insertCommand.Parameters.AddWithValue("$toolCallId", DBNull.Value);
+        var pIsCompactionSummary = insertCommand.Parameters.AddWithValue("$isCompactionSummary", 0);
+        var pToolArgs = insertCommand.Parameters.AddWithValue("$toolArgs", DBNull.Value);
+        var pToolIsError = insertCommand.Parameters.AddWithValue("$toolIsError", 0);
+        var pIsCrashSentinel = insertCommand.Parameters.AddWithValue("$isCrashSentinel", 0);
+        var pIsHistory = insertCommand.Parameters.AddWithValue("$isHistory", 0);
+        var pTriggerType = insertCommand.Parameters.AddWithValue("$triggerType", DBNull.Value);
+        var pThinkingContent = insertCommand.Parameters.AddWithValue("$thinkingContent", DBNull.Value);
+
         foreach (var entry in session.GetHistorySnapshot())
         {
-            await using var insertCommand = connection.CreateCommand();
-            insertCommand.Transaction = transaction;
-            insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent)
-                """;
-            insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
-            insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
-            insertCommand.Parameters.AddWithValue("$content", entry.Content);
-            insertCommand.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
-            insertCommand.Parameters.AddWithValue("$toolName", (object?)entry.ToolName ?? DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$toolCallId", (object?)entry.ToolCallId ?? DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$isCompactionSummary", entry.IsCompactionSummary ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$toolArgs", (object?)entry.ToolArgs ?? DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$toolIsError", entry.ToolIsError ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$triggerType", (object?)entry.Trigger?.Value ?? DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$thinkingContent", (object?)entry.ThinkingContent ?? DBNull.Value);
+            pRole.Value = entry.Role.Value;
+            pContent.Value = entry.Content;
+            pTimestamp.Value = entry.Timestamp.ToString("O");
+            pToolName.Value = (object?)entry.ToolName ?? DBNull.Value;
+            pToolCallId.Value = (object?)entry.ToolCallId ?? DBNull.Value;
+            pIsCompactionSummary.Value = entry.IsCompactionSummary ? 1 : 0;
+            pToolArgs.Value = (object?)entry.ToolArgs ?? DBNull.Value;
+            pToolIsError.Value = entry.ToolIsError ? 1 : 0;
+            pIsCrashSentinel.Value = entry.IsCrashSentinel ? 1 : 0;
+            pIsHistory.Value = entry.IsHistory ? 1 : 0;
+            pTriggerType.Value = (object?)entry.Trigger?.Value ?? DBNull.Value;
+            pThinkingContent.Value = (object?)entry.ThinkingContent ?? DBNull.Value;
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
