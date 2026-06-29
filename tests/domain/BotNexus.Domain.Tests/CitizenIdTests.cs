@@ -226,4 +226,50 @@ public sealed class CitizenIdTests
         CitizenId.TryParse(original.ToString(), out var parsed).ShouldBeTrue();
         parsed.ShouldBe(original);
     }
+    [Theory]
+    [InlineData(CitizenKind.User, "alice", "alice")]
+    [InlineData(CitizenKind.Agent, "coding-agent", "coding-agent")]
+    public void TryParse_KindAndId_ComposesKnownKinds(CitizenKind kind, string id, string expectedId)
+    {
+        var ok = CitizenId.TryParse(kind, id, out var citizen);
+
+        ok.ShouldBeTrue();
+        citizen.Kind.ShouldBe(kind);
+        citizen.Value.ShouldBe(expectedId);
+    }
+
+    [Theory]
+    [InlineData(CitizenKind.User)]
+    [InlineData(CitizenKind.Agent)]
+    public void TryParse_KindAndId_NullOrEmptyId_ReturnsFalse(CitizenKind kind)
+    {
+        CitizenId.TryParse(kind, null, out var fromNull).ShouldBeFalse();
+        fromNull.IsValid.ShouldBeFalse();
+        CitizenId.TryParse(kind, "", out var fromEmpty).ShouldBeFalse();
+        fromEmpty.IsValid.ShouldBeFalse();
+        CitizenId.TryParse(kind, "   ", out var fromBlank).ShouldBeFalse();
+        fromBlank.IsValid.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(CitizenKind.Unknown)]
+    [InlineData((CitizenKind)99)]
+    public void TryParse_KindAndId_UnknownKind_ReturnsFalse(CitizenKind kind)
+    {
+        var ok = CitizenId.TryParse(kind, "whoever", out var citizen);
+
+        ok.ShouldBeFalse();
+        citizen.IsValid.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(CitizenKind.User, "alice")]
+    [InlineData(CitizenKind.Agent, "coding-agent")]
+    public void TryParse_KindAndId_MatchesStringOverload(CitizenKind kind, string id)
+    {
+        CitizenId.TryParse(kind, id, out var fromPair).ShouldBeTrue();
+        CitizenId.TryParse(fromPair.ToString(), out var fromString).ShouldBeTrue();
+
+        fromPair.ShouldBe(fromString);
+    }
 }
