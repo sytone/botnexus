@@ -299,6 +299,7 @@ public static class CompletionsStreamEngine
             ThinkingLevel.Medium => "medium",
             ThinkingLevel.High => "high",
             ThinkingLevel.ExtraHigh => "xhigh",
+            ThinkingLevel.Max => "xhigh",
             _ => "medium"
         };
     }

@@ -116,7 +116,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                     ThinkingLevel.Low => "low",
                     ThinkingLevel.Medium => "medium",
                     ThinkingLevel.High => "high",
-                    ThinkingLevel.ExtraHigh => IsOpus46Model(model.Id) ? "max" : "high",
+                    ThinkingLevel.ExtraHigh => ModelRegistry.SupportsExtraHigh(model) ? "max" : "high",
+                    ThinkingLevel.Max => ModelRegistry.SupportsExtraHigh(model) ? "max" : "high",
                     _ => "high"
                 };
             }
@@ -360,10 +361,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
     internal static bool IsAdaptiveThinkingModel(string modelId) =>
         modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase) ||
+        modelId.Contains("opus-4-8", StringComparison.OrdinalIgnoreCase) ||
+        modelId.Contains("opus-4.8", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4-6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4.6", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsOpus46Model(string modelId) =>
-        modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
 }

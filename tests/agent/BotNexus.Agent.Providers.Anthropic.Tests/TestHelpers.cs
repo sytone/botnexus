@@ -11,7 +11,8 @@ internal static class TestHelpers
         string api = "anthropic-messages",
         string provider = "anthropic",
         bool reasoning = true,
-        int maxTokens = 16384) => new(
+        int maxTokens = 16384,
+        bool supportsExtraHigh = false) => new(
         Id: id,
         Name: id,
         Api: api,
@@ -21,7 +22,8 @@ internal static class TestHelpers
         Input: ["text", "image"],
         Cost: new ModelCost(3.0m, 15.0m, 0.3m, 3.75m),
         ContextWindow: 200000,
-        MaxTokens: maxTokens);
+        MaxTokens: maxTokens,
+        SupportsExtraHighThinking: supportsExtraHigh);
 
     public static Context MakeContext(string? systemPrompt = "You are helpful") => new(
         SystemPrompt: systemPrompt,
