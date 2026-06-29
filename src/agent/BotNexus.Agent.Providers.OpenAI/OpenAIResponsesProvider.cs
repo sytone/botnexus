@@ -78,7 +78,7 @@ public sealed class OpenAIResponsesProvider(
             }
         },
         ThrowForError: static (response, errorBody) =>
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {errorBody}"));
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "OpenAI"));
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

@@ -73,5 +73,5 @@ public sealed class OpenAICompletionsProvider(
             }
         },
         ThrowForError: static (response, providerError) =>
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {providerError}"));
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "OpenAI"));
 }

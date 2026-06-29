@@ -58,14 +58,57 @@ public sealed class ProviderHttpErrorHelperTests
     }
 
     [Fact]
-    public void ThrowForFailedResponse_401Error_ThrowsHttpRequestException()
+    public void ThrowForFailedResponse_401Error_ThrowsProviderAuthenticationException()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
 
-        var ex = Assert.Throws<HttpRequestException>(() =>
+        var ex = Assert.Throws<ProviderAuthenticationException>(() =>
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, "unauthorized", "TestProvider"));
 
         Assert.IsNotType<ProviderRateLimitException>(ex);
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, ex.StatusCode);
+        Assert.Equal("TestProvider", ex.ProviderName);
+    }
+
+    [Fact]
+    public void ThrowForFailedResponse_401Error_MessageIsActionableAndNamesProvider()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+
+        var ex = Assert.Throws<ProviderAuthenticationException>(() =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, "unauthorized", "OpenAI"));
+
+        // The message must name the provider and tell the user what to do, so the
+        // failure self-diagnoses instead of walking the fallback ladder silently.
+        Assert.Contains("OpenAI", ex.Message);
+        Assert.Contains("401", ex.Message);
+        Assert.Contains("API key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ThrowForFailedResponse_403Error_ThrowsProviderAuthenticationException()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var ex = Assert.Throws<ProviderAuthenticationException>(() =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, "forbidden", "TestProvider"));
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.Contains("TestProvider", ex.Message);
+    }
+
+    [Fact]
+    public void ThrowForFailedResponse_AuthExceptionIsHttpRequestException()
+    {
+        // ProviderAuthenticationException derives from HttpRequestException so existing
+        // catch sites that expect HttpRequestException keep working, and the actionable
+        // message flows through Agent.cs's ex.Message surfacing path unchanged.
+        using var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+
+        var ex = Assert.Throws<ProviderAuthenticationException>(() =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, "unauthorized", "TestProvider"));
+
+        Assert.IsAssignableFrom<HttpRequestException>(ex);
     }
 
     [Fact]
