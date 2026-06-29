@@ -334,12 +334,15 @@ public sealed class InProcessIsolationStrategyTests
 
 
     [Fact]
-    public async Task CreateAsync_WithCompactionSummaryInHistory_InjectsSummaryAsSystemMessage()
+    public async Task CreateAsync_WithCompactionSummaryInHistory_FoldsSummaryIntoSystemPrompt()
     {
-        // Arrange: simulate a session that has been compacted — history starts with a
+        // Arrange: simulate a session that has been compacted -- history starts with a
         // compaction summary entry (Role=System, IsCompactionSummary=true) followed by
         // recent user/assistant turns. After a gateway restart the handle is recreated;
-        // the compaction summary must survive so the LLM retains the summarised context.
+        // the compaction summary must reach the model. It must be FOLDED INTO THE SYSTEM
+        // PROMPT, not the message list: the agent-core default converter drops list-level
+        // System messages, so a summary placed in the list never reaches the provider
+        // (the lost-context-on-resume bug). It must NOT appear as a list SystemAgentMessage.
         var strategy = CreateStrategyWithRegisteredModel();
         var context = new AgentExecutionContext
         {
@@ -360,19 +363,25 @@ public sealed class InProcessIsolationStrategyTests
         // Act
         var handle = await strategy.CreateAsync(CreateDescriptor(), context);
         var messages = GetMessages(handle);
+        var options = GetAgentOptions(handle);
 
-        // Assert: summary injected as a system message before user/assistant turns
-        messages.Count.ShouldBe(3);
-        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("Option A");
-        messages[1].ShouldBe(new AgentCoreUserMessage("what was decided?"));
-        messages[2].ShouldBe(new AssistantAgentMessage("Option A was chosen."));
+        // Assert: summary folded into the system prompt (survives the converter)...
+        var foldedPrompt = options.InitialState!.SystemPrompt;
+        foldedPrompt.ShouldNotBeNull();
+        foldedPrompt!.ShouldContain("Option A");
+        // ...and only the user + assistant turns are in the list -- no list SystemAgentMessage.
+        messages.Count.ShouldBe(2);
+        messages.ShouldNotContain(m => m is SystemAgentMessage);
+        messages[0].ShouldBe(new AgentCoreUserMessage("what was decided?"));
+        messages[1].ShouldBe(new AssistantAgentMessage("Option A was chosen."));
     }
 
     [Fact]
-    public async Task CreateAsync_WithOnlyCompactionSummary_InjectsSummaryOnly()
+    public async Task CreateAsync_WithOnlyCompactionSummary_FoldsSummaryIntoSystemPromptAndEmptyList()
     {
         // Regression: a session with only a compaction summary (no preserved turns yet)
-        // should still have the summary injected so the LLM has prior context.
+        // must still have the summary reach the model via the system prompt, with an
+        // empty message list (a lone list System entry would be dropped by the converter).
         var strategy = CreateStrategyWithRegisteredModel();
         var context = new AgentExecutionContext
         {
@@ -390,16 +399,20 @@ public sealed class InProcessIsolationStrategyTests
 
         var handle = await strategy.CreateAsync(CreateDescriptor(), context);
         var messages = GetMessages(handle);
+        var options = GetAgentOptions(handle);
 
-        messages.Count.ShouldBe(1);
-        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("CI");
+        var foldedPrompt = options.InitialState!.SystemPrompt;
+        foldedPrompt.ShouldNotBeNull();
+        foldedPrompt!.ShouldContain("CI");
+        messages.ShouldNotContain(m => m is SystemAgentMessage);
+        messages.Count.ShouldBe(0);
     }
 
     [Fact]
     public async Task CreateAsync_WithRegularSystemEntryInHistory_ExcludesNonSummarySystemMessages()
     {
-        // Non-compaction system entries should still be excluded — only IsCompactionSummary=true
-        // entries are injected. This prevents duplicate system prompt content.
+        // Non-compaction system entries are excluded from both list and prompt -- only
+        // IsCompactionSummary=true entries are folded. This prevents duplicate prompt content.
         var strategy = CreateStrategyWithRegisteredModel();
         var context = new AgentExecutionContext
         {
@@ -410,7 +423,7 @@ public sealed class InProcessIsolationStrategyTests
                 {
                     Role = BotNexus.Domain.Primitives.MessageRole.System,
                     Content = "You are a helpful assistant.",
-                    IsCompactionSummary = false   // regular system entry — exclude
+                    IsCompactionSummary = false   // regular system entry -- exclude
                 },
                 new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.User, Content = "hello" }
             ]
@@ -418,10 +431,14 @@ public sealed class InProcessIsolationStrategyTests
 
         var handle = await strategy.CreateAsync(CreateDescriptor(), context);
         var messages = GetMessages(handle);
+        var options = GetAgentOptions(handle);
 
-        // Only the user message; the plain system entry is excluded
+        // Only the user message; the plain system entry is excluded and not folded.
         messages.Count.ShouldBe(1);
+        messages.ShouldNotContain(m => m is SystemAgentMessage);
         messages[0].ShouldBe(new AgentCoreUserMessage("hello"));
+        var folded = options.InitialState!.SystemPrompt ?? string.Empty;
+        folded.ShouldNotContain("helpful assistant");
     }    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
         IReadOnlyList<IAgentToolContributor>? contributors = null,
         IServiceProvider? serviceProvider = null)
