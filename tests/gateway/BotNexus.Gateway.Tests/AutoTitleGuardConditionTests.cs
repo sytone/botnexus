@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -146,8 +147,11 @@ public sealed class AutoTitleGuardConditionTests
     }
 
     [Fact]
-    public void ShouldTrigger_MultipleRealUsers_ReturnsNull()
+    public void ShouldTrigger_MultipleRealUsers_StillFires_NotOneShot()
     {
+        // #1695: the guard must no longer disqualify a conversation once it reaches a second
+        // user turn. Re-titling stays gated on the default title in GenerateAndSaveAsync, so it
+        // is safe for ShouldTriggerAutoTitle to fire on a later turn instead of one-shot.
         var history = new List<SessionEntry>
         {
             new() { Role = MessageRole.User, Content = "First question" },
@@ -158,8 +162,8 @@ public sealed class AutoTitleGuardConditionTests
 
         var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history);
 
-        userText.ShouldBeNull();
-        assistantText.ShouldBeNull();
+        userText.ShouldBe("First question");
+        assistantText.ShouldBe("Second answer");
     }
 
     [Fact]
@@ -254,5 +258,79 @@ public sealed class AutoTitleGuardConditionTests
 
         userText.ShouldBeNull();
         assistantText.ShouldBeNull();
+    }
+[Fact]
+    public void ShouldTrigger_ThreeUserTurns_StillFires()
+    {
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.User, Content = "Q1" },
+            new() { Role = MessageRole.Assistant, Content = "A1" },
+            new() { Role = MessageRole.User, Content = "Q2" },
+            new() { Role = MessageRole.Assistant, Content = "A2" },
+            new() { Role = MessageRole.User, Content = "Q3" },
+            new() { Role = MessageRole.Assistant, Content = "A3" }
+        };
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history);
+
+        userText.ShouldBe("Q1");
+        assistantText.ShouldBe("A3");
+    }
+
+    [Fact]
+    public void ShouldTrigger_NoUserNoAssistant_LogsSkipAtInfo()
+    {
+        var logger = new CaptureLogger();
+        var history = new List<SessionEntry>();
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history, logger);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBeNull();
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Information);
+    }
+
+    [Fact]
+    public void ShouldTrigger_UserButNoAssistant_LogsSkipAtInfo()
+    {
+        var logger = new CaptureLogger();
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.User, Content = "Hello" }
+        };
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history, logger);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBeNull();
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Information);
+    }
+
+    [Fact]
+    public void ShouldTrigger_GuardPasses_DoesNotLogSkip()
+    {
+        var logger = new CaptureLogger();
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.User, Content = "Q1" },
+            new() { Role = MessageRole.Assistant, Content = "A1" },
+            new() { Role = MessageRole.User, Content = "Q2" },
+            new() { Role = MessageRole.Assistant, Content = "A2" }
+        };
+
+        var (userText, _) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history, logger);
+
+        userText.ShouldBe("Q1");
+        logger.Entries.ShouldNotContain(e => e.Level == LogLevel.Information);
+    }
+
+    private sealed class CaptureLogger : ILogger
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
     }
 }
