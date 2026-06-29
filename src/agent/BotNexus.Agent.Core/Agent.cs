@@ -584,7 +584,8 @@ public sealed class Agent
             _options.MaxRetryDelayMs,
             skipInitialSteeringPoll,
             _options.ToolTimeout ?? TimeSpan.FromSeconds(120),
-            _options.ClaimAudit);
+            _options.ClaimAudit,
+            _options.MaybeCompactAsync);
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)

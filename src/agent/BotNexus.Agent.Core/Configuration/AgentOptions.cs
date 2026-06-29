@@ -32,9 +32,14 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="ClaimAudit">
 /// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
 /// </param>
+/// <param name="MaybeCompactAsync">
+/// Optional best-effort auto-compaction hook (#1710). Flows to the loop config and is awaited at
+/// the top of each outer-loop iteration so a long dispatch re-checks the compaction threshold
+/// between turns. Null means no mid-loop re-check.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
-/// InitialState is used to seed AgentState — changes to InitialState after construction have no effect.
+/// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
 /// </remarks>
 public record AgentOptions(
     AgentInitialState? InitialState,
@@ -55,4 +60,5 @@ public record AgentOptions(
     Action<string>? OnDiagnostic = null,
     int? MaxRetryDelayMs = null,
     TimeSpan? ToolTimeout = null,
-    Diagnostics.ClaimAuditOptions? ClaimAudit = null);
+    Diagnostics.ClaimAuditOptions? ClaimAudit = null,
+    Func<CancellationToken, Task>? MaybeCompactAsync = null);
