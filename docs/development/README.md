@@ -27,6 +27,10 @@ This directory contains detailed documentation for developers working on or exte
 
 - **[cli-wizard.md](cli-wizard.md)** — Reusable step-based wizard framework for interactive CLI commands
 
+### Tooling & repo
+
+- **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene
+
 ---
 
 ## For Newcomers

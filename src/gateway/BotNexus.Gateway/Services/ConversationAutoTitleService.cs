@@ -232,21 +232,36 @@ public sealed class ConversationAutoTitleService
            && entry.Role != MessageRole.System;
 
     /// <summary>
-    /// Evaluates the session history to determine if this is the first user+assistant exchange.
-    /// Returns the user text and the last non-empty assistant text if the guard passes, or
-    /// (null, null) if auto-title should not fire.
+    /// Evaluates the session history to find a user+assistant exchange to title. Returns the
+    /// first user text and the last non-empty assistant text when at least one of each exists, or
+    /// (null, null) when no exchange is present yet. #1695: this is no longer one-shot - it fires
+    /// whenever an exchange exists, and re-titling stays gated on the default title in
+    /// GenerateAndSaveAsync so a custom title is never overwritten. The optional logger records an
+    /// INFO skip when the guard does not fire, so stuck-on-default conversations are diagnosable.
     /// </summary>
     public static (string? UserText, string? AssistantText) ShouldTriggerAutoTitle(
-        IReadOnlyList<SessionEntry> history)
+        IReadOnlyList<SessionEntry> history,
+        ILogger? logger = null)
     {
         var liveEntries = history.Where(IsLiveConversationEntry).ToList();
 
         var userEntries = liveEntries.Where(e => e.Role == MessageRole.User).ToList();
         var assistantEntries = liveEntries.Where(e => e.Role == MessageRole.Assistant).ToList();
 
-        // Only fire on the first exchange: exactly 1 user entry + at least 1 assistant entry.
-        if (userEntries.Count != 1 || assistantEntries.Count < 1)
+        // #1695: fire on any turn that still has at least one user + one assistant entry, not just
+        // the one-shot first exchange. The old equals-1 user guard permanently disqualified a
+        // conversation once it reached a second user turn, leaving it stuck on the default title.
+        // Re-titling stays gated on the default title in GenerateAndSaveAsync, so firing on a later
+        // turn only ever re-titles a still-default-titled conversation.
+        if (userEntries.Count < 1 || assistantEntries.Count < 1)
+        {
+            // Log at INFO so the no-fire path is diagnosable: previously a count mismatch skipped
+            // silently and gave no signal for conversations stuck on the default title.
+            logger?.LogInformation(
+                "Auto-title guard skipped: count mismatch (user={UserCount}, assistant={AssistantCount}); first user+assistant exchange not yet present",
+                userEntries.Count, assistantEntries.Count);
             return (null, null);
+        }
 
         var userText = userEntries[0].Content;
         // Pick the last assistant entry with non-empty content (handles tool-call turns
