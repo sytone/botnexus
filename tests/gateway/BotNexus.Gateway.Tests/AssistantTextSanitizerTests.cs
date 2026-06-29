@@ -114,4 +114,57 @@ public sealed class AssistantTextSanitizerTests
         var text = "  <thinking>Reasoning here.</thinking>  ";
         AssistantTextSanitizer.IsThinkingOnlyResponse(text).ShouldBeTrue();
     }
+
+    // --- Sanitize: leaked tool-call XML (issue #1698) ---
+
+    [Fact]
+    public void Sanitize_LeakedInvokeBlock_RemovesBlock()
+    {
+        // opus-copilot serialises a tool call as <invoke> XML in the text channel instead of tool_use.
+        var text = "Let me check.<invoke name=\"shell\"><parameter name=\"command\">ls</parameter></invoke>";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe("Let me check.");
+    }
+
+    [Fact]
+    public void Sanitize_CourtJunkPrefixBeforeInvoke_StrippedClean()
+    {
+        // Observed signature: junk 'court' token prefixes the leaked XML.
+        var text = "court<invoke name=\"read\"><parameter name=\"path\">x</parameter></invoke>The answer.";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe("The answer.");
+    }
+
+    [Fact]
+    public void Sanitize_StrayInvokeAndParameterTags_Removed()
+    {
+        var text = "Intro </invoke> mid <parameter name=\"q\"> tail";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe("Intro  mid  tail");
+    }
+
+    [Fact]
+    public void Sanitize_ToolUseAndFunctionCallsBlocks_Removed()
+    {
+        var text = "<tool_use>{}</tool_use><function_calls>noise</function_calls>real text";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe("real text");
+    }
+
+    [Fact]
+    public void Sanitize_AlsoStripsThinking_Combined()
+    {
+        var text = "<thinking>plan</thinking>court<invoke name=\"x\"></invoke>Done.";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe("Done.");
+    }
+
+    [Fact]
+    public void Sanitize_PlainText_Unchanged()
+    {
+        var text = "A normal reply with <angle> brackets in prose.";
+        AssistantTextSanitizer.Sanitize(text).ShouldBe(text);
+    }
+
+    [Fact]
+    public void Sanitize_NullOrEmpty_ReturnsUnchanged()
+    {
+        AssistantTextSanitizer.Sanitize(string.Empty).ShouldBe(string.Empty);
+        AssistantTextSanitizer.Sanitize(null!).ShouldBeNull();
+    }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 
 namespace BotNexus.Gateway.Channels;
@@ -27,6 +28,23 @@ public static class AssistantTextSanitizer
     private static readonly Regex ThinkingTagPattern = new(
         @"<(?:antml:)?thinking>.*?</(?:antml:)?thinking>",
         RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+    // Leaked tool-call XML: some models (notably opus via github-copilot) serialise a tool call as
+    // Anthropic <invoke>/<tool_use> markup inside the assistant TEXT channel instead of a structured
+    // tool_use block (issue #1698). Mirror the proven MemoryContentSanitizer filters so raw XML never
+    // reaches a channel. Block form first (removes nested <parameter> JSON), then stray open/close tags
+    // including bare <parameter>.
+    private static readonly Regex ToolCallBlockPattern = new(
+        @"<(?:tool_call|function_calls|invoke|tool_use)\b[^>]*>.*?</(?:tool_call|function_calls|invoke|tool_use)>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex ToolCallStrayTagPattern = new(
+        @"</?(?:tool_call|function_calls|invoke|tool_use|parameter)\b[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Junk 'court' token observed immediately before the leaked <invoke> XML; strip only when adjacent
+    // to a tool tag so ordinary prose containing "court" survives.
+    private static readonly Regex CourtJunkPrefixPattern = new(
+        @"\bcourt(?=\s*<(?:invoke|tool_use|tool_call|function_calls)\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// Strips any embedded thinking/reasoning XML tags from assistant text.
@@ -73,5 +91,25 @@ public static class AssistantTextSanitizer
             return false;
 
         return string.IsNullOrWhiteSpace(StripThinkingTags(text));
+    }
+
+    /// <summary>
+    /// Strips thinking blocks AND leaked tool-call XML (invoke/tool_use/function_calls/bare parameter)
+    /// plus the junk "court" prefix opus-copilot emits ahead of the XML (issue #1698). Input returned
+    /// unchanged when clean; allocation-free fast path.
+    /// </summary>
+    [return: NotNullIfNotNull(nameof(text))]
+    public static string? Sanitize(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+        if (text.IndexOf('<') < 0)
+            return text;
+        var stripped = ThinkingTagPattern.Replace(text, string.Empty);
+        stripped = CourtJunkPrefixPattern.Replace(stripped, string.Empty);
+        stripped = ToolCallBlockPattern.Replace(stripped, string.Empty);
+        stripped = ToolCallStrayTagPattern.Replace(stripped, string.Empty);
+        stripped = Regex.Replace(stripped, @"\n{3}", "\n\n");
+        return stripped.Trim();
     }
 }
