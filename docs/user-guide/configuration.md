@@ -95,6 +95,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `cors.allowedOrigins` | array | `[]` | Allowed CORS origins for browser clients |
 | `rateLimit.requestsPerMinute` | int | `60` | Max requests per client per minute |
 | `rateLimit.windowSeconds` | int | `60` | Rate limit window size in seconds |
+| `rateLimit.maxEntries` | int | `10000` | Max distinct client windows tracked in memory; bounds the per-client dictionary so a flood of distinct clients cannot exhaust gateway memory. Actively rate-limited windows are never evicted. Non-positive disables the cap. |
 | `logLevel` | string | `Information` | Logging level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical` |
 | `extensions.path` | string | `~/.botnexus/extensions` | Root directory for extension assemblies |
 | `extensions.enabled` | bool | `true` | Enable/disable dynamic extension loading |
