@@ -131,6 +131,10 @@ public static class ToolCallValidator
     /// </summary>
     private static bool TryCoerceValue(JsonElement value, JsonElement propertySchema, Utf8JsonWriter writer)
     {
+        // Cap the synchronous in-process JSON.parse of model-controlled strings (issue #1738,
+        // mirror OpenClaw): a string over this length is not parsed and is left to validation.
+        const int MaxJsonCoerceLength = 64 * 1024;
+
         if (!propertySchema.TryGetProperty("type", out var typeElement))
         {
             return false;
@@ -172,14 +176,94 @@ public static class ToolCallValidator
             }
         }
 
-        // scalar -> single-element array (optionally comma-split for string items).
-        if (allowedTypes.Contains("array") && IsScalar(value))
+        // string whose CONTENT is a JSON array/object (a model serialised a structured
+        // param as a JSON string, e.g. "[\"a\",\"b\"]" or "{\"x\":1}"). Parse it into the
+        // real shape so the downstream tool receives an array/object, not a literal string.
+        // This must run BEFORE the scalar -> single-element array wrap below so a genuine
+        // JSON-array string is parsed rather than wrapped or comma-split. (Issue #1738.)
+        //
+        // MaxJsonCoerceLength caps the synchronous in-process JSON.parse: the input is
+        // model-controlled, so an unbounded parse here is a denial-of-service surface. A
+        // string over the cap is left unparsed and falls through to the reject path.
+        if (value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } json)
+        {
+            var trimmed = json.AsSpan().Trim();
+
+            if (trimmed.Length > 0 && trimmed.Length <= MaxJsonCoerceLength)
+            {
+                if (allowedTypes.Contains("array") && trimmed[0] == '[' &&
+                    TryWriteParsedJson(json, JsonValueKind.Array, writer))
+                {
+                    return true;
+                }
+
+                if (allowedTypes.Contains("object") && trimmed[0] == '{' &&
+                    TryWriteParsedJson(json, JsonValueKind.Object, writer))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // scalar -> single-element array (optionally comma-split for string items). A string
+        // whose content looks like a JSON array/object is excluded: it was either parsed
+        // above or is malformed/oversized, in which case it must reach the reject path rather
+        // than be silently wrapped into a 1-element array that masks the wrong shape.
+        if (allowedTypes.Contains("array") && IsScalar(value) && !LooksLikeJsonStructure(value, allowedTypes))
         {
             WriteScalarAsArray(value, propertySchema, writer);
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Attempts to parse <paramref name="json"/> and, only when it parses to the
+    /// <paramref name="expectedKind"/>, writes the parsed value to <paramref name="writer"/>.
+    /// Returns <c>false</c> (writing nothing) on a parse failure or a kind mismatch so the
+    /// caller can fall through. The parsed document is written before disposal.
+    /// </summary>
+    private static bool TryWriteParsedJson(string json, JsonValueKind expectedKind, Utf8JsonWriter writer)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != expectedKind)
+            {
+                return false;
+            }
+
+            document.RootElement.WriteTo(writer);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="value"/> is a string whose trimmed content begins like a
+    /// JSON array (when an array is allowed) or object (when an object is allowed). Used to
+    /// keep such strings out of the scalar -> single-element array wrap so a malformed or
+    /// oversized JSON structure rejects instead of being silently wrapped.
+    /// </summary>
+    private static bool LooksLikeJsonStructure(JsonElement value, List<string> allowedTypes)
+    {
+        if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } text)
+        {
+            return false;
+        }
+
+        var trimmed = text.AsSpan().Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        return (allowedTypes.Contains("array") && trimmed[0] == '[')
+            || (allowedTypes.Contains("object") && trimmed[0] == '{');
     }
 
     private static void WriteScalarAsArray(JsonElement value, JsonElement propertySchema, Utf8JsonWriter writer)
