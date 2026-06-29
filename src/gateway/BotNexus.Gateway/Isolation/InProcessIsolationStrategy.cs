@@ -474,6 +474,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         List<AgentMessage>? initialMessages = null;
+        var resumeSystemPrompt = enrichedSystemPrompt;
         if (context.History.Count > 0)
         {
             // The cold-start resume projection — what survives a session hydration without
@@ -482,19 +483,40 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // (the Assistant SessionEntry persists response text but not the paired
             // tool_use). Phase 3a/#531 added IsHistory; Phase 3b/#534 centralised the
             // filter so all isolation strategies share it.
-            initialMessages = SessionContextProjector
-                .ProjectForResume(context.History)
+            var resumeEntries = SessionContextProjector.ProjectForResume(context.History);
+
+            // Compaction summaries are System entries. The default message converter
+            // (agent-core) deliberately drops System messages from the LLM message list
+            // because system context belongs in Context.SystemPrompt, not the timeline.
+            // So a summary materialised into the list never reaches the model -- the agent
+            // resumes blind (#1693/#1698-adjacent: lost-context-on-resume). Fold summaries
+            // into the system prompt so the folded context survives the converter contract.
+            var summaries = resumeEntries
+                .Where(e => e.Role.Equals(MessageRole.System) && e.IsCompactionSummary)
+                .Select(e => e.Content)
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .ToList();
+            if (summaries.Count > 0)
+            {
+                var summaryBlock = string.Join("\n\n", summaries);
+                resumeSystemPrompt = string.IsNullOrWhiteSpace(enrichedSystemPrompt)
+                    ? summaryBlock
+                    : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{summaryBlock}";
+            }
+
+            initialMessages = resumeEntries
                 .Select(ConvertSessionEntryToAgentMessage)
+                .OfType<AgentMessage>()
                 .ToList();
 
             _logger.LogInformation(
-                "Injecting {Count} history messages (of {Total} entries) into agent context for session '{SessionId}'",
-                initialMessages.Count, context.History.Count, context.SessionId);
+                "Injecting {Count} history messages ({Summaries} summary folded into prompt, of {Total} entries) into agent context for session '{SessionId}'",
+                initialMessages.Count, summaries.Count, context.History.Count, context.SessionId);
         }
 
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
-                SystemPrompt: enrichedSystemPrompt,
+                SystemPrompt: resumeSystemPrompt,
                 Model: model,
                 Tools: tools,
                 Messages: initialMessages),
@@ -533,7 +555,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             extensionResourcesToDispose,
             _serviceProvider.GetService<IActivityTracker>())
         {
-            RenderedSystemPrompt = enrichedSystemPrompt
+            RenderedSystemPrompt = resumeSystemPrompt
         };
         IAgentHandle handle = inProcessHandle;
 
@@ -704,13 +726,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         return conversations.FirstOrDefault(conversation => conversation.ActiveSessionId == sessionId)?.ConversationId;
     }
 
-    private static AgentMessage ConvertSessionEntryToAgentMessage(SessionEntry entry)
+    // Compaction-summary System entries are folded into the system prompt on resume
+    // (see CreateAsync); they are not materialised into the timeline because the
+    // default converter drops list-level System messages. Any other System entry is
+    // excluded too -- the converter would discard it anyway -- to avoid a phantom
+    // injected-count. Returns null for entries that must not appear in the message list.
+    private static AgentMessage? ConvertSessionEntryToAgentMessage(SessionEntry entry)
     {
         return entry.Role.Value switch
         {
             "user" => new AgentCoreUserMessage(entry.Content),
             "assistant" => new AssistantAgentMessage(entry.Content),
-            "system" => new SystemAgentMessage(entry.Content),
+            "system" => null,
             "tool" => new ToolResultAgentMessage(
                 entry.ToolCallId ?? string.Empty,
                 entry.ToolName ?? "tool",
