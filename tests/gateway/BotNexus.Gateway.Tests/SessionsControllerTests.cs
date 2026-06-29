@@ -1268,6 +1268,78 @@ public sealed class SessionsControllerTests
         ids.ShouldContain("s-expired");
     }
 
+    // ----- List: must use the transcript-free summary read, not full hydration.
+    // The portal sidebar list endpoint historically called ISessionStore.ListAsync,
+    // which materialised every session's full transcript just to project metadata
+    // (seconds on a large DB). It must instead call ListSummariesAsync, whose SQLite
+    // override derives MessageCount from a COUNT(*) aggregate without reading content.
+
+    [Fact]
+    public async Task List_UsesSummaryRead_NotFullHydration()
+    {
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42) });
+        var controller = new SessionsController(store.Object);
+
+        await controller.List(null, cancellationToken: CancellationToken.None);
+
+        store.Verify(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once,
+            "List must use the metadata-only summary read");
+        store.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never,
+            "List must not hydrate full transcripts via ListAsync");
+    }
+
+    [Fact]
+    public async Task List_ProjectsSummaryFields_IncludingMessageCount()
+    {
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42, "c1") });
+        var controller = new SessionsController(store.Object);
+
+        var ok = (await controller.List(null, cancellationToken: CancellationToken.None)) as OkObjectResult;
+
+        ok.ShouldNotBeNull();
+        var sessions = (ok!.Value as IEnumerable<object>)!.ToList();
+        sessions.Count.ShouldBe(1);
+        var json = JsonSerializer.Serialize(sessions[0]);
+        json.ShouldContain("\"messageCount\":42");
+        json.ShouldContain("\"sessionId\":\"s1\"");
+        json.ShouldContain("\"conversationId\":\"c1\"");
+    }
+
+    [Fact]
+    public async Task List_FiltersByAgentId()
+    {
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 1), Summary("s2", "agent-b", SessionStatus.Active, 1) });
+        var controller = new SessionsController(store.Object);
+
+        var ok = (await controller.List("agent-a", cancellationToken: CancellationToken.None)) as OkObjectResult;
+
+        (ok!.Value as IEnumerable<object>)!.Count().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task List_ExcludesInactiveByDefault_AndIncludesWhenRequested()
+    {
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Summary("s-active", "agent-a", SessionStatus.Active, 1), Summary("s-sealed", "agent-a", SessionStatus.Sealed, 1) });
+        var controller = new SessionsController(store.Object);
+
+        var defaultOk = (await controller.List(null, cancellationToken: CancellationToken.None)) as OkObjectResult;
+        (defaultOk!.Value as IEnumerable<object>)!.Count().ShouldBe(1);
+
+        var inclusiveOk = (await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None)) as OkObjectResult;
+        (inclusiveOk!.Value as IEnumerable<object>)!.Count().ShouldBe(2);
+    }
+
+    private static SessionSummary Summary(string id, string agentId, SessionStatus status, int messageCount, string? conversationId = null)
+        => new(id, agentId, null, status, SessionType.UserAgent, true, messageCount, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, conversationId);
+
     private static ControllerContext CreateControllerContext(string callerId)
     {
         var httpContext = new DefaultHttpContext();
@@ -1289,7 +1361,7 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new SessionStoreUnavailableException("unavailable", new Exception("inner")));
 
         var controller = new SessionsController(store.Object);
@@ -1306,8 +1378,8 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<GatewaySession>());
+            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<SessionSummary>());
 
         var controller = new SessionsController(store.Object);
 
