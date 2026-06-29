@@ -209,7 +209,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             IsToolCall = true
         };
 
-        conv.Messages.Add(msg);
+        conv.AppendMessage(msg);
         conv.StreamState.ActiveToolCalls[toolCallId] = new ActiveToolCall
         {
             ToolCallId = toolCallId,
@@ -245,17 +245,19 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (messageId is not null)
         {
-            var index = conv.Messages.FindIndex(m => m.Id == messageId);
-            if (index >= 0)
+            // O(1) id->index lookup instead of an O(n) FindIndex on every ToolEnd (#1622).
+            // A miss (id not present) leaves index at -1 and falls through to the new-message
+            // fallback below -- the exact behaviour of the previous FindIndex(...) == -1 path.
+            if (conv.TryGetMessageIndex(messageId, out var index))
             {
                 var original = conv.Messages[index];
-                conv.Messages[index] = original with
+                conv.ReplaceMessageAt(index, original with
                 {
                     Content = evt.ToolIsError == true ? $"❌ {evt.ToolName} failed" : $"✅ {evt.ToolName} completed",
                     ToolResult = AnsiStripper.Strip(evt.ToolResult),
                     ToolIsError = evt.ToolIsError,
                     ToolDuration = duration
-                };
+                });
 
                 agent.ProcessingStage = agent.IsStreaming ? "🤖 Agent is responding…" : null;
                 _store.NotifyChanged();
@@ -264,7 +266,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         // Fallback: new message
-        conv.Messages.Add(new ChatMessage("Tool",
+        conv.AppendMessage(new ChatMessage("Tool",
             evt.ToolIsError == true ? $"❌ {evt.ToolName} failed" : $"✅ {evt.ToolName} completed",
             DateTimeOffset.UtcNow)
         {
@@ -304,7 +306,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (!isNoReply && (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null))
         {
-            conv.Messages.Add(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
+            conv.AppendMessage(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
             {
                 ThinkingContent = thinkingContent,
                 InputTokens = evt.Usage?.InputTokens,
@@ -348,7 +350,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("Error", evt.ErrorMessage ?? "An unknown error occurred.", DateTimeOffset.UtcNow));
+            conv.AppendMessage(new ChatMessage("Error", evt.ErrorMessage ?? "An unknown error occurred.", DateTimeOffset.UtcNow));
             // An error is terminal for the loop (the runner emits RunEnded right after), so clear the
             // whole run bracket defensively in case the RunEnded event is missed.
             conv.StreamState.EndRun();
@@ -380,7 +382,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("Notification",
+            conv.AppendMessage(new ChatMessage("Notification",
                 evt.ErrorMessage ?? "The gateway was restarted while your last message was being processed.",
                 DateTimeOffset.UtcNow));
             // A gateway restart terminates the run; clear the whole run bracket (no RunEnded will arrive).
@@ -462,7 +464,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // Session reset clears the agent's context window — it does not
             // erase conversation history. The portal should keep showing all
             // prior messages with a visual divider marking the new session.
-            conv.Messages.Add(new ChatMessage("System", "─── New session started ───", DateTimeOffset.UtcNow));
+            conv.AppendMessage(new ChatMessage("System", "--- New session started ---", DateTimeOffset.UtcNow));
             _store.ClearPendingAskUser(conv.ConversationId);
         }
 
@@ -500,7 +502,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             var taskHint = string.IsNullOrWhiteSpace(payload.Task) ? string.Empty : $" — {payload.Task}";
-            conv.Messages.Add(new ChatMessage("System",
+            conv.AppendMessage(new ChatMessage("System",
                 $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId}{taskHint}",
                 DateTimeOffset.UtcNow));
         }
@@ -522,7 +524,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("System",
+            conv.AppendMessage(new ChatMessage("System",
                 $"✅ Sub-agent completed: {payload.Name ?? payload.SubAgentId}" +
                 (payload.ResultSummary is not null ? $" — {payload.ResultSummary}" : ""),
                 DateTimeOffset.UtcNow));
@@ -545,7 +547,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("System",
+            conv.AppendMessage(new ChatMessage("System",
                 $"❌ Sub-agent failed: {payload.Name ?? payload.SubAgentId}" +
                 (payload.ResultSummary is not null ? $" — {payload.ResultSummary}" : ""),
                 DateTimeOffset.UtcNow));
@@ -567,7 +569,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
-            conv.Messages.Add(new ChatMessage("System",
+            conv.AppendMessage(new ChatMessage("System",
                 $"⛔ Sub-agent killed: {payload.Name ?? payload.SubAgentId}",
                 DateTimeOffset.UtcNow));
         }
@@ -616,12 +618,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             }
 
             // Add styled stream message
-            conv.Messages.Add(new ChatMessage("System", "\u21b3 Steering injected", DateTimeOffset.UtcNow));
+            conv.AppendMessage(new ChatMessage("System", "\u21b3 Steering injected", DateTimeOffset.UtcNow));
         }
         else
         {
             // Queued: keep as pending, add informational message
-            conv.Messages.Add(new ChatMessage("System", "\u21b3 Steering queued \u2014 will process next turn", DateTimeOffset.UtcNow));
+            conv.AppendMessage(new ChatMessage("System", "\u21b3 Steering queued \u2014 will process next turn", DateTimeOffset.UtcNow));
         }
 
         _store.NotifyChanged();

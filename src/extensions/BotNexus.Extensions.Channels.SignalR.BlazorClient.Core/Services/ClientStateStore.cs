@@ -219,7 +219,7 @@ public sealed class ClientStateStore : IClientStateStore
         if (conv is null)
             return;
 
-        conv.Messages.Add(message);
+        conv.AppendMessage(message);
         NotifyChanged();
     }
 
@@ -230,7 +230,7 @@ public sealed class ClientStateStore : IClientStateStore
         if (conv is null)
             return;
 
-        conv.Messages.InsertRange(0, messages);
+        conv.PrependMessages(messages);
         NotifyChanged();
     }
 
@@ -241,7 +241,7 @@ public sealed class ClientStateStore : IClientStateStore
         if (conv is null)
             return;
 
-        conv.Messages.Clear();
+        conv.ClearMessages();
         conv.HistoryLoaded = false;
         NotifyChanged();
     }
@@ -306,7 +306,7 @@ public sealed class ClientStateStore : IClientStateStore
 
         if (!string.IsNullOrEmpty(buffer) || thinking is not null)
         {
-            conv.Messages.Add(new ChatMessage("Assistant", buffer ?? "", DateTimeOffset.UtcNow)
+            conv.AppendMessage(new ChatMessage("Assistant", buffer ?? "", DateTimeOffset.UtcNow)
             {
                 ThinkingContent = thinking
             });

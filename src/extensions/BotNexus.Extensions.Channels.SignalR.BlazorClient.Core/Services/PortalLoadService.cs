@@ -153,7 +153,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     foreach (var entry in sessionHistory.Entries)
                     {
                         var role = MapRole(entry.Role ?? "system");
-                        conversation.Messages.Add(new ChatMessage(role, entry.Content ?? string.Empty, entry.Timestamp)
+                        conversation.AppendMessage(new ChatMessage(role, entry.Content ?? string.Empty, entry.Timestamp)
                         {
                             ToolName = entry.ToolName,
                             ToolCallId = entry.ToolCallId,
@@ -176,7 +176,7 @@ public sealed class PortalLoadService : IPortalLoadService
                 {
                     if (entry.Kind == "boundary")
                     {
-                        conversation.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
+                        conversation.AppendMessage(new ChatMessage("System", string.Empty, entry.Timestamp)
                         {
                             Kind = "boundary",
                             BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
@@ -186,7 +186,7 @@ public sealed class PortalLoadService : IPortalLoadService
                     else
                     {
                         var isTool = entry.ToolName is not null;
-                        conversation.Messages.Add(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
+                        conversation.AppendMessage(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
                         {
                             ToolName = entry.ToolName,
                             ToolCallId = entry.ToolCallId,

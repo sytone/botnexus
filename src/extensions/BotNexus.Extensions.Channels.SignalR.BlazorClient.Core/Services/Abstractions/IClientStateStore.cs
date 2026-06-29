@@ -1,4 +1,4 @@
-﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// Single in-memory source of truth for all portal state.
@@ -311,8 +311,105 @@ public sealed class ConversationState
 
     // ── Messages + streaming ─────────────────────────────────────────────────
 
-    /// <summary>Messages in this conversation's timeline.</summary>
-    public List<ChatMessage> Messages { get; } = new();
+    // Backing store for the conversation timeline. Kept private so every mutation flows through the
+    // helpers below, which keep _messageIndex in sync. Exposing the raw List would let a caller
+    // Add/Remove/Clear directly and silently desync the id->index map (#1622).
+    private readonly List<ChatMessage> _messages = new();
+
+    // O(1) id -> first-occurrence index map over _messages. Lets HandleToolEnd locate the message a
+    // tool result belongs to without an O(n) FindIndex scan on every ToolEnd (#1622). Only messages
+    // with a non-empty Id are indexed; on a duplicate Id the FIRST index wins, exactly mirroring
+    // List.FindIndex semantics so the lookup is behaviour-preserving.
+    private readonly Dictionary<string, int> _messageIndex = new(StringComparer.Ordinal);
+
+    /// <summary>Messages in this conversation's timeline. Read-only view: mutate via
+    /// <see cref="AppendMessage"/>, <see cref="ReplaceMessageAt"/>, <see cref="PrependMessages"/>,
+    /// or <see cref="ClearMessages"/> so the id-&gt;index map stays consistent (#1622).</summary>
+    public IReadOnlyList<ChatMessage> Messages => _messages;
+
+    /// <summary>O(1) id-&gt;index map over <see cref="Messages"/>. Each non-empty message id maps to the
+    /// first index it appears at (matching <c>List.FindIndex</c>). Used by the ToolEnd handler to locate
+    /// the message a tool result belongs to without a linear scan (#1622).</summary>
+    public IReadOnlyDictionary<string, int> MessageIndex => _messageIndex;
+
+    /// <summary>Appends a message to the timeline and indexes it in O(1).</summary>
+    public void AppendMessage(ChatMessage message)
+    {
+        _messages.Add(message);
+        IndexMessageAt(_messages.Count - 1);
+    }
+
+    /// <summary>Replaces the message at <paramref name="index"/> in place (used by the ToolEnd update
+    /// path, which rewrites a tool-call row via <c>original with { ... }</c>). Keeps the id-&gt;index map
+    /// consistent: the position is unchanged, and if the replacement carries a different id the map is
+    /// updated to point the new id at this slot.</summary>
+    public void ReplaceMessageAt(int index, ChatMessage message)
+    {
+        if (index < 0 || index >= _messages.Count)
+            return;
+
+        var previous = _messages[index];
+        _messages[index] = message;
+
+        // If the id changed, drop the old id's entry only when it pointed at this slot (a later
+        // duplicate may still own the old id), then index the slot under the new id.
+        if (!string.Equals(previous.Id, message.Id, StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrEmpty(previous.Id)
+                && _messageIndex.TryGetValue(previous.Id, out var owned)
+                && owned == index)
+            {
+                _messageIndex.Remove(previous.Id);
+            }
+
+            IndexMessageAt(index);
+        }
+    }
+
+    /// <summary>Prepends older messages (used for history pagination). Every existing index shifts, so
+    /// the id-&gt;index map is rebuilt.</summary>
+    public void PrependMessages(IEnumerable<ChatMessage> messages)
+    {
+        _messages.InsertRange(0, messages);
+        RebuildMessageIndex();
+    }
+
+    /// <summary>Clears the timeline and the id-&gt;index map.</summary>
+    public void ClearMessages()
+    {
+        _messages.Clear();
+        _messageIndex.Clear();
+    }
+
+    /// <summary>Resolves a message id to its index in O(1). Returns <see langword="false"/> for a
+    /// null/empty id or an id not present, leaving <paramref name="index"/> at -1 -- the same graceful
+    /// miss the previous <c>FindIndex(...) == -1</c> path produced (#1622).</summary>
+    public bool TryGetMessageIndex(string? id, out int index)
+    {
+        if (!string.IsNullOrEmpty(id) && _messageIndex.TryGetValue(id, out index))
+            return true;
+
+        index = -1;
+        return false;
+    }
+
+    // Indexes the message at the given slot under its id, keeping FIRST-occurrence-wins semantics so a
+    // duplicate id never overwrites the earlier mapping (List.FindIndex returns the first match).
+    private void IndexMessageAt(int index)
+    {
+        var id = _messages[index].Id;
+        if (!string.IsNullOrEmpty(id))
+            _messageIndex.TryAdd(id, index);
+    }
+
+    // Full O(n) rebuild after a bulk reorder (prepend). Cheaper and simpler than shifting every entry,
+    // and prepend is a rare pagination event, not on the streaming hot path.
+    private void RebuildMessageIndex()
+    {
+        _messageIndex.Clear();
+        for (var i = 0; i < _messages.Count; i++)
+            IndexMessageAt(i);
+    }
 
     /// <summary>Streaming state for this conversation.</summary>
     public ConversationStreamState StreamState { get; } = new();

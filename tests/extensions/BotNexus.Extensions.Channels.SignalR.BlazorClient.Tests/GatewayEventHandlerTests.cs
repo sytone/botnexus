@@ -401,7 +401,7 @@ public sealed class GatewayEventHandlerTests
         var agent = _store.GetAgent("agent-1")!;
         var conv = agent.Conversations["conv-1"];
         agent.SessionId = "sess-1";
-        conv.Messages.Add(new ChatMessage("User", "before reset", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("User", "before reset", DateTimeOffset.UtcNow));
         conv.HistoryLoaded = true;
 
         _handler.HandleSessionReset(new SessionResetPayload("agent-1", "sess-1"));
@@ -414,7 +414,7 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal("User", conv.Messages[0].Role);
         Assert.Equal("before reset", conv.Messages[0].Content);
         Assert.Equal("System", conv.Messages[1].Role);
-        Assert.Contains("───", conv.Messages[1].Content); // visual divider
+        Assert.Contains("---", conv.Messages[1].Content); // visual divider
     }
 
     // ── Fix 3 — Steering feedback ────────────────────────────────────────
