@@ -91,7 +91,7 @@ public sealed class ConversationAutoTitleServiceTests
             NullLogger.Instance);
 
         var result = await svc.GenerateAndSaveAsync(
-            ConvId, AgentId, "user text", "assistant text", null, CancellationToken.None);
+            ConvId, AgentId, "user text", "assistant text", null, 30, CancellationToken.None);
 
         result.ShouldBeNull();
         store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -109,7 +109,7 @@ public sealed class ConversationAutoTitleServiceTests
             NullLogger.Instance);
 
         var result = await svc.GenerateAndSaveAsync(
-            ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+            ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBeNull();
     }
@@ -134,7 +134,7 @@ public sealed class ConversationAutoTitleServiceTests
             NullLogger.Instance);
 
         var result = await svc.GenerateAndSaveAsync(
-            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, CancellationToken.None);
+            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, 30, CancellationToken.None);
 
         result.ShouldNotBeNull();
         result.ShouldBe("Chat About Cats");
@@ -165,7 +165,7 @@ public sealed class ConversationAutoTitleServiceTests
             NullLogger.Instance,
             notifier.Object);
 
-        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         notifier.Verify(n => n.NotifyConversationChangedAsync("updated", AgentId.Value, ConvId.Value,
             It.IsAny<CancellationToken>()), Times.Once);
@@ -188,7 +188,7 @@ public sealed class ConversationAutoTitleServiceTests
             CreateFakeLlmClient("Race Condition Title"),
             NullLogger.Instance);
 
-        var result = await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+        var result = await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBeNull();
         store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -240,7 +240,7 @@ public sealed class ConversationAutoTitleServiceTests
             endpointResolver: provider => provider == "github-copilot" ? EnterpriseEndpoint : null);
 
         var result = await svc.GenerateAndSaveAsync(
-            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, CancellationToken.None);
+            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, 30, CancellationToken.None);
 
         result.ShouldBe("Chat About Cats");
         modelSeenByProvider.ShouldNotBeNull();
@@ -274,7 +274,7 @@ public sealed class ConversationAutoTitleServiceTests
             endpointResolver: _ => null);
 
         var result = await svc.GenerateAndSaveAsync(
-            ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+            ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBe("Some Title");
         modelSeenByProvider.ShouldNotBeNull();
@@ -305,7 +305,7 @@ public sealed class ConversationAutoTitleServiceTests
             notifier: null,
             endpointResolver: _ => "   ");
 
-        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         modelSeenByProvider.ShouldNotBeNull();
         modelSeenByProvider!.BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
@@ -334,15 +334,143 @@ public sealed class ConversationAutoTitleServiceTests
             llmClient,
             NullLogger.Instance);
 
-        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, CancellationToken.None);
+        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         modelSeenByProvider.ShouldNotBeNull();
         modelSeenByProvider!.BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
     }
 
     // -----------------------------------------------------------------------
+    // Timeout wiring (#auto-title config): timeoutSeconds is now honoured
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_TinyTimeout_AbandonsSlowCall_NoSave()
+    {
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateDelayingLlmClient("Slow Title", TimeSpan.FromSeconds(5)),
+            NullLogger.Instance);
+
+        // A 1s timeout must abandon the 5s call -> no title saved. A hardcoded 30s timeout would
+        // wait it out and save, so this fails RED until timeoutSeconds is actually wired through.
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "q", "a", null, 1, CancellationToken.None);
+
+        result.ShouldBeNull();
+        store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_GenerousTimeout_AllowsFastCall_Saves()
+    {
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Fast Title"),
+            NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "q", "a", null, 60, CancellationToken.None);
+
+        result.ShouldBe("Fast Title");
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_NonPositiveTimeout_ClampsToDefault_AllowsFastCall()
+    {
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Clamped Title"),
+            NullLogger.Instance);
+
+        // 0 must clamp to 30s, not cancel instantly; a fast call still succeeds.
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "q", "a", null, 0, CancellationToken.None);
+
+        result.ShouldBe("Clamped Title");
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// LlmClient whose provider delays before returning so a configured timeout can be exercised.
+    /// </summary>
+    private static LlmClient CreateDelayingLlmClient(string responseText, TimeSpan delay)
+    {
+        var modelRegistry = new ModelRegistry();
+        var fakeModel = new LlmModel(
+            Id: "fake-model",
+            Name: "fake-model",
+            Api: "fake-api",
+            Provider: "fake",
+            BaseUrl: "https://fake.example.com",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 4096,
+            MaxTokens: 512);
+        modelRegistry.Register("fake", fakeModel);
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new DelayingApiProvider(responseText, delay));
+        return new LlmClient(providerRegistry, modelRegistry);
+    }
+
+    private sealed class DelayingApiProvider : IApiProvider
+    {
+        private readonly string _responseText;
+        private readonly TimeSpan _delay;
+        public DelayingApiProvider(string responseText, TimeSpan delay) { _responseText = responseText; _delay = delay; }
+        public string Api => "fake-api";
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+            => throw new NotImplementedException();
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
+        {
+            var stream = new LlmStream();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(_delay);
+                var msg = new AssistantMessage(
+                    Content: [new TextContent(_responseText)], Api: "fake-api", Provider: "fake",
+                    ModelId: "fake-model", Usage: new Usage(), StopReason: StopReason.Stop,
+                    ErrorMessage: null, ResponseId: null,
+                    Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                stream.Push(new DoneEvent(StopReason.Stop, msg));
+            });
+            return stream;
+        }
+    }
 
     /// <summary>
     /// Creates a minimal LlmClient backed by a fake provider that returns the given title text.
