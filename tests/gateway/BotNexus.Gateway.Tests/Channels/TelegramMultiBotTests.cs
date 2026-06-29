@@ -228,6 +228,79 @@ public sealed class TelegramMultiBotTests
         larrySends.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Regression for #1681: a non-streaming <see cref="OutboundMessage"/> (fan-out path) carries no
+    /// <c>telegramBotName</c> metadata. The old multi-bot resolver threw and dropped the reply.
+    /// When the target chat is admitted by exactly one configured bot's allow-list, the send must
+    /// degrade gracefully and route through that bot instead of throwing.
+    /// </summary>
+    [Fact]
+    public async Task SendAsync_MultiBot_NoBotNameMetadata_RoutesByAllowList()
+    {
+        var larrySends = new List<string>();
+        var assistantSends = new List<string>();
+
+        HttpResponseMessage Handler(HttpRequestMessage req, List<string> sendSink)
+        {
+            var method = req.RequestUri?.Segments.LastOrDefault()?.Trim('/');
+            if (method == "sendMessage")
+            {
+                sendSink.Add(req.RequestUri!.AbsoluteUri);
+                return JsonOk(new TelegramMessage { MessageId = 999, Chat = new TelegramChat { Id = 202 } });
+            }
+            if (method == "getUpdates") return JsonOk(Array.Empty<TelegramUpdate>());
+            return JsonOk(true);
+        }
+
+        // Distinct allow-lists so chat 202 is admitted by exactly one bot (assistant-bot).
+        var options = new TelegramGatewayOptions
+        {
+            Bots =
+            {
+                ["larry-bot"] = new TelegramBotConfig
+                {
+                    BotToken = "token-larry",
+                    AgentId = "agent-b",
+                    AllowedChatIds = { 101 },
+                    PollingTimeoutSeconds = 1,
+                    RichMessages = false
+                },
+                ["assistant-bot"] = new TelegramBotConfig
+                {
+                    BotToken = "token-assistant",
+                    AgentId = "assistant",
+                    AllowedChatIds = { 202 },
+                    PollingTimeoutSeconds = 1,
+                    RichMessages = false
+                }
+            }
+        };
+
+        var httpFactory = new StubHttpClientFactory(name => name == "larry-bot"
+            ? new HttpClient(new StubHandler(req => Task.FromResult(Handler(req, larrySends))))
+            : new HttpClient(new StubHandler(req => Task.FromResult(Handler(req, assistantSends)))));
+
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(options),
+            httpFactory);
+
+        // No telegramBotName metadata -- exactly the fan-out OutboundMessage shape that used to throw.
+        var outbound = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = TelegramChannelAddress.Encode(202, null),
+            Content = "delivered via allow-list fallback"
+        };
+
+        // Must NOT throw, and must route through assistant-bot (the only bot allowing chat 202).
+        await Should.NotThrowAsync(async () => await adapter.SendAsync(outbound, CancellationToken.None));
+
+        assistantSends.ShouldNotBeEmpty();
+        assistantSends.ShouldContain(u => u.Contains("token-assistant"));
+        larrySends.ShouldBeEmpty();
+    }
+
     private static TelegramUpdate MakeUpdate(int updateId, long chatId, string text) =>
         new()
         {

@@ -767,6 +767,21 @@ public sealed class TelegramChannelAdapter(
         if (_bots.Count == 1)
             return _bots.Values.Single();
 
+        // Multi-bot, no explicit telegramBotName: degrade gracefully instead of dropping the reply.
+        // The fan-out / non-streaming OutboundMessage does not carry the bot name, but the target
+        // chat is still scoped to whichever bot's allow-list admits it. If exactly one configured
+        // bot allows this chat, route through it (mirrors ResolveStreamingBot's agent-based
+        // fallback). This is what keeps multi-bot Telegram DMs delivering replies -- see #1681.
+        if (TelegramChannelAddress.TryDecode(message.ChannelAddress, out var chatId, out _))
+        {
+            var allowed = _bots.Values
+                .Where(b => IsChatAllowed(b.Config, chatId))
+                .ToList();
+
+            if (allowed.Count == 1)
+                return allowed[0];
+        }
+
         throw new InvalidOperationException("Multiple Telegram bots are configured. Outbound Telegram messages must specify metadata['telegramBotName'].");
     }
 
