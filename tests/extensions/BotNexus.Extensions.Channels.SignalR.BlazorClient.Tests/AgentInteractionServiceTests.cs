@@ -162,6 +162,54 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
+    public async Task SelectConversation_when_history_fetch_throws_marks_HistoryLoadFailed()
+    {
+        // #1697: a non-404 history fetch failure must flag the conversation so the message view can
+        // show a load-error empty state rather than a silent blank pane (and never spin forever).
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Boom",
+            HistoryLoaded = false
+        };
+
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<ConversationHistoryResponseDto?>(_ => throw new HttpRequestException("500"));
+
+        await _service.SelectConversationAsync("agent-1", "conv-1");
+
+        var conv = agent.Conversations["conv-1"];
+        conv.HistoryLoadFailed.ShouldBeTrue();
+        conv.IsLoadingHistory.ShouldBeFalse();
+        conv.HistoryLoaded.ShouldBeTrue(); // marked loaded so the view stops showing the spinner
+    }
+
+    [Fact]
+    public async Task SelectConversation_when_history_loads_empty_clears_HistoryLoadFailed()
+    {
+        // #1697: a successful load (even an empty one) leaves HistoryLoadFailed false so the view shows
+        // the neutral "No messages yet" state, not the error state.
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Empty",
+            HistoryLoaded = false,
+            HistoryLoadFailed = true // pretend a prior attempt failed
+        };
+
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", TotalCount: 0, Offset: 0, Limit: 200, Entries: []));
+
+        await _service.SelectConversationAsync("agent-1", "conv-1");
+
+        var conv = agent.Conversations["conv-1"];
+        conv.HistoryLoadFailed.ShouldBeFalse();
+        conv.Messages.Count.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task RefreshConversationsAsync_RepeatedCronRunsReuseSingleConversationKey()
     {
         var agent = _store.GetAgent("agent-1")!;

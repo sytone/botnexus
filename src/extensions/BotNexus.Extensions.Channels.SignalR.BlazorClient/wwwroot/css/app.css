@@ -1930,6 +1930,21 @@ html, body, #app {
     border-width: 2px;
 }
 
+/* Empty/error states for the conversation message view (#1697) */
+.chat-empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.chat-empty-state-error {
+    color: var(--error);
+}
+
 /* ── Markdown content styling (rendered assistant messages) ──────────── */
 
 .msg-content {

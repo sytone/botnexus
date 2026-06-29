@@ -149,6 +149,19 @@
             </div>
         }
 
+        @if (HasActiveConversation && !IsLoadingHistory && HistoryLoadFailed && !HasMessages)
+        {
+            <div class="chat-empty-state chat-empty-state-error" data-testid="chat-history-error" role="alert">
+                Could not load messages for this conversation. Try selecting it again or refreshing.
+            </div>
+        }
+        else if (HasActiveConversation && !IsLoadingHistory && !HasMessages)
+        {
+            <div class="chat-empty-state chat-empty-state-empty" data-testid="chat-no-messages" role="status">
+                No messages yet. Send a message to get started.
+            </div>
+        }
+
         @foreach (var msg in Messages)
         {
             @if (msg.IsBoundary)
@@ -440,6 +453,8 @@ private bool IsStreaming =>
     private bool IsLoadingHistory => ActiveConversation?.IsLoadingHistory ?? false;
     private string? ProcessingStage => Agent?.ProcessingStage;
     private IReadOnlyList<ChatMessage> Messages => ActiveConversation?.Messages ?? [];
+    private bool HasMessages => Messages.Count > 0;
+    private bool HistoryLoadFailed => ActiveConversation?.HistoryLoadFailed ?? false;
     private AskUserPromptState? PendingAskUserPrompt =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
