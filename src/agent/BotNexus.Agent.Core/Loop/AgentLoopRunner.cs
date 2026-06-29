@@ -196,6 +196,29 @@ public static class AgentLoopRunner
 
                 newMessages.Add(assistantMessage);
 
+                // #1709: opus (via github-copilot) sometimes leaks a tool call as invoke/tool_use
+                // XML in the assistant TEXT channel with a non-ToolUse finish reason, so the
+                // continuation guard below never dispatches it. Recover such leaked calls before the
+                // guard: parse the markup into real tool calls, strip it from the text, and promote
+                // the turn to ToolUse. Behaviour-preserving for a genuine ToolUse turn or any turn
+                // with no recoverable markup. Complements the Tier 1 sanitizer (#1699) that only
+                // strips the markup for delivery.
+                if (assistantMessage.FinishReason != StopReason.ToolUse
+                    && assistantMessage.ToolCalls is not { Count: > 0 })
+                {
+                    var recovery = LeakedToolCallRecovery.Recover(assistantMessage.Content);
+                    if (recovery.RecoveredCalls.Count > 0)
+                    {
+                        assistantMessage = assistantMessage with
+                        {
+                            Content = recovery.CleanedText,
+                            ToolCalls = recovery.RecoveredCalls,
+                            FinishReason = StopReason.ToolUse,
+                        };
+                        messages[messages.Count - 1] = assistantMessage;
+                        newMessages[newMessages.Count - 1] = assistantMessage;
+                    }
+                }
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
                 {
                     metrics.IncrementTurns();

@@ -54,37 +54,41 @@ public sealed class SessionsController : ControllerBase
         [FromQuery] bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
-        AgentId? parsedAgentId = null;
+        string? normalizedAgentId = null;
         if (!string.IsNullOrWhiteSpace(agentId))
-            parsedAgentId = AgentId.From(agentId);
+            normalizedAgentId = AgentId.From(agentId).Value;
 
-        IReadOnlyList<GatewaySession> sessions;
+        IReadOnlyList<SessionSummary> summaries;
         try
         {
-            sessions = await _sessions.ListAsync(parsedAgentId, cancellationToken);
+            // Use the transcript-free summary read so the portal sidebar never pays for
+            // hydrating every session's full transcript just to render metadata. The slow
+            // path (ListAsync -> EnumerateSessions) materialised the whole history table -
+            // seconds on a large DB. ListSummariesAsync derives MessageCount from a COUNT(*)
+            // aggregate (#1581 fixed warmup the same way; this closes the REST/portal gap).
+            // DateTimeOffset.MinValue keeps the historical "return every session" contract;
+            // agent/status filtering is applied below to preserve the previous behaviour.
+            summaries = await _sessions.ListSummariesAsync(DateTimeOffset.MinValue, cancellationToken);
         }
         catch (SessionStoreUnavailableException)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Session store temporarily unavailable. Please retry." });
         }
-        if (!includeInactive)
-        {
-            sessions = sessions
-                .Where(s => s.Status is SessionStatus.Active or SessionStatus.Suspended)
-                .ToArray();
-        }
 
-        var result = sessions.Select(s => new
+        IEnumerable<SessionSummary> filtered = summaries;
+        if (normalizedAgentId is not null)
+            filtered = filtered.Where(s => string.Equals(s.AgentId, normalizedAgentId, StringComparison.Ordinal));
+        if (!includeInactive)
+            filtered = filtered.Where(s => s.Status is SessionStatus.Active or SessionStatus.Suspended);
+
+        var result = filtered.Select(s => new
         {
-            sessionId = s.SessionId.Value,
-            agentId = s.AgentId.Value,
+            sessionId = s.SessionId,
+            agentId = s.AgentId,
             channelType = s.ChannelType?.Value,
-            // Phase 9 / P9-B-2 (#627): defensive projection — `Session.ConversationId`
-            // is non-nullable, but the unset sentinel `default(ConversationId)` will
-            // throw on `.Value`. Project default → null so portal/REST clients still see
-            // a meaningful response if a session is read in the narrow window before
-            // save-time backfill stamps it.
-            conversationId = s.ConversationId.IsInitialized() ? s.ConversationId.Value : null,
+            // Phase 9 / P9-B-2 (#627): conversationId is already projected to null for the
+            // unset sentinel by SessionSummary, so portal/REST clients see a stable shape.
+            conversationId = s.ConversationId,
             status = s.Status.ToString(),
             sessionType = s.SessionType.Value,
             isInteractive = s.IsInteractive,
