@@ -5,7 +5,6 @@ using BotNexus.Agent.Providers.Copilot.Telemetry;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
-using BotNexus.Agent.Providers.Copilot.Streaming;
 
 namespace BotNexus.Agent.Providers.Copilot.Messages;
 

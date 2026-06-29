@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text;
 using BotNexus.Agent.Providers.Copilot.Messages;
-using BotNexus.Agent.Providers.Copilot.Streaming;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Utilities;
