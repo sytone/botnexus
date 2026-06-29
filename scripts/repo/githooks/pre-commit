@@ -1,0 +1,29 @@
+#!/bin/sh
+# BotNexus pre-commit hook (versioned; activate with scripts/repo/install-hooks.ps1)
+# 1) #1602 guard: ensure core.bare did not flip BEFORE we build a commit (a bare repo
+#    silently rejects/relocates commits and can capture another branch's tip).
+# 2) Build + unit-test gate.
+set -e
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
+
+echo "🛡  Pre-commit: #1602 core.bare guard..."
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -File "$repo_root/scripts/repo/guard-bare.ps1" -Quiet || {
+    echo "❌ core.bare guard could not repair the repo. Aborting commit (#1602)."; exit 1; }
+fi
+# Belt-and-braces even without pwsh: a working clone must never be bare at commit time.
+bare=$(git config --local --get core.bare 2>/dev/null || echo false)
+if [ "$bare" = "true" ]; then
+  echo "❌ core.bare=true on a working clone (#1602). Run: git config core.bare false"; exit 1
+fi
+
+echo "🔧 Pre-commit: Building solution..."
+dotnet build BotNexus.slnx --nologo --verbosity minimal --tl:off || {
+  echo "❌ Build failed. Fix errors before committing."; exit 1; }
+echo "✅ Build succeeded."
+
+echo "🧪 Pre-commit: Running unit tests..."
+dotnet test BotNexus.slnx --nologo --verbosity minimal --tl:off --no-build || {
+  echo "❌ Tests failed. Fix failing tests before committing."; exit 1; }
+echo "✅ Commit validation complete."
+exit 0
