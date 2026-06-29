@@ -544,6 +544,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             return;
 
         conv.IsLoadingHistory = true;
+        conv.HistoryLoadFailed = false; // clear any prior failure before re-attempting (#1697)
         _store.NotifyChanged();
 
         try
@@ -567,6 +568,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         {
             _logger.LogError(ex, "LoadHistory failed for {ConversationId}", Sanitise(conversationId));
             conv.HistoryLoaded = true; // don't retry
+            conv.HistoryLoadFailed = true; // surface a load-error empty state instead of a blank pane (#1697)
         }
         finally
         {

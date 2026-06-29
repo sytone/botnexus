@@ -303,6 +303,10 @@ public sealed class ConversationState
     /// <summary>Whether a history fetch is currently in-flight.</summary>
     public bool IsLoadingHistory { get; set; }
 
+    /// <summary>Whether the last history fetch failed (non-404 error). Drives the load-error empty
+    /// state in the message view so a blank pane is never ambiguous between empty and broken (#1697).</summary>
+    public bool HistoryLoadFailed { get; set; }
+
     /// <summary>Whether there are older messages available for pagination.</summary>
     public bool HasMoreHistory { get; set; }
 
