@@ -25,7 +25,7 @@ namespace BotNexus.Gateway.Tests.Api;
 /// 2. Slow-path: no pin (first run, or pinned conversation was hard-deleted) → trigger
 ///    creates a fresh conversation with a random <c>conv:&lt;guid&gt;</c> id, titled after
 ///    the job, with the initiator derived from <c>CreatedBy</c> via
-///    <see cref="CitizenId.TryParse"/> or falling back to the agent itself.
+///    <see cref="CitizenId.TryParse(string?, out CitizenId)"/> or falling back to the agent itself.
 ///    Write-back of <c>ResolvedConversationId</c> lets the scheduler perform a CAS pinback.
 /// </summary>
 public sealed class CronTriggerTests
@@ -696,6 +696,190 @@ public sealed class CronTriggerTests
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    // -- #1722 Part A: near-empty wake sessions are not persisted --
+
+    /// <summary>
+    /// #1722 Part A: a cron wake whose turn returns NO_REPLY and makes no tool calls is a
+    /// no-op. The trigger must NOT persist user/assistant entries, and must dispose the
+    /// transient conv:&lt;guid&gt; conversation it just created (delete cron session + archive
+    /// conv) so empty wake runs do not accumulate sessions and 2 history rows each.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NoReplyTurn_NoTools_DoesNotPersistEntries_AndDisposesTransientConv()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "NO_REPLY" });
+
+        Conversation? createdConversation = null;
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        var sessionId = await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "wake up",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-noop"), JobName = "Noop" });
+
+        // No user/assistant entries ever land in a saved session.
+        if (lastSavedSession is not null)
+            lastSavedSession.History.Count.ShouldBe(0, "NO_REPLY + no tools is a no-op: entries must not be persisted (#1722)");
+
+        // Transient conversation we created this run is disposed: cron session deleted + conv archived.
+        createdConversation.ShouldNotBeNull();
+        sessionStore.Verify(s => s.DeleteAsync(sessionId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// #1722 Part A: whitespace-only content with no tools is also a no-op and disposed.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_WhitespaceTurn_NoTools_DisposesTransientConv()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "   \n\t " });
+
+        Conversation? createdConversation = null;
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        var sessionId = await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "wake up",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-ws"), JobName = "WsOnly" });
+
+        createdConversation.ShouldNotBeNull();
+        sessionStore.Verify(s => s.DeleteAsync(sessionId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// #1722 Part A: a NO_REPLY turn that nonetheless made tool calls did real work and must
+    /// persist as today - tools are the proxy-citizen's actual effect even when no user reply.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NoReplyTurn_WithToolCalls_PersistsAndKeepsConversation()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse
+            {
+                Content = "NO_REPLY",
+                ToolCalls = [new AgentToolCallInfo("call-1", "memory_save", false)]
+            });
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "do work then go quiet",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-tools"), JobName = "Tools" });
+
+        lastSavedSession.ShouldNotBeNull();
+        lastSavedSession!.History.Count.ShouldBe(2, "tool activity is real work: persist both entries");
+        sessionStore.Verify(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        conversationStore.Verify(s => s.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// #1722 Part A safety: a no-op turn on a pinned/human conversation must NEVER delete the
+    /// session or archive the conversation - only the trigger's own transient conv:&lt;guid&gt; is
+    /// disposable. Entries are still skipped (mirrors GatewayHost #1237), pin stays Active.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NoReplyTurn_PinnedConversation_NeverDeletedOrArchived()
+    {
+        var pinned = new Conversation
+        {
+            ConversationId = ConversationId.From("conv:pinned-noop"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "My custom conversation",
+            IsDefault = false,
+            IsPinned = true,
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "NO_REPLY" });
+        conversationStore
+            .Setup(s => s.GetAsync(pinned.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pinned);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "wake up",
+            request: new InternalTriggerRequest
+            {
+                CronJobId = JobId.From("job-pin"),
+                ConversationId = pinned.ConversationId
+            });
+
+        sessionStore.Verify(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        conversationStore.Verify(s => s.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Never);
+        pinned.Status.ShouldBe(ConversationStatus.Active, "a pinned conversation must never be archived by a cron no-op (#1722)");
+    }
+
+    /// <summary>
+    /// #1722 Part A: a real-work turn (non-empty, non-NO_REPLY content) persists exactly as
+    /// today - both entries saved, nothing deleted or archived.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_RealWorkTurn_PersistsAndNeverDisposes()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "do the thing",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-work"), JobName = "Work" });
+
+        lastSavedSession.ShouldNotBeNull();
+        lastSavedSession!.History.Count.ShouldBe(2);
+        sessionStore.Verify(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        conversationStore.Verify(s => s.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildMocksWithResponse(AgentResponse response)
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(response);
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        return (sessionStore, conversationStore, supervisor);
+    }
 
     private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildStandardMocks()
     {

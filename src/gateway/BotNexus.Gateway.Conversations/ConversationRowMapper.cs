@@ -4,6 +4,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Conversations;
 
@@ -97,12 +98,12 @@ internal static class ConversationRowMapper
     /// shifts the ordinals so the batched loader's <c>conversation_id</c>-prefixed projection can
     /// share this mapper.
     /// </summary>
-    internal static SessionParticipant? MapParticipant(SqliteDataReader reader, int offset)
+    internal static SessionParticipant? MapParticipant(SqliteDataReader reader, int offset, ILogger? logger = null)
     {
         var kindRaw = reader.GetString(offset + 0);
         var idValue = reader.GetString(offset + 1);
         var role = reader.IsDBNull(offset + 2) ? null : reader.GetString(offset + 2);
-        if (!TryComposeCitizen(kindRaw, idValue, out var citizen))
+        if (!TryComposeCitizen(kindRaw, idValue, out var citizen, logger))
             return null;
         return new SessionParticipant
         {
@@ -193,21 +194,20 @@ internal static class ConversationRowMapper
         return CitizenId.TryParse(raw, out var citizen) ? citizen : null;
     }
 
-    private static bool TryComposeCitizen(string kindRaw, string idValue, out CitizenId citizen)
+    // Composition (kind/id -> CitizenId) lives on the value type; the store only adapts the
+    // persisted kind label and surfaces an unknown species explicitly via the log rather than
+    // dropping the row silently. Behaviour is unchanged for known kinds: the row is still skipped.
+    private static bool TryComposeCitizen(string kindRaw, string idValue, out CitizenId citizen, ILogger? logger = null)
     {
         citizen = default;
-        if (!Enum.TryParse<CitizenKind>(kindRaw, ignoreCase: true, out var kind))
-            return false;
-        switch (kind)
+        if (!Enum.TryParse<CitizenKind>(kindRaw, ignoreCase: true, out var kind)
+            || !CitizenId.TryParse(kind, idValue, out citizen))
         {
-            case CitizenKind.User:
-                citizen = CitizenId.Of(UserId.From(idValue));
-                return true;
-            case CitizenKind.Agent:
-                citizen = CitizenId.Of(AgentId.From(idValue));
-                return true;
-            default:
-                return false;
+            logger?.LogWarning(
+                "Skipping conversation participant with unknown or invalid citizen kind '{CitizenKind}'.",
+                kindRaw);
+            return false;
         }
+        return true;
     }
 }

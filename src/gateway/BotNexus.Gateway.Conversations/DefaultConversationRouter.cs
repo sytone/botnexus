@@ -69,7 +69,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 // This ensures reconnects without explicit conversationId can find this conversation.
                 var existingBinding = direct.ChannelBindings.FirstOrDefault(b =>
                     b.ChannelType == channelType && b.ChannelAddress == channelAddress);
-                if (existingBinding is null)
+                if (existingBinding is null && ShouldPersistBinding(agentId, channelType, channelAddress))
                 {
                     direct.ChannelBindings.Add(new ChannelBinding
                     {
@@ -79,7 +79,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     });
                     reactivated = true;
                 }
-                else if (existingBinding.Mode == BindingMode.Muted)
+                else if (existingBinding is { Mode: BindingMode.Muted })
                 {
                     existingBinding.Mode = BindingMode.Interactive;
                     reactivated = true;
@@ -126,14 +126,19 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 IsDefault = false,
                 Initiator = initiator?.IsValid == true ? initiator : null
             };
-            var binding = new ChannelBinding
+            if (ShouldPersistBinding(agentId, channelType, channelAddress) &&
+                !conversation.ChannelBindings.Any(b =>
+                    b.ChannelType == channelType && b.ChannelAddress == channelAddress))
             {
-                ChannelType = channelType,
-                ChannelAddress = channelAddress,
-                Mode = BindingMode.Interactive
-            };
-            conversation.ChannelBindings.Add(binding);
-            addedBinding = true;
+                var binding = new ChannelBinding
+                {
+                    ChannelType = channelType,
+                    ChannelAddress = channelAddress,
+                    Mode = BindingMode.Interactive
+                };
+                conversation.ChannelBindings.Add(binding);
+                addedBinding = true;
+            }
             _logger.LogDebug(
                 "Creating new conversation for agent={AgentId} channel={ChannelType} address={ChannelAddress}",
                 agentId, channelType, channelAddress);
@@ -374,6 +379,16 @@ public sealed class DefaultConversationRouter : IConversationRouter
         // which would confuse diagnostics and potentially leak trigger metadata.
         return string.Equals(existingSession.ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase);
     }
+
+    // A conversation kickoff (ConversationTool) posts a synthetic inbound on the
+    // internal channel whose ChannelAddress equals the conversation AgentId. That
+    // artifact must never be persisted as a binding: an internal binding addressed by
+    // an agent name accumulates duplicates and poisons multi-bot routing (#1681).
+    private const string KickoffChannelType = "internal";
+
+    private static bool ShouldPersistBinding(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress) =>
+        !(string.Equals(channelType.Value, KickoffChannelType, StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(channelAddress.Value, agentId.Value, StringComparison.OrdinalIgnoreCase));
 
     private async Task<Conversation?> TryReopenArchivedConversationAsync(
         AgentId agentId,

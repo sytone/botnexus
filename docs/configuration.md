@@ -751,6 +751,33 @@ The `compaction` section tunes when and how a session's history is summarised to
 The section is optional — when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
 
 
+#### Conversation Auto-Title
+
+The gateway can auto-generate a short title for a conversation after its first user+assistant exchange, replacing the default `New conversation` label. Titling uses a cheap/fast auxiliary model and is best-effort: failures never affect the turn, and a conversation a user or agent has already titled is never overwritten.
+
+```json
+{
+  "gateway": {
+    "auxiliary": {
+      "titling": {
+        "enabled": true,
+        "model": null,
+        "timeoutSeconds": 30
+      }
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enabled` | bool | true | Master switch for auto-titling. When false, the gateway never schedules a title-generation call and conversations keep the default title until renamed. |
+| `model` | string? | null | Auxiliary model ID for title generation (e.g. `gpt-4o-mini`, `claude-haiku-3-5`). When null/empty the first registered model is used. |
+| `timeoutSeconds` | int | 30 | Per-call timeout for the best-effort titling request. A non-positive value falls back to 30. |
+
+The section is optional — when absent, titling is enabled with the defaults above. For backward compatibility `titling` may also be a bare string, which is treated as the model ID.
+
+
 #### Claim Auditor (anti-fabrication)
 
 The claim auditor is a post-turn verification control that inverts the trust model for side-effecting claims. After a run settles, it scans the agent's final user-facing message for **artifact-shaped claims** — "filed issue #N", "opened PR #N", a GitHub issue/PR URL, "wrote `path`", "sent", "deployed", "ran the audit … all checks passed" — and cross-checks each against the set of tools that were actually invoked during the run. A claim with no plausible backing tool call (for example narrating "I filed issue #1234" when no `shell`/`exec`/`github` tool ran that turn) is reported as an **unbacked claim**.

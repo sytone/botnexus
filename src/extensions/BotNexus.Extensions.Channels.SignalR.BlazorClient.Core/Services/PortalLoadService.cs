@@ -141,7 +141,7 @@ public sealed class PortalLoadService : IPortalLoadService
     /// </summary>
     private async Task LoadInitialHistoryAsync(AgentState agent, ConversationState conversation, CancellationToken cancellationToken)
     {
-        const int historyLimit = 200;
+        const int historyLimit = AgentInteractionService.DefaultHistoryPageSize;
 
         try
         {
@@ -170,9 +170,11 @@ public sealed class PortalLoadService : IPortalLoadService
             }
 
             var history = await _restClient.GetHistoryAsync(conversation.ConversationId, historyLimit, 0, cancellationToken);
-            if (history?.Entries is { Count: > 0 })
+            conversation.LoadedHistoryRows = 0;
+            conversation.HasMoreHistory = false;
+            if (history?.Entries is { Count: > 0 } historyEntries)
             {
-                foreach (var entry in history.Entries)
+                foreach (var entry in historyEntries)
                 {
                     if (entry.Kind == "boundary")
                     {
@@ -198,6 +200,13 @@ public sealed class PortalLoadService : IPortalLoadService
                     }
                 }
 
+                // Open on the most-recent 20 and allow scroll-up paging when a full page came back (#1691).
+                conversation.LoadedHistoryRows = historyEntries.Count;
+                conversation.HasMoreHistory = historyEntries.Count >= historyLimit;
+                conversation.HistoryLoaded = true;
+            }
+            else
+            {
                 conversation.HistoryLoaded = true;
             }
         }

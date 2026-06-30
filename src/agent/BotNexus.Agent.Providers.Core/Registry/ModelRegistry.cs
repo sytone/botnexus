@@ -92,6 +92,39 @@ public sealed class ModelRegistry
     }
 
     /// <summary>
+    /// Returns the thinking levels a model legitimately supports, so the UI can offer
+    /// only valid choices. Non-reasoning models support none; reasoning models support
+    /// the base tiers, and ExtraHigh/Max are added only when the model advertises the
+    /// extra-high capability.
+    /// </summary>
+    /// <param name="model">The model.</param>
+    /// <returns>The supported thinking levels.</returns>
+    public static IReadOnlyList<ThinkingLevel> GetSupportedThinkingLevels(LlmModel model)
+    {
+        if (!model.Reasoning)
+            return [];
+
+        if (model.SupportsExtraHighThinking)
+            return
+            [
+                ThinkingLevel.Minimal,
+                ThinkingLevel.Low,
+                ThinkingLevel.Medium,
+                ThinkingLevel.High,
+                ThinkingLevel.ExtraHigh,
+                ThinkingLevel.Max
+            ];
+
+        return
+        [
+            ThinkingLevel.Minimal,
+            ThinkingLevel.Low,
+            ThinkingLevel.Medium,
+            ThinkingLevel.High
+        ];
+    }
+
+    /// <summary>
     /// Executes models are equal.
     /// </summary>
     /// <param name="a">The a.</param>

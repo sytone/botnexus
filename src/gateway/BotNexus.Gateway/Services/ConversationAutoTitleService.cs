@@ -90,12 +90,14 @@ public sealed class ConversationAutoTitleService
     /// <param name="userText">The first user message text.</param>
     /// <param name="assistantText">The first assistant response text.</param>
     /// <param name="preferredModelId">Optional model ID from auxiliary.titling config.</param>
+    /// <param name="timeoutSeconds">Per-call timeout in seconds from auxiliary.titling config; non-positive falls back to 30.</param>
     public void TriggerBestEffort(
         ConversationId conversationId,
         AgentId agentId,
         string userText,
         string assistantText,
-        string? preferredModelId)
+        string? preferredModelId,
+        int timeoutSeconds = 30)
     {
         _ = Task.Run(async () =>
         {
@@ -103,7 +105,7 @@ public sealed class ConversationAutoTitleService
             {
                 await GenerateAndSaveAsync(
                     conversationId, agentId, userText, assistantText, preferredModelId,
-                    CancellationToken.None);
+                    timeoutSeconds, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -125,6 +127,7 @@ public sealed class ConversationAutoTitleService
         string userText,
         string assistantText,
         string? preferredModelId,
+        int timeoutSeconds,
         CancellationToken ct)
     {
         // Load conversation and check that it still has the default title.
@@ -156,9 +159,12 @@ public sealed class ConversationAutoTitleService
         AssistantMessage completion;
         try
         {
+            // A non-positive configured timeout would otherwise cancel the call instantly; clamp
+            // to the 30s default so a mis-set zero degrades to default behaviour, not no titling.
+            var effectiveTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
             completion = await _llmClient
                 .CompleteSimpleAsync(model, context)
-                .WaitAsync(TimeSpan.FromSeconds(30), ct)
+                .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)

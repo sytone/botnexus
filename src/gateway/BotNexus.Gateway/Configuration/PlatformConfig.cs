@@ -890,6 +890,14 @@ public sealed class AuxiliaryConfig
 public sealed class TitlingConfig
 {
     /// <summary>
+    /// Master switch for conversation auto-titling. When false the gateway never schedules a
+    /// title-generation call and conversations keep their default title until a user or agent
+    /// renames them. Defaults to true. Surfaced as config because the only prior way to disable
+    /// auto-titling was to leave no models registered, which is a poor proxy for intent.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
     /// Model ID to use for auto-generating conversation titles after the first user+assistant
     /// exchange. Supports any registered provider model ID (e.g. "gpt-4o-mini",
     /// "claude-haiku-3-5", "gemini-2.0-flash-lite").
@@ -899,7 +907,8 @@ public sealed class TitlingConfig
 
     /// <summary>
     /// Maximum time in seconds allowed for the best-effort title generation call before it is
-    /// abandoned. Defaults to 30 seconds.
+    /// abandoned. Defaults to 30 seconds. A non-positive value falls back to the 30s default so a
+    /// mis-set zero never produces a zero-timeout that cancels every call instantly.
     /// </summary>
     public int TimeoutSeconds { get; set; } = 30;
 }

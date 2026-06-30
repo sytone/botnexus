@@ -9,6 +9,13 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// </summary>
 public sealed class AgentInteractionService : IAgentInteractionService
 {
+    /// <summary>
+    /// Default history page size (#1691): open on the most-recent 20 messages and page backwards
+    /// 20 at a time on scroll-up. Used by both the initial load and <see cref="LoadMoreHistoryAsync"/>
+    /// so desktop and mobile share one paging contract.
+    /// </summary>
+    public const int DefaultHistoryPageSize = 20;
+
     private readonly IClientStateStore _store;
     private readonly GatewayHubConnection _hub;
     private readonly IGatewayRestClient _restClient;
@@ -358,6 +365,69 @@ public sealed class AgentInteractionService : IAgentInteractionService
             await LoadConversationHistoryAsync(agentId, conversationId);
     }
 
+    /// <inheritdoc />
+    public async Task<int> LoadMoreHistoryAsync(string agentId, string conversationId)
+    {
+        var agent = _store.GetAgent(agentId);
+        var conv = agent?.Conversations.GetValueOrDefault(conversationId);
+        if (conv is null)
+            return 0;
+
+        // Nothing older to fetch, a fetch is already in flight, or this is a virtual
+        // (cron/sub-agent) transcript that is not paged backwards. Treat as a no-op so a
+        // repeated scroll-to-top never double-fetches or pages a virtual session (#1691).
+        if (!conv.HasMoreHistory || conv.IsLoadingHistory || conv.IsVirtualSession)
+            return 0;
+
+        conv.IsLoadingHistory = true;
+        _store.NotifyChanged();
+        try
+        {
+            var response = await _restClient.GetHistoryAsync(
+                conversationId,
+                limit: DefaultHistoryPageSize,
+                offset: conv.LoadedHistoryRows);
+
+            var entries = response?.Entries;
+            if (entries is not { Count: > 0 })
+            {
+                // Empty older page => we have reached the start of the transcript.
+                conv.HasMoreHistory = false;
+                return 0;
+            }
+
+            // Prepend the older page above the current view. The store's PrependMessages keeps the
+            // id->index map consistent; the component layer preserves the visual scroll position so
+            // the viewport does not jump (#1691).
+            var older = entries.Select(ProjectConversationEntry).ToList();
+            _store.PrependMessages(conversationId, older);
+
+            conv.LoadedHistoryRows += entries.Count;
+            // Stop once a page returns fewer rows than the page size.
+            conv.HasMoreHistory = entries.Count >= DefaultHistoryPageSize;
+            return entries.Count;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            // The conversation vanished server-side mid-scroll; stop paging rather than loop on 404.
+            conv.HasMoreHistory = false;
+            _logger.LogWarning(ex, "LoadMoreHistory 404 for conversation {ConversationId}", Sanitise(conversationId));
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            // A transient failure should not wedge the view; leave HasMoreHistory set so a later
+            // scroll-up can retry, but surface nothing destructive to the timeline.
+            _logger.LogError(ex, "LoadMoreHistory failed for {ConversationId}", Sanitise(conversationId));
+            return 0;
+        }
+        finally
+        {
+            conv.IsLoadingHistory = false;
+            _store.NotifyChanged();
+        }
+    }
+
     public async Task RenameConversationAsync(string agentId, string? conversationId, string newTitle)
     {
         if (conversationId is null) return;
@@ -603,40 +673,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// </summary>
     private async Task LoadRegularHistoryAsync(AgentState agent, ConversationState conv, string conversationId)
     {
-        const int historyLimit = 200;
-        var response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit);
+        var response = await _restClient.GetHistoryAsync(conversationId, limit: DefaultHistoryPageSize, offset: 0);
 
-        if (response?.Entries is { Count: > 0 })
+        conv.ClearMessages();
+        conv.LoadedHistoryRows = 0;
+        conv.HasMoreHistory = false;
+
+        if (response?.Entries is { Count: > 0 } entries)
         {
-            conv.ClearMessages();
+            foreach (var entry in entries)
+                conv.AppendMessage(ProjectConversationEntry(entry));
 
-            foreach (var entry in response.Entries)
-            {
-                if (entry.Kind == "boundary")
-                {
-                    var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
-                    conv.AppendMessage(new ChatMessage("System", string.Empty, entry.Timestamp)
-                    {
-                        Kind = "boundary",
-                        BoundaryLabel = label,
-                        BoundarySessionId = entry.SessionId
-                    });
-                }
-                else if (entry.Kind == "compaction")
-                {
-                    var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
-                    conv.AppendMessage(new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
-                    {
-                        Kind = "compaction",
-                        BoundaryLabel = label,
-                        BoundarySessionId = entry.SessionId
-                    });
-                }
-                else
-                {
-                    conv.AppendMessage(ToChatMessage(entry));
-                }
-            }
+            // The endpoint pages backwards into older history; a full page means there is more to
+            // fetch on scroll-up, while a short page means we have reached the start (#1691).
+            conv.LoadedHistoryRows = entries.Count;
+            conv.HasMoreHistory = entries.Count >= DefaultHistoryPageSize;
         }
 
         conv.HistoryLoaded = true;
@@ -644,6 +695,39 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // Sync session ID
         if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
             agent.SessionId = conv.ActiveSessionId;
+    }
+
+    /// <summary>
+    /// Projects a single conversation-history entry into a displayable <see cref="ChatMessage"/>,
+    /// rendering session-boundary and compaction dividers as system rows and routing ordinary
+    /// entries through <see cref="ToChatMessage(ConversationHistoryEntryDto)"/>. Shared by the
+    /// initial load and the scroll-up load-more path so both build identical timelines (#1691).
+    /// </summary>
+    private static ChatMessage ProjectConversationEntry(ConversationHistoryEntryDto entry)
+    {
+        if (entry.Kind == "boundary")
+        {
+            var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
+            return new ChatMessage("System", string.Empty, entry.Timestamp)
+            {
+                Kind = "boundary",
+                BoundaryLabel = label,
+                BoundarySessionId = entry.SessionId
+            };
+        }
+
+        if (entry.Kind == "compaction")
+        {
+            var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
+            return new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
+            {
+                Kind = "compaction",
+                BoundaryLabel = label,
+                BoundarySessionId = entry.SessionId
+            };
+        }
+
+        return ToChatMessage(entry);
     }
 
     /// <summary>

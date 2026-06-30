@@ -1,29 +1,93 @@
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Conversations;
-using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BotNexus.Gateway.Tests;
 
 /// <summary>
-/// Tests for the canvas state REST API endpoints (Issue #1066).
-/// Verifies CRUD operations on conversation canvas state via ConversationsController.
+/// Tests for the canvas/canvas-state REST API endpoints (Issues #1066 + #1688).
+/// Verifies the six canvas endpoints on the dedicated <see cref="ConversationCanvasController"/>,
+/// which depends only on <see cref="IConversationStore"/> (plus optional canvas notifiers),
+/// exercising canvas-state CRUD against an in-memory store without the heavyweight
+/// conversation-CRUD dependency surface.
 /// </summary>
-public sealed class ConversationsControllerCanvasStateTests
+public sealed class ConversationCanvasControllerTests
 {
     private static readonly ConversationId TestConversationId = ConversationId.From("c_canvas_test");
+
+    // -- Canvas HTML -------------------------------------------------------
+
+    [Fact]
+    public async Task GetCanvas_NoHtml_Returns204()
+    {
+        var (controller, _) = CreateController();
+        var result = await controller.GetCanvas("test-agent", TestConversationId.Value, CancellationToken.None);
+        result.ShouldBeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task GetCanvas_WithHtml_ReturnsContent()
+    {
+        var (controller, store) = CreateController();
+        var conversation = await store.GetAsync(TestConversationId);
+        conversation!.CanvasHtml = "<h1>hi</h1>";
+        await store.SaveAsync(conversation);
+        var result = await controller.GetCanvas("test-agent", TestConversationId.Value, CancellationToken.None);
+        var content = result.ShouldBeOfType<ContentResult>();
+        content.Content.ShouldBe("<h1>hi</h1>");
+        content.ContentType.ShouldBe("text/html");
+    }
+
+    [Fact]
+    public async Task GetCanvas_NonExistentConversation_Returns404()
+    {
+        var (controller, _) = CreateController();
+        var result = await controller.GetCanvas("test-agent", "c_nonexistent", CancellationToken.None);
+        result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task PutCanvas_SavesHtml_Returns204()
+    {
+        var (controller, store) = CreateController();
+        var result = await controller.PutCanvas("test-agent", TestConversationId.Value, "<p>x</p>", CancellationToken.None);
+        result.ShouldBeOfType<NoContentResult>();
+        var conversation = await store.GetAsync(TestConversationId);
+        conversation!.CanvasHtml.ShouldBe("<p>x</p>");
+    }
+
+    [Fact]
+    public async Task PutCanvas_EmptyHtml_ClearsToNull()
+    {
+        var (controller, store) = CreateController();
+        var conversation = await store.GetAsync(TestConversationId);
+        conversation!.CanvasHtml = "<p>x</p>";
+        await store.SaveAsync(conversation);
+        await controller.PutCanvas("test-agent", TestConversationId.Value, "", CancellationToken.None);
+        var updated = await store.GetAsync(TestConversationId);
+        updated!.CanvasHtml.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PutCanvas_NonExistentConversation_Returns404()
+    {
+        var (controller, _) = CreateController();
+        var result = await controller.PutCanvas("test-agent", "c_nonexistent", "<p>x</p>", CancellationToken.None);
+        result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    // -- Canvas state CRUD -------------------------------------------------
 
     [Fact]
     public async Task GetCanvasState_EmptyConversation_ReturnsEmptyObject()
     {
         var (controller, _) = CreateController();
-
         var result = await controller.GetCanvasState(TestConversationId.Value, CancellationToken.None);
-
         var okResult = result.ShouldBeOfType<OkObjectResult>();
         var state = okResult.Value as Dictionary<string, JsonElement>;
         state.ShouldNotBeNull();
@@ -34,9 +98,7 @@ public sealed class ConversationsControllerCanvasStateTests
     public async Task GetCanvasState_NonExistentConversation_Returns404()
     {
         var (controller, _) = CreateController();
-
         var result = await controller.GetCanvasState("c_nonexistent", CancellationToken.None);
-
         result.ShouldBeOfType<NotFoundResult>();
     }
 
@@ -46,9 +108,7 @@ public sealed class ConversationsControllerCanvasStateTests
         var (controller, store) = CreateController();
         var value = JsonDocument.Parse("42").RootElement.Clone();
         await store.SetCanvasStateKeyAsync(TestConversationId, "counter", value);
-
         var result = await controller.GetCanvasStateKey(TestConversationId.Value, "counter", CancellationToken.None);
-
         var okResult = result.ShouldBeOfType<OkObjectResult>();
         var returnedValue = (JsonElement)okResult.Value!;
         returnedValue.GetInt32().ShouldBe(42);
@@ -58,9 +118,7 @@ public sealed class ConversationsControllerCanvasStateTests
     public async Task GetCanvasStateKey_MissingKey_Returns404()
     {
         var (controller, _) = CreateController();
-
         var result = await controller.GetCanvasStateKey(TestConversationId.Value, "missing", CancellationToken.None);
-
         result.ShouldBeOfType<NotFoundResult>();
     }
 
@@ -68,9 +126,7 @@ public sealed class ConversationsControllerCanvasStateTests
     public async Task GetCanvasStateKey_NonExistentConversation_Returns404()
     {
         var (controller, _) = CreateController();
-
         var result = await controller.GetCanvasStateKey("c_nonexistent", "key", CancellationToken.None);
-
         result.ShouldBeOfType<NotFoundResult>();
     }
 
@@ -79,12 +135,8 @@ public sealed class ConversationsControllerCanvasStateTests
     {
         var (controller, store) = CreateController();
         var value = JsonDocument.Parse("\"hello\"").RootElement.Clone();
-
         var result = await controller.SetCanvasStateKey(TestConversationId.Value, "greeting", value, CancellationToken.None);
-
         result.ShouldBeOfType<OkResult>();
-
-        // Verify persisted
         var state = await store.GetCanvasStateAsync(TestConversationId);
         state.ShouldNotBeNull();
         state!["greeting"].GetString().ShouldBe("hello");
@@ -96,10 +148,8 @@ public sealed class ConversationsControllerCanvasStateTests
         var (controller, store) = CreateController();
         var first = JsonDocument.Parse("1").RootElement.Clone();
         var second = JsonDocument.Parse("2").RootElement.Clone();
-
         await controller.SetCanvasStateKey(TestConversationId.Value, "version", first, CancellationToken.None);
         var result = await controller.SetCanvasStateKey(TestConversationId.Value, "version", second, CancellationToken.None);
-
         result.ShouldBeOfType<OkResult>();
         var state = await store.GetCanvasStateAsync(TestConversationId);
         state!["version"].GetInt32().ShouldBe(2);
@@ -110,10 +160,20 @@ public sealed class ConversationsControllerCanvasStateTests
     {
         var (controller, _) = CreateController();
         var value = JsonDocument.Parse("true").RootElement.Clone();
-
         var result = await controller.SetCanvasStateKey("c_nonexistent", "key", value, CancellationToken.None);
-
         result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task SetCanvasStateKey_NotifiesCanvasNotifiers()
+    {
+        var notifier = new RecordingCanvasNotifier();
+        var (controller, _) = CreateController(notifier);
+        var value = JsonDocument.Parse("7").RootElement.Clone();
+        await controller.SetCanvasStateKey(TestConversationId.Value, "k", value, CancellationToken.None);
+        notifier.Changes.Count.ShouldBe(1);
+        notifier.Changes[0].Key.ShouldBe("k");
+        notifier.Changes[0].Value.ShouldNotBeNull();
     }
 
     [Fact]
@@ -122,12 +182,8 @@ public sealed class ConversationsControllerCanvasStateTests
         var (controller, store) = CreateController();
         var value = JsonDocument.Parse("\"temp\"").RootElement.Clone();
         await store.SetCanvasStateKeyAsync(TestConversationId, "temp", value);
-
         var result = await controller.DeleteCanvasStateKey(TestConversationId.Value, "temp", CancellationToken.None);
-
         result.ShouldBeOfType<NoContentResult>();
-
-        // Verify deleted
         var state = await store.GetCanvasStateAsync(TestConversationId);
         state.ShouldNotBeNull();
         state!.ContainsKey("temp").ShouldBeFalse();
@@ -137,10 +193,7 @@ public sealed class ConversationsControllerCanvasStateTests
     public async Task DeleteCanvasStateKey_MissingKey_Returns204()
     {
         var (controller, _) = CreateController();
-
-        // Deleting a non-existent key is idempotent
         var result = await controller.DeleteCanvasStateKey(TestConversationId.Value, "no_such_key", CancellationToken.None);
-
         result.ShouldBeOfType<NoContentResult>();
     }
 
@@ -148,13 +201,21 @@ public sealed class ConversationsControllerCanvasStateTests
     public async Task DeleteCanvasStateKey_NonExistentConversation_Returns404()
     {
         var (controller, _) = CreateController();
-
         var result = await controller.DeleteCanvasStateKey("c_nonexistent", "key", CancellationToken.None);
-
         result.ShouldBeOfType<NotFoundResult>();
     }
 
-    private static (ConversationsController, InMemoryConversationStore) CreateController()
+    [Fact]
+    public async Task DeleteCanvasStateKey_NotifiesCanvasNotifiers_WithNullValue()
+    {
+        var notifier = new RecordingCanvasNotifier();
+        var (controller, _) = CreateController(notifier);
+        await controller.DeleteCanvasStateKey(TestConversationId.Value, "k", CancellationToken.None);
+        notifier.Changes.Count.ShouldBe(1);
+        notifier.Changes[0].Value.ShouldBeNull();
+    }
+
+    private static (ConversationCanvasController, InMemoryConversationStore) CreateController(IAgentCanvasNotifier? notifier = null)
     {
         var store = new InMemoryConversationStore();
         store.CreateAsync(new Conversation
@@ -166,9 +227,22 @@ public sealed class ConversationsControllerCanvasStateTests
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         }).GetAwaiter().GetResult();
-
-        var sessions = new InMemorySessionStore();
-        var controller = new ConversationsController(store, sessions);
+        var notifiers = notifier is null ? null : new[] { notifier };
+        var controller = new ConversationCanvasController(store, notifiers);
         return (controller, store);
+    }
+
+    private sealed class RecordingCanvasNotifier : IAgentCanvasNotifier
+    {
+        public List<(string Key, object? Value)> Changes { get; } = [];
+
+        public Task NotifyCanvasUpdatedAsync(string agentId, string conversationId, string html, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task NotifyCanvasStateChangedAsync(string conversationId, string key, object? value, CancellationToken cancellationToken = default)
+        {
+            Changes.Add((key, value));
+            return Task.CompletedTask;
+        }
     }
 }
