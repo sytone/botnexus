@@ -78,6 +78,43 @@ public sealed class DefaultSubAgentManagerActivityTests
         activity.Activities.Any(HasLifecycleEvent("subagent_killed")).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task ActiveSubAgentCount_CountsRunningAcrossDifferentParents_ExcludesFinished()
+    {
+        // Platform-wide aggregate (issue #1692): the manager registry holds running sub-agents for
+        // every parent session, so ActiveSubAgentCount must total Running records across DISTINCT
+        // parents - unlike ListAsync, which is parent-scoped. Hanging handles keep each spawn in the
+        // Running state until we explicitly kill one, so we can assert the count moves with real
+        // in-flight work (a kill drops the active count by one).
+        var manager = CreateManager(CreateHangingHandle(), out _, out _);
+
+        manager.ActiveSubAgentCount.ShouldBe(0);
+
+        var first = await manager.SpawnAsync(CreateSpawnRequestFor("parent-session"));
+        await manager.SpawnAsync(CreateSpawnRequestFor("parent-session-2"));
+
+        // Two running sub-agents under two different parent sessions -> the platform-wide count is 2,
+        // even though each parent's ListAsync would only see one.
+        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 2, TimeSpan.FromSeconds(2));
+        manager.ActiveSubAgentCount.ShouldBe(2);
+        (await manager.ListAsync(SessionId.From("parent-session"))).Count.ShouldBe(1);
+        (await manager.ListAsync(SessionId.From("parent-session-2"))).Count.ShouldBe(1);
+
+        // Killing one completes that record; the platform-wide active count must exclude it.
+        (await manager.KillAsync(first.SubAgentId, SessionId.From("parent-session"))).ShouldBeTrue();
+
+        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 1, TimeSpan.FromSeconds(2));
+        manager.ActiveSubAgentCount.ShouldBe(1);
+    }
+    private static SubAgentSpawnRequest CreateSpawnRequestFor(string parentSessionId)
+        => new()
+        {
+            ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
+            ParentSessionId = BotNexus.Domain.Primitives.SessionId.From(parentSessionId),
+            Task = "Do background work",
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conv")
+        };
     private static DefaultSubAgentManager CreateManager(
         Mock<IAgentHandle> childHandle,
         out Mock<IAgentSupervisor> supervisor,
