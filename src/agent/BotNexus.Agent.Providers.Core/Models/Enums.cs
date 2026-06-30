@@ -52,7 +52,8 @@ public enum ThinkingLevel
     [JsonStringEnumMemberName("low")] Low,
     [JsonStringEnumMemberName("medium")] Medium,
     [JsonStringEnumMemberName("high")] High,
-    [JsonStringEnumMemberName("xhigh")] ExtraHigh
+    [JsonStringEnumMemberName("xhigh")] ExtraHigh,
+    [JsonStringEnumMemberName("max")] Max
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<CacheRetention>))]

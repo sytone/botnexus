@@ -85,16 +85,16 @@ public class AnthropicProviderTests
     }
 
     [Theory]
-    [InlineData("claude-opus-4-6", "max")]
-    [InlineData("claude-opus-4.6", "max")]
-    [InlineData("claude-sonnet-4-5", "high")]
-    [InlineData("claude-haiku-4-5", "high")]
-    public async Task StreamSimple_ExtraHigh_UsesExpectedReasoningGuard(string modelId, string expectedEffort)
+    [InlineData("claude-opus-4-6", true, "max")]
+    [InlineData("claude-opus-4.6", true, "max")]
+    [InlineData("claude-sonnet-4-5", false, "high")]
+    [InlineData("claude-haiku-4-5", false, "high")]
+    public async Task StreamSimple_ExtraHigh_UsesExpectedReasoningGuard(string modelId, bool supportsExtraHigh, string expectedEffort)
     {
         var handler = new RecordingHandler();
         var provider = new AnthropicProvider(new HttpClient(handler));
         // Use high maxTokens so thinking budget isn't clamped by model limits
-        var model = TestHelpers.MakeModel(id: modelId, reasoning: true, maxTokens: 200000);
+        var model = TestHelpers.MakeModel(id: modelId, reasoning: true, maxTokens: 200000, supportsExtraHigh: supportsExtraHigh);
         var context = TestHelpers.MakeContext();
 
         var stream = provider.StreamSimple(model, context, new Core.SimpleStreamOptions

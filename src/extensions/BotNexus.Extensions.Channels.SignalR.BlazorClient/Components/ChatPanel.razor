@@ -134,6 +134,22 @@
     }
 
     <div class="messages-container" data-testid="chat-messages" @ref="_messagesContainer">
+        @if (HasMoreHistory)
+        {
+            <div class="history-load-more" data-testid="chat-load-more">
+                @if (IsLoadingMore)
+                {
+                    <div class="loading-spinner small"></div>
+                    <span>Loading older messages…</span>
+                }
+                else
+                {
+                    <button class="load-more-btn" data-testid="chat-load-more-btn" @onclick="LoadMoreHistory">
+                        Load older messages
+                    </button>
+                }
+            </div>
+        }
         @if (IsLoadingHistory)
         {
             <div class="history-loading">
@@ -433,6 +449,7 @@
     public void Dispose()
     {
         Store.OnChanged -= HandleStoreChanged;
+        _loadMoreRef?.Dispose();
     }
     private ConversationState? ActiveConversation =>
         Agent?.ActiveConversationId is not null ? Agent.Conversations.GetValueOrDefault(Agent.ActiveConversationId) : null;
@@ -455,6 +472,8 @@ private bool IsStreaming =>
     private IReadOnlyList<ChatMessage> Messages => ActiveConversation?.Messages ?? [];
     private bool HasMessages => Messages.Count > 0;
     private bool HistoryLoadFailed => ActiveConversation?.HistoryLoadFailed ?? false;
+    private bool HasMoreHistory => ActiveConversation?.HasMoreHistory ?? false;
+    private bool IsLoadingMore => _isLoadingMore;
     private AskUserPromptState? PendingAskUserPrompt =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
@@ -464,6 +483,10 @@ private bool IsStreaming =>
     private string _inputText = "";
     private ElementReference _messagesContainer;
         private ElementReference _inputElement;
+    // #1691: load-more (scroll-up pagination) state.
+    private bool _isLoadingMore;
+    private bool _loadMoreObserverBound;
+    private DotNetObjectReference<ChatPanel>? _loadMoreRef;
 
     private async Task HandleInputChanged()
     {
@@ -770,6 +793,15 @@ private bool IsStreaming =>
                 _enterPreventionBound = true;
             }
 
+            // #1691: attach the scroll-to-top observer once so scrolling up fetches the next older
+            // page. Idempotent on the JS side too; bind only after the container exists.
+            if (!_loadMoreObserverBound)
+            {
+                _loadMoreRef ??= DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("chatScroll.observeTopForLoadMore", _messagesContainer, _loadMoreRef);
+                _loadMoreObserverBound = true;
+            }
+
             var needsRender = false;
             foreach (var msg in Messages.ToList())
             {
@@ -900,6 +932,46 @@ private bool IsStreaming =>
         _inputText = "";
         UpdateCommandPalette();
         await Interaction.InterruptAndSteerAsync(AgentId, message);
+    }
+
+    // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.
+    // Fetches and prepends the next older page, preserving the visual scroll position so the view
+    // does not jump. The shared paging logic lives in AgentInteractionService.LoadMoreHistoryAsync.
+    [JSInvokable]
+    public async Task OnScrolledToTop() => await LoadMoreHistory();
+
+    private async Task LoadMoreHistory()
+    {
+        if (_isLoadingMore || ActiveConversationId is not { } convId)
+            return;
+        if (ActiveConversation is not { HasMoreHistory: true })
+            return;
+
+        _isLoadingMore = true;
+        StateHasChanged();
+        double previousHeight = 0;
+        try
+        {
+            try { previousHeight = await JS.InvokeAsync<double>("chatScroll.captureScrollHeight", _messagesContainer); }
+            catch (JSDisconnectedException) { }
+
+            var added = await Interaction.LoadMoreHistoryAsync(AgentId, convId);
+
+            // Suppress the auto-scroll-to-bottom that a message-count jump would otherwise trigger,
+            // then pin the previously-visible message in place after the prepend renders.
+            if (added > 0)
+            {
+                _lastRenderedMessageCount = Messages.Count;
+                StateHasChanged();
+                try { await JS.InvokeVoidAsync("chatScroll.restoreScrollAfterPrepend", _messagesContainer, previousHeight); }
+                catch (JSDisconnectedException) { }
+            }
+        }
+        finally
+        {
+            _isLoadingMore = false;
+            StateHasChanged();
+        }
     }
 
 

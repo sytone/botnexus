@@ -330,4 +330,69 @@ public sealed class MobileChatPageTests : IDisposable
         Assert.Contains("**not rendered**", cut.Markup);
     }
 
+    // -- #1691: scroll-up history pagination (load-more) ---------------------
+
+    [Fact]
+    public void Mobile_load_more_affordance_is_shown_when_more_history_exists()
+    {
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "conv-1",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "C",
+            HistoryLoaded = true,
+            HasMoreHistory = true,
+            LoadedHistoryRows = 20
+        };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.ActiveAgentId.Returns("agent-1");
+        _store.GetAgent("agent-1").Returns(agent);
+        _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.NotNull(cut.Find("[data-testid='mobile-load-more']"));
+    }
+
+    [Fact]
+    public async Task Mobile_scroll_to_top_fetches_next_page_via_shared_service()
+    {
+        // #1691: mobile and desktop share AgentInteractionService.LoadMoreHistoryAsync. The mobile
+        // scroll observer fires OnScrolledToTop, which must delegate to that single implementation.
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "conv-1",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "C",
+            HistoryLoaded = true,
+            HasMoreHistory = true,
+            LoadedHistoryRows = 20
+        };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.ActiveAgentId.Returns("agent-1");
+        _store.GetAgent("agent-1").Returns(agent);
+        _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
+        _interaction.LoadMoreHistoryAsync("agent-1", "conv-1").Returns(20);
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Instance.OnScrolledToTop());
+
+        await _interaction.Received(1).LoadMoreHistoryAsync("agent-1", "conv-1");
+    }
+
 }

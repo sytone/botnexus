@@ -25,4 +25,8 @@ public record ThinkingBudgets
     /// Gets or sets the extra high.
     /// </summary>
     public int? ExtraHigh { get; init; }
+    /// <summary>
+    /// Gets or sets the max (top thinking tier).
+    /// </summary>
+    public int? Max { get; init; }
 }

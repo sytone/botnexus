@@ -29,6 +29,13 @@ namespace BotNexus.Agent.Core.Configuration;
 /// When provided and enabled, the agent's final message is audited for artifact-shaped claims that
 /// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
 /// </param>
+/// <param name="MaybeCompactAsync">
+/// Optional best-effort auto-compaction hook (#1710). When set it is awaited at the top of each
+/// outer-loop iteration (after a turn settles, before the next steering drain) so a single long
+/// dispatch -- cron or an autonomous follow-up loop -- re-checks the compaction threshold instead
+/// of growing the transcript unbounded until provider overflow. Failures are swallowed and the
+/// loop continues. Null means no mid-loop re-check (prior behaviour).
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -48,4 +55,5 @@ public record AgentLoopConfig(
     int? MaxRetryDelayMs = null,
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
-    ClaimAuditOptions? ClaimAudit = null);
+    ClaimAuditOptions? ClaimAudit = null,
+    Func<CancellationToken, Task>? MaybeCompactAsync = null);

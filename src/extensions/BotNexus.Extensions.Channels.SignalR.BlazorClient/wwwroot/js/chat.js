@@ -70,6 +70,41 @@ window.chatScroll = {
             }
         });
         element._preventEnterBound = true;
+    },
+
+    /**
+     * #1691: watches the scroll container and invokes the .NET OnScrolledToTop callback when the
+     * user scrolls near the top, so the next older page of history can be fetched and prepended.
+     * Idempotent per element (binds once). Uses a small top threshold so the fetch starts just
+     * before the very top is reached, giving a smoother infinite-scroll feel.
+     */
+    observeTopForLoadMore: function (element, dotNetRef) {
+        if (!element || typeof element.addEventListener !== 'function' || element._loadMoreBound) return;
+        var threshold = 60;
+        element.addEventListener('scroll', function () {
+            if (element.scrollTop <= threshold) {
+                try { dotNetRef.invokeMethodAsync('OnScrolledToTop'); } catch (e) { /* ref disposed */ }
+            }
+        });
+        element._loadMoreBound = true;
+    },
+
+    /** #1691: captures scrollHeight before an older page is prepended so the view can be restored. */
+    captureScrollHeight: function (element) {
+        return element ? element.scrollHeight : 0;
+    },
+
+    /**
+     * #1691: after older messages are prepended at the top, keep the previously-visible message in
+     * place by shifting scrollTop down by the height the prepend added (new height minus the height
+     * captured before the prepend). Prevents the viewport from jumping to the top.
+     */
+    restoreScrollAfterPrepend: function (element, previousHeight) {
+        if (!element) return;
+        var added = element.scrollHeight - previousHeight;
+        if (added > 0) {
+            element.scrollTop = element.scrollTop + added;
+        }
     }
 };
 

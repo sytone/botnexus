@@ -29,10 +29,12 @@ public sealed class SkillManagerToolContributor : IAgentToolContributor
         var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var agentSkillsDir = Path.Combine(homeDir, ".botnexus", "agents", context.Descriptor.AgentId.Value, "skills");
         var workspaceSkillsDir = Path.Combine(context.WorkspacePath, "skills");
+        // Shared (all-agent) skills live at ~/.botnexus/skills. Writes there require AllowSharedSkillManagement.
+        var globalSkillsDir = Path.Combine(homeDir, ".botnexus", "skills");
 
         IReadOnlyList<IAgentTool> tools =
         [
-            new SkillManagerTool(agentSkillsDir, workspaceSkillsDir, config)
+            new SkillManagerTool(agentSkillsDir, workspaceSkillsDir, globalSkillsDir, config)
         ];
 
         return Task.FromResult(new AgentToolContribution(tools));
