@@ -48,4 +48,12 @@ public sealed class SkillsConfig
     /// Set to false to explicitly prevent skill deletion.
     /// </summary>
     public bool AllowSkillDeletion { get; set; } = true;
+
+    /// <summary>
+    /// Allow the agent to create, edit, and delete SHARED (all-agent) skills under the global
+    /// skills directory via the skill_manage tool with scope "shared". Defaults to FALSE.
+    /// Shared skills are visible to every agent, so a change here has a wide blast radius --
+    /// this gate is opt-in. Deleting shared skills additionally requires <see cref="AllowSkillDeletion"/>.
+    /// </summary>
+    public bool AllowSharedSkillManagement { get; set; }
 }

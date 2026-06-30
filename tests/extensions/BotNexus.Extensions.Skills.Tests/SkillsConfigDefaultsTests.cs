@@ -31,4 +31,11 @@ public sealed class SkillsConfigDefaultsTests
         var config = new SkillsConfig { AllowSkillCreation = false };
         Assert.False(config.AllowSkillCreation, "AllowSkillCreation=false should remain false when explicitly set");
     }
+
+    [Fact]
+    public void AllowSharedSkillManagement_DefaultsToFalse()
+    {
+        var config = new SkillsConfig();
+        Assert.False(config.AllowSharedSkillManagement, "AllowSharedSkillManagement should default to false -- shared writes are opt-in");
+    }
 }

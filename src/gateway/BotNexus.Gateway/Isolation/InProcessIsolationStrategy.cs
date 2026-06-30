@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -514,6 +514,33 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 initialMessages.Count, summaries.Count, context.History.Count, context.SessionId);
         }
 
+        // #1710: best-effort mid-loop auto-compaction hook. ShouldCompact ran ONLY pre-turn at the
+        // gateway, so a single long dispatch (cron / autonomous follow-up loop) grew the transcript
+        // past the token threshold unchecked until provider overflow. The loop now re-checks between
+        // outer iterations: when over threshold, compact and resync history via the coordinator (the
+        // existing TryReplaceHistoryFromSnapshot apply + handle eviction). Mirrors PrepareTurnAsync.
+        // CompactionOptions and the compactor are consumed read-only (#1687). Null when the supporting
+        // services are unavailable, preserving prior behaviour.
+        Func<CancellationToken, Task>? maybeCompactAsync = null;
+        var compactor = _serviceProvider.GetService<ISessionCompactor>();
+        var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
+        var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
+        if (compactor is not null && compactionCoordinator is not null && compactionOptions is not null && sessionStore is not null)
+        {
+            var compactSessionId = context.SessionId;
+            var compactAgentId = descriptor.AgentId;
+            maybeCompactAsync = async cancellationToken =>
+            {
+                var liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
+                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, compactionOptions.CurrentValue))
+                {
+                    return;
+                }
+
+                await compactionCoordinator.CompactAsync(compactAgentId, liveSession, cancellationToken).ConfigureAwait(false);
+            };
+        }
+
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
                 SystemPrompt: resumeSystemPrompt,
@@ -543,7 +570,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId.Value,
             ToolTimeout: ResolveToolTimeout(descriptor),
-            ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit));
+            ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit),
+            MaybeCompactAsync: maybeCompactAsync);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
         var inProcessHandle = new InProcessAgentHandle(
