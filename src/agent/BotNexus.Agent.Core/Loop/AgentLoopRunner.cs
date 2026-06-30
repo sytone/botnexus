@@ -140,6 +140,13 @@ public static class AgentLoopRunner
 
         while (true)
         {
+            // #1710: re-check auto-compaction at the top of every outer iteration. A single long
+            // dispatch (cron / autonomous follow-up loop) can blow past the token threshold mid-run;
+            // pre-turn ShouldCompact at the gateway never sees it, so the transcript grew unbounded
+            // until provider overflow. The hook compacts off-loop and resyncs history; best-effort so
+            // a compactor failure never aborts the run.
+            await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
+
             var pendingMessages = followUpSeed.Count > 0
                 ? followUpSeed.ToList()
                 : (config.SkipInitialSteeringPoll
@@ -362,6 +369,32 @@ public static class AgentLoopRunner
         }
 
         return await getMessages(cancellationToken).ConfigureAwait(false) ?? [];
+    }
+
+    /// <summary>
+    /// Best-effort mid-loop auto-compaction (#1710). Awaits <see cref="AgentLoopConfig.MaybeCompactAsync"/>
+    /// when configured so a long dispatch re-checks the compaction threshold between outer iterations.
+    /// A failure is swallowed so the loop continues; cancellation propagates.
+    /// </summary>
+    private static async Task MaybeCompactAsync(AgentLoopConfig config, CancellationToken cancellationToken)
+    {
+        if (config.MaybeCompactAsync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await config.MaybeCompactAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Compaction is best-effort: a failure must never abort the run.
+        }
     }
 
     private static async Task<AssistantAgentMessage> ExecuteWithRetryAsync(

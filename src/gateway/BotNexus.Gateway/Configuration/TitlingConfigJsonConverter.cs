@@ -27,6 +27,8 @@ internal sealed class TitlingConfigJsonConverter : JsonConverter<TitlingConfig?>
             var root = doc.RootElement;
 
             var config = new TitlingConfig();
+            if (root.TryGetProperty("enabled", out var enabledEl) || root.TryGetProperty("Enabled", out enabledEl))
+                config.Enabled = enabledEl.GetBoolean();
             if (root.TryGetProperty("model", out var modelEl) || root.TryGetProperty("Model", out modelEl))
                 config.Model = modelEl.GetString();
             if (root.TryGetProperty("timeoutSeconds", out var timeoutEl) || root.TryGetProperty("TimeoutSeconds", out timeoutEl))
@@ -47,6 +49,7 @@ internal sealed class TitlingConfigJsonConverter : JsonConverter<TitlingConfig?>
         }
 
         writer.WriteStartObject();
+        writer.WriteBoolean("enabled", value.Enabled);
         if (value.Model is not null)
         {
             writer.WriteString("model", value.Model);

@@ -48,6 +48,7 @@ public sealed class AuxiliarySchemaContributor : IConfigSchemaContributor
     {
         titling = new
         {
+            enabled = true,
             model = (string?)null,
             timeoutSeconds = 30
         }

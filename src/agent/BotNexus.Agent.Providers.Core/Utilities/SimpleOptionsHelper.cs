@@ -14,7 +14,8 @@ public static class SimpleOptionsHelper
         [ThinkingLevel.Low] = 2048,
         [ThinkingLevel.Medium] = 8192,
         [ThinkingLevel.High] = 16384,
-        [ThinkingLevel.ExtraHigh] = 16384
+        [ThinkingLevel.ExtraHigh] = 16384,
+        [ThinkingLevel.Max] = 32768
     };
 
     /// <summary>
@@ -40,10 +41,11 @@ public static class SimpleOptionsHelper
 
     /// <summary>
     /// Clamp reasoning level to High for models that don't support ExtraHigh.
+    /// Both ExtraHigh and Max collapse to High on models without the capability.
     /// </summary>
     public static ThinkingLevel? ClampReasoning(ThinkingLevel? level)
     {
-        if (level == ThinkingLevel.ExtraHigh)
+        if (level is ThinkingLevel.ExtraHigh or ThinkingLevel.Max)
             return ThinkingLevel.High;
         return level;
     }
@@ -65,6 +67,7 @@ public static class SimpleOptionsHelper
             ThinkingLevel.Medium => customBudgets.Medium,
             ThinkingLevel.High => customBudgets.High,
             ThinkingLevel.ExtraHigh => customBudgets.ExtraHigh,
+            ThinkingLevel.Max => customBudgets.Max,
             _ => null
         };
     }

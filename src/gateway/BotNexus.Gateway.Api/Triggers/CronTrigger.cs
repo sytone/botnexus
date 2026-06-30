@@ -18,7 +18,7 @@ namespace BotNexus.Gateway.Api.Triggers;
 ///   reuses that conversation verbatim — no per-agent enumeration, no title matching, no composite-id construction.
 /// • Otherwise the trigger creates a fresh conversation with a random GUID id, titled after the job, with the
 ///   initiator derived from <see cref="InternalTriggerRequest.CreatedBy"/> (parsed via
-///   <see cref="CitizenId.TryParse"/>) or falling back to the agent itself for system-provisioned jobs.
+///   <see cref="CitizenId.TryParse(string?, out CitizenId)"/>) or falling back to the agent itself for system-provisioned jobs.
 /// • Race safety: when two parallel runs create different conversations, the scheduler's CAS
 ///   (<see cref="BotNexus.Cron.ICronStore.TrySetConversationIdAsync"/>) picks one winner; the loser archives its
 ///   conversation and rebinds its session. See <see cref="BotNexus.Cron.CronScheduler"/>.
@@ -55,7 +55,7 @@ public sealed class CronTrigger(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
-        var conversation = await ResolveOrCreateConversationAsync(agentId, request, ct).ConfigureAwait(false);
+        var (conversation, createdFreshConversation) = await ResolveOrCreateConversationAsync(agentId, request, ct).ConfigureAwait(false);
 
         if (request is not null && request.ResolvedConversationId is null)
             request.ResolvedConversationId = conversation.ConversationId;
@@ -108,6 +108,30 @@ public sealed class CronTrigger(
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 
+        // #1722 Part A: a wake whose turn produced nothing - the response is NO_REPLY or
+        // whitespace AND no tool calls fired - is a pure no-op. Persisting it would leave a
+        // full cron session plus two history rows (user + empty assistant) per silent wake,
+        // which dominates the store over time. Treat it as a no-op: skip the user/assistant
+        // entries entirely. If we also created the transient conv:<guid> for this run (no
+        // human pin), dispose it - delete the cron session and archive the throwaway
+        // conversation. A pinned/human/default conversation is never deleted or archived;
+        // only the trigger's own per-run conversation is disposable.
+        if (IsNoOpTurn(response))
+        {
+            logger.LogInformation(
+                "Cron trigger no-op for agent '{AgentId}' job '{JobId}': empty turn (no reply, no tools); skipping persistence.",
+                agentId,
+                request?.CronJobId);
+
+            if (createdFreshConversation && IsDisposableTransientConversation(conversation, sessionId))
+            {
+                await sessions.DeleteAsync(sessionId, ct).ConfigureAwait(false);
+                await conversations.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+            }
+
+            return sessionId;
+        }
+
         // P9-E (#645): stamp Cron on the user entry. Cron is a proxy for the citizen
         // who scheduled the job — the persisted trigger marks the originating proxy
         // so audit/UI can render the right badge without sniffing SessionType.
@@ -133,7 +157,45 @@ public sealed class CronTrigger(
         return sessionId;
     }
 
-    private async Task<Conversation> ResolveOrCreateConversationAsync(
+    /// <summary>
+    /// A cron turn produced no real work when the assistant content is empty/whitespace or the
+    /// silent-reply sentinel <c>NO_REPLY</c>, AND no tool calls executed. Mirrors the GatewayHost
+    /// NO_REPLY suppression (#1237) plus a tool-activity guard so a silent-but-acted turn (e.g.
+    /// memory write then NO_REPLY) is still treated as work and persisted.
+    /// </summary>
+    private static bool IsNoOpTurn(AgentResponse response)
+    {
+        if (response.ToolCalls.Count > 0)
+            return false;
+
+        var content = response.Content;
+        if (string.IsNullOrWhiteSpace(content))
+            return true;
+
+        return content.Trim().Equals("NO_REPLY", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// True only for a throwaway per-run conversation the trigger created this run: a transient
+    /// <c>conv:&lt;guid&gt;</c> that is not pinned, not the default, not a human-pairing thread, and
+    /// whose ActiveSessionId is either unset or our own cron session. Guarantees a pinned/human
+    /// conversation is never archived by a no-op cron wake.
+    /// </summary>
+    private static bool IsDisposableTransientConversation(Conversation conversation, SessionId cronSessionId)
+    {
+        if (conversation.IsPinned || conversation.IsDefault)
+            return false;
+
+        if (conversation.Kind != ConversationKind.HumanAgent)
+            return false;
+
+        if (!conversation.ConversationId.Value.StartsWith("conv:", StringComparison.Ordinal))
+            return false;
+
+        return conversation.ActiveSessionId is null || conversation.ActiveSessionId == cronSessionId;
+    }
+
+    private async Task<(Conversation Conversation, bool CreatedFresh)> ResolveOrCreateConversationAsync(
         AgentId agentId,
         InternalTriggerRequest? request,
         CancellationToken ct)
@@ -169,7 +231,7 @@ public sealed class CronTrigger(
                         }
                     }
                 }
-                return pinned;
+                return (pinned, false);
             }
 
             logger.LogWarning(
@@ -202,7 +264,7 @@ public sealed class CronTrigger(
             request?.CronJobId,
             initiator);
 
-        return conversation;
+        return (conversation, true);
     }
 
     /// <summary>

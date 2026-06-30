@@ -1278,21 +1278,42 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// </summary>
     private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
     {
-        if (_autoTitleService is null || !session.ConversationId.IsInitialized())
+        // Diagnostic: previously these guards no-op'd silently, so a conversation stuck on the
+        // default title gave no signal about why auto-titling never ran. Log at Debug so the path
+        // is observable when investigating, without spamming INFO on every successful turn.
+        if (_autoTitleService is null)
+        {
+            _logger.LogDebug(
+                "Auto-title not triggered: service not wired (no LLM client or conversation store).");
             return;
+        }
+        if (!session.ConversationId.IsInitialized())
+        {
+            _logger.LogDebug(
+                "Auto-title not triggered: session '{SessionId}' has no resolved conversation.",
+                session.SessionId);
+            return;
+        }
+
+        var titling = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
+        if (titling is { Enabled: false })
+        {
+            _logger.LogDebug(
+                "Auto-title not triggered: disabled via gateway.auxiliary.titling.enabled.");
+            return;
+        }
 
         var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History, _logger);
         if (userText is null || assistantText is null)
             return;
-
-        var titlingModel = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling?.Model;
 
         _autoTitleService.TriggerBestEffort(
             session.ConversationId,
             typedAgentId,
             userText,
             assistantText,
-            titlingModel);
+            titling?.Model,
+            titling?.TimeoutSeconds ?? 30);
     }
 
     private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)

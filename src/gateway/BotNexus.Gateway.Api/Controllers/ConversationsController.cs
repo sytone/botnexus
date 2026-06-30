@@ -1,10 +1,8 @@
-using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
@@ -31,7 +29,6 @@ public sealed class ConversationsController : ControllerBase
     private readonly ILogger<ConversationsController> _logger;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IConversationResetService? _resetService;
-    private readonly IReadOnlyList<IAgentCanvasNotifier> _canvasNotifiers;
     private readonly IConversationAuditLog? _auditLog;
     private readonly IConversationHistoryAssembler _historyAssembler;
 
@@ -47,7 +44,6 @@ public sealed class ConversationsController : ControllerBase
     /// and Reset endpoints delegate the active-session seal + memory flush + ask-user cancel to it. When omitted,
     /// the controller falls back to a best-effort in-place seal — used only by tests that construct the controller
     /// directly without DI.</param>
-    /// <param name="canvasNotifiers">Optional notifiers that broadcast canvas state changes to connected clients.</param>
     /// <param name="auditLog">Optional audit log for recording conversation mutations.</param>
     /// <param name="historyAssembler">Assembles cross-session conversation history. When omitted (legacy
     /// test harnesses constructing the controller directly), a default instance over the same stores is used.</param>
@@ -58,7 +54,6 @@ public sealed class ConversationsController : ControllerBase
         ILogger<ConversationsController>? logger = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
-        IEnumerable<IAgentCanvasNotifier>? canvasNotifiers = null,
         IConversationAuditLog? auditLog = null,
         IConversationHistoryAssembler? historyAssembler = null)
     {
@@ -68,7 +63,6 @@ public sealed class ConversationsController : ControllerBase
         _logger = logger ?? NullLogger<ConversationsController>.Instance;
         _askUserResponseRegistry = askUserResponseRegistry;
         _resetService = resetService;
-        _canvasNotifiers = canvasNotifiers?.ToArray() ?? [];
         _auditLog = auditLog;
         // When DI omits the assembler (legacy test harnesses that construct the controller
         // directly), fall back to the default implementation over the same stores so the
@@ -562,35 +556,6 @@ public sealed class ConversationsController : ControllerBase
         await _sessions.SaveAsync(session, cancellationToken);
     }
 
-    /// <summary>Gets the current canvas HTML for a conversation.</summary>
-    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
-    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> GetCanvas(string agentId, string conversationId, CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
-        if (conversation is null)
-            return NotFound();
-        if (string.IsNullOrEmpty(conversation.CanvasHtml))
-            return NoContent();
-        return Content(conversation.CanvasHtml, "text/html");
-    }
-
-    /// <summary>Saves canvas HTML for a conversation.</summary>
-    [HttpPut("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> PutCanvas(string agentId, string conversationId, [FromBody] string html, CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
-        if (conversation is null)
-            return NotFound();
-        conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
-        await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
-        return NoContent();
-    }
-
     /// <summary>
     /// Gets the current per-conversation todo state (the raw <c>TodoJson</c> payload) for a
     /// conversation, so the portal Todo panel can hydrate on initial load (#1464 step 5).
@@ -653,84 +618,6 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null) return NotFound();
         await _conversations.PinAsync(ConversationId.From(conversationId), false, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
-        return NoContent();
-    }
-
-    // -----------------------------------------------------------------------
-    // Canvas State CRUD (Issue #1066)
-    // -----------------------------------------------------------------------
-
-    /// <summary>Returns the full canvas state dictionary for a conversation (empty object if none).</summary>
-    [HttpGet("{conversationId}/canvas-state")]
-    [ProducesResponseType(typeof(Dictionary<string, JsonElement>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> GetCanvasState(string conversationId, CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null)
-            return NotFound();
-
-        var state = await _conversations.GetCanvasStateAsync(ConversationId.From(conversationId), cancellationToken);
-        return Ok(state ?? new Dictionary<string, JsonElement>());
-    }
-
-    /// <summary>Returns a single canvas state key value, or 404 if not found.</summary>
-    [HttpGet("{conversationId}/canvas-state/{key}")]
-    [ProducesResponseType(typeof(JsonElement), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> GetCanvasStateKey(string conversationId, string key, CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null)
-            return NotFound();
-
-        var state = await _conversations.GetCanvasStateAsync(ConversationId.From(conversationId), cancellationToken);
-        if (state is null || !state.TryGetValue(key, out var value))
-            return NotFound();
-
-        return Ok(value);
-    }
-
-    /// <summary>Upserts a canvas state key. Body is the raw JSON value.</summary>
-    [HttpPost("{conversationId}/canvas-state/{key}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> SetCanvasStateKey(
-        string conversationId,
-        string key,
-        [FromBody] JsonElement value,
-        CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null)
-            return NotFound();
-
-        await _conversations.SetCanvasStateKeyAsync(ConversationId.From(conversationId), key, value, cancellationToken);
-
-        foreach (var notifier in _canvasNotifiers)
-            await notifier.NotifyCanvasStateChangedAsync(conversationId, key, value, cancellationToken);
-
-        return Ok();
-    }
-
-    /// <summary>Removes a canvas state key. Idempotent — returns 204 even if key didn't exist.</summary>
-    [HttpDelete("{conversationId}/canvas-state/{key}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> DeleteCanvasStateKey(
-        string conversationId,
-        string key,
-        CancellationToken cancellationToken)
-    {
-        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null)
-            return NotFound();
-
-        await _conversations.DeleteCanvasStateKeyAsync(ConversationId.From(conversationId), key, cancellationToken);
-
-        foreach (var notifier in _canvasNotifiers)
-            await notifier.NotifyCanvasStateChangedAsync(conversationId, key, null, cancellationToken);
-
         return NoContent();
     }
 
