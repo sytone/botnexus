@@ -5,8 +5,16 @@ namespace BotNexus.Gateway.Configuration;
 /// <summary>
 /// Validates <see cref="PlatformConfig"/> through the options pipeline on startup,
 /// providing fast-fail behavior for misconfigured gateways.
-/// Delegates to the existing BotNexus domain validation helpers.
 /// </summary>
+/// <remarks>
+/// Server-side validation is unified on the annotated model (#1613, config parity PBI 5/6 of
+/// #1579): the per-field DataAnnotations and the cross-field <c>IValidatableObject</c> escape
+/// hatch are both enforced by <see cref="PlatformConfigLoader.ValidateAnnotated"/>, which runs
+/// <see cref="System.ComponentModel.DataAnnotations.Validator.TryValidateObject"/>. The structural
+/// JSON-schema check (<see cref="PlatformConfigSchema.ValidateObject"/>) is retained alongside it
+/// to catch shape errors the typed model cannot express; the same DataAnnotations now also appear
+/// in that generated schema, so the rules are readable client-side as well.
+/// </remarks>
 public sealed class PlatformConfigOptionsValidator : IValidateOptions<PlatformConfig>
 {
     /// <inheritdoc />
@@ -14,10 +22,15 @@ public sealed class PlatformConfigOptionsValidator : IValidateOptions<PlatformCo
     {
         var errors = new List<string>();
         errors.AddRange(PlatformConfigSchema.ValidateObject(options));
-        errors.AddRange(PlatformConfigLoader.Validate(options));
+        errors.AddRange(PlatformConfigLoader.ValidateAnnotated(options));
 
-        return errors.Count > 0
-            ? ValidateOptionsResult.Fail(errors)
+        var distinctErrors = errors
+            .Where(error => !string.IsNullOrWhiteSpace(error))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return distinctErrors.Length > 0
+            ? ValidateOptionsResult.Fail(distinctErrors)
             : ValidateOptionsResult.Success;
     }
 }

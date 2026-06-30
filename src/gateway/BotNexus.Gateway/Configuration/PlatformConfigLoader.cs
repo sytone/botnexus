@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Diagnostics;
 using System.IO.Abstractions;
@@ -162,8 +163,59 @@ public static class PlatformConfigLoader
         return warnings;
     }
 
-    /// <summary>Validates the configuration and returns any errors.</summary>
+    /// <summary>
+    /// Validates the configuration and returns any errors.
+    /// </summary>
+    /// <remarks>
+    /// Retained as the legacy/baseline validation surface and as the imperative cross-field and
+    /// graph escape hatch for the DataAnnotations pipeline (#1613). The body lives in
+    /// <see cref="CollectCrossFieldErrors"/> so it can be invoked both directly (existing callers
+    /// and the parity baseline) and from <see cref="PlatformConfig.Validate(ValidationContext)"/>
+    /// during a <see cref="Validator.TryValidateObject"/> pass without duplicating the rules.
+    /// </remarks>
     public static IReadOnlyList<string> Validate(PlatformConfig config)
+        => CollectCrossFieldErrors(config);
+
+    /// <summary>
+    /// Runs server-side configuration validation through the DataAnnotations pipeline (#1613,
+    /// config parity PBI 5/6 of #1579): <see cref="Validator.TryValidateObject"/> over the annotated
+    /// <see cref="PlatformConfig"/> with <c>validateAllProperties: true</c>. This fires the per-field
+    /// validation attributes (for example <see cref="RangeAttribute"/>) declared on the model AND the
+    /// cross-field escape hatch in <see cref="PlatformConfig.Validate(ValidationContext)"/>, which
+    /// delegates back to <see cref="CollectCrossFieldErrors"/>. Messages are de-duplicated so a field
+    /// covered by both an attribute and an imperative rule is reported once.
+    /// </summary>
+    /// <param name="config">The platform configuration to validate.</param>
+    /// <returns>The distinct validation error messages, or an empty list when the config is valid.</returns>
+    public static IReadOnlyList<string> ValidateAnnotated(PlatformConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        var results = new List<ValidationResult>();
+        var context = new ValidationContext(config);
+        // validateAllProperties: true so [Range]/[Required]/etc. on the annotated model run in
+        // addition to the IValidatableObject cross-field rules. The boolean return is ignored;
+        // the collected results carry the messages.
+        _ = Validator.TryValidateObject(config, context, results, validateAllProperties: true);
+
+        return results
+            .Select(result => result.ErrorMessage ?? string.Empty)
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The imperative cross-field, dictionary-graph, and conditional validation rules for
+    /// <see cref="PlatformConfig"/>. These are the rules that cannot be expressed as per-field
+    /// DataAnnotations attributes (they span fields, iterate user-keyed maps, or apply
+    /// "if X then Y" logic) and therefore remain the documented escape hatch. Produces the exact
+    /// message text the platform has always emitted, so both the legacy <see cref="Validate"/>
+    /// surface and the new <see cref="ValidateAnnotated"/> pipeline reject and accept identically.
+    /// </summary>
+    /// <param name="config">The platform configuration to validate.</param>
+    /// <returns>One message per rule violation.</returns>
+    public static IReadOnlyList<string> CollectCrossFieldErrors(PlatformConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 

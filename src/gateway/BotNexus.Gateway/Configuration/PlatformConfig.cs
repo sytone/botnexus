@@ -12,7 +12,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <summary>
 /// Platform-wide BotNexus configuration stored at ~/.botnexus/config.json.
 /// </summary>
-public sealed class PlatformConfig
+public sealed class PlatformConfig : IValidatableObject
 {
     /// <summary>Optional JSON schema reference for editor IntelliSense/validation.</summary>
     [JsonPropertyName("$schema")]
@@ -73,6 +73,26 @@ public sealed class PlatformConfig
     /// </summary>
     [JsonIgnore]
     public Dictionary<string, System.Text.Json.JsonElement>? AgentRawElements { get; set; }
+
+    /// <summary>
+    /// Cross-field and graph validation escape hatch for the DataAnnotations pipeline (#1613,
+    /// config parity PBI 5/6 of #1579). Per-field scalar rules live as DataAnnotations attributes
+    /// (for example <see cref="System.ComponentModel.DataAnnotations.RangeAttribute"/>) directly on
+    /// the model and are enforced by <see cref="System.ComponentModel.DataAnnotations.Validator.TryValidateObject"/>.
+    /// Rules that span multiple fields, iterate user-keyed dictionaries, or apply conditional
+    /// "if X set then Y required" logic cannot be expressed as per-field attributes, so they are
+    /// retained imperatively in <see cref="PlatformConfigLoader"/> and surfaced here so a single
+    /// <c>TryValidateObject</c> pass enforces both layers identically server-side.
+    /// </summary>
+    /// <param name="validationContext">The DataAnnotations validation context (unused; the whole
+    /// graph is validated from this root instance).</param>
+    /// <returns>One <see cref="ValidationResult"/> per cross-field rule violation, with the same
+    /// message text the legacy imperative validator produced.</returns>
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        foreach (var error in PlatformConfigLoader.CollectCrossFieldErrors(this))
+            yield return new ValidationResult(error);
+    }
 
 }
 
