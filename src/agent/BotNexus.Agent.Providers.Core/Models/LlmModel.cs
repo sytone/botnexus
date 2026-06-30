@@ -27,6 +27,7 @@ public record LlmModel(
     int ContextWindow,
     int MaxTokens,
     bool SupportsExtraHighThinking = false,
+    bool SupportsExtendedContextWindow = false,
     IReadOnlyDictionary<string, string>? Headers = null,
     OpenAICompletionsCompat? Compat = null
 );

@@ -17,6 +17,12 @@ public sealed class ModelRegistry
         ["copilot"] = "github-copilot"
     };
 
+    // Selectable context-window tiers for models that advertise the extended-context
+    // capability. 200K is the standard ceiling; 1M is the Anthropic-direct extended tier
+    // (gated behind the context-1m beta header on the Anthropic messages path).
+    private const int StandardContextWindow = 200_000;
+    private const int ExtendedContextWindow = 1_000_000;
+
     /// <summary>
     /// Executes register.
     /// </summary>
@@ -122,6 +128,33 @@ public sealed class ModelRegistry
             ThinkingLevel.Medium,
             ThinkingLevel.High
         ];
+    }
+
+    /// <summary>
+    /// Reports whether a model can be driven with the extended (1M) context window.
+    /// Mirrors <see cref="SupportsExtraHigh"/> for thinking: the capability is carried per
+    /// model on the registry so a caller never offers a context size the provider rejects.
+    /// </summary>
+    /// <param name="model">The model.</param>
+    /// <returns>True when the model advertises the extended-context capability.</returns>
+    public static bool SupportsExtendedContext(LlmModel model)
+    {
+        return model.SupportsExtendedContextWindow;
+    }
+
+    /// <summary>
+    /// Returns the context-window sizes a model legitimately supports, so the UI can offer
+    /// only valid choices. Models without the extended capability expose just their single
+    /// default window (for example Copilot Claude is fixed at 200K); models that advertise
+    /// the extended capability expose the selectable 200K and 1M tiers (Anthropic-direct).
+    /// </summary>
+    /// <param name="model">The model.</param>
+    /// <returns>The supported context-window sizes.</returns>
+    public static IReadOnlyList<int> GetSupportedContextSizes(LlmModel model)
+    {
+        if (model.SupportsExtendedContextWindow)
+            return [StandardContextWindow, ExtendedContextWindow];
+        return [model.ContextWindow];
     }
 
     /// <summary>
