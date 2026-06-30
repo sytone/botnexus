@@ -9,6 +9,17 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 public interface ISubAgentManager
 {
     /// <summary>
+    /// Gets the platform-wide number of sub-agents that are currently running, aggregated across
+    /// every parent session. This differs from <see cref="ListAsync"/>, which is parent-scoped:
+    /// the portal stats overview needs a single headline "active sub-agents" figure spanning all
+    /// parents, and a parent-by-parent sum would require enumerating every session. Implementations
+    /// that do not track sub-agents (for example a no-op manager used by a controller that cannot
+    /// spawn) inherit the default value of zero. Exposed as a synchronous property because it is a
+    /// cheap read over the in-memory registry and is polled by the live stats panel.
+    /// </summary>
+    int ActiveSubAgentCount => 0;
+
+    /// <summary>
     /// Spawns a background sub-agent session for the specified request.
     /// </summary>
     /// <param name="request">The spawn request describing parent context and execution overrides.</param>
