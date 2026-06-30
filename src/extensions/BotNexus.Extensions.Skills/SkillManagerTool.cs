@@ -11,14 +11,26 @@ namespace BotNexus.Extensions.Skills;
 /// Agent-facing tool for creating, editing, patching, deleting, and managing supporting files
 /// for skills at runtime. Only contributed when <see cref="SkillsConfig.AllowSkillCreation"/>
 /// is enabled. Destructive actions additionally require <see cref="SkillsConfig.AllowSkillDeletion"/>.
+/// Writes to the shared (all-agent) global skills directory require
+/// <see cref="SkillsConfig.AllowSharedSkillManagement"/> and are requested via the "shared" scope.
 /// </summary>
 public sealed class SkillManagerTool(
     string? agentSkillsDir,
     string? workspaceSkillsDir,
+    string? globalSkillsDir,
     SkillsConfig config,
     IFileSystem? fileSystem = null) : IAgentTool
 {
     private readonly IFileSystem _fs = fileSystem ?? new FileSystem();
+
+    /// <summary>
+    /// Convenience overload for callers that do not manage shared (global) skills.
+    /// Equivalent to passing a null global skills directory; shared scope is then unavailable.
+    /// </summary>
+    public SkillManagerTool(string? agentSkillsDir, string? workspaceSkillsDir, SkillsConfig config, IFileSystem? fileSystem = null)
+        : this(agentSkillsDir, workspaceSkillsDir, globalSkillsDir: null, config, fileSystem)
+    {
+    }
 
     // Allowed sub-directories for write_file / remove_file supporting files
     private static readonly HashSet<string> AllowedSupportingDirs = new(StringComparer.OrdinalIgnoreCase)
@@ -42,11 +54,16 @@ public sealed class SkillManagerTool(
                 "action": {
                   "type": "string",
                   "enum": ["create", "edit", "patch", "delete", "write_file", "remove_file"],
-                  "description": "Action to perform: 'create' — create a new skill; 'edit' — full rewrite of SKILL.md; 'patch' — targeted find-replace within a skill file; 'delete' — remove a skill; 'write_file' — write a supporting file (references/, templates/, scripts/, assets/); 'remove_file' — delete a supporting file."
+                  "description": "Action to perform: 'create' - create a new skill; 'edit' - full rewrite of SKILL.md; 'patch' - targeted find-replace within a skill file; 'delete' - remove a skill; 'write_file' - write a supporting file (references/, templates/, scripts/, assets/); 'remove_file' - delete a supporting file."
                 },
                 "name": {
                   "type": "string",
                   "description": "Skill name (required for all actions). Must be lowercase alphanumeric + hyphens, max 64 chars."
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": ["agent", "workspace", "shared"],
+                  "description": "Where to manage the skill: 'agent' (default) - this agent's private skills; 'workspace' - the current workspace; 'shared' - the global all-agent skills directory (requires AllowSharedSkillManagement). Default is workspace. Existing skills are matched across all scopes regardless of this value."
                 },
                 "content": {
                   "type": "string",
@@ -101,9 +118,12 @@ public sealed class SkillManagerTool(
         if (!SkillParser.IsValidName(name))
             return Task.FromResult(Error($"Invalid skill name '{name}'. Must be lowercase alphanumeric + hyphens, no leading/trailing/consecutive hyphens, max 64 chars."));
 
+        if (!TryResolveScope(arguments, out var scope, out var scopeError))
+            return Task.FromResult(Error(scopeError));
+
         return action.ToLowerInvariant() switch
         {
-            "create" => Task.FromResult(CreateSkill(name, arguments)),
+            "create" => Task.FromResult(CreateSkill(name, scope, arguments)),
             "edit" => Task.FromResult(EditSkill(name, arguments)),
             "patch" => Task.FromResult(PatchSkill(name, arguments)),
             "delete" => Task.FromResult(DeleteSkill(name)),
@@ -115,15 +135,19 @@ public sealed class SkillManagerTool(
 
     // ──────────────────────────── create ────────────────────────────────────
 
-    private AgentToolResult CreateSkill(string name, IReadOnlyDictionary<string, object?> arguments)
+    private AgentToolResult CreateSkill(string name, SkillSource scope, IReadOnlyDictionary<string, object?> arguments)
     {
         var content = ReadString(arguments, "content");
         if (string.IsNullOrWhiteSpace(content))
             return Error("'content' is required for create.");
 
-        var targetDir = ResolveWriteRoot(name);
+        var targetDir = ResolveWriteRoot(scope);
         if (targetDir is null)
             return Error("No writable skill directory is configured for this agent.");
+
+        // Shared scope is gated; surface a clear error before touching the filesystem.
+        if (scope == SkillSource.Global && !config.AllowSharedSkillManagement)
+            return Error(SharedGateMessage());
 
         var skillDir = Path.Combine(targetDir, name);
         var skillMdPath = Path.Combine(skillDir, "SKILL.md");
@@ -135,7 +159,7 @@ public sealed class SkillManagerTool(
             return Error($"SKILL.md content exceeds maximum size of {MaxSkillFileBytes / 1024} KB.");
 
         // Validate parseable + required fields before writing
-        var parsed = SkillParser.Parse(name, content, skillDir, SkillSource.Workspace);
+        var parsed = SkillParser.Parse(name, content, skillDir, scope);
         if (string.IsNullOrWhiteSpace(parsed.Description))
             return Error("SKILL.md frontmatter must include a non-empty 'description' field.");
 
@@ -145,7 +169,7 @@ public sealed class SkillManagerTool(
         _fs.Directory.CreateDirectory(skillDir);
         _fs.File.WriteAllText(skillMdPath, content);
 
-        // Security scan post-write — roll back on critical finding
+        // Security scan post-write - roll back on critical finding
         var scan = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: _fs);
         if (scan.Critical > 0)
         {
@@ -168,8 +192,8 @@ public sealed class SkillManagerTool(
         if (skillDir is null)
             return Error($"Skill '{name}' not found in any configured skill directory.");
 
-        if (source == SkillSource.Global)
-            return Error($"Skill '{name}' is a global skill and cannot be edited by the agent. Copy it to the agent or workspace scope first.");
+        if (CheckSourceWritable(source) is { } gate)
+            return gate;
 
         var skillMdPath = Path.Combine(skillDir, "SKILL.md");
 
@@ -219,8 +243,8 @@ public sealed class SkillManagerTool(
         if (skillDir is null)
             return Error($"Skill '{name}' not found in any configured skill directory.");
 
-        if (source == SkillSource.Global)
-            return Error($"Skill '{name}' is a global skill and cannot be patched by the agent.");
+        if (CheckSourceWritable(source) is { } gate)
+            return gate;
 
         var relPath = ReadString(arguments, "filePath") ?? "SKILL.md";
         if (!IsAllowedFilePath(relPath, out var reason))
@@ -279,8 +303,8 @@ public sealed class SkillManagerTool(
         if (skillDir is null)
             return Error($"Skill '{name}' not found.");
 
-        if (source == SkillSource.Global)
-            return Error($"Skill '{name}' is a global skill and cannot be deleted by the agent.");
+        if (CheckSourceWritable(source) is { } gate)
+            return gate;
 
         _fs.Directory.Delete(skillDir, recursive: true);
         return Ok($"Skill '{name}' deleted from '{skillDir}'.");
@@ -312,8 +336,8 @@ public sealed class SkillManagerTool(
             return Error($"Skill '{name}' not found. Create the skill first with 'create'.");
         }
 
-        if (source == SkillSource.Global)
-            return Error($"Skill '{name}' is a global skill. Supporting files cannot be written to it by the agent.");
+        if (CheckSourceWritable(source) is { } gate)
+            return gate;
 
         var targetPath = Path.Combine(skillDir, relPath);
 
@@ -360,8 +384,8 @@ public sealed class SkillManagerTool(
         if (skillDir is null)
             return Error($"Skill '{name}' not found.");
 
-        if (source == SkillSource.Global)
-            return Error($"Skill '{name}' is a global skill. Files cannot be removed from it by the agent.");
+        if (CheckSourceWritable(source) is { } gate)
+            return gate;
 
         var targetPath = Path.Combine(skillDir, relPath);
 
@@ -379,28 +403,79 @@ public sealed class SkillManagerTool(
     // ──────────────────────────── helpers ───────────────────────────────────
 
     /// <summary>
-    /// Resolves the write-target root for a new skill.
-    /// Prefers workspace, falls back to agent. Never writes to global.
+    /// Resolves the write-target root for a new skill based on the requested scope.
+    /// Workspace and agent scopes are unchanged; shared resolves to the global directory.
+    /// Returns null when the requested scope has no configured directory.
     /// </summary>
-    private string? ResolveWriteRoot(string name)
+    private string? ResolveWriteRoot(SkillSource scope) => scope switch
     {
-        if (!string.IsNullOrWhiteSpace(workspaceSkillsDir))
-            return workspaceSkillsDir;
-        if (!string.IsNullOrWhiteSpace(agentSkillsDir))
-            return agentSkillsDir;
-        return null;
+        SkillSource.Global => string.IsNullOrWhiteSpace(globalSkillsDir) ? null : globalSkillsDir,
+        SkillSource.Agent => string.IsNullOrWhiteSpace(agentSkillsDir) ? null : agentSkillsDir,
+        // Workspace (default): preserve historical behaviour - prefer workspace, fall back to agent.
+        _ => !string.IsNullOrWhiteSpace(workspaceSkillsDir) ? workspaceSkillsDir
+            : !string.IsNullOrWhiteSpace(agentSkillsDir) ? agentSkillsDir
+            : null
+    };
+
+    /// <summary>
+    /// Maps the optional scope argument to a <see cref="SkillSource"/>. Defaults to agent.
+    /// Returns false with an error message for an unrecognised scope.
+    /// </summary>
+    private static bool TryResolveScope(IReadOnlyDictionary<string, object?> arguments, out SkillSource scope, out string error)
+    {
+        error = string.Empty;
+        var raw = ReadString(arguments, "scope");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            // Default preserves historical behaviour: new skills go to workspace (falling back to agent).
+            scope = SkillSource.Workspace;
+            return true;
+        }
+
+        switch (raw.Trim().ToLowerInvariant())
+        {
+            case "agent":
+                scope = SkillSource.Agent;
+                return true;
+            case "workspace":
+                scope = SkillSource.Workspace;
+                return true;
+            case "shared":
+                scope = SkillSource.Global;
+                return true;
+            default:
+                scope = SkillSource.Agent;
+                error = $"Invalid scope '{raw}'. Valid scopes: agent, workspace, shared.";
+                return false;
+        }
     }
 
     /// <summary>
-    /// Finds the skill directory for the given skill name across agent and workspace sources.
-    /// Global source is included for read (find) but write operations must reject it.
+    /// Gate-check for mutating an existing skill found at <paramref name="source"/>.
+    /// Global (shared) skills require <see cref="SkillsConfig.AllowSharedSkillManagement"/>.
+    /// Returns null when the source is writable, or an error result otherwise.
+    /// </summary>
+    private AgentToolResult? CheckSourceWritable(SkillSource source)
+    {
+        if (source == SkillSource.Global && !config.AllowSharedSkillManagement)
+            return Error(SharedGateMessage());
+        return null;
+    }
+
+    private static string SharedGateMessage()
+        => "Shared (all-agent) skill management is not enabled (AllowSharedSkillManagement = false). Copy the skill to the agent or workspace scope first.";
+
+    /// <summary>
+    /// Finds the skill directory for the given skill name across workspace, agent, and global sources.
+    /// Mirrors SkillDiscovery priority (workspace overrides agent overrides global). Global is included
+    /// so shared skills are discoverable; write operations gate Global via AllowSharedSkillManagement.
     /// </summary>
     private string? FindSkillDir(string name, out SkillSource source)
     {
-        // Workspace overrides agent which overrides global — match SkillDiscovery priority
         foreach (var (dir, src) in new[] {
             (workspaceSkillsDir, SkillSource.Workspace),
-            (agentSkillsDir, SkillSource.Agent) })
+            (agentSkillsDir, SkillSource.Agent),
+            (globalSkillsDir, SkillSource.Global) })
         {
             if (string.IsNullOrWhiteSpace(dir))
                 continue;
@@ -473,7 +548,7 @@ public sealed class SkillManagerTool(
 
         var lines = scan.Findings
             .Where(f => f.Severity == ScanSeverity.Critical)
-            .Select(f => $"  [{f.RuleId}] {f.File}:{f.Line} — {f.Message}")
+            .Select(f => $"  [{f.RuleId}] {f.File}:{f.Line} - {f.Message}")
             .Take(5);
 
         return "Critical findings:\n" + string.Join("\n", lines);

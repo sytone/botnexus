@@ -313,6 +313,12 @@ public sealed class ConversationState
     /// <summary>Cursor for fetching the next (older) page of history.</summary>
     public string? NextBeforeCursor { get; set; }
 
+    /// <summary>Count of real history rows fetched so far for this conversation. Doubles as the
+    /// offset for the next backwards page (#1691): the load-more fetch reads at this offset,
+    /// prepends, then advances it by the page count. Boundary/compaction dividers are synthesised
+    /// locally and are intentionally not counted here.</summary>
+    public int LoadedHistoryRows { get; set; }
+
     // ── Messages + streaming ─────────────────────────────────────────────────
 
     // Backing store for the conversation timeline. Kept private so every mutation flows through the

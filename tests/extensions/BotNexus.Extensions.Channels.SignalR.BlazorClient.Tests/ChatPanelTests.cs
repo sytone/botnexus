@@ -194,6 +194,7 @@ public sealed class ChatPanelTests : IDisposable
         CreateAndSeedAgent("agent-1");
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("chatScroll.preventEnterSubmit", _ => true);
+        _ctx.JSInterop.SetupVoid("chatScroll.observeTopForLoadMore", _ => true);
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
 
@@ -221,6 +222,7 @@ public sealed class ChatPanelTests : IDisposable
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
+        _ctx.JSInterop.SetupVoid("chatScroll.observeTopForLoadMore", _ => true);
 
         _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
 
@@ -849,5 +851,103 @@ public sealed class ChatPanelTests : IDisposable
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
         Assert.Contains("**not rendered**", cut.Markup);
+    }
+
+    // ── #1691: scroll-up history pagination (load-more) ───────────────────
+
+    private ConversationState SeedActiveConversationWithMore(string agentId, string convId)
+    {
+        _store.SeedConversations(agentId, [MakeConvDto(convId, agentId)]);
+        _store.SetActiveConversation(agentId, convId);
+        var conv = _store.GetConversation(convId)!;
+        conv.HistoryLoaded = true;
+        conv.HasMoreHistory = true;
+        conv.LoadedHistoryRows = 20;
+        return conv;
+    }
+
+    [Fact]
+    public void Load_more_affordance_is_shown_when_more_history_exists()
+    {
+        // #1691: a conversation that opened on the most-recent page but has older messages must
+        // surface the scroll-up load-more affordance.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        SeedActiveConversationWithMore("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.NotNull(cut.Find("[data-testid='chat-load-more']"));
+    }
+
+    [Fact]
+    public void Load_more_affordance_is_hidden_when_no_more_history()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var conv = _store.GetConversation("conv-1")!;
+        conv.HistoryLoaded = true;
+        conv.HasMoreHistory = false;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll("[data-testid='chat-load-more']"));
+    }
+
+    [Fact]
+    public async Task Scroll_to_top_fetches_next_page_via_shared_service()
+    {
+        // #1691: the JSInvokable the scroll observer fires must delegate to the shared Core paging
+        // method so desktop and mobile use one implementation. Simulate the older page being
+        // prepended so the component does not early-return on a stale HasMoreHistory check.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        var conv = SeedActiveConversationWithMore("agent-1", "conv-1");
+        _interaction.LoadMoreHistoryAsync("agent-1", "conv-1").Returns(callInfo =>
+        {
+            _store.PrependMessages("conv-1", Enumerable.Range(0, 20)
+                .Select(i => new ChatMessage("User", $"older-{i}", DateTimeOffset.UtcNow)));
+            conv.LoadedHistoryRows += 20;
+            return 20;
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Instance.OnScrolledToTop());
+
+        await _interaction.Received(1).LoadMoreHistoryAsync("agent-1", "conv-1");
+        Assert.Equal(20, conv.Messages.Count);
+        Assert.Equal("older-0", conv.Messages[0].Content);
+    }
+
+    [Fact]
+    public async Task Load_more_button_click_fetches_next_page()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        SeedActiveConversationWithMore("agent-1", "conv-1");
+        _interaction.LoadMoreHistoryAsync("agent-1", "conv-1").Returns(0);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-load-more-btn']").Click());
+
+        await _interaction.Received(1).LoadMoreHistoryAsync("agent-1", "conv-1");
+    }
+
+    [Fact]
+    public async Task Scroll_to_top_is_noop_when_no_more_history()
+    {
+        // Guard: once exhausted, the scroll observer firing again must not call the service.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var conv = _store.GetConversation("conv-1")!;
+        conv.HistoryLoaded = true;
+        conv.HasMoreHistory = false;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Instance.OnScrolledToTop());
+
+        await _interaction.DidNotReceive().LoadMoreHistoryAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }

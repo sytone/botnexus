@@ -99,10 +99,11 @@ public sealed class AgentInteractionServiceTests
             HistoryLoaded = false
         };
 
-        // API returns the newest entries on offset=0, even for long conversations.
+        // #1691: the API returns the newest 20 entries on offset=0; the client opens on that page
+        // and pages backwards on scroll-up rather than pulling the whole transcript.
         var firstPage = new ConversationHistoryResponseDto(
-            "conv-1", TotalCount: 272, Offset: 0, Limit: 200,
-            Entries: Enumerable.Range(72, 200).Select(i => new ConversationHistoryEntryDto
+            "conv-1", TotalCount: 272, Offset: 0, Limit: 20,
+            Entries: Enumerable.Range(252, 20).Select(i => new ConversationHistoryEntryDto
             {
                 Kind = "message",
                 SessionId = "s1",
@@ -111,20 +112,21 @@ public sealed class AgentInteractionServiceTests
                 Timestamp = DateTimeOffset.UtcNow.AddMinutes(-300 + i)
             }).ToList());
 
-        _restClient.GetHistoryAsync("conv-1", 200, 0, Arg.Any<CancellationToken>())
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
             .Returns(firstPage);
 
         await _service.SelectConversationAsync("agent-1", "conv-1");
 
-        // Should only fetch once; a second call pages away from newest data.
-        await _restClient.Received(1).GetHistoryAsync("conv-1", 200, 0, Arg.Any<CancellationToken>());
-        await _restClient.DidNotReceive().GetHistoryAsync("conv-1", 200, 72, Arg.Any<CancellationToken>());
+        // Should fetch the most-recent 20-row page once; older pages come later via LoadMoreHistoryAsync.
+        await _restClient.Received(1).GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>());
+        await _restClient.DidNotReceive().GetHistoryAsync("conv-1", 20, 20, Arg.Any<CancellationToken>());
 
-        // Messages come directly from the first page (latest entries).
-        var messages = agent.Conversations["conv-1"].Messages;
-        Assert.Equal(200, messages.Count);
-        Assert.Equal("msg-72", messages[0].Content);
-        Assert.Equal("msg-271", messages[^1].Content);
+        // Messages come directly from the first page (latest entries) and more remain to be paged.
+        var conv = agent.Conversations["conv-1"];
+        Assert.Equal(20, conv.Messages.Count);
+        Assert.Equal("msg-252", conv.Messages[0].Content);
+        Assert.Equal("msg-271", conv.Messages[^1].Content);
+        Assert.True(conv.HasMoreHistory);
     }
 
     [Fact]
@@ -139,7 +141,7 @@ public sealed class AgentInteractionServiceTests
         };
 
         var response = new ConversationHistoryResponseDto(
-            "conv-1", TotalCount: 5, Offset: 0, Limit: 200,
+            "conv-1", TotalCount: 5, Offset: 0, Limit: 20,
             Entries: Enumerable.Range(0, 5).Select(i => new ConversationHistoryEntryDto
             {
                 Kind = "message",

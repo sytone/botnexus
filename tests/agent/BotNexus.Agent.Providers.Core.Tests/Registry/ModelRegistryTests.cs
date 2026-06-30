@@ -32,6 +32,40 @@ public class ModelRegistryTests : IDisposable
         SupportsExtraHighThinking: supportsExtraHighThinking);
 
     [Fact]
+    public void GetSupportedThinkingLevels_NonReasoningModel_IsEmpty()
+    {
+        var model = MakeModel(supportsExtraHighThinking: false) with { Reasoning = false };
+
+        var levels = ModelRegistry.GetSupportedThinkingLevels(model);
+
+        levels.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void GetSupportedThinkingLevels_ReasoningWithoutExtraHigh_ExcludesExtraHighAndMax()
+    {
+        var model = MakeModel(supportsExtraHighThinking: false) with { Reasoning = true };
+
+        var levels = ModelRegistry.GetSupportedThinkingLevels(model);
+
+        levels.ShouldContain(ThinkingLevel.Minimal);
+        levels.ShouldContain(ThinkingLevel.High);
+        levels.ShouldNotContain(ThinkingLevel.ExtraHigh);
+        levels.ShouldNotContain(ThinkingLevel.Max);
+    }
+
+    [Fact]
+    public void GetSupportedThinkingLevels_ExtraHighCapable_IncludesExtraHighAndMax()
+    {
+        var model = MakeModel(supportsExtraHighThinking: true) with { Reasoning = true };
+
+        var levels = ModelRegistry.GetSupportedThinkingLevels(model);
+
+        levels.ShouldContain(ThinkingLevel.ExtraHigh);
+        levels.ShouldContain(ThinkingLevel.Max);
+    }
+
+    [Fact]
     public void Register_AndRetrieve_ReturnsModel()
     {
         var model = MakeModel();

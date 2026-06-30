@@ -180,6 +180,26 @@ body {
     overscroll-behavior: contain;
 }
 
+/* #1691: scroll-up load-more affordance pinned above the mobile message stream. */
+.message-stream .history-load-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 8px;
+    color: var(--text-muted, #a6adc8);
+    font-size: 0.8rem;
+}
+
+.message-stream .history-load-more .load-more-btn {
+    background: transparent;
+    border: 1px solid var(--border, #45475a);
+    border-radius: 999px;
+    color: var(--text-muted, #a6adc8);
+    font-size: 0.78rem;
+    padding: 4px 12px;
+}
+
 /* ── Message bubbles ─────────────────────────────────────────────────────── */
 .message {
     max-width: 82%;

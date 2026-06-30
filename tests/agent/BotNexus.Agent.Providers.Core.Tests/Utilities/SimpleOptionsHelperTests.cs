@@ -171,10 +171,33 @@ public class SimpleOptionsHelperTests
     [InlineData(ThinkingLevel.Low, 2048)]
     [InlineData(ThinkingLevel.Medium, 8192)]
     [InlineData(ThinkingLevel.High, 16384)]
+    [InlineData(ThinkingLevel.ExtraHigh, 16384)]
+    [InlineData(ThinkingLevel.Max, 32768)]
     public void GetDefaultThinkingBudget_ReturnsCorrectDefaults(ThinkingLevel level, int expectedBudget)
     {
         var result = SimpleOptionsHelper.GetDefaultThinkingBudget(level);
 
         result.ShouldBe(expectedBudget);
+    }
+
+    [Fact]
+    public void ClampReasoning_ConvertsMax_ToHigh()
+    {
+        var result = SimpleOptionsHelper.ClampReasoning(ThinkingLevel.Max);
+
+        result.ShouldBe(ThinkingLevel.High);
+    }
+
+    [Fact]
+    public void GetBudgetForLevel_Max_ReturnsMatchingBudget()
+    {
+        var budgets = new ThinkingBudgets
+        {
+            Max = 50000
+        };
+
+        var result = SimpleOptionsHelper.GetBudgetForLevel(ThinkingLevel.Max, budgets);
+
+        result.ShouldBe(50000);
     }
 }

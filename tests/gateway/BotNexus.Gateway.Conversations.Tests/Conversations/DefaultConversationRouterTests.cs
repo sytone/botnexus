@@ -719,5 +719,44 @@ public sealed class DefaultConversationRouterTests
         result.SessionId.ShouldNotBe(cronSessionId);
         result.IsNewSession.ShouldBeTrue();
     }
+
+    // -- #1681: agent-name binding leak + dedupe --------------------------------
+
+    [Fact]
+    public async Task ResolveInbound_AddressEqualsAgentId_PersistsNoBindingAddressedAgentName()
+    {
+        // The conversation kickoff posts a synthetic inbound whose ChannelAddress equals
+        // the conversation AgentId. On a real routable channel that synthetic artifact must
+        // never be persisted as a binding addressed 'X', or it poisons multi-bot routing.
+        var router = CreateRouter();
+        var agentId = Agent("agentX");
+
+        var result = await router.ResolveInboundAsync(
+            agentId, Channel("internal"), ChannelAddress.From(agentId.Value), null);
+
+        result.Conversation.ChannelBindings
+            .ShouldNotContain(b => b.ChannelAddress.Value == agentId.Value,
+                "kickoff for agent X must create NO routable binding addressed 'X'");
+    }
+
+    [Fact]
+    public async Task ResolveInbound_SecondConversation_DoesNotDuplicateChannelAddressBinding()
+    {
+        // Two kickoffs (or reconnects) on the same real channel address must not pile up
+        // duplicate bindings on (ChannelType, ChannelAddress).
+        var conversationStore = new InMemoryConversationStore();
+        var router = CreateRouter(conversationStore);
+        var agentId = Agent("agentX");
+        var channel = Channel("telegram");
+        var address = ChannelAddress.From("chat-123");
+
+        var first = await router.ResolveInboundAsync(agentId, channel, address, null);
+        var second = await router.ResolveInboundAsync(agentId, channel, address, null);
+
+        first.Conversation.ConversationId.ShouldBe(second.Conversation.ConversationId);
+        second.Conversation.ChannelBindings
+            .Count(b => b.ChannelType == channel && b.ChannelAddress == address)
+            .ShouldBe(1);
+    }
 }
 

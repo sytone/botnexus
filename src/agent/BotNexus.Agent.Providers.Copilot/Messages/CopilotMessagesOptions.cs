@@ -14,7 +14,7 @@ public record class CopilotMessagesOptions : Core.StreamOptions
 
     /// <summary>
     /// Adaptive thinking effort level: "low", "medium", "high", "max".
-    /// Used with Opus 4.6 and Sonnet 4.6 models served via GitHub Copilot.
+    /// Used with Opus 4.6/4.8 and Sonnet 4.6 adaptive-thinking models served via GitHub Copilot.
     /// </summary>
     public string? Effort { get; set; }
 

@@ -1067,10 +1067,10 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
-        return await LoadConversationAsync(connection, conversationId, ct).ConfigureAwait(false);
+        return await LoadConversationAsync(connection, conversationId, ct, _logger).ConfigureAwait(false);
     }
 
-    private static async Task<Conversation?> LoadConversationAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
+    private static async Task<Conversation?> LoadConversationAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct, ILogger? logger = null)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1088,7 +1088,7 @@ public sealed class SqliteConversationStore : IConversationStore
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
-        conversation.Participants = await LoadParticipantsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
+        conversation.Participants = await LoadParticipantsAsync(connection, conversation.ConversationId, logger, ct).ConfigureAwait(false);
         return conversation;
     }
 
@@ -1229,7 +1229,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var conversationId = reader.GetString(0);
                 if (!byId.ContainsKey(conversationId)
-                    || ConversationRowMapper.MapParticipant(reader, offset: 1) is not { } participant)
+                    || ConversationRowMapper.MapParticipant(reader, offset: 1, _logger) is not { } participant)
                 {
                     continue;
                 }
@@ -1273,7 +1273,7 @@ public sealed class SqliteConversationStore : IConversationStore
         return string.Join(", ", placeholders);
     }
 
-    private static async Task<List<SessionParticipant>> LoadParticipantsAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
+    private static async Task<List<SessionParticipant>> LoadParticipantsAsync(SqliteConnection connection, ConversationId conversationId, ILogger? logger, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1288,7 +1288,7 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            if (ConversationRowMapper.MapParticipant(reader, offset: 0) is { } participant)
+            if (ConversationRowMapper.MapParticipant(reader, offset: 0, logger) is { } participant)
                 participants.Add(participant);
         }
 

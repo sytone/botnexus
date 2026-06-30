@@ -110,13 +110,15 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
             if (IsAdaptiveThinkingModel(model.Id))
             {
                 copilotOpts.ThinkingEnabled = true;
+                var maxCapable = ModelRegistry.SupportsExtraHigh(model);
                 copilotOpts.Effort = reasoning switch
                 {
                     ThinkingLevel.Minimal => "low",
                     ThinkingLevel.Low => "low",
                     ThinkingLevel.Medium => "medium",
                     ThinkingLevel.High => "high",
-                    ThinkingLevel.ExtraHigh => IsOpus46Model(model.Id) ? "max" : "high",
+                    ThinkingLevel.ExtraHigh => maxCapable ? "max" : "high",
+                    ThinkingLevel.Max => maxCapable ? "max" : "high",
                     _ => "high"
                 };
             }
@@ -326,10 +328,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
     internal static bool IsAdaptiveThinkingModel(string modelId) =>
         modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase) ||
+        modelId.Contains("opus-4-8", StringComparison.OrdinalIgnoreCase) ||
+        modelId.Contains("opus-4.8", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4-6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4.6", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsOpus46Model(string modelId) =>
-        modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
 }

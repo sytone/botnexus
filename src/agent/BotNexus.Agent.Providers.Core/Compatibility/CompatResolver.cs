@@ -139,7 +139,8 @@ public static class CompatResolver
                 [ThinkingLevel.Low] = "default",
                 [ThinkingLevel.Medium] = "default",
                 [ThinkingLevel.High] = "default",
-                [ThinkingLevel.ExtraHigh] = "default"
+                [ThinkingLevel.ExtraHigh] = "default",
+                [ThinkingLevel.Max] = "default"
             };
         }
 
