@@ -18,7 +18,7 @@ namespace BotNexus.Gateway.Api.Triggers;
 ///   reuses that conversation verbatim — no per-agent enumeration, no title matching, no composite-id construction.
 /// • Otherwise the trigger creates a fresh conversation with a random GUID id, titled after the job, with the
 ///   initiator derived from <see cref="InternalTriggerRequest.CreatedBy"/> (parsed via
-///   <see cref="CitizenId.TryParse"/>) or falling back to the agent itself for system-provisioned jobs.
+///   <see cref="CitizenId.TryParse(string?, out CitizenId)"/>) or falling back to the agent itself for system-provisioned jobs.
 /// • Race safety: when two parallel runs create different conversations, the scheduler's CAS
 ///   (<see cref="BotNexus.Cron.ICronStore.TrySetConversationIdAsync"/>) picks one winner; the loser archives its
 ///   conversation and rebinds its session. See <see cref="BotNexus.Cron.CronScheduler"/>.

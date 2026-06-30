@@ -25,7 +25,7 @@ namespace BotNexus.Gateway.Tests.Api;
 /// 2. Slow-path: no pin (first run, or pinned conversation was hard-deleted) → trigger
 ///    creates a fresh conversation with a random <c>conv:&lt;guid&gt;</c> id, titled after
 ///    the job, with the initiator derived from <c>CreatedBy</c> via
-///    <see cref="CitizenId.TryParse"/> or falling back to the agent itself.
+///    <see cref="CitizenId.TryParse(string?, out CitizenId)"/> or falling back to the agent itself.
 ///    Write-back of <c>ResolvedConversationId</c> lets the scheduler perform a CAS pinback.
 /// </summary>
 public sealed class CronTriggerTests

@@ -120,17 +120,39 @@ public readonly struct CitizenId : IEquatable<CitizenId>
         if (string.IsNullOrWhiteSpace(kindPart) || string.IsNullOrWhiteSpace(idPart))
             return false;
 
+        // Map the textual kind prefix onto the enum, then delegate to the (kind, id) overload
+        // so the prefix-string form and the structured form share one composition path.
+        return Enum.TryParse<CitizenKind>(kindPart, ignoreCase: true, out var kind)
+            && TryParse(kind, idPart, out citizen);
+    }
+
+    /// <summary>
+    /// Composes a citizen identity from a known <see cref="CitizenKind"/> and its inner identifier
+    /// string. This is the single composition site every (kind, id) caller funnels through - the
+    /// string-prefix <see cref="TryParse(string?, out CitizenId)"/> overload, the JSON converter,
+    /// and persistence loaders all delegate here so the kind-to-arm mapping lives in exactly one
+    /// place. Returns <see langword="false"/> for an unknown/<see cref="CitizenKind.Unknown"/> kind,
+    /// a null/whitespace id, or an id the inner value object rejects - unknown kinds are surfaced
+    /// as a typed failure here and logged explicitly by callers, never silently dropped.
+    /// </summary>
+    public static bool TryParse(CitizenKind kind, string? id, out CitizenId citizen)
+    {
+        citizen = default;
+        if (string.IsNullOrWhiteSpace(id))
+            return false;
+
         try
         {
-            if (string.Equals(kindPart, "user", StringComparison.OrdinalIgnoreCase))
+            switch (kind)
             {
-                citizen = Of(UserId.From(idPart));
-                return true;
-            }
-            if (string.Equals(kindPart, "agent", StringComparison.OrdinalIgnoreCase))
-            {
-                citizen = Of(AgentId.From(idPart));
-                return true;
+                case CitizenKind.User:
+                    citizen = Of(UserId.From(id));
+                    return true;
+                case CitizenKind.Agent:
+                    citizen = Of(AgentId.From(id));
+                    return true;
+                default:
+                    return false;
             }
         }
         catch (Vogen.ValueObjectValidationException)
@@ -138,8 +160,6 @@ public readonly struct CitizenId : IEquatable<CitizenId>
             // Inner value-object validation rejected the id portion.
             return false;
         }
-
-        return false;
     }
 
     /// <inheritdoc/>
@@ -215,12 +235,11 @@ internal sealed class CitizenIdJsonConverter : JsonConverter<CitizenId>
         if (id is null)
             throw new JsonException("CitizenId requires an 'id' property.");
 
-        return kind.Value switch
-        {
-            CitizenKind.User => CitizenId.Of(UserId.From(id)),
-            CitizenKind.Agent => CitizenId.Of(AgentId.From(id)),
-            _ => throw new JsonException($"CitizenId.kind '{kind}' is not a valid citizen species."),
-        };
+        // Same kind-to-arm mapping as the rest of the system: delegate to the canonical
+        // composition site rather than re-switching here. Unknown species fail explicitly.
+        if (!CitizenId.TryParse(kind.Value, id, out var citizen))
+            throw new JsonException($"CitizenId.kind '{kind}' is not a valid citizen species.");
+        return citizen;
     }
 
     private static CitizenKind ReadKind(ref Utf8JsonReader reader) => reader.TokenType switch

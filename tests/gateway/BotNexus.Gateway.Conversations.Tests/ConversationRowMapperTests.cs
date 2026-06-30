@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Conversations.Tests;
 
@@ -321,5 +322,48 @@ public sealed class ConversationRowMapperTests
         summary.Kind.ShouldBe("Agent");
         summary.Id.ShouldBe("agent-z");
         summary.Role.ShouldBe("initiator");
+    }
+    [Fact]
+    public void MapParticipant_UnknownKind_LogsExplicitlyAndReturnsNull()
+    {
+        using var connection = OpenMemory();
+        using var reader = Read(connection, """
+            SELECT 'Martian' AS citizen_kind, 'x' AS citizen_id, NULL AS role
+            """);
+        var logger = new CapturingLogger();
+
+        var result = ConversationRowMapper.MapParticipant(reader, offset: 0, logger);
+
+        result.ShouldBeNull();
+        logger.Entries.ShouldContain(e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("Martian", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MapParticipant_KnownKind_DoesNotWarn()
+    {
+        using var connection = OpenMemory();
+        using var reader = Read(connection, """
+            SELECT 'User' AS citizen_kind, 'bob' AS citizen_id, 'peer' AS role
+            """);
+        var logger = new CapturingLogger();
+
+        var participant = ConversationRowMapper.MapParticipant(reader, offset: 0, logger);
+
+        participant.ShouldNotBeNull();
+        participant!.CitizenId.ShouldBe(CitizenId.Of(UserId.From("bob")));
+        logger.Entries.ShouldNotContain(e => e.Level == LogLevel.Warning);
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
     }
 }
