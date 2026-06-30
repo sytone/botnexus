@@ -93,6 +93,22 @@ else
         </div>
         <!-- MESSAGE STREAM -->
         <div class="message-stream" @ref="_messageStreamRef">
+            @if (HasMoreHistory)
+            {
+                <div class="history-load-more" data-testid="mobile-load-more">
+                    @if (_isLoadingMore)
+                    {
+                        <span class="history-load-more-spinner">&#x21BB;</span>
+                        <span>Loading older messages&#x2026;</span>
+                    }
+                    else
+                    {
+                        <button class="load-more-btn" data-testid="mobile-load-more-btn" @onclick="LoadMoreHistory">
+                            Load older messages
+                        </button>
+                    }
+                </div>
+            }
             @foreach (var msg in messages)
             {
                 @if (msg.IsBoundary)
@@ -266,6 +282,9 @@ else
     private string? _askUserError;
     private ConversationState? _archiveTarget;
     private ElementReference _messageStreamRef;
+    // #1691: load-more (scroll-up pagination) state.
+    private bool _isLoadingMore;
+    private bool _loadMoreObserverBound;
     private readonly Dictionary<string, string> _markdownCache = new();
 
     // #1475: user and assistant messages both render through the Markdown pipeline.
@@ -339,6 +358,19 @@ else
                 }
                 catch { /* JS not ready or not available in test context */ }
             }
+
+            // #1691: attach the scroll-to-top observer so scrolling up fetches the next older page
+            // and prepends it, matching the desktop behaviour through the shared Core paging logic.
+            if (!_loadMoreObserverBound)
+            {
+                try
+                {
+                    _dotNetRef ??= DotNetObjectReference.Create(this);
+                    await JS.InvokeVoidAsync("chatScroll.observeTopForLoadMore", _messageStreamRef, _dotNetRef);
+                    _loadMoreObserverBound = true;
+                }
+                catch { /* JS not ready or not available in test context */ }
+            }
         }
     }
 
@@ -391,6 +423,45 @@ else
             StateHasChanged();
             await ForceScrollToBottomAsync();
         });
+    }
+
+    // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.
+    // Fetches and prepends the next older page through the shared Core paging logic and pins the
+    // previously-visible message in place so the viewport does not jump to the top.
+    [JSInvokable]
+    public async Task OnScrolledToTop() => await LoadMoreHistory();
+
+    private async Task LoadMoreHistory()
+    {
+        if (_isLoadingMore || Store.ActiveAgentId is not { } agentId)
+            return;
+        var convId = Store.GetAgent(agentId)?.ActiveConversationId;
+        if (convId is null || !HasMoreHistory)
+            return;
+
+        _isLoadingMore = true;
+        StateHasChanged();
+        double previousHeight = 0;
+        try
+        {
+            try { previousHeight = await JS.InvokeAsync<double>("chatScroll.captureScrollHeight", _messageStreamRef); }
+            catch { }
+
+            var added = await Interaction.LoadMoreHistoryAsync(agentId, convId);
+            if (added > 0)
+            {
+                // Keep the conditional-scroll guard from treating the prepend as new-tail growth.
+                _lastRenderedMessageCount = Store.GetMessages(convId).Count;
+                StateHasChanged();
+                try { await JS.InvokeVoidAsync("chatScroll.restoreScrollAfterPrepend", _messageStreamRef, previousHeight); }
+                catch { }
+            }
+        }
+        finally
+        {
+            _isLoadingMore = false;
+            StateHasChanged();
+        }
     }
 
     /// <summary>
@@ -522,6 +593,19 @@ else
     {
         if (e.Key == "Enter" && !e.ShiftKey)
             await SendMessage();
+    }
+
+    // #1691: whether the active conversation has older history to page in on scroll-up.
+    private bool HasMoreHistory
+    {
+        get
+        {
+            var activeConvId = Store.ActiveAgentId is not null
+                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
+                : null;
+            return activeConvId is not null
+                && Store.GetAgent(Store.ActiveAgentId!)?.Conversations.GetValueOrDefault(activeConvId) is { HasMoreHistory: true };
+        }
     }
 
     // #1491: the pending ask_user prompt (if any) for the active conversation.
