@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -39,6 +39,16 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     // because _childAgentIds could drift out of sync with _subAgents (#1385).
     private readonly ConcurrentDictionary<string, SubAgentRecord> _records = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
+
+    /// <summary>
+    /// Platform-wide count of sub-agents currently in the <see cref="SubAgentStatus.Running"/>
+    /// state across all parent sessions. Mirrors the per-session running tally used by
+    /// <c>EnforceSpawnLimits</c> but without the parent filter, so the portal stats overview can
+    /// show a single live "active sub-agents" figure. Reading the concurrent dictionary's values is
+    /// a lock-free snapshot, which is sufficient for a monitoring counter that the stats panel polls.
+    /// </summary>
+    public int ActiveSubAgentCount =>
+        _records.Values.Count(record => record.Info.Status == SubAgentStatus.Running);
 
     public DefaultSubAgentManager(
         IAgentSupervisor supervisor,
