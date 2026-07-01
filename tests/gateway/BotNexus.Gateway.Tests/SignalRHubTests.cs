@@ -249,20 +249,23 @@ public sealed class SignalRHubTests
                 new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
                 NullLogger<SessionCompactionCoordinator>.Instance);
 
+        // Facade grouping the gateway application collaborators the hub delegates to.
+        GatewayHubApplicationService NewApp()
+            => new(
+                orchestrator,
+                Mock.Of<ISessionWarmupService>(),
+                conversationDispatcher,
+                NewCoordinator(sessionStore));
+
         // Two hubs with different connection IDs but same underlying stores/router
         var hub1 = new GatewayHub(
             Mock.Of<IAgentSupervisor>(),
             Mock.Of<IAgentRegistry>(),
             sessionStore,
-            orchestrator,
             Mock.Of<IActivityBroadcaster>(),
-            Mock.Of<ISessionCompactor>(),
-            Mock.Of<ISessionWarmupService>(),
-            conversationDispatcher,
             router,
-            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHub>.Instance,
-            compactionCoordinator: NewCoordinator(sessionStore))
+            NewApp(),
+            NullLogger<GatewayHub>.Instance)
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -273,15 +276,10 @@ public sealed class SignalRHubTests
             Mock.Of<IAgentSupervisor>(),
             Mock.Of<IAgentRegistry>(),
             sessionStore,
-            orchestrator,
             Mock.Of<IActivityBroadcaster>(),
-            Mock.Of<ISessionCompactor>(),
-            Mock.Of<ISessionWarmupService>(),
-            conversationDispatcher,
             router,
-            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHub>.Instance,
-            compactionCoordinator: NewCoordinator(sessionStore))
+            NewApp(),
+            NullLogger<GatewayHub>.Instance)
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -472,6 +470,35 @@ public sealed class SignalRHubTests
         activity.Verify(a => a.PublishAsync(
             It.Is<GatewayActivity>(ga => ga.Type == GatewayActivityType.SteeringInjected),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GatewayHub_Steer_SharedDispatchPath_PublishesActivityWithNormalizedIds()
+    {
+        // Structural guard (#1625): every control method routes its ids through the single
+        // ResolveCallContext normalize step and publishes via the shared PublishActivityAsync
+        // envelope path. A padded agent id must surface trimmed on the published activity, and
+        // the centralized envelope must still carry the conversation id the caller supplied.
+        var idleHandle = new Mock<IAgentHandle>();
+        idleHandle.SetupGet(h => h.IsRunning).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(idleHandle.Object);
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(idleHandle.Object);
+        var activity = new Mock<IActivityBroadcaster>();
+
+        var hub = CreateHub(supervisor: supervisor.Object, activity: activity.Object, connectionId: "conn-1");
+
+        await hub.Steer(AgentId.From("  agent-a  "), SessionId.From("sess-shared"), "nudge", "conv-shared");
+
+        activity.Verify(a => a.PublishAsync(
+            It.Is<GatewayActivity>(ga =>
+                ga.Type == GatewayActivityType.Error &&
+                ga.AgentId == "agent-a" &&
+                ga.SessionId == "sess-shared" &&
+                ga.ConversationId == "conv-shared"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -968,22 +995,26 @@ public sealed class SignalRHubTests
             optionsImpl,
             NullLogger<SessionCompactionCoordinator>.Instance);
 
+        // The gateway's inbound-dispatch, warmup, conversation-resolution, compaction, and
+        // conversation-reset collaborators now live behind IGatewayHubApplicationService. Compose
+        // it from the same substitutes so each hub control method stays individually testable.
+        var app = new GatewayHubApplicationService(
+            orchestrator ?? new CapturingInboundMessageOrchestrator(),
+            warmup ?? Mock.Of<ISessionWarmupService>(),
+            dispatcherForHub,
+            coordinator,
+            resetService);
+
         var hub = new GatewayHub(
             supervisorImpl,
             registry ?? Mock.Of<IAgentRegistry>(),
             sessionStore,
-            orchestrator ?? new CapturingInboundMessageOrchestrator(),
             activity ?? Mock.Of<IActivityBroadcaster>(),
-            compactorImpl,
-            warmup ?? Mock.Of<ISessionWarmupService>(),
-            dispatcherForHub,
             router,
-            optionsImpl,
+            app,
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry,
-            resetService,
-            coordinator)
+            askUserResponseRegistry)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
