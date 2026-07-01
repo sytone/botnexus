@@ -156,6 +156,7 @@ export default defineConfig({
           { text: 'Canvas', link: '/features/canvas' },
           { text: 'Per-Conversation Todo', link: '/features/todo' },
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
+          { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],
