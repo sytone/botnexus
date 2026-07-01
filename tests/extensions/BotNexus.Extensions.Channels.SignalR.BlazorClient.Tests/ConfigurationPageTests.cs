@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
@@ -10,9 +9,12 @@ using Microsoft.Extensions.DependencyInjection;
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
 /// <summary>
-/// Tests that the Configuration page:
-/// - Displays effective state (cron shows enabled even when missing from raw)
-/// - Save workflow only persists user-dirtied sections, not default-injected sections
+/// Tests for the schema-driven Configuration page save workflow (config-parity PBI 4/6 of #1579).
+/// The page now renders the generic SchemaForm fed by GET /api/config/schema instead of the eight
+/// hand-written panels. These assert the save workflow still only persists sections the user
+/// dirtied and that exist on disk (raw) -- default-injected-only sections must not be written back.
+/// Field-coverage parity is covered by ConfigurationPageSchemaFormTests; widget behaviour by
+/// SchemaFormTests.
 /// </summary>
 public sealed class ConfigurationPageTests : IDisposable
 {
@@ -21,36 +23,10 @@ public sealed class ConfigurationPageTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Cron_panel_shows_enabled_from_effective_config_even_when_raw_has_no_cron()
-    {
-        var handler = new FakeConfigApiHandler(
-            effective: new JsonObject
-            {
-                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
-                ["cron"] = new JsonObject { ["enabled"] = true, ["tickIntervalSeconds"] = 60 }
-            },
-            raw: new JsonObject
-            {
-                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" }
-            });
-        ConfigureServices(handler);
-
-        var cut = _ctx.Render<Configuration>(parameters =>
-            parameters.Add(p => p.Section, "cron"));
-
-        cut.WaitForAssertion(() =>
-        {
-            // The enabled checkbox should be present with checked attribute (effective cron.enabled = true)
-            var checkbox = cut.Find("input[type='checkbox']");
-            checkbox.ShouldNotBeNull();
-            checkbox.HasAttribute("checked").ShouldBeTrue();
-        });
-    }
-
-    [Fact]
     public void SaveAll_does_not_persist_sections_only_present_in_effective_defaults()
     {
         var handler = new FakeConfigApiHandler(
+            schema: BuildSchema(),
             effective: new JsonObject
             {
                 ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
@@ -62,37 +38,28 @@ public sealed class ConfigurationPageTests : IDisposable
             });
         ConfigureServices(handler);
 
-        var cut = _ctx.Render<Configuration>(parameters =>
-            parameters.Add(p => p.Section, "gateway"));
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        cut.WaitForAssertion(() => cut.Markup.ShouldNotContain("Loading"));
+        // Edit a gateway field (gateway is in raw, so it is eligible for save).
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
 
-        // Simulate user editing the gateway section only
-        // (gateway is in raw, so it's eligible for save)
-        // Find any input and change it to trigger dirty
-        var inputs = cut.FindAll("input[type='text']");
-        if (inputs.Count > 0)
-        {
-            inputs[0].Change("http://localhost:9999");
-        }
-
-        // Click save
-        var saveBtn = cut.Find("button.primary");
-        saveBtn.Click();
+        cut.Find("button.primary").Click();
 
         cut.WaitForAssertion(() =>
         {
-            // Gateway section should be saved (it's in raw and was dirtied)
+            // Gateway section is saved (in raw and dirtied).
             handler.SavedSections.ShouldContain("gateway");
-            // Cron section should NOT be saved (only in effective, user didn't touch it)
+            // Cron section is NOT saved (only present in effective defaults, not raw).
             handler.SavedSections.ShouldNotContain("cron");
         });
     }
 
     [Fact]
-    public void SaveAll_persists_section_when_user_explicitly_edits_default_only_section()
+    public void SaveAll_persists_section_when_it_exists_in_raw_after_edit()
     {
         var handler = new FakeConfigApiHandler(
+            schema: BuildSchema(),
             effective: new JsonObject
             {
                 ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
@@ -100,83 +67,126 @@ public sealed class ConfigurationPageTests : IDisposable
             },
             raw: new JsonObject
             {
-                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" }
+                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
+                ["cron"] = new JsonObject { ["enabled"] = true, ["tickIntervalSeconds"] = 60 }
             });
         ConfigureServices(handler);
 
-        // Navigate to cron panel and edit it
-        var cut = _ctx.Render<Configuration>(parameters =>
-            parameters.Add(p => p.Section, "cron"));
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        cut.WaitForAssertion(() => cut.Markup.ShouldNotContain("Loading"));
+        // Toggle a cron field; cron exists in raw so it must be persisted.
+        cut.Find("[data-testid='field-cron.enabled'] input").Change(false);
 
-        // Toggle the enabled checkbox to dirty the cron section
-        var checkbox = cut.Find("input[type='checkbox']");
-        checkbox.Change(false);
-
-        // Click save
-        var saveBtn = cut.Find("button.primary");
-        saveBtn.Click();
+        cut.Find("button.primary").Click();
 
         cut.WaitForAssertion(() =>
         {
-            // Cron SHOULD be saved because user explicitly edited it
             handler.SavedSections.ShouldContain("cron");
         });
     }
 
+    [Fact]
+    public void Save_button_disabled_until_an_edit_is_made()
+    {
+        var handler = new FakeConfigApiHandler(
+            schema: BuildSchema(),
+            effective: new JsonObject
+            {
+                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" }
+            },
+            raw: new JsonObject
+            {
+                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" }
+            });
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:8888");
+
+        cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());
+    }
+
     private void ConfigureServices(FakeConfigApiHandler handler)
     {
-        var httpClient = new HttpClient(handler)
-        {
-            BaseAddress = new Uri("http://gateway.test")
-        };
-
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://gateway.test") };
         _ctx.Services.AddSingleton(new PlatformConfigService(httpClient));
-        _ctx.Services.AddSingleton(new CronApiClient(httpClient));
         _ctx.JSInterop.SetupVoid("", _ => true);
     }
 
+    // Minimal schema covering the gateway + cron fields these tests edit.
+    private static JsonObject BuildSchema() => new()
+    {
+        ["schemaVersion"] = "1.0",
+        ["root"] = "PlatformConfig",
+        ["schema"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["gateway"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["x-ui-label"] = "Gateway",
+                    ["properties"] = new JsonObject
+                    {
+                        ["listenUrl"] = Scalar("string", "text", "Listen URL"),
+                    },
+                },
+                ["cron"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["x-ui-label"] = "Cron",
+                    ["properties"] = new JsonObject
+                    {
+                        ["enabled"] = Scalar("boolean", "toggle", "Enabled"),
+                        ["tickIntervalSeconds"] = Scalar("integer", "number", "Tick Interval"),
+                    },
+                },
+            },
+        },
+    };
+
+    private static JsonObject Scalar(string type, string widget, string label) =>
+        new() { ["type"] = type, ["x-ui-widget"] = widget, ["x-ui-label"] = label };
+
     internal sealed class FakeConfigApiHandler : HttpMessageHandler
     {
+        private readonly JsonObject _schema;
         private readonly JsonObject _effective;
         private readonly JsonObject _raw;
-
         public List<string> SavedSections { get; } = [];
 
-        public FakeConfigApiHandler(JsonObject effective, JsonObject raw)
+        public FakeConfigApiHandler(JsonObject schema, JsonObject effective, JsonObject raw)
         {
+            _schema = schema;
             _effective = effective;
             _raw = raw;
         }
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
-
+            if (path == "/api/config/schema" && request.Method == HttpMethod.Get)
+                return Task.FromResult(JsonResponse(_schema));
             if (path == "/api/config" && request.Method == HttpMethod.Get)
-                return JsonResponse(_effective);
-
+                return Task.FromResult(JsonResponse(_effective));
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
-                return JsonResponse(_raw);
-
-            if (path == "/api/cron" && request.Method == HttpMethod.Get)
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("[]", Encoding.UTF8, "application/json")
-                };
-
+                return Task.FromResult(JsonResponse(_raw));
             if (path.StartsWith("/api/config/", StringComparison.Ordinal) && request.Method == HttpMethod.Put)
             {
                 var section = Uri.UnescapeDataString(path["/api/config/".Length..]);
                 SavedSections.Add(section);
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"message\":\"ok\"}", Encoding.UTF8, "application/json")
-                };
+                });
             }
-
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
         private static HttpResponseMessage JsonResponse(JsonObject obj) =>

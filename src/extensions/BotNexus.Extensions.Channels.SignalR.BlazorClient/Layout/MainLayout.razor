@@ -217,21 +217,6 @@
 
                 <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
 
-                @* Config section sub-nav — only shown when on the configuration page *@
-                @if (IsOnPage("configuration"))
-                {
-                    <div class="sidebar-subnav">
-                        <a href="configuration/gateway"   class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F310; Gateway</a>
-                        <a href="configuration/providers" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F50C; Providers</a>
-                        <a href="configuration/channels"  class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F4E1; Channels</a>
-                        <a href="configuration/locations" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F4CD; Locations</a>
-                        <a href="configuration/world"     class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F30D; World Settings</a>
-                        <a href="configuration/cron"      class="sidebar-subnav-item" @onclick="CloseSidebar">&#x23F0; Cron</a>
-                        <a href="configuration/apikey"    class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F511; Global API Key</a>
-                        <a href="configuration/extensions" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F50C; Extensions</a>
-                    </div>
-                }
-
                 @if (ExtensionFeatures.SkillsEnabled)
                 {
                     <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">&#x1F9E0; Skills</a>

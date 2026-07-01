@@ -48,6 +48,24 @@ public sealed class PlatformConfigService
         }
     }
 
+    /// <summary>
+    /// Load the read-only UI schema for the whole platform config tree from
+    /// <c>GET /api/config/schema</c>. The returned envelope drives the schema-driven settings UI
+    /// (the generic SchemaForm renderer) so no hand-written config panels are needed; returns null
+    /// when the request fails so the page can show a fallback state.
+    /// </summary>
+    public async Task<JsonObject?> LoadSchemaAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<JsonObject>("/api/config/schema", s_jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Load a single config section.</summary>
     public async Task<JsonNode?> LoadSectionAsync(string section)
     {

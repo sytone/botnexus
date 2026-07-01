@@ -4,20 +4,20 @@
 @inject IJSRuntime JS
 @implements IDisposable
 
-<PageTitle>BotNexus — Configuration</PageTitle>
+<PageTitle>BotNexus - Configuration</PageTitle>
 
 <div class="platform-config-page">
     <header class="platform-config-toolbar">
-        <h2>⚙️ Platform Configuration</h2>
+        <h2>Platform Configuration</h2>
         <div class="platform-config-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
             {
                 <span class="platform-config-status @_statusClass">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="Validate" disabled="@_loading">✓ Validate</button>
-            <button class="toolbar-btn" @onclick="LoadConfig" disabled="@_loading">↻ Reload</button>
-            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(_dirtySections.Count == 0 || _saving)">
-                @(_saving ? "Saving…" : "💾 Save Changes")
+            <button class="toolbar-btn" @onclick="Validate" disabled="@_loading">Validate</button>
+            <button class="toolbar-btn" @onclick="LoadConfig" disabled="@_loading">Reload</button>
+            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(!_dirty || _saving)">
+                @(_saving ? "Saving..." : "Save Changes")
             </button>
         </div>
     </header>
@@ -26,10 +26,10 @@
     {
         <div class="config-loading">
             <div class="loading-spinner small"></div>
-            <span>Loading configuration…</span>
+            <span>Loading configuration...</span>
         </div>
     }
-    else if (_config is null)
+    else if (_config is null || _schema is null)
     {
         <div class="empty-state">Failed to load configuration.</div>
     }
@@ -37,36 +37,10 @@
     {
         <div class="config-page">
             <div class="config-panel-canvas">
-                @switch (Section?.ToLowerInvariant() ?? "gateway")
-                {
-                    case "gateway":
-                        <GatewayConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "providers":
-                        <ProvidersConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "channels":
-                        <ChannelsConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "locations":
-                        <LocationsConfigPanel />
-                        break;
-                    case "world":
-                        <WorldSettingsConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "cron":
-                        <CronConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "apikey":
-                        <ApiKeyConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                    case "extensions":
-                        <ExtensionsConfigPanel OnChanged="MarkDirty" />
-                        break;
-                    default:
-                        <GatewayConfigPanel Config="@_config" OnChanged="MarkDirty" />
-                        break;
-                }
+                @* The whole settings UI is rendered by the generic schema-driven SchemaForm fed by
+                   GET /api/config/schema (config-parity PBI 4/6 of #1579). The eight hand-written
+                   config panels were removed -- every field they exposed is surfaced by the schema. *@
+                <SchemaForm Schema="_schema" Value="_config" ValueChanged="OnConfigChanged" />
             </div>
         </div>
     }
@@ -75,7 +49,7 @@
     {
         <div class="validation-overlay" @onclick="@(() => _validationResult = null)">
             <div class="validation-dialog" @onclick:stopPropagation="true">
-                <h3>@(_validationResult.IsValid ? "✅ Configuration Valid" : "❌ Validation Errors")</h3>
+                <h3>@(_validationResult.IsValid ? "Configuration Valid" : "Validation Errors")</h3>
                 @if (_validationResult.ConfigPath is not null)
                 {
                     <p class="text-muted">Path: @_validationResult.ConfigPath</p>
@@ -85,7 +59,7 @@
                     <div class="validation-list errors">
                         @foreach (var err in _validationResult.Errors)
                         {
-                            <div class="validation-item error">❌ @err</div>
+                            <div class="validation-item error">@err</div>
                         }
                     </div>
                 }
@@ -94,7 +68,7 @@
                     <div class="validation-list warnings">
                         @foreach (var warn in _validationResult.Warnings)
                         {
-                            <div class="validation-item warning">⚠️ @warn</div>
+                            <div class="validation-item warning">@warn</div>
                         }
                     </div>
                 }
