@@ -8,6 +8,21 @@
 - **Hub URL:** `http://localhost:5005/hub/gateway`
 - **Transport:** SignalR negotiation (WebSockets/Server-Sent Events/Long Polling as available)
 
+### Connection query parameters
+
+Two optional query parameters are read from the connection URL at connect time and stay in
+effect for the lifetime of the connection:
+
+| Parameter | Values | Default | Purpose |
+|---|---|---|---|
+| `client` | `mobile`, `desktop` (any string; normalized to lowercase, trimmed) | `desktop` | Distinguishes the client surface (#1737). The gateway stamps the resolved value onto `InboundMessage.Metadata["clientKind"]` for every message this connection sends, so agents and the dispatch pipeline can tell a mobile client from a desktop one. A blank or absent value normalizes to `desktop`, so existing desktop clients that send nothing keep working. |
+| `clientVersion` | any string | `unknown` | Client build/version hint, recorded in the connect-time log line for diagnostics. |
+
+Append them to the hub URL, e.g. `…/hub/gateway?client=mobile&clientVersion=1.4.2`. The mobile
+portal sets `client=mobile`; the desktop portal sends no `client` value and is treated as
+`desktop`. Both values are attacker-controlled and are sanitized (CR/LF and control characters
+stripped) before being logged.
+
 ## Hub Methods (Client → Server)
 
 Methods invoked by the client on the hub. Return values are shown where the method
