@@ -14,5 +14,8 @@ builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.Ge
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
 builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
+// #1615: the schema-driven mobile Settings page reads/writes platform config through this service
+// (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.
+builder.Services.AddScoped<PlatformConfigService>();
 
 await builder.Build().RunAsync();
