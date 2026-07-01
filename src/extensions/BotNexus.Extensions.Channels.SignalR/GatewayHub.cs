@@ -18,7 +18,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -31,66 +30,54 @@ namespace BotNexus.Extensions.Channels.SignalR;
 /// When no authentication scheme is registered, the hub permits anonymous access
 /// for backward compatibility during the Phase 1 transition.
 /// </summary>
+/// <remarks>
+/// The hub is a thin transport adapter: SignalR-context-bound collaborators (supervisor,
+/// session store, activity broadcaster, conversation router/store, ask-user registry) are
+/// injected directly, while the gateway's inbound-dispatch, warmup, conversation-resolution,
+/// compaction, and conversation-reset operations are grouped behind
+/// <see cref="IGatewayHubApplicationService"/>. Every client-callable control method resolves
+/// its ids once through <see cref="ResolveCallContext"/> and publishes activity through the
+/// shared <see cref="PublishActivityAsync"/> path so id-normalisation and envelope construction
+/// live in one place.
+/// </remarks>
 [Authorize(Policy = SignalRAuthPolicy.PolicyName)]
 public sealed class GatewayHub : Hub<IGatewayHubClient>
 {
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
     private readonly ISessionStore _sessions;
-    private readonly IInboundMessageOrchestrator _orchestrator;
     private readonly IActivityBroadcaster _activity;
-    private readonly ISessionCompactor _compactor;
-    private readonly ISessionWarmupService _warmup;
-    private readonly IConversationDispatcher _conversationDispatcher;
     private readonly IConversationRouter _conversationRouter;
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
-    private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
-    private readonly IConversationResetService? _resetService;
-    private readonly ISessionCompactionCoordinator _compactionCoordinator;
+    private readonly IGatewayHubApplicationService _app;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
         ISessionStore sessions,
-        IInboundMessageOrchestrator orchestrator,
         IActivityBroadcaster activity,
-        ISessionCompactor compactor,
-        ISessionWarmupService warmup,
-        IConversationDispatcher conversationDispatcher,
         IConversationRouter conversationRouter,
-        IOptionsMonitor<CompactionOptions> compactionOptions,
+        IGatewayHubApplicationService app,
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null,
-        IConversationResetService? resetService = null,
-        ISessionCompactionCoordinator? compactionCoordinator = null)
+        IAskUserResponseRegistry? askUserResponseRegistry = null)
     {
         _supervisor = supervisor;
         _registry = registry;
         _sessions = sessions;
-        _orchestrator = orchestrator;
         _activity = activity;
-        _compactor = compactor;
-        _warmup = warmup;
-        _conversationDispatcher = conversationDispatcher;
         _conversationRouter = conversationRouter;
-        _compactionOptions = compactionOptions;
+        _app = app;
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
-        _resetService = resetService;
-        // Required for the /compact RPC path. Tests constructing the hub directly
-        // must pass one (see SignalRHubTests.CreateHub which uses TestSessionCompactionCoordinator).
-        _compactionCoordinator = compactionCoordinator
-            ?? throw new ArgumentNullException(nameof(compactionCoordinator),
-                "ISessionCompactionCoordinator is required. Production hosts get it from DI; tests must inject one.");
     }
 
     /// <summary>
     /// Subscribes the connection to every conversation it currently has access to, so it
-    /// receives streaming and event payloads for any session in those conversations —
+    /// receives streaming and event payloads for any session in those conversations --
     /// including sessions that are created later (e.g. after compaction within the
     /// conversation). Conversation-keyed groups are stable across compaction; the
     /// previous session-keyed groups dropped post-compaction deliveries (#682).
@@ -98,11 +85,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The available sessions at subscribe time, for UI initialisation.</returns>
     public async Task<SubscribeAllResult> SubscribeAll()
     {
-        var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
+        var sessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
 
         // Distinct conversation group keys across the returned sessions. Each session
         // contributes:
-        //   1) the real "conversation:{conversationId}" group (production routing key —
+        //   1) the real "conversation:{conversationId}" group (production routing key --
         //      the conversation survives compaction so the connection keeps receiving),
         //   2) a back-compat "conversation:{sessionId}" synonym, so any caller that
         //      builds a ChannelStreamTarget from the sessionId only (legacy code paths
@@ -158,7 +145,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Resolve the (sessionId, conversationId) the inbound message will land on so the
         // caller is in the conversation group before the orchestrator's worker emits stream
         // events. Session-row mutation (status / channel / participants) is owned by
-        // GatewayHost.ProcessAsync downstream — see #721.
+        // GatewayHost.ProcessAsync downstream -- see #721.
         var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
         // The router's GetOrCreate+SaveAsync (called inside the dispatcher) pins ConversationId
         // on the session row; subscribe by conversation so streams reach this connection even
@@ -255,13 +242,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
 
         _ = SafeDispatchAsync(
-            () => _orchestrator.AcceptAsync(
+            () => _app.AcceptAsync(
                 new InboundMessage
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
                     Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
-                    ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
+                    ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address -- one portal conversation per agent
                     RoutingHints = new InboundMessageRoutingHints(
                         RequestedAgentId: typedAgentId,
                         RequestedSessionId: resolution.SessionId,
@@ -286,13 +273,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
         string messageType, string senderId, string? conversationId = null)
-        => _orchestrator.AcceptAsync(
+        => _app.AcceptAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
                 Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
-                ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
+                ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address -- one portal conversation per agent
                 RoutingHints = new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
                     RequestedSessionId: typedSessionId,
@@ -326,15 +313,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
             try
             {
-                await _activity.PublishAsync(
-                    new GatewayActivity
-                    {
-                        Type = GatewayActivityType.Error,
-                        AgentId = agentId.Value,
-                        SessionId = sessionId.Value,
-                        Message = $"Agent dispatch failed: {ex.Message}"
-                    },
-                    CancellationToken.None);
+                await PublishActivityAsync(
+                    agentId,
+                    sessionId,
+                    GatewayActivityType.Error,
+                    CancellationToken.None,
+                    message: $"Agent dispatch failed: {ex.Message}");
             }
             catch
             {
@@ -368,13 +352,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The steer result.</returns>
     public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content, string? conversationId)
     {
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
+        var ctx = ResolveCallContext(agentId, sessionId);
         var typedChannelType = ChannelKey.From("signalr");
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         // Subscribe so post-compaction streams continue to arrive. #682
-        await SubscribeInternalAsync(typedSessionId);
+        await SubscribeInternalAsync(ctx.SessionId);
 
         // Steering bypasses the per-session orchestrator queue entirely and injects
         // directly into the agent's PendingMessageQueue via handle.SteerAsync().
@@ -401,28 +384,27 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // be routing/registering the handle (the original #-rationale for GetOrCreate). After that,
         // if the resolved handle still isn't running, treat it as a non-delivery rather than
         // dead-lettering the message.
-        IAgentHandle? handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
+        IAgentHandle? handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
         if (handle is null || !handle.IsRunning)
         {
             try
             {
-                handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, Context.ConnectionAborted);
+                handle = await _supervisor.GetOrCreateAsync(ctx.AgentId, ctx.SessionId, Context.ConnectionAborted);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to resolve agent handle for steering: agent {AgentId} session {SessionId}",
-                    typedAgentId.Value, typedSessionId.Value);
+                    ctx.AgentId.Value, ctx.SessionId.Value);
 
-                await _activity.PublishAsync(new GatewayActivity
-                {
-                    Type = GatewayActivityType.Error,
-                    AgentId = typedAgentId.Value,
-                    SessionId = typedSessionId.Value,
-                    ConversationId = conversationId,
-                    Message = $"Steering failed: {ex.Message}"
-                }, Context.ConnectionAborted);
+                await PublishActivityAsync(
+                    ctx.AgentId,
+                    ctx.SessionId,
+                    GatewayActivityType.Error,
+                    Context.ConnectionAborted,
+                    conversationId: conversationId,
+                    message: $"Steering failed: {ex.Message}");
 
-                return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
+                return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
             }
         }
 
@@ -431,24 +413,23 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Surface a clear, user-visible signal so the steer isn't silently lost.
         if (!handle.IsRunning)
         {
-            await _activity.PublishAsync(new GatewayActivity
-            {
-                Type = GatewayActivityType.Error,
-                AgentId = typedAgentId.Value,
-                SessionId = typedSessionId.Value,
-                ConversationId = conversationId,
-                Message = "Steering not applied: the agent isn't currently running in this conversation. Send the message instead to start a new turn."
-            }, Context.ConnectionAborted);
+            await PublishActivityAsync(
+                ctx.AgentId,
+                ctx.SessionId,
+                GatewayActivityType.Error,
+                Context.ConnectionAborted,
+                conversationId: conversationId,
+                message: "Steering not applied: the agent isn't currently running in this conversation. Send the message instead to start a new turn.");
 
             _logger.LogInformation(
                 "Steering skipped (agent not running) for agent {AgentId} session {SessionId}",
-                typedAgentId.Value, typedSessionId.Value);
+                ctx.AgentId.Value, ctx.SessionId.Value);
 
-            return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
+            return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
         }
 
         // Record steering message in session history
-        var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, Context.ConnectionAborted);
+        var session = await _sessions.GetOrCreateAsync(ctx.SessionId, ctx.AgentId, Context.ConnectionAborted);
         session.AddEntry(new SessionEntry
         {
             Role = BotNexus.Domain.Primitives.MessageRole.User,
@@ -459,19 +440,18 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Inject into agent's steering queue
         await handle.SteerAsync(content, Context.ConnectionAborted);
 
-        await _activity.PublishAsync(new GatewayActivity
-        {
-            Type = GatewayActivityType.SteeringInjected,
-            AgentId = typedAgentId.Value,
-            SessionId = typedSessionId.Value,
-            ConversationId = conversationId
-        }, Context.ConnectionAborted);
+        await PublishActivityAsync(
+            ctx.AgentId,
+            ctx.SessionId,
+            GatewayActivityType.SteeringInjected,
+            Context.ConnectionAborted,
+            conversationId: conversationId);
 
         _logger.LogInformation(
             "Steering injected for agent {AgentId} session {SessionId} (running={IsRunning})",
-            typedAgentId.Value, typedSessionId.Value, handle.IsRunning);
+            ctx.AgentId.Value, ctx.SessionId.Value, handle.IsRunning);
 
-        return new SendMessageResult(typedSessionId.Value, typedAgentId.Value, typedChannelType.Value);
+        return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
     }
 
     /// <summary>
@@ -484,10 +464,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public async Task<bool> InterruptAndSteer(AgentId agentId, SessionId sessionId, string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
+        var ctx = ResolveCallContext(agentId, sessionId);
 
-        var handle = _supervisor.GetHandle(typedAgentId, typedSessionId);
+        var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
         if (handle is null)
             return false;
 
@@ -504,8 +483,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The follow up result.</returns>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
+        var ctx = ResolveCallContext(agentId, sessionId);
         var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         _ = SafeDispatchAsync(
@@ -514,11 +492,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 // Late-subscribe by conversation so stream events emitted by the
                 // follow-up reach the connection even if SubscribeAll has not been
                 // invoked recently. #682
-                await SubscribeInternalAsync(typedSessionId);
-                await DispatchMessageAsync(typedAgentId, typedSessionId, content, "message", connectionId);
+                await SubscribeInternalAsync(ctx.SessionId);
+                await DispatchMessageAsync(ctx.AgentId, ctx.SessionId, content, "message", connectionId);
             },
-            typedAgentId,
-            typedSessionId);
+            ctx.AgentId,
+            ctx.SessionId);
         return Task.CompletedTask;
     }
 
@@ -530,13 +508,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The abort result.</returns>
     public async Task Abort(AgentId agentId, SessionId sessionId)
     {
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
-        var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
+        var ctx = ResolveCallContext(agentId, sessionId);
+        var instance = _supervisor.GetInstance(ctx.AgentId, ctx.SessionId);
         if (instance is null)
             return;
 
-        var handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, CancellationToken.None);
+        var handle = await _supervisor.GetOrCreateAsync(ctx.AgentId, ctx.SessionId, CancellationToken.None);
         await handle.AbortAsync(CancellationToken.None);
     }
 
@@ -547,52 +524,51 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// message creates a fresh session inside the same conversation.
     /// </summary>
     /// <remarks>
-    /// Delegates to <see cref="IConversationResetService"/> when a conversation is bound,
-    /// guarding against stale <paramref name="sessionId"/> values by passing it as the
-    /// expected active session. Sessions without a conversation (legacy/orphans) are
-    /// sealed in place — no transcript-destroying <see cref="ISessionStore.ArchiveAsync"/>.
+    /// Delegates to the conversation-reset operation on <see cref="IGatewayHubApplicationService"/>
+    /// when a conversation is bound, guarding against stale <paramref name="sessionId"/> values by
+    /// passing it as the expected active session. Sessions without a conversation (legacy/orphans)
+    /// are sealed in place -- no transcript-destroying <see cref="ISessionStore.ArchiveAsync"/>.
     /// </remarks>
     /// <param name="agentId">The agent id.</param>
     /// <param name="sessionId">The session id known to the caller.</param>
     /// <returns>A task that completes when the caller has been notified.</returns>
     public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
+        var ctx = ResolveCallContext(agentId, sessionId);
 
-        var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
+        var gatewaySession = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
 
-        if (gatewaySession is not null && gatewaySession.ConversationId.IsInitialized() && _resetService is not null)
-        {
-            await _resetService.ResetActiveSessionAsync(
+        var resetViaService = gatewaySession is not null
+            && gatewaySession.ConversationId.IsInitialized()
+            && await _app.TryResetActiveSessionAsync(
                 gatewaySession.ConversationId,
-                expectedActiveSessionId: typedSessionId,
-                CancellationToken.None).ConfigureAwait(false);
-        }
-        else if (gatewaySession is not null)
+                expectedActiveSessionId: ctx.SessionId,
+                CancellationToken.None);
+
+        if (!resetViaService && gatewaySession is not null)
         {
-            // Orphan/legacy session with no conversation link: stop the agent and seal
-            // the session in place (Status=Sealed + SaveAsync). Deliberately avoids
-            // ArchiveAsync because the InMemory implementation deletes the row and the
-            // file store renames files out of normal lookup — both destroy transcript
+            // Orphan/legacy session with no conversation link (or no reset service configured):
+            // stop the agent and seal the session in place (Status=Sealed + SaveAsync).
+            // Deliberately avoids ArchiveAsync because the InMemory implementation deletes the
+            // row and the file store renames files out of normal lookup -- both destroy transcript
             // readability for any UI that lists historical sessions.
             try
             {
-                await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None).ConfigureAwait(false);
+                await _supervisor.StopAsync(ctx.AgentId, ctx.SessionId, CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Supervisor stop failed for orphan session {SessionId}; reset will proceed.", typedSessionId);
+                _logger.LogWarning(ex, "Supervisor stop failed for orphan session {SessionId}; reset will proceed.", ctx.SessionId);
             }
 
             gatewaySession.Status = GatewaySessionStatus.Sealed;
             gatewaySession.UpdatedAt = DateTimeOffset.UtcNow;
-            await _sessions.SaveAsync(gatewaySession, CancellationToken.None).ConfigureAwait(false);
+            await _sessions.SaveAsync(gatewaySession, CancellationToken.None);
         }
 
         await Clients.Caller.SessionReset(new SessionResetPayload(
-            typedAgentId.Value,
-            typedSessionId.Value,
+            ctx.AgentId.Value,
+            ctx.SessionId.Value,
             gatewaySession is not null && gatewaySession.ConversationId.IsInitialized()
                 ? gatewaySession.ConversationId.Value
                 : null));
@@ -606,18 +582,20 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The compact session result.</returns>
     public async Task<CompactSessionResult> CompactSession(AgentId agentId, SessionId sessionId)
     {
-        var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeClientSessionId(sessionId);
-        var session = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
+        var ctx = ResolveCallContext(agentId, sessionId);
+        var session = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
         if (session is null)
-            throw new HubException($"Session '{typedSessionId.Value}' not found.");
+            throw new HubException($"Session '{ctx.SessionId.Value}' not found.");
 
         // Resolve through the request services so test hosts can substitute the
-        // coordinator. Falls back to the singleton injected at hub construction.
+        // coordinator. Falls back to the application-service facade composed at hub
+        // construction when the request scope does not override it.
         var requestServices = Context.GetHttpContext()?.RequestServices;
-        var coordinator = requestServices?.GetService<ISessionCompactionCoordinator>() ?? _compactionCoordinator;
+        var coordinator = requestServices?.GetService<ISessionCompactionCoordinator>();
 
-        var outcome = await coordinator.CompactAsync(typedAgentId, session, CancellationToken.None, force: true).ConfigureAwait(false);
+        var outcome = coordinator is not null
+            ? await coordinator.CompactAsync(ctx.AgentId, session, CancellationToken.None, force: true)
+            : await _app.CompactAsync(ctx.AgentId, session, CancellationToken.None, force: true);
 
         return new CompactSessionResult(
             outcome.Succeeded && outcome.Applied,
@@ -642,7 +620,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="sessionId">The session id.</param>
     /// <returns>The get agent status result.</returns>
     public AgentInstance? GetAgentStatus(AgentId agentId, SessionId sessionId)
-        => _supervisor.GetInstance(NormalizeAgentId(agentId), NormalizeClientSessionId(sessionId));
+    {
+        var ctx = ResolveCallContext(agentId, sessionId);
+        return _supervisor.GetInstance(ctx.AgentId, ctx.SessionId);
+    }
 
     /// <summary>
     /// Executes on connected async.
@@ -715,8 +696,47 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await base.OnDisconnectedAsync(exception);
     }
 
-    // GetSessionGroup is gone — the hub now subscribes/unsubscribes via SignalRChannelAdapter.GetConversationGroup.
+    // GetSessionGroup is gone -- the hub now subscribes/unsubscribes via SignalRChannelAdapter.GetConversationGroup.
     // Removing this prevents future regressions back to session-keyed routing (#682).
+
+    /// <summary>
+    /// Resolves the caller-supplied agent and session ids into a single normalized
+    /// <see cref="HubCallContext"/> so every client-callable control method runs the same
+    /// id-normalisation and reserved-namespace guard once, rather than repeating the
+    /// <see cref="NormalizeAgentId"/> / <see cref="NormalizeClientSessionId"/> pair inline.
+    /// </summary>
+    private static HubCallContext ResolveCallContext(AgentId agentId, SessionId sessionId)
+        => new(NormalizeAgentId(agentId), NormalizeClientSessionId(sessionId));
+
+    /// <summary>
+    /// Publishes a control-path <see cref="GatewayActivity"/> for the given call context through
+    /// the single activity path so the envelope shape (agent id, session id, optional conversation
+    /// id and message) is constructed in one place. Callers decide <em>whether</em> to publish;
+    /// this centralises only the construction and dispatch.
+    /// </summary>
+    private ValueTask PublishActivityAsync(
+        AgentId agentId,
+        SessionId sessionId,
+        GatewayActivityType type,
+        CancellationToken cancellationToken,
+        string? conversationId = null,
+        string? message = null)
+        => _activity.PublishAsync(
+            new GatewayActivity
+            {
+                Type = type,
+                AgentId = agentId.Value,
+                SessionId = sessionId.Value,
+                ConversationId = conversationId,
+                Message = message
+            },
+            cancellationToken);
+
+    /// <summary>
+    /// Normalized caller ids shared by the control methods. Produced once per call by
+    /// <see cref="ResolveCallContext"/> after the reserved-namespace guard has run.
+    /// </summary>
+    private readonly record struct HubCallContext(AgentId AgentId, SessionId SessionId);
 
     // AgentId is a Vogen value object; the parameter cannot be default(AgentId) (compile-time
     // VOG009) and is already validated and trimmed at construction. The defensive re-construction
@@ -851,7 +871,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     /// <summary>
     /// Resolves the (sessionId, conversationId) pair the inbound message will land on by
-    /// delegating to the shared <see cref="IConversationDispatcher"/>. Returns a lightweight
+    /// delegating to the shared conversation-resolution operation on
+    /// <see cref="IGatewayHubApplicationService"/>. Returns a lightweight
     /// <see cref="HubInboundResolution"/> that carries just the IDs the hub needs to
     /// (a) populate the synchronous <see cref="SendMessageResult"/> contract and
     /// (b) join the caller connection to the conversation group before the orchestrator's
@@ -860,7 +881,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <remarks>
     /// <para>
     /// This is a pure resolution call. Session row materialisation, ChannelType / SessionType
-    /// stamping, Expired→Active reactivation, transcript SaveAsync, and caller participant
+    /// stamping, Expired->Active reactivation, transcript SaveAsync, and caller participant
     /// registration are owned by <c>GatewayHost.ProcessAsync</c> inside the orchestrator's
     /// per-session worker (#721). The router invoked by the dispatcher already calls
     /// <c>SessionStore.GetOrCreateAsync</c> + <c>SaveAsync</c> as a side-effect of binding
@@ -894,7 +915,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 SenderId = Context.ConnectionId,
                 Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
                 Content = string.Empty,
-                // RoutingHints intentionally omitted — the outer InboundMessageContext below
+                // RoutingHints intentionally omitted -- the outer InboundMessageContext below
                 // carries the typed RequestedAgentId + RequestedConversationId explicitly.
             },
             new ChannelSource(
@@ -904,7 +925,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             RequestedConversationId: typedConversationId,
             RequestedAgentId: agentId);
 
-        var dispatchResult = await _conversationDispatcher.DispatchAsync(context, Context.ConnectionAborted);
+        var dispatchResult = await _app.ResolveSessionAsync(context, Context.ConnectionAborted);
         return new HubInboundResolution(
             dispatchResult.Resolution.SessionId,
             dispatchResult.Resolution.ConversationId,
@@ -927,7 +948,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     /// <summary>
     /// Returns <see langword="true"/> for exceptions that are expected side-effects of a
-    /// WebSocket client disconnecting before (or during) the SignalR handshake — e.g.
+    /// WebSocket client disconnecting before (or during) the SignalR handshake -- e.g.
     /// the browser navigating away, a network blip, or a rapid reconnect cycle. These
     /// are logged at Debug level instead of Warning to avoid Application Insights noise.
     /// </summary>
@@ -949,4 +970,3 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         return false;
     }
 }
-
