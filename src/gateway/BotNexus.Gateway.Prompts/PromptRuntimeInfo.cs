@@ -42,6 +42,13 @@ public sealed record PromptRuntimeInfo
     /// </summary>
     public string? Channel { get; init; }
     /// <summary>
+    /// Gets or sets the connecting client kind for transports that can distinguish device
+    /// classes (e.g. SignalR "mobile" vs "desktop"). Surfaced on the runtime line only when
+    /// a non-default kind is present so the agent can adapt its behaviour (#1209). Null or a
+    /// default kind ("desktop"/"unknown") is omitted to keep the no-hint case unchanged.
+    /// </summary>
+    public string? ClientKind { get; init; }
+    /// <summary>
     /// Gets or sets the capabilities.
     /// </summary>
     public IReadOnlyList<string>? Capabilities { get; init; }

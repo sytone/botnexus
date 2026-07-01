@@ -304,6 +304,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType));
             }
             session.ChannelType ??= message.ChannelType;
+            // Carry the connecting client kind (e.g. SignalR "mobile" vs "desktop") from the
+            // inbound message onto the session so the system-prompt builder can surface it on
+            // the runtime line. Only stamp when the channel supplied a non-empty value; absent
+            // metadata leaves the session untouched so non-signalr channels stay unchanged (#1209).
+            if (message.Metadata.TryGetValue("clientKind", out var clientKindValue)
+                && clientKindValue is string clientKind
+                && !string.IsNullOrWhiteSpace(clientKind))
+            {
+                session.Metadata["clientKind"] = clientKind;
+            }
             // Update session ConversationId from dispatch resolution.
             // Always update (not just when null) so that switching conversations on the same
             // session correctly routes messages to the new conversation (#314).

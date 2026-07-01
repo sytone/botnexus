@@ -232,7 +232,8 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         var context = new AgentExecutionContext
         {
             SessionId = sessionId,
-            History = priorHistory
+            History = priorHistory,
+            Parameters = BuildExecutionParameters(existingSession)
         };
         var handle = await strategy.CreateAsync(descriptor, context, cancellationToken);
 
@@ -312,6 +313,24 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 
         value = raw.ToString() ?? string.Empty;
         return !string.IsNullOrWhiteSpace(value);
+    }
+
+    /// <summary>
+    /// Builds the execution-context parameter bag from session metadata. Currently carries the
+    /// connecting client kind ("mobile" vs "desktop") so the context builder can surface it on
+    /// the runtime line (#1209). Returns an empty dictionary when the session has no such metadata
+    /// so the no-hint path is unchanged.
+    /// </summary>
+    /// <param name="session">The resuming session, or <see langword="null"/> for a fresh session.</param>
+    /// <returns>A parameter dictionary; empty when no relevant metadata is present.</returns>
+    private static IReadOnlyDictionary<string, object?> BuildExecutionParameters(GatewaySession? session)
+    {
+        if (session is not null && TryGetMetadataString(session, "clientKind", out var clientKind))
+        {
+            return new Dictionary<string, object?> { ["clientKind"] = clientKind };
+        }
+
+        return new Dictionary<string, object?>();
     }
 
     private async Task DisposeHandleAsync(IAgentHandle handle)

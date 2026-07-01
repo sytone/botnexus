@@ -17,6 +17,14 @@ public interface IPortalLoadService
     /// <summary>True when the SignalR hub connection is in the Connected state.</summary>
     bool IsSignalRConnected { get; }
 
+    /// <summary>
+    /// The connecting client kind ("desktop" or "mobile") appended to the hub URL as a
+    /// <c>client</c> query parameter so the gateway can distinguish device classes per
+    /// SignalR connection (#1209). Callers set this before <see cref="InitializeAsync"/>;
+    /// it defaults to "desktop" so the historical desktop-portal path is unchanged (AC#5).
+    /// </summary>
+    string ClientKind { get; set; }
+
     /// <summary>Raised when <see cref="IsReady"/>, <see cref="IsLoading"/>, or <see cref="LoadError"/> changes.</summary>
     event Action? OnReadyChanged;
 

@@ -268,7 +268,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                         RequestedConversationId: null),
                     Content = content,
                     ContentParts = parts,
-                    Metadata = new Dictionary<string, object?> { ["messageType"] = "message-with-media" }
+                    Metadata = new Dictionary<string, object?>
+                    {
+                        ["messageType"] = "message-with-media",
+                        ["clientKind"] = ResolveClientKind()
+                    }
                 },
                 CancellationToken.None),
             typedAgentId,
@@ -294,7 +298,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     RequestedSessionId: typedSessionId,
                     RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
                 Content = content,
-                Metadata = new Dictionary<string, object?> { ["messageType"] = messageType }
+                Metadata = new Dictionary<string, object?>
+                {
+                    ["messageType"] = messageType,
+                    ["clientKind"] = ResolveClientKind()
+                }
             },
             CancellationToken.None);
 
@@ -643,8 +651,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     public override async Task OnConnectedAsync()
     {
         var clientVersion = Context.GetHttpContext()?.Request.Query["clientVersion"].FirstOrDefault() ?? "unknown";
-        _logger.LogInformation("Hub OnConnected: connection={ConnectionId} clientVersion={ClientVersion}",
-            Context.ConnectionId, clientVersion);
+        // Read the connect-time client-kind hint and stash it for the lifetime of the
+        // connection so the per-message dispatch path can stamp it onto InboundMessage.Metadata
+        // without re-reading the query each time (#1209). Absent hint -> "desktop" (AC#5).
+        var clientKind = ResolveClientKind();
+        Context.Items["clientKind"] = clientKind;
+        // Both clientVersion and clientKind originate from the connect-time query string and are
+        // fully attacker-controlled. Sanitize them before logging so an embedded CR/LF (or other
+        // control character) cannot forge additional log lines (CodeQL cs/log-forging).
+        _logger.LogInformation("Hub OnConnected: connection={ConnectionId} clientVersion={ClientVersion} clientKind={ClientKind}",
+            Context.ConnectionId, SanitizeForLog(clientVersion), SanitizeForLog(clientKind));
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
@@ -717,6 +733,52 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// </summary>
     private string GetAuthenticatedUserId()
         => Context.UserIdentifier ?? Context.ConnectionId;
+
+    /// <summary>
+    /// Resolves the connecting client kind ("mobile" vs "desktop") for this connection (#1209).
+    /// Reads the value cached in <see cref="HubCallerContext.Items"/> by
+    /// <see cref="OnConnectedAsync"/> first, then falls back to re-reading the connect-time
+    /// <c>client</c> query parameter so dispatch still works if the cache was not populated.
+    /// An absent or blank hint normalizes to "desktop" so existing desktop clients that send no
+    /// hint keep working (backward compatible -- AC#5). The value is lower-cased for a stable key.
+    /// </summary>
+    /// <returns>The normalized client kind; never null or empty.</returns>
+    private string ResolveClientKind()
+    {
+        if (Context.Items.TryGetValue("clientKind", out var cached)
+            && cached is string cachedKind
+            && !string.IsNullOrWhiteSpace(cachedKind))
+        {
+            return cachedKind;
+        }
+
+        var raw = Context.GetHttpContext()?.Request.Query["client"].FirstOrDefault();
+        return string.IsNullOrWhiteSpace(raw) ? "desktop" : raw.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Strips CR, LF and other control characters from a value before it is written to a log so
+    /// that attacker-controlled connect-time query values (client kind, client version) cannot
+    /// inject newlines and forge additional log lines (CodeQL cs/log-forging). Control characters
+    /// are replaced with a single space and the result is trimmed; an empty/whitespace result
+    /// collapses to a stable placeholder so the log line keeps its shape.
+    /// </summary>
+    private static string SanitizeForLog(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "(empty)";
+        }
+
+        var chars = new char[value.Length];
+        for (var i = 0; i < value.Length; i++)
+        {
+            chars[i] = char.IsControl(value[i]) ? ' ' : value[i];
+        }
+
+        var sanitized = new string(chars).Trim();
+        return sanitized.Length == 0 ? "(empty)" : sanitized;
+    }
 
     private static SessionId NormalizeSessionId(SessionId sessionId)
     {

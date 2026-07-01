@@ -17,6 +17,14 @@ public sealed class PortalLoadService : IPortalLoadService
     public bool IsLoading { get; private set; }
     public string? LoadError { get; private set; }
     public bool IsSignalRConnected => _hub.IsConnected;
+
+    /// <summary>
+    /// The connecting client kind ("desktop" or "mobile") forwarded to the hub connection as a
+    /// <c>client</c> query parameter so the gateway can distinguish device classes per SignalR
+    /// connection (#1209). Set by the per-app caller before <see cref="InitializeAsync"/>;
+    /// defaults to "desktop" so the historical desktop-portal path is unchanged (AC#5).
+    /// </summary>
+    public string ClientKind { get; set; } = "desktop";
     public event Action? OnReadyChanged;
     public event Action? OnConnectionStateChanged;
 
@@ -106,7 +114,7 @@ public sealed class PortalLoadService : IPortalLoadService
                 if (agentInteractionRef is not null)
                     concreteHandler.ConversationRefreshDelegate = agentId => agentInteractionRef.RefreshConversationsAsync(agentId);
             }
-            await _hub.ConnectAsync(hubUrl);
+            await _hub.ConnectAsync(hubUrl, ClientKind);
 
             // Track SignalR connection state for UI indicators and reconnect flows.
             _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
@@ -261,7 +269,7 @@ public sealed class PortalLoadService : IPortalLoadService
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)
             {
-                await _hub.ConnectAsync(_hubUrl);
+                await _hub.ConnectAsync(_hubUrl, ClientKind);
                 var subscribeResult = await _hub.SubscribeAllAsync();
                 foreach (var session in subscribeResult.Sessions)
                     _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);

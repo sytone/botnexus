@@ -141,4 +141,65 @@ public sealed class PromptSectionWiringTests
         modelIdx.ShouldBeGreaterThan(-1);
         workspaceIdx.ShouldBeLessThan(modelIdx);
     }
+
+    [Fact]
+    public void RuntimeLine_WithMobileClientKind_EmitsClientField()
+    {
+        // Proves the gateway-side RuntimeInfo.ClientKind threads through SystemPromptBuilder ->
+        // PromptRuntimeInfo -> the runtime line in a full prompt (#1209 AC#4).
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "test-workspace"),
+            ToolNames = ["read", "write"],
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "test-agent",
+                Channel = "signalr",
+                ClientKind = "mobile"
+            }
+        });
+
+        prompt.ShouldContain("client=mobile");
+    }
+
+    [Fact]
+    public void RuntimeLine_WithoutClientKind_OmitsClientField()
+    {
+        // Back-compat (AC#5): a session with no client kind renders the existing runtime line.
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "test-workspace"),
+            ToolNames = ["read", "write"],
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "test-agent",
+                Channel = "signalr"
+            }
+        });
+
+        prompt.ShouldNotContain("client=");
+    }
+
+    [Fact]
+    public void RuntimeLine_WithDesktopClientKind_OmitsClientField()
+    {
+        // Back-compat (AC#5): the default desktop kind is suppressed so desktop prompts are
+        // unchanged from before this feature.
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "test-workspace"),
+            ToolNames = ["read", "write"],
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = "test-agent",
+                Channel = "signalr",
+                ClientKind = "desktop"
+            }
+        });
+
+        prompt.ShouldNotContain("client=");
+    }
 }
