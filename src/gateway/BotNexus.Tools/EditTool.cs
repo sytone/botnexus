@@ -63,7 +63,7 @@ public sealed class EditTool : IAgentTool
                 },
                 "edits": {
                   "type": "array",
-                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally.",
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Expected shape: { \"path\": \"...\", \"edits\": [ { \"oldText\": \"...\", \"newText\": \"...\" } ] }.",
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -218,7 +218,7 @@ public sealed class EditTool : IAgentTool
             IReadOnlyDictionary<string, object?> dict => new EditEntry(
                 ReadRequiredString(dict, "oldText"),
                 ReadRequiredString(dict, "newText")),
-            _ => throw new ArgumentException("Each edits entry must be an object.")
+            _ => throw new ArgumentException("Each edits entry must be an object." + ShapeHint)
         };
     }
 
@@ -226,17 +226,17 @@ public sealed class EditTool : IAgentTool
     {
         if (element.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("Each edits entry must be an object.");
+            throw new ArgumentException("Each edits entry must be an object." + ShapeHint);
         }
 
         if (!element.TryGetProperty("oldText", out var oldTextElement) || oldTextElement.ValueKind != JsonValueKind.String)
         {
-            throw new ArgumentException("Each edits entry must include oldText.");
+            throw new ArgumentException("Each edits entry must include oldText." + ShapeHint);
         }
 
         if (!element.TryGetProperty("newText", out var newTextElement) || newTextElement.ValueKind != JsonValueKind.String)
         {
-            throw new ArgumentException("Each edits entry must include newText.");
+            throw new ArgumentException("Each edits entry must include newText." + ShapeHint);
         }
 
         return new EditEntry(
@@ -293,7 +293,8 @@ public sealed class EditTool : IAgentTool
                 if (exactMatchCount > 1)
                 {
                     throw new InvalidOperationException(
-                        $"Expected exactly one match for edits[].oldText, but found {exactMatchCount}.");
+                        $"Expected exactly one match for edits[].oldText, but found {exactMatchCount}."
+                        + DescribeMatchLines(normalizedOriginal, normalizedOld));
                 }
 
                 if (exactMatchCount == 1)
@@ -313,7 +314,8 @@ public sealed class EditTool : IAgentTool
                 if (fuzzyMatchCount != 1)
                 {
                     throw new InvalidOperationException(
-                        $"Expected exactly one match for edits[].oldText, but found {fuzzyMatchCount}.");
+                        $"Expected exactly one match for edits[].oldText, but found {fuzzyMatchCount}."
+                        + DescribeFuzzyMatchLines(normalizedOriginal, normalizedForFuzzy, fuzzyOld));
                 }
 
                 var fuzzyStart = normalizedForFuzzy.Normalized.IndexOf(fuzzyOld, StringComparison.Ordinal);
@@ -329,17 +331,26 @@ public sealed class EditTool : IAgentTool
             .OrderBy(edit => edit.StartIndex)
             .ToList();
 
-        EnsureNonOverlapping(replacements);
+        EnsureNonOverlapping(replacements, normalizedOriginal);
         return replacements;
     }
 
-    private static void EnsureNonOverlapping(List<ResolvedEdit> replacements)
+    private static void EnsureNonOverlapping(List<ResolvedEdit> replacements, string normalizedOriginal)
     {
         for (var i = 1; i < replacements.Count; i++)
         {
             if (replacements[i].StartIndex < replacements[i - 1].EndIndex)
             {
-                throw new InvalidOperationException("edits entries must not overlap.");
+                var previous = replacements[i - 1];
+                var current = replacements[i];
+                // Report which two resolved edits collide and their 1-based line ranges so the
+                // caller can make them disjoint or merge them, instead of guessing blind.
+                var previousRange = DescribeLineRange(normalizedOriginal, previous.StartIndex, previous.EndIndex);
+                var currentRange = DescribeLineRange(normalizedOriginal, current.StartIndex, current.EndIndex);
+                throw new InvalidOperationException(
+                    "edits entries must not overlap."
+                    + $" edits[{i - 1}] ({previousRange}) overlaps edits[{i}] ({currentRange})."
+                    + " Make edits disjoint or combine them into one.");
             }
         }
     }
@@ -377,6 +388,121 @@ public sealed class EditTool : IAgentTool
         }
 
         return count;
+    }
+
+    // Correct-shape example mirrored in the tool description so a malformed-entry error tells the
+    // caller exactly what a valid edits payload looks like instead of leaving them to guess.
+    private const string ShapeHint =
+        " Expected shape: { \"path\": \"...\", \"edits\": [ { \"oldText\": \"...\", \"newText\": \"...\" } ] }.";
+
+    /// <summary>
+    /// Builds the line-location suffix for the ambiguous exact-match case (issue #1736): finds every
+    /// exact occurrence of <paramref name="needle"/> in <paramref name="text"/>, converts each start
+    /// offset to a 1-based line number, and returns a sentence such as
+    /// <c> Matches at lines 44 and 207. Add surrounding context to oldText so it matches exactly one
+    /// site.</c> Returns an empty string when fewer than two matches are present so callers can append
+    /// unconditionally.
+    /// </summary>
+    private static string DescribeMatchLines(string text, string needle)
+    {
+        if (string.IsNullOrEmpty(needle))
+        {
+            return string.Empty;
+        }
+
+        var lineNumbers = new List<int>();
+        var index = 0;
+        while ((index = text.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            lineNumbers.Add(LineNumberAt(text, index));
+            index += needle.Length;
+        }
+
+        return FormatMatchLines(lineNumbers);
+    }
+
+    /// <summary>
+    /// The fuzzy-match counterpart of <see cref="DescribeMatchLines"/>: enumerates every occurrence of
+    /// the fuzzy-normalized needle in the fuzzy-normalized text, maps each fuzzy start offset back to
+    /// the original text via the index map, and reports the original-text line numbers. This keeps the
+    /// reported lines accurate even when the match only succeeded after smart-quote/whitespace folding.
+    /// </summary>
+    private static string DescribeFuzzyMatchLines(string normalizedOriginal, NormalizedFuzzyText fuzzy, string fuzzyNeedle)
+    {
+        if (string.IsNullOrEmpty(fuzzyNeedle))
+        {
+            return string.Empty;
+        }
+
+        var lineNumbers = new List<int>();
+        var index = 0;
+        while ((index = fuzzy.Normalized.IndexOf(fuzzyNeedle, index, StringComparison.Ordinal)) >= 0)
+        {
+            var originalStart = fuzzy.IndexMap[index];
+            lineNumbers.Add(LineNumberAt(normalizedOriginal, originalStart));
+            index += fuzzyNeedle.Length;
+        }
+
+        return FormatMatchLines(lineNumbers);
+    }
+
+    private static string FormatMatchLines(List<int> lineNumbers)
+    {
+        if (lineNumbers.Count < 2)
+        {
+            return string.Empty;
+        }
+
+        return $" Matches at {FormatLineNumbers(lineNumbers)}."
+               + " Add surrounding context to oldText so it matches exactly one site.";
+    }
+
+    /// <summary>
+    /// Describes the 1-based line span an offset range covers as <c>line 12</c> (single line) or
+    /// <c>lines 12-18</c> (multi-line), used to show where two overlapping edits collide.
+    /// </summary>
+    private static string DescribeLineRange(string text, int startIndex, int endIndex)
+    {
+        var startLine = LineNumberAt(text, startIndex);
+        // The end offset is exclusive; step back one so a range that ends exactly at a line break
+        // does not claim the following line.
+        var endLine = LineNumberAt(text, Math.Max(startIndex, endIndex - 1));
+        return startLine == endLine ? $"line {startLine}" : $"lines {startLine}-{endLine}";
+    }
+
+    /// <summary>
+    /// Converts a character offset into a 1-based line number by counting the line breaks before it,
+    /// matching the <c>\n</c>-counting approach the rest of the file uses on already line-normalized text.
+    /// </summary>
+    private static int LineNumberAt(string text, int offset)
+    {
+        var clamped = Math.Clamp(offset, 0, text.Length);
+        var line = 1;
+        for (var i = 0; i < clamped; i++)
+        {
+            if (text[i] == '\n')
+            {
+                line++;
+            }
+        }
+
+        return line;
+    }
+
+    private static string FormatLineNumbers(List<int> lineNumbers)
+    {
+        if (lineNumbers.Count == 1)
+        {
+            return $"line {lineNumbers[0]}";
+        }
+
+        if (lineNumbers.Count == 2)
+        {
+            return $"lines {lineNumbers[0]} and {lineNumbers[1]}";
+        }
+
+        var leading = string.Join(", ", lineNumbers.Take(lineNumbers.Count - 1));
+        return $"lines {leading} and {lineNumbers[^1]}";
     }
 
     /// <summary>
