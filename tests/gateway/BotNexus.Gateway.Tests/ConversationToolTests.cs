@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -103,8 +104,11 @@ public sealed class ConversationToolTests
     }
 
     [Fact]
-    public async Task New_WithMessage_SeedsInitialUserMessageInNewSession()
+    public async Task New_WithMessage_SeedsInitialAssistantMessageInNewSession()
     {
+        // Hybrid rule (#1650): the `new` action posts as the calling agent with no
+        // speak_as override, so the seeded entry is recorded as assistant (the agent
+        // speaking as itself) rather than the old hardcoded user role.
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
         var tool = new ConversationTool(conversationStore, AgentId.From("orchestrator"), accessLevel: ConversationAccessLevel.All, sessionStore: sessionStore);
@@ -127,8 +131,35 @@ public sealed class ConversationToolTests
         session.ShouldNotBeNull();
         session.Session.ConversationId.ShouldBe(ConversationId.From(conversationId));
         var entry = session.GetHistorySnapshot().ShouldHaveSingleItem();
-        entry.Role.ShouldBe(MessageRole.User);
+        entry.Role.ShouldBe(MessageRole.Assistant);
         entry.Content.ShouldBe("Please investigate issue #249");
+    }
+
+    [Fact]
+    public async Task New_WithMessageAndSpeakAsUser_SeedsInitialUserMessage()
+    {
+        // Hybrid rule (#1650), AC 2: an explicit speak_as:"user" on the `new` action
+        // records the seeded entry as user -- the on-behalf-of-user kickoff case --
+        // overriding the agent-kind assistant default.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var tool = new ConversationTool(conversationStore, AgentId.From("orchestrator"), accessLevel: ConversationAccessLevel.All, sessionStore: sessionStore);
+
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Handoff",
+            message: "Please investigate issue #249",
+            speakAs: "user"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()
+            ?? throw new InvalidOperationException("Expected activeSessionId in tool response.");
+
+        var session = await sessionStore.GetAsync(SessionId.From(activeSessionId));
+        session.ShouldNotBeNull();
+        var entry = session.GetHistorySnapshot().ShouldHaveSingleItem();
+        entry.Role.ShouldBe(MessageRole.User);
     }
 
     [Fact]
@@ -171,7 +202,10 @@ public sealed class ConversationToolTests
         var conversationId = document.RootElement.GetProperty("conversationId").GetString()!;
         var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
 
-        // Assert: dispatcher was called exactly once with the correct inbound message
+        // Assert: dispatcher was called exactly once with the correct inbound message.
+        // SpeakAs is null (no override) so GatewayHost derives the role from the
+        // agent-kind sender; the posted sender must be the calling agent so that
+        // derivation resolves to assistant rather than user.
         orchestrator.Received(1).Post(
             Arg.Is<InboundMessage>(m =>
                 m.RoutingHints != null &&
@@ -179,7 +213,38 @@ public sealed class ConversationToolTests
                 m.Content == "Please investigate issue #285" &&
                 m.RoutingHints.RequestedSessionId != null && m.RoutingHints.RequestedSessionId.Value.Value == activeSessionId &&
                 m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId &&
+                m.Sender.Kind == CitizenKind.Agent &&
+                m.SpeakAs == null &&
                 m.ChannelType.Equals(ChannelKey.From("internal"))));
+    }
+
+    [Fact]
+    public async Task New_WithMessageAndSpeakAsUser_PostsInboundMessageWithUserSpeakAs()
+    {
+        // Hybrid rule (#1650): the speak_as override is threaded onto the posted
+        // InboundMessage.SpeakAs so GatewayHost reads it rather than re-deriving.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var tool = new ConversationTool(
+            conversationStore,
+            AgentId.From("orchestrator"),
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            messageOrchestrator: orchestrator);
+
+        await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Handoff",
+            message: "Kick off on behalf of the user",
+            speakAs: "user"));
+
+        orchestrator.Received(1).Post(
+            Arg.Is<InboundMessage>(m =>
+                m.Content == "Kick off on behalf of the user" &&
+                m.Sender.Kind == CitizenKind.Agent &&
+                m.SpeakAs != null && m.SpeakAs == MessageRole.User));
     }
 
     [Fact]
@@ -256,18 +321,52 @@ public sealed class ConversationToolTests
             conversationId: conversation.ConversationId.Value,
             message: "Hello Nova!"));
 
-        // Assert: dispatcher called with the user message
+        // Assert: dispatcher called with the agent-authored message. SpeakAs is null
+        // (no override) so GatewayHost derives the role from the agent-kind sender.
         orchestrator.Received(1).Post(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Hello Nova!" &&
                 m.RoutingHints != null &&
                 m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
+                m.Sender.Kind == CitizenKind.Agent &&
+                m.SpeakAs == null &&
                 m.ChannelType == ChannelKey.From("internal")));
 
         // Result includes conversation and session IDs
         using var document = JsonDocument.Parse(ReadText(result));
         document.RootElement.GetProperty("conversationId").GetString().ShouldBe(conversation.ConversationId.Value);
         document.RootElement.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task SendMessage_WithSpeakAsUser_ThreadsUserSpeakAsOntoInboundMessage()
+    {
+        // Hybrid rule (#1650), AC 2: an explicit speak_as:"user" on the `message`
+        // action is threaded onto the posted InboundMessage.SpeakAs so the message
+        // is recorded as an on-behalf-of-user kickoff rather than an agent post.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+
+        var tool = new ConversationTool(
+            conversationStore,
+            AgentId.From("orchestrator"),
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            messageOrchestrator: orchestrator);
+
+        await tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Kick off on behalf of the user",
+            speakAs: "user"));
+
+        orchestrator.Received(1).Post(
+            Arg.Is<InboundMessage>(m =>
+                m.Content == "Kick off on behalf of the user" &&
+                m.Sender.Kind == CitizenKind.Agent &&
+                m.SpeakAs != null && m.SpeakAs == MessageRole.User));
     }
 
     [Fact]
@@ -451,7 +550,8 @@ public sealed class ConversationToolTests
         string? conversationId = null,
         string? displayName = null,
         string? purpose = null,
-        string? message = null)
+        string? message = null,
+        string? speakAs = null)
     {
         var args = new Dictionary<string, object?> { ["action"] = action };
         if (agentId is not null) args["agentId"] = agentId;
@@ -459,6 +559,7 @@ public sealed class ConversationToolTests
         if (displayName is not null) args["displayName"] = displayName;
         if (purpose is not null) args["purpose"] = purpose;
         if (message is not null) args["message"] = message;
+        if (speakAs is not null) args["speak_as"] = speakAs;
         return args;
     }
 

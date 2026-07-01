@@ -118,6 +118,29 @@ public sealed record InboundMessage
     /// </para>
     /// </remarks>
     public MessageRole? SpeakAs { get; init; }
+
+    /// <summary>
+    /// Derives the <see cref="MessageRole"/> this message should be recorded under when it
+    /// is stamped into channel/session history, applying the Hybrid rule agreed on <c>#1547</c>
+    /// (Step 2/3, <c>#1650</c>). Called by every role-stamp site on the inbound agent-post path
+    /// so the local copy a producer writes and the entry the gateway persists never diverge.
+    /// </summary>
+    /// <remarks>
+    /// The rule, in priority order:
+    /// <list type="number">
+    /// <item>An explicit <see cref="SpeakAs"/> override is honoured verbatim (e.g. an
+    /// on-behalf-of-user kickoff posting <see cref="MessageRole.User"/>).</item>
+    /// <item>Otherwise an agent sender (<see cref="CitizenKind.Agent"/>) defaults to
+    /// <see cref="MessageRole.Assistant"/> -- the agent speaking as itself.</item>
+    /// <item>Otherwise (a human <see cref="CitizenKind.User"/> sender) the role stays
+    /// <see cref="MessageRole.User"/>, unchanged from the pre-Hybrid behaviour.</item>
+    /// </list>
+    /// The override is unconditional so a caller-supplied role is never silently discarded,
+    /// even for a user-kind sender.
+    /// </remarks>
+    public MessageRole DeriveChannelPostRole() =>
+        SpeakAs
+        ?? (Sender.Kind == CitizenKind.Agent ? MessageRole.Assistant : MessageRole.User);
 }
 
 /// <summary>
