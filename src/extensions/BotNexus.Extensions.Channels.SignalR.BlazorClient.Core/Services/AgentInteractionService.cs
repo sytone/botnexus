@@ -341,7 +341,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             try
             {
                 var pendingJson = await _restClient.GetConversationPendingAskUserAsync(agentId, conversationId);
-                if (GatewayEventHandler.TryBuildAskUserPromptFromPersistedJson(pendingJson, conversationId, out var pendingPrompt))
+                if (AskUserPromptFactory.TryBuildFromPersistedJson(pendingJson, conversationId, out var pendingPrompt))
                 {
                     _store.SetPendingAskUser(pendingPrompt);
                     _store.NotifyChanged();

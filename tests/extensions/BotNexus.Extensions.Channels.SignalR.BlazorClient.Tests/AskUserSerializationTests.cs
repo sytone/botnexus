@@ -110,7 +110,7 @@ public sealed class AskUserSerializationTests
 
         handler.HandleUserInputRequired(evt);
 
-        // With null InputType, TryBuildAskUserPrompt returns false — no pending state set
+        // With null InputType, AskUserPromptFactory.TryBuildFromStreamEvent returns false — no pending state set
         var pending = store.GetPendingAskUser("conv-1");
         Assert.Null(pending);
     }
