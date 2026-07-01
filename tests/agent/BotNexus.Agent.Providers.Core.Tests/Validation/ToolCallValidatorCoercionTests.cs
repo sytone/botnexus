@@ -245,4 +245,96 @@ public class ToolCallValidatorCoercionTests
         tags[0].GetString().ShouldBe("a");
         tags[1].GetString().ShouldBe("b");
     }
+    [Fact]
+    public void Validate_WhenJsonArrayStringForStringArray_ParsesIntoRealArray()
+    {
+        // A model serialised an array param as a JSON string. The validator must parse the
+        // JSON array rather than wrapping the whole literal into a 1-element string array or
+        // comma-splitting it. (Issue #1738 -- mirror of OpenClaw 9202dbb1b650.)
+        var arguments = Parse("""{ "tags": "[\"a\",\"b\"]" }""");
+        var schema = Parse("""
+            {
+              "type": "object",
+              "properties": { "tags": { "type": "array", "items": { "type": "string" } } }
+            }
+            """);
+
+        var (isValid, errors) = ToolCallValidator.Validate(arguments, schema, out var coerced);
+
+        isValid.ShouldBeTrue();
+        errors.ShouldBeEmpty();
+        var tags = coerced.GetProperty("tags");
+        tags.ValueKind.ShouldBe(JsonValueKind.Array);
+        tags.GetArrayLength().ShouldBe(2);
+        tags[0].GetString().ShouldBe("a");
+        tags[1].GetString().ShouldBe("b");
+    }
+
+    [Fact]
+    public void Validate_WhenJsonObjectStringForObject_ParsesIntoRealObject()
+    {
+        // A model serialised an object param as a JSON string. The validator must parse the
+        // JSON object so the downstream tool receives a real object. (Issue #1738.)
+        var arguments = Parse("""{ "config": "{\"enabled\":true}" }""");
+        var schema = Parse("""
+            {
+              "type": "object",
+              "properties": { "config": { "type": "object" } }
+            }
+            """);
+
+        var (isValid, errors) = ToolCallValidator.Validate(arguments, schema, out var coerced);
+
+        isValid.ShouldBeTrue();
+        errors.ShouldBeEmpty();
+        var config = coerced.GetProperty("config");
+        config.ValueKind.ShouldBe(JsonValueKind.Object);
+        config.GetProperty("enabled").ValueKind.ShouldBe(JsonValueKind.True);
+    }
+
+    [Fact]
+    public void Validate_WhenOversizedJsonArrayString_DoesNotCoerceAndRejects()
+    {
+        // Defends the in-process validator from unbounded synchronous JSON parsing on
+        // model-controlled input: a JSON-array string larger than the 64 KB cap must NOT be
+        // parsed -- it falls through to the reject path. (Issue #1738.)
+        var oversized = "[\"" + new string('x', 70 * 1024) + "\"]";
+        var arguments = Parse(JsonSerializer.Serialize(new Dictionary<string, string> { ["tags"] = oversized }));
+        var schema = Parse("""
+            {
+              "type": "object",
+              "properties": { "tags": { "type": "array", "items": { "type": "string" } } }
+            }
+            """);
+
+        var (isValid, errors) = ToolCallValidator.Validate(arguments, schema, out var coerced);
+
+        // Not silently coerced into a valid array.
+        var tags = coerced.GetProperty("tags");
+        tags.ValueKind.ShouldBe(JsonValueKind.String);
+        isValid.ShouldBeFalse();
+        errors.ShouldHaveSingleItem().ShouldContain("Property 'tags' must be of type array");
+    }
+
+    [Fact]
+    public void Validate_WhenNonJsonStringForStringArray_StillWrapsInSingleElementArray()
+    {
+        // Back-compat: a plain (non-JSON) string must keep the existing scalar->array
+        // behaviour -- it does not parse as a JSON array/object, so it is still wrapped.
+        var arguments = Parse("""{ "tags": "platform" }""");
+        var schema = Parse("""
+            {
+              "type": "object",
+              "properties": { "tags": { "type": "array", "items": { "type": "string" } } }
+            }
+            """);
+
+        var (isValid, _) = ToolCallValidator.Validate(arguments, schema, out var coerced);
+
+        isValid.ShouldBeTrue();
+        var tags = coerced.GetProperty("tags");
+        tags.ValueKind.ShouldBe(JsonValueKind.Array);
+        tags.GetArrayLength().ShouldBe(1);
+        tags[0].GetString().ShouldBe("platform");
+    }
 }
