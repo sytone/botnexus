@@ -52,12 +52,12 @@ public sealed class PendingAskUserHydrationTests
         return conv;
     }
 
-    // ── TryBuildAskUserPromptFromPersistedJson maps the persisted shape ────
+    // ── AskUserPromptFactory.TryBuildFromPersistedJson maps the persisted shape ──
 
     [Fact]
-    public void TryBuildAskUserPromptFromPersistedJson_MapsAllFields()
+    public void TryBuildFromPersistedJson_MapsAllFields()
     {
-        var ok = GatewayEventHandler.TryBuildAskUserPromptFromPersistedJson(PersistedPrompt, "conv-5", out var prompt);
+        var ok = AskUserPromptFactory.TryBuildFromPersistedJson(PersistedPrompt, "conv-5", out var prompt);
 
         Assert.True(ok);
         Assert.NotNull(prompt);
@@ -77,12 +77,12 @@ public sealed class PendingAskUserHydrationTests
     }
 
     [Fact]
-    public void TryBuildAskUserPromptFromPersistedJson_FallsBackToConversationId_WhenPayloadOmitsIt()
+    public void TryBuildFromPersistedJson_FallsBackToConversationId_WhenPayloadOmitsIt()
     {
         const string noConvId =
             "{\"requestId\":\"r9\",\"prompt\":\"Type a value\",\"inputType\":\"FreeForm\",\"allowFreeForm\":true}";
 
-        var ok = GatewayEventHandler.TryBuildAskUserPromptFromPersistedJson(noConvId, "conv-fallback", out var prompt);
+        var ok = AskUserPromptFactory.TryBuildFromPersistedJson(noConvId, "conv-fallback", out var prompt);
 
         Assert.True(ok);
         Assert.Equal("conv-fallback", prompt!.ConversationId);
@@ -99,9 +99,9 @@ public sealed class PendingAskUserHydrationTests
     [InlineData("{}")] // missing required requestId/prompt/inputType
     [InlineData("{\"requestId\":\"r\",\"inputType\":\"FreeForm\"}")] // missing prompt
     [InlineData("{\"requestId\":\"r\",\"prompt\":\"p\"}")] // missing inputType
-    public void TryBuildAskUserPromptFromPersistedJson_ReturnsFalse_ForMissingOrMalformed(string? json)
+    public void TryBuildFromPersistedJson_ReturnsFalse_ForMissingOrMalformed(string? json)
     {
-        var ok = GatewayEventHandler.TryBuildAskUserPromptFromPersistedJson(json, "conv-x", out var prompt);
+        var ok = AskUserPromptFactory.TryBuildFromPersistedJson(json, "conv-x", out var prompt);
 
         Assert.False(ok);
         Assert.Null(prompt);
