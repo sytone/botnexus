@@ -37,17 +37,18 @@ internal static class ConversationRowMapper
     /// paths hydrate identically. Child collections (bindings / participants) are NOT populated
     /// here - the caller attaches them.
     /// </summary>
-    internal static Conversation MapConversation(SqliteDataReader reader)
+    internal static Conversation MapConversation(SqliteDataReader reader, ILogger? logger = null)
     {
+        var conversationId = ConversationId.From(reader.GetString(reader.GetOrdinal("id")));
         var conversation = new Conversation
         {
-            ConversationId = ConversationId.From(reader.GetString(reader.GetOrdinal("id"))),
+            ConversationId = conversationId,
             AgentId = AgentId.From(reader.GetString(reader.GetOrdinal("agent_id"))),
             Title = reader.GetString(reader.GetOrdinal("title")),
             Purpose = GetNullableString(reader, "purpose"),
             IsDefault = reader.GetInt64(reader.GetOrdinal("is_default")) != 0,
             Status = ParseConversationStatus(reader.GetString(reader.GetOrdinal("status"))),
-            Metadata = DeserializeMetadata(GetNullableString(reader, "metadata")),
+            Metadata = DeserializeMetadata(GetNullableString(reader, "metadata"), conversationId, logger),
             CreatedAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("created_at"))),
             UpdatedAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("updated_at"))),
             Instructions = GetNullableString(reader, "instructions"),
@@ -179,12 +180,27 @@ internal static class ConversationRowMapper
             ? parsed
             : ThreadingMode.Single;
 
-    private static Dictionary<string, object?> DeserializeMetadata(string? metadataJson)
+    // #1751: guard the stored metadata column read. A single corrupt value must not throw
+    // JsonException out of MapConversation and abort the whole list/scan (one bad row would poison
+    // every conversation load). On parse failure we log a warning with the conversation id and fall
+    // back to an empty metadata dictionary so the row still hydrates.
+    private static Dictionary<string, object?> DeserializeMetadata(string? metadataJson, ConversationId conversationId, ILogger? logger)
     {
         if (string.IsNullOrWhiteSpace(metadataJson))
             return [];
 
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, SqliteConversationStore.JsonOptions) ?? [];
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, SqliteConversationStore.JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            logger?.LogWarning(
+                ex,
+                "Skipping corrupt metadata for conversation '{ConversationId}'; hydrating with empty metadata.",
+                conversationId.Value);
+            return [];
+        }
     }
 
     private static CitizenId? DeserializeInitiator(string? raw)
