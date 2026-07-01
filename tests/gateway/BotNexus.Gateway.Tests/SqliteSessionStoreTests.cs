@@ -1167,6 +1167,76 @@ public sealed class SqliteSessionStoreTests
         });
     }
 
+    [Fact]
+    public async Task BackfillParticipants_WithCorruptParticipantsJsonOnOneRow_SkipsIt_AndForwardsTheValidRows()
+    {
+        // Regression (#1751): the participants backfill scan reads participants_json row by
+        // row. A single corrupt blob used to throw JsonException out of DeserializeParticipants
+        // and abort the ENTIRE scan, so no conversation received its participants. The guard now
+        // logs a warning with the conversation/session id, skips the corrupt row, and continues
+        // the reader loop so the remaining valid rows are still forwarded.
+        using var fixture = new StoreFixture();
+
+        // Two destination conversations must exist in the (shared) conversation store, because
+        // AddParticipantsAsync no-ops when the target conversation is absent.
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conv-good"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "good",
+            Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await fixture.Conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conv-bad"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "bad",
+            Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        // First store op creates the schema (and runs an initial, empty backfill).
+        (await fixture.CreateStore().GetAsync(SessionId.From("missing"))).ShouldBeNull();
+
+        // Seed two legacy session rows carrying participants_json: one valid (legacy wire
+        // shape), one deliberately corrupt. Both are attached to a non-null conversation_id so
+        // the backfill scan picks them up.
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                INSERT INTO sessions (id, status, participants_json, created_at, updated_at, conversation_id)
+                VALUES ('s-good', 'Active', $goodJson, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', 'conv-good');
+
+                INSERT INTO sessions (id, status, participants_json, created_at, updated_at, conversation_id)
+                VALUES ('s-bad', 'Active', $badJson, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', 'conv-bad');
+                """;
+            seed.Parameters.AddWithValue("$goodJson", """[{"type":"User","id":"alice","role":"initiator"}]""");
+            seed.Parameters.AddWithValue("$badJson", "[ this is not valid json ");
+            await seed.ExecuteNonQueryAsync();
+        }
+        SqliteConnection.ClearAllPools();
+
+        // A fresh store re-runs EnsureCreatedAsync -> BackfillParticipantsToConversationsAsync.
+        // Must NOT throw despite the corrupt row.
+        (await fixture.CreateStore().GetAsync(SessionId.From("s-good"))).ShouldNotBeNull();
+
+        // The valid row's participant was forwarded even though a corrupt row was present in the
+        // same scan - proving one bad blob does not abort the whole backfill.
+        var good = await fixture.Conversations.GetAsync(ConversationId.From("conv-good"));
+        good.ShouldNotBeNull();
+        good!.Participants.ShouldContain(p => p.CitizenId == CitizenId.Of(UserId.From("alice")));
+
+        // The corrupt row contributed nothing (skipped-to-empty), but did not poison the scan.
+        var bad = await fixture.Conversations.GetAsync(ConversationId.From("conv-bad"));
+        bad.ShouldNotBeNull();
+        bad!.Participants.ShouldBeEmpty("A corrupt participants_json row must be skipped, not forwarded.");
+    }
+
     private sealed class StoreFixture : IDisposable
     {
         public StoreFixture()

@@ -542,20 +542,21 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$deleteAfterRun", job.DeleteAfterRun ? 1 : 0);
     }
 
-    private static CronJob ReadJob(SqliteDataReader reader)
+    private CronJob ReadJob(SqliteDataReader reader)
     {
+        var jobId = JobId.From(reader.GetString(0));
         var templateParametersJson = reader.IsDBNull(7) ? null : reader.GetString(7);
         var metadataJson = reader.IsDBNull(20) ? null : reader.GetString(20);
         return new CronJob
         {
-            Id = JobId.From(reader.GetString(0)),
+            Id = jobId,
             Name = reader.GetString(1),
             Schedule = reader.GetString(2),
             ActionType = reader.GetString(3),
             AgentId = reader.IsDBNull(4) ? null : AgentId.From(reader.GetString(4)),
             Message = reader.IsDBNull(5) ? null : reader.GetString(5),
             TemplateName = reader.IsDBNull(6) ? null : reader.GetString(6),
-            TemplateParameters = DeserializeTemplateParameters(templateParametersJson),
+            TemplateParameters = DeserializeTemplateParameters(templateParametersJson, jobId),
             Model = reader.IsDBNull(8) ? null : reader.GetString(8),
             WebhookUrl = reader.IsDBNull(9) ? null : reader.GetString(9),
             ShellCommand = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -568,7 +569,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             NextRunAt = reader.IsDBNull(17) ? null : ParseDate(reader.GetString(17)),
             LastRunStatus = reader.IsDBNull(18) ? null : reader.GetString(18),
             LastRunError = reader.IsDBNull(19) ? null : reader.GetString(19),
-            Metadata = DeserializeMetadata(metadataJson),
+            Metadata = DeserializeMetadata(metadataJson, jobId),
             ConversationId = reader.IsDBNull(21) ? null : ConversationId.From(reader.GetString(21)),
             DeleteAfterRun = !reader.IsDBNull(22) && reader.GetInt32(22) != 0
         };
@@ -600,20 +601,47 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     private static object SerializeTemplateParameters(IReadOnlyDictionary<string, string?>? parameters)
         => parameters is null ? DBNull.Value : JsonSerializer.Serialize(parameters, JsonOptions);
 
-    private static IReadOnlyDictionary<string, object?>? DeserializeMetadata(string? metadataJson)
+    // #1751: guard stored-column JSON reads. A single corrupt metadata_json / template_parameters_json
+    // value must not throw JsonException out of ReadJob and abort the whole ListAsync/GetAsync scan
+    // (that would leave the scheduler unable to enumerate ANY jobs). On parse failure we log a warning
+    // with the job id and degrade the property to null - the columns are already nullable, so the job
+    // still loads with null metadata rather than poisoning the entire load.
+    private IReadOnlyDictionary<string, object?>? DeserializeMetadata(string? metadataJson, JobId jobId)
     {
         if (string.IsNullOrWhiteSpace(metadataJson))
             return null;
 
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions);
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Skipping corrupt metadata_json for cron job '{JobId}'; the job will load with null metadata.",
+                jobId.Value);
+            return null;
+        }
     }
 
-    private static IReadOnlyDictionary<string, string?>? DeserializeTemplateParameters(string? parametersJson)
+    private IReadOnlyDictionary<string, string?>? DeserializeTemplateParameters(string? parametersJson, JobId jobId)
     {
         if (string.IsNullOrWhiteSpace(parametersJson))
             return null;
 
-        return JsonSerializer.Deserialize<Dictionary<string, string?>>(parametersJson, JsonOptions);
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string?>>(parametersJson, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Skipping corrupt template_parameters_json for cron job '{JobId}'; the job will load with null template parameters.",
+                jobId.Value);
+            return null;
+        }
     }
 
     /// <inheritdoc />
