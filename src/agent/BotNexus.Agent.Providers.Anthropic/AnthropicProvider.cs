@@ -22,6 +22,11 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
 {
     private const string ApiVersion = "2023-06-01";
     private const string ClaudeCodeVersion = "2.1.75";
+    // Anthropic 1M context window selection: the beta header is emitted on the Anthropic
+    // messages path only when the caller selects the 1M window. Copilot is fixed at 200K and
+    // never sends this. Token verified against Anthropic's context-1m beta (2025-08-07).
+    private const int OneMillionContextWindow = 1_000_000;
+    private const string OneMillionContextBetaToken = "context-1m-2025-08-07";
     // Total / per-frame caps for the untrusted SSE success body. Mirrors the merged Copilot guard
     // (#1668) so all transports agree on a legitimate body size; bounds an unbounded body or a
     // single never-terminating data: line before it can exhaust memory (#1685). 16 MiB / 8 MiB.
@@ -295,6 +300,12 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
 
         if (opts?.InterleavedThinking == true && !IsAdaptiveThinkingModel(model.Id))
             betaFeatures.Add("interleaved-thinking-2025-05-14");
+
+        // 1M context is an Anthropic-direct-only beta. Copilot caps Claude at 200K, so the
+        // header is never emitted on the Copilot path. It is added only when the caller has
+        // explicitly selected the 1M window (default/unset leaves the standard 200K window).
+        if (authMode != AuthMode.Copilot && opts?.ContextWindow == OneMillionContextWindow)
+            betaFeatures.Add(OneMillionContextBetaToken);
 
         switch (authMode)
         {

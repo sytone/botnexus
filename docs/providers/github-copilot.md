@@ -75,6 +75,15 @@ BotNexus can query Copilot's model catalog at runtime to discover available mode
 
 The provider automatically selects the correct path based on the model family.
 
+### Context Window
+
+Claude models reached through GitHub Copilot are capped at a fixed 200K context window.
+There is no 1M option on the Copilot path: BotNexus offers no context-size toggle for these
+models and never sends Anthropic's 1M `context-1m-2025-08-07` beta header. The selectable
+200K / 1M window is an Anthropic-direct feature only (see the Anthropic provider page). If
+you need a 1M context window for a Claude model, configure that model on the `anthropic`
+provider instead.
+
 ### Usage Tracking
 
 BotNexus parses Copilot usage billing snapshots and emits activity tags for observability. Monitor per-agent token consumption through the platform diagnostics.
@@ -88,4 +97,5 @@ Copilot supports prompt caching for compatible models. The `<!-- BOTNEXUS_CACHE_
 - Model availability varies by Copilot subscription tier
 - Rate limits are managed by GitHub — not configurable per-user
 - Some models may not support all features (e.g., extended thinking availability depends on the model)
+- Claude models are fixed at a 200K context window - the 1M window is Anthropic-direct only
 - OAuth token refresh requires `gh` CLI to be installed and authenticated

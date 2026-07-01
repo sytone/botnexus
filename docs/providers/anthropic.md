@@ -75,6 +75,20 @@ Claude supports extended thinking (chain-of-thought reasoning before responding)
 
 Effort levels: `low`, `medium`, `high`, `max`.
 
+### Context Window Selection
+
+The long-context Claude 4.x models on the Anthropic-direct path (Sonnet 4, Sonnet 4.5,
+Opus 4.5) support a selectable context window of either 200K (the default) or 1M tokens.
+When -- and only when -- the 1M window is selected, BotNexus sends the Anthropic
+`context-1m-2025-08-07` beta header on the messages request. Leaving the window unset keeps
+the standard 200K window and sends no beta header. Each model advertises its valid set of
+context sizes, so the selector only ever offers values the provider accepts (200K / 1M for
+these models; 200K only for short-context models such as Claude Haiku 3.5).
+
+This is the Anthropic-direct path only. The same Claude models reached through GitHub
+Copilot are fixed at a 200K ceiling and never expose a 1M option or emit the beta header --
+see the GitHub Copilot provider page.
+
 ### Prompt Caching
 
 BotNexus automatically uses Anthropic's prompt caching. The system prompt is split at the `<!-- BOTNEXUS_CACHE_BOUNDARY -->` marker — content before the boundary is cached across turns, reducing latency and cost.

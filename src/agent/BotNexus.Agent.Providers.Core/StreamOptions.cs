@@ -16,6 +16,7 @@ public record class StreamOptions
     {
         Temperature = original.Temperature;
         MaxTokens = original.MaxTokens;
+        ContextWindow = original.ContextWindow;
         CancellationToken = original.CancellationToken;
         ApiKey = original.ApiKey;
         Transport = original.Transport;
@@ -36,6 +37,13 @@ public record class StreamOptions
     /// Gets or sets the max tokens.
     /// </summary>
     public int? MaxTokens { get; init; }
+    /// <summary>
+    /// Gets or sets the selected context-window size (in tokens). Leave unset to keep the
+    /// model's default window. Providers that support a selectable window (Anthropic-direct
+    /// 200K/1M) use this to decide whether to request the extended window; providers with a
+    /// fixed window (Copilot Claude, always 200K) ignore any larger value.
+    /// </summary>
+    public int? ContextWindow { get; init; }
     /// <summary>
     /// Gets a value indicating whether cancellation token.
     /// </summary>
