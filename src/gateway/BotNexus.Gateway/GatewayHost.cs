@@ -390,7 +390,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
             session.AddEntry(new SessionEntry
             {
-                Role = MessageRole.User,
+                // Hybrid rule (#1650): an agent posting into a channel (e.g. via the
+                // conversation tool, cross-channel relays) defaults to the assistant
+                // role when speaking as itself; a human sender stays user; an explicit
+                // InboundMessage.SpeakAs override wins. Derived once on the message so
+                // this entry and the producer's local copy cannot diverge.
+                Role = message.DeriveChannelPostRole(),
                 Content = message.Content,
                 OriginalContentParts = originalParts,
                 ProcessedContentParts = processedParts

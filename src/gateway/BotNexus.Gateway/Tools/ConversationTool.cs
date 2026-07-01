@@ -69,6 +69,11 @@ public sealed class ConversationTool(
                   "type": "string",
                   "description": "Optional initial user message to seed the new conversation."
                 },
+                "speak_as": {
+                  "type": "string",
+                  "enum": ["assistant", "user"],
+                  "description": "Role to record the message under for the 'message' and 'new' actions. Omit to speak as the agent itself (assistant). Set to 'user' only for an on-behalf-of-user kickoff."
+                },
                 "status": {
                   "type": "string",
                   "description": "Filter by conversation status for list action: 'active' or 'archived'. Omit to return all."
@@ -162,6 +167,10 @@ public sealed class ConversationTool(
             await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
         }
 
+        // Carry the parsed speak_as override (if any) onto the inbound message so
+        // GatewayHost derives the recorded role from it -- and from the agent-kind
+        // sender when it is absent -- rather than re-deriving or hardcoding.
+        var speakAs = ReadSpeakAs(arguments);
         messageOrchestrator.Post(
             new InboundMessage
             {
@@ -170,6 +179,7 @@ public sealed class ConversationTool(
                 Sender = CitizenId.Of(agentId),
                 ChannelAddress = ChannelAddress.From(conversation.AgentId.Value),
                 Content = message.Trim(),
+                SpeakAs = speakAs,
                 RoutingHints = new InboundMessageRoutingHints(
                     RequestedAgentId: conversation.AgentId,
                     RequestedSessionId: session.SessionId,
@@ -295,9 +305,34 @@ public sealed class ConversationTool(
                 .GetOrCreateAsync(SessionId.Create(), targetAgentId, ct)
                 .ConfigureAwait(false);
             session.ConversationId = created.ConversationId;
+
+            // Build the inbound message up front so the seeded entry below and the
+            // dispatched message share one role derivation (Hybrid rule, #1650). The
+            // agent is the sender, so with no speak_as override the seed records as
+            // assistant; an explicit speak_as:"user" records the on-behalf-of-user case.
+            var speakAs = ReadSpeakAs(arguments);
+            var inbound = new InboundMessage
+            {
+                ChannelType = ChannelKey.From("internal"),
+                SenderId = agentId.Value,
+                Sender = CitizenId.Of(agentId),
+                ChannelAddress = ChannelAddress.From(targetAgentId.Value),
+                Content = message.Trim(),
+                SpeakAs = speakAs,
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: targetAgentId,
+                    RequestedSessionId: session.SessionId,
+                    RequestedConversationId: created.ConversationId),
+                Metadata = new Dictionary<string, object?>
+                {
+                    ["messageType"] = "message",
+                    ["source"] = "conversation-tool-new"
+                }
+            };
+
             session.AddEntry(new SessionEntry
             {
-                Role = MessageRole.User,
+                Role = inbound.DeriveChannelPostRole(),
                 Content = message.Trim()
             });
             await sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
@@ -306,30 +341,13 @@ public sealed class ConversationTool(
             created.UpdatedAt = DateTimeOffset.UtcNow;
             await conversationStore.SaveAsync(created, ct).ConfigureAwait(false);
 
-            // Trigger agent turn: dispatch a synthetic inbound message so the agent
-            // processes the seeded user message rather than it sitting silently in history.
+            // Trigger agent turn: dispatch the synthetic inbound message so the agent
+            // processes the seeded message rather than it sitting silently in history.
             // Post() is fire-and-forget so the calling agent is not blocked waiting for
             // the spawned agent turn to complete (fixes #728).
             if (messageOrchestrator is not null)
             {
-                messageOrchestrator.Post(
-                    new InboundMessage
-                    {
-                        ChannelType = ChannelKey.From("internal"),
-                        SenderId = agentId.Value,
-                        Sender = CitizenId.Of(agentId),
-                        ChannelAddress = ChannelAddress.From(targetAgentId.Value),
-                        Content = message.Trim(),
-                        RoutingHints = new InboundMessageRoutingHints(
-                            RequestedAgentId: targetAgentId,
-                            RequestedSessionId: session.SessionId,
-                            RequestedConversationId: created.ConversationId),
-                        Metadata = new Dictionary<string, object?>
-                        {
-                            ["messageType"] = "message",
-                            ["source"] = "conversation-tool-new"
-                        }
-                    });
+                messageOrchestrator.Post(inbound);
             }
         }
 
@@ -434,6 +452,27 @@ public sealed class ConversationTool(
 
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);
+
+    /// <summary>
+    /// Parses the optional <c>speak_as</c> override for the message-bearing actions
+    /// into the role the message should be recorded under. Returns <c>null</c> (no
+    /// override -- derive from the sender kind) when absent or blank; only
+    /// <c>"assistant"</c> and <c>"user"</c> are accepted so the tool cannot smuggle in
+    /// system/tool/notification roles.
+    /// </summary>
+    private static MessageRole? ReadSpeakAs(IReadOnlyDictionary<string, object?> args)
+    {
+        var raw = ReadString(args, "speak_as");
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "assistant" => MessageRole.Assistant,
+            "user" => MessageRole.User,
+            _ => throw new ArgumentException($"Invalid speak_as '{raw}'. Valid values: assistant, user."),
+        };
+    }
 
     private async Task NotifyBestEffortAsync(string changeType, Conversation conversation, CancellationToken ct)
     {
