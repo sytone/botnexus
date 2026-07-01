@@ -47,6 +47,23 @@ public sealed partial class SecretRedactor : ISecretRedactor
         GenericApiKeyRegex(),
     ];
 
+    // Trusted-only security-event sink (#1647). Optional: when null the redactor behaves exactly
+    // as before (no emission). A Redact call that actually replaces at least one secret emits one
+    // SecurityEvent to the trusted sink; the event carries only a non-sensitive reference and never
+    // any plaintext secret material.
+    private readonly ISecurityEventSink? _securityEvents;
+
+    /// <summary>
+    /// Creates a redactor. When a trusted <paramref name="securityEvents"/> sink is supplied, every
+    /// <see cref="Redact(string)"/> call that replaces at least one secret emits exactly one
+    /// <see cref="SecurityEvent"/>; without it the redactor behaves exactly as before (no emission).
+    /// The sink is optional so existing callers and the DI type-mapped registration (which auto-
+    /// resolves the registered sink) and tests that only exercise redaction need no changes.
+    /// </summary>
+    /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
+    public SecretRedactor(ISecurityEventSink? securityEvents = null)
+        => _securityEvents = securityEvents;
+
     /// <inheritdoc />
     public string Redact(string input)
     {
@@ -57,7 +74,42 @@ public sealed partial class SecretRedactor : ISecretRedactor
         foreach (var pattern in Patterns)
             result = pattern.Replace(result, "[REDACTED]");
 
+        // Emit one trusted security event only when a secret was actually replaced. A no-op Redact
+        // (nothing matched) emits nothing. The event carries a non-sensitive SecretRef reference and
+        // never the matched value, so a redaction can never leak the secret it removed.
+        if (!string.Equals(result, input, StringComparison.Ordinal))
+            EmitRedaction();
+
         return result;
+    }
+
+    /// <summary>
+    /// Records one <c>secret.redacted</c> event to the trusted sink. The target is a fixed,
+    /// non-sensitive reference (the transcript being scrubbed) - never the matched secret value or a
+    /// count that could narrow it. Best-effort: a null sink is a no-op and any sink fault is
+    /// swallowed so the redaction path - which protects the session store - is never broken.
+    /// </summary>
+    private void EmitRedaction()
+    {
+        if (_securityEvents is null)
+            return;
+
+        try
+        {
+            var evt = new SecurityEvent(
+                SecurityEventCategory.Secret,
+                "secret.redacted",
+                SecurityEventOutcome.Success,
+                SecurityEventSeverity.Low,
+                Target: new SecurityEventTarget(SecurityTargetKind.SecretRef, "transcript"),
+                Control: SecurityControlFamily.Secret);
+            _securityEvents.Record(evt);
+        }
+        catch
+        {
+            // Observability must never break the redaction path. The redactor takes no logger
+            // (it is on the hot transcript-write path); a sink fault is simply swallowed.
+        }
     }
 
     // ──────────────────── Compiled regex factories ────────────────────

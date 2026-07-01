@@ -1,5 +1,8 @@
 using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -31,6 +34,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
+    // Trusted-only security-event sink (#1647). Optional: null behaves exactly as before (no
+    // emission). Spawn and kill each emit one SecurityEvent so the sandbox boundary is recorded
+    // to the trusted sink and never the public activity/diagnostic stream.
+    private readonly ISecurityEventSink? _securityEvents;
     // Single source of truth per sub-agent. Folds the previously-separate parent/child agent
     // id, timeout CTS, and the completion/cleanup once-only gates into one record so an add or
     // teardown is a single atomic dictionary operation. The old design spread these across five
@@ -60,7 +67,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IAgentWorkspaceManager? workspaceManager = null,
         DefaultToolPolicyProvider? policyProvider = null,
         ISessionStore? sessionStore = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ISecurityEventSink? securityEvents = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -72,6 +80,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _policyProvider = policyProvider;
         _sessionStore = sessionStore;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _securityEvents = securityEvents;
     }
 
     /// <summary>
@@ -252,6 +261,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             info,
             request.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' spawned.");
+
+        // Trusted security-event emit (#1647): the sandbox boundary just spawned a sub-agent.
+        // Best-effort and side-effect-free - it never alters the spawn outcome.
+        EmitSubAgentEvent("subagent.spawned", request.ParentSessionId, subAgentId);
 
         // Opportunistically age out finished records so the registry stays bounded without a timer.
         ReapCompletedRecords();
@@ -529,6 +542,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             updatedInfo,
             record.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' was killed.");
+
+        // Trusted security-event emit (#1647): only the successful-kill path reaches here - the
+        // wrong-requester and already-terminal guards above early-return false before this point.
+        EmitSubAgentEvent("subagent.killed", info.ParentSessionId, subAgentId);
 
         return true;
     }
@@ -944,6 +961,51 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 removed.DisposeTimeout();
             }
         }
+    }
+
+    /// <summary>
+    /// Emits one sub-agent lifecycle security event to the trusted sink. The actor id is a hash of
+    /// the parent session id so the trusted record carries a stable pseudonym instead of the raw id,
+    /// and the target is the (already non-sensitive) sub-agent id. Best-effort: a null sink is a
+    /// no-op and any sink fault is swallowed/logged so spawn/kill behaviour is never altered. These
+    /// events go only to the trusted sink, never the public activity/diagnostic stream.
+    /// </summary>
+    private void EmitSubAgentEvent(string action, SessionId parentSessionId, string subAgentId)
+    {
+        if (_securityEvents is null)
+            return;
+
+        try
+        {
+            var evt = new SecurityEvent(
+                SecurityEventCategory.Tool,
+                action,
+                SecurityEventOutcome.Success,
+                SecurityEventSeverity.Info,
+                Actor: new SecurityEventActor(SecurityActorKind.Agent, HashActor(parentSessionId.Value)),
+                Target: new SecurityEventTarget(SecurityTargetKind.Tool, subAgentId),
+                Control: SecurityControlFamily.Sandbox);
+            _securityEvents.Record(evt);
+        }
+        catch (Exception ex)
+        {
+            // Observability must never break the spawn/kill path; swallow and log.
+            _logger.LogWarning(ex, "Failed to record sub-agent security event for action {Action}.", action);
+        }
+    }
+
+    /// <summary>
+    /// Hashes a session/agent id to a short, opaque hex token so security events carry a stable
+    /// pseudonym instead of the raw id. SHA-256 with a fixed prefix is sufficient for correlation;
+    /// it is not reversible and never stores the plaintext.
+    /// </summary>
+    private static string HashActor(string id)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
+        var sb = new StringBuilder(16);
+        for (var i = 0; i < 8; i++)
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
     }
 
     /// <summary>
