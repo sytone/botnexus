@@ -2068,7 +2068,7 @@ public sealed class TelegramChannelAdapterTests
     public void SplitMessage_AsciiOnly_ChunksAtExactLength()
     {
         var content = new string('a', 25);
-        var result = TelegramChannelAdapter.SplitMessage(content, 10).ToList();
+        var result = TelegramMessageSplitter.SplitMessage(content, 10).ToList();
         result.Count.ShouldBe(3);
         result[0].ShouldBe(new string('a', 10));
         result[1].ShouldBe(new string('a', 10));
@@ -2088,7 +2088,7 @@ public sealed class TelegramChannelAdapterTests
         // "aaa" + 😀 (U+1F600, 2 UTF-16 code units) + "bbb". With maxLength 4 the naive slice
         // would cut after "aaa" + high surrogate, leaving a lone �.
         var content = "aaa\U0001F600bbb";
-        var result = TelegramChannelAdapter.SplitMessage(content, 4).ToList();
+        var result = TelegramMessageSplitter.SplitMessage(content, 4).ToList();
 
         AssertNoLoneSurrogateAcrossChunks(result);
         // Reassembly must be lossless — no characters dropped, no replacement chars introduced.
@@ -2106,7 +2106,7 @@ public sealed class TelegramChannelAdapterTests
     {
         var content = string.Concat(Enumerable.Repeat("\U0001F600", 50)); // 50 emoji = 100 code units
         // maxLength 3 is deliberately misaligned with the 2-code-unit emoji width.
-        var result = TelegramChannelAdapter.SplitMessage(content, 3).ToList();
+        var result = TelegramMessageSplitter.SplitMessage(content, 3).ToList();
 
         AssertNoLoneSurrogateAcrossChunks(result);
         string.Concat(result).ShouldBe(content);
@@ -2121,7 +2121,7 @@ public sealed class TelegramChannelAdapterTests
     {
         // A single line (no '\n') longer than maxLength forces the hard-split branch.
         var line = "aaa\U0001F600" + new string('b', 20);
-        var result = TelegramChannelAdapter.SplitMarkdown(line, 4).ToList();
+        var result = TelegramMessageSplitter.SplitMarkdown(line, 4).ToList();
 
         AssertNoLoneSurrogateAcrossChunks(result);
         string.Concat(result).ShouldBe(line);
@@ -2216,7 +2216,7 @@ public sealed class TelegramChannelAdapterTests
         while (buffer.Length > maxLength)
         {
             var before = buffer.Length;
-            chunks.Add(TelegramChannelAdapter.DrainStreamingBuffer(buffer, maxLength));
+            chunks.Add(TelegramMessageSplitter.DrainStreamingBuffer(buffer, maxLength));
             buffer.Length.ShouldBeLessThan(before, "each drain must make forward progress");
         }
         return chunks;
