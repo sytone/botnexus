@@ -107,6 +107,57 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal("thinking", conv.Messages[0].ThinkingContent);
     }
 
+    // #1651 (post-as-assistant Step 3/3): the live SignalR fan-out now carries the stamped
+    // MessageRole on the ContentDelta event (previously the DTO dropped it and every buffered
+    // post flushed as "Assistant"). A ContentDelta that carries an explicit role must record
+    // it on the stream state so the terminal flush honours it -- this is the seam that lets a
+    // user-stamped agent-post render as a user bubble on the live path.
+    [Fact]
+    public void HandleContentDelta_records_delivered_role_on_stream_state()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "on behalf", Role = "user" });
+
+        Assert.Equal("user", conv.StreamState.PendingRole);
+    }
+
+    // #1651: when the buffered content was delivered with an explicit `user` role (the
+    // on-behalf-of-user kickoff), the flush must commit a USER bubble, not an assistant one.
+    [Fact]
+    public void HandleMessageEnd_honours_user_role_carried_on_the_delta()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "kickoff", Role = "user" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Single(conv.Messages);
+        Assert.Equal("User", conv.Messages[0].Role);
+        Assert.Equal("kickoff", conv.Messages[0].Content);
+        // Pending role must be cleared with the rest of the stream buffers so the next
+        // (default) turn is not mis-stamped.
+        Assert.Null(conv.StreamState.PendingRole);
+    }
+
+    // #1651: no regression -- a delta with no role (the overwhelming common case: the agent's
+    // own streamed reply, or any fan-out that does not stamp a role) still flushes as Assistant.
+    [Fact]
+    public void HandleMessageEnd_defaults_to_assistant_when_no_role_carried()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "hi there" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Single(conv.Messages);
+        Assert.Equal("Assistant", conv.Messages[0].Role);
+    }
+
     // PR1.5 (#682): explicit ConversationId on the event must take precedence over the
     // session→conversation lookup so post-compaction stream events (which carry the
     // original conversation but a new sessionId not yet known to the client) still

@@ -184,4 +184,23 @@ public sealed record OutboundMessage
     /// <summary>Extensible metadata for the channel adapter.</summary>
     public IReadOnlyDictionary<string, object?> Metadata { get; init; } =
         new Dictionary<string, object?>();
+
+    /// <summary>
+    /// Optional role the delivered content should be recorded/rendered under. <c>null</c>
+    /// (the default) means the surface applies its own default -- for the SignalR portal that
+    /// is the assistant bubble, matching every pre-#1651 outbound post. An explicit value
+    /// carries the role stamped on the inbound agent-post (see
+    /// <see cref="InboundMessage.DeriveChannelPostRole"/>) all the way to the live fan-out so a
+    /// post the gateway recorded as <see cref="MessageRole.User"/> (an on-behalf-of-user
+    /// kickoff) renders as a user bubble rather than being forced to assistant on the wire.
+    /// </summary>
+    /// <remarks>
+    /// Step 3/3 of post-as-assistant (<c>#1651</c>, epic <c>#1547</c>). Step 2 (<c>#1650</c>)
+    /// stamps the role onto the persisted session entry, which already reaches the portal with
+    /// the correct role via history replay. This field closes the remaining seam: the live
+    /// SignalR fan-out DTO previously dropped the role, so the streamed/buffered path could only
+    /// ever flush an assistant bubble. Purely additive -- adapters that ignore it keep their
+    /// prior behaviour.
+    /// </remarks>
+    public MessageRole? SpeakAs { get; init; }
 }

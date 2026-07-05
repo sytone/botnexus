@@ -274,6 +274,65 @@ public sealed class ChatPanelTests : IDisposable
         Assert.NotEmpty(msgs);
     }
 
+    // #1651 (post-as-assistant Step 3/3): an agent post stamped `assistant` in Step 2
+    // (#1650) reaches the client with Role == "Assistant" (via history replay's MapRole
+    // or the role-carrying live fan-out). The render must show it as an ASSISTANT bubble,
+    // never a user bubble -- the whole point of the epic. Locks the assistant-vs-user
+    // decision to msg.Role so a future refactor cannot silently regress it.
+    [Fact]
+    public void Assistant_stamped_agent_post_renders_as_assistant_bubble_not_user()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        // An agent-authored post the gateway stamped MessageRole.Assistant.
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Posting as myself", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Single(cut.FindAll(".message.assistant"));
+        Assert.Empty(cut.FindAll(".message.user"));
+        var bubble = cut.Find("[data-message-role]");
+        Assert.Equal("Assistant", bubble.GetAttribute("data-message-role"));
+    }
+
+    // #1651: the on-behalf-of-user kickoff explicitly stamps MessageRole.User even though
+    // the sender is an agent (speak_as:"user" in Step 2). That post must still render as a
+    // USER bubble -- the Hybrid rule's explicit override is honoured all the way to the DOM.
+    [Fact]
+    public void User_stamped_agent_post_renders_as_user_bubble_not_assistant()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        // An agent-authored post the gateway stamped MessageRole.User (on-behalf-of-user kickoff).
+        _store.AppendMessage("conv-1", new ChatMessage("User", "Kicking off on behalf of the user", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Single(cut.FindAll(".message.user"));
+        Assert.Empty(cut.FindAll(".message.assistant"));
+        var bubble = cut.Find("[data-message-role]");
+        Assert.Equal("User", bubble.GetAttribute("data-message-role"));
+    }
+
+    // #1651: no regression for genuine human-authored messages -- a User-role message keeps
+    // rendering as a user bubble exactly as before the epic (guards against an over-broad
+    // change that would reclassify human input while wiring the assistant path).
+    [Fact]
+    public void Human_authored_user_message_still_renders_as_user_bubble()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "A human typed this", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Single(cut.FindAll(".message.user"));
+        Assert.Empty(cut.FindAll(".message.assistant"));
+    }
+
     [Fact]
     public void Renders_copy_button_for_completed_assistant_messages()
     {
