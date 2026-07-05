@@ -27,9 +27,14 @@ public sealed class DefaultSubAgentManagerRetentionTests
 
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        // Let the background run finish and cleanup stamp the retention clock.
-        await WaitUntilAsync(async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+        // Let the background run finish and, crucially, let the completion `finally` stamp the
+        // retention clock. Waiting only for Status==Completed is a race: RetiredAt is stamped AFTER
+        // the status flips (in CleanupChildAgentAsync, past two awaited dispatch steps), so advancing
+        // the virtual clock the instant we see Completed can move `now` past the retirement instant
+        // -- the record then retires at the advanced time and its window never elapses relative to
+        // the assertion, so eviction silently no-ops and this test flakes red on CI (#1769). Wait
+        // for the actual retirement stamp before touching the clock.
+        await WaitUntilRetiredAsync(manager, spawned.SubAgentId, TimeSpan.FromSeconds(5));
 
         // Within the window the record is still queryable.
         clock.Advance(TimeSpan.FromMinutes(10));
@@ -70,15 +75,27 @@ public sealed class DefaultSubAgentManagerRetentionTests
         var manager = CreateManager(CreateSuccessfulHandle(), options, clock);
 
         var first = await manager.SpawnAsync(CreateSpawnRequest());
-        await WaitUntilAsync(async () => (await manager.GetAsync(first.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+        // Wait for the real retirement stamp, not just Completed status: the count-cap reap only
+        // considers records whose RetiredAt is set, so asserting eviction before both records have
+        // actually retired is racy under CI load (#1769).
+        await WaitUntilRetiredAsync(manager, first.SubAgentId, TimeSpan.FromSeconds(5));
 
         clock.Advance(TimeSpan.FromSeconds(1)); // make the second strictly newer
         var second = await manager.SpawnAsync(CreateSpawnRequest());
-        await WaitUntilAsync(async () => (await manager.GetAsync(second.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+        await WaitUntilRetiredAsync(manager, second.SubAgentId, TimeSpan.FromSeconds(5));
 
-        // The spawn of `second` already reaps; with cap=1 the older `first` is evicted, `second` kept.
+        // With both records retired and cap=1, a reap evicts the older `first`, keeps `second`.
+        // GetAsync triggers a reap; poll until exactly one survives so the assertion never races the
+        // cap-driven eviction sweep.
+        await WaitUntilAsync(
+            async () =>
+            {
+                var firstPresent = (await manager.GetAsync(first.SubAgentId)) is not null;
+                var secondPresent = (await manager.GetAsync(second.SubAgentId)) is not null;
+                return !(firstPresent && secondPresent); // one has been evicted
+            },
+            TimeSpan.FromSeconds(5));
+
         var olderAfter = await manager.GetAsync(first.SubAgentId);
         var newerAfter = await manager.GetAsync(second.SubAgentId);
         olderAfter.ShouldBeNull();
@@ -99,14 +116,12 @@ public sealed class DefaultSubAgentManagerRetentionTests
         var manager = CreateManager(CreateSuccessfulHandle(), options, clock);
 
         var first = await manager.SpawnAsync(CreateSpawnRequest());
-        await WaitUntilAsync(async () => (await manager.GetAsync(first.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+        await WaitUntilRetiredAsync(manager, first.SubAgentId, TimeSpan.FromSeconds(5));
 
         // Deliberately do NOT advance the clock -- `second` retires at the same instant as `first`,
         // forcing an exact RetiredAt tie that only the spawn-order tie-break can resolve.
         var second = await manager.SpawnAsync(CreateSpawnRequest());
-        await WaitUntilAsync(async () => (await manager.GetAsync(second.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+        await WaitUntilRetiredAsync(manager, second.SubAgentId, TimeSpan.FromSeconds(5));
 
         // Wait until the cap-driven reap has fired with *both* records retired (exactly one of the
         // two survives under cap=1). Each GetAsync triggers a reap, so this also drives it.
@@ -117,7 +132,7 @@ public sealed class DefaultSubAgentManagerRetentionTests
                 var secondPresent = (await manager.GetAsync(second.SubAgentId)) is not null;
                 return !(firstPresent && secondPresent); // one has been evicted
             },
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(5));
 
         // The oldest-spawned record (`first`) must be the one evicted, every run.
         var olderAfter = await manager.GetAsync(first.SubAgentId);
@@ -245,6 +260,17 @@ public sealed class DefaultSubAgentManagerRetentionTests
 
         throw new TimeoutException("Condition was not met before timeout.");
     }
+
+    /// <summary>
+    /// Awaits the record's actual retirement (its <c>RetiredAt</c> stamp), not merely its Completed
+    /// status. The retention/count-cap eviction only considers retired records, and the stamp is
+    /// written in the completion <c>finally</c> AFTER the status flips -- so advancing the virtual
+    /// clock on Completed alone races the stamp and makes the eviction assertions flaky (#1769).
+    /// Polling <see cref="DefaultSubAgentManager.IsRetiredForTest"/> ties the wait to the real
+    /// retirement point, keeping the subsequent clock-advance + eviction assertions deterministic.
+    /// </summary>
+    private static Task WaitUntilRetiredAsync(DefaultSubAgentManager manager, string subAgentId, TimeSpan timeout)
+        => WaitUntilAsync(() => Task.FromResult(manager.IsRetiredForTest(subAgentId)), timeout);
 
     /// <summary>
     /// A minimal mutable <see cref="TimeProvider"/> test double so the retention sweep can be driven

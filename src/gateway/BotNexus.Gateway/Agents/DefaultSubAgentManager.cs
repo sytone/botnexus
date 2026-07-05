@@ -481,6 +481,25 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         return Task.FromResult(_records.TryGetValue(subAgentId, out var record) ? record.Info : null);
     }
 
+    /// <summary>
+    /// Test-only hook: whether the record for <paramref name="subAgentId"/> has finished its child
+    /// cleanup and stamped its retention clock (<see cref="SubAgentRecord.RetiredAt"/> is set).
+    /// <para>
+    /// The retention eviction is driven by <c>RetiredAt</c>, which is stamped in the completion
+    /// <c>finally</c> (via <see cref="CleanupChildAgentAsync"/>) AFTER the record's status has
+    /// already flipped to <see cref="SubAgentStatus.Completed"/> and after two awaited dispatch
+    /// steps. A test that advances a virtual <see cref="TimeProvider"/> the moment it observes
+    /// <c>Completed</c> can therefore race the retirement stamp: the record is retired at the
+    /// (already-advanced) virtual instant, so its window never elapses relative to the assertion
+    /// and the eviction silently no-ops. Tests poll this to await the real retirement before
+    /// advancing time, making the eviction assertions deterministic (#1769).
+    /// </para>
+    /// This is a diagnostic accessor only — it is not part of <see cref="ISubAgentManager"/> and has
+    /// no effect on runtime behaviour.
+    /// </summary>
+    internal bool IsRetiredForTest(string subAgentId)
+        => _records.TryGetValue(subAgentId, out var record) && record.RetiredAt is not null;
+
     /// <inheritdoc />
     public async Task<bool> KillAsync(string subAgentId, SessionId requestingSessionId, CancellationToken ct = default)
     {
