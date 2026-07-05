@@ -223,7 +223,7 @@ public sealed class TelegramChannelAdapterRichTests
     [Fact]
     public void SplitMarkdown_ContentUnderLimit_ReturnsSingleChunk()
     {
-        var result = TelegramChannelAdapter.SplitMarkdown("line1\nline2", 100).ToList();
+        var result = TelegramMessageSplitter.SplitMarkdown("line1\nline2", 100).ToList();
         result.Count.ShouldBe(1);
         result[0].ShouldBe("line1\nline2");
     }
@@ -233,7 +233,7 @@ public sealed class TelegramChannelAdapterRichTests
     {
         // Three 8-char lines; limit 20 forces a split, but never mid-line.
         var content = "AAAAAAAA\nBBBBBBBB\nCCCCCCCC"; // 8 + 1 + 8 + 1 + 8 = 26
-        var result = TelegramChannelAdapter.SplitMarkdown(content, 20).ToList();
+        var result = TelegramMessageSplitter.SplitMarkdown(content, 20).ToList();
         result.Count.ShouldBeGreaterThan(1);
         // Every chunk is composed of whole original lines (no partial line).
         var rejoined = string.Join("\n", result.SelectMany(c => c.Split('\n')));
@@ -246,7 +246,7 @@ public sealed class TelegramChannelAdapterRichTests
     public void SplitMarkdown_SingleLineLongerThanLimit_HardSplits()
     {
         var content = new string('x', 50);
-        var result = TelegramChannelAdapter.SplitMarkdown(content, 20).ToList();
+        var result = TelegramMessageSplitter.SplitMarkdown(content, 20).ToList();
         result.Count.ShouldBe(3); // 20 + 20 + 10
         string.Concat(result).ShouldBe(content);
     }
