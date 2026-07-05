@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Providers.Copilot;
 
@@ -21,6 +22,14 @@ public static class CopilotOAuth
     private const string DeviceCodeUrl = "https://github.com/login/device/code";
     private const string AccessTokenUrl = "https://github.com/login/oauth/access_token";
     private const string CopilotTokenUrl = "https://api.github.com/copilot_internal/v2/token";
+
+    // Cap for the peer-controlled OAuth token-exchange JSON bodies (device-code, access-token,
+    // copilot-token). A GitHub OAuth device/token response is a few hundred bytes; 256 KiB is
+    // generous headroom yet small enough that a hostile or malfunctioning endpoint cannot force the
+    // runtime to buffer an unbounded body before JsonDocument.Parse (OOM-DoS hardening, #1772).
+    // Matches the OpenClaw Google-Meet OAuth token cap the issue cites. Kept far below the shared
+    // BoundedHttpContent.DefaultMaxResponseBytes (16 MiB) used for larger model/search payloads.
+    private const long OAuthResponseMaxBytes = 256 * 1024;
 
     /// <summary>
     /// Maximum valid Unix timestamp (seconds) for an expiry claim.
@@ -108,7 +117,7 @@ public static class CopilotOAuth
 
             var description = tokenJson.TryGetProperty("error_description", out var descEl)
                 ? descEl.GetString() : "Unknown error";
-            throw new InvalidOperationException($"GitHub OAuth error: {error} — {description}");
+            throw new InvalidOperationException($"GitHub OAuth error: {error} - {description}");
         }
 
         throw new TimeoutException("Timed out waiting for GitHub device code authorization.");
@@ -141,7 +150,7 @@ public static class CopilotOAuth
 
         // Refresh if expired, within 60s of expiry, or if ExpiresAt is out of the valid range.
         // An out-of-range ExpiresAt (e.g. from a crafted JWT with a huge exp claim) would cause
-        // DateTimeOffset.FromUnixTimeSeconds to throw — treat it as invalid and force a refresh.
+        // DateTimeOffset.FromUnixTimeSeconds to throw - treat it as invalid and force a refresh.
         if (!IsExpiresAtInRange(credentials.ExpiresAt) ||
             DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= credentials.ExpiresAt - 60)
         {
@@ -223,9 +232,23 @@ public static class CopilotOAuth
         return response;
     }
 
-    private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response, CancellationToken ct)
+    // All three OAuth reads funnel through this choke-point, so capping here bounds every
+    // peer-controlled token-exchange body in the file.
+    private static Task<JsonElement> ReadJsonAsync(HttpResponseMessage response, CancellationToken ct)
+        => ReadBoundedJsonAsync(response, OAuthResponseMaxBytes, ct);
+
+    /// <summary>
+    /// Reads an OAuth JSON response through <see cref="BoundedHttpContent"/> so a hostile or
+    /// malfunctioning endpoint cannot stream an unbounded body into <see cref="JsonDocument.Parse(string)"/>.
+    /// The decoded body is parsed exactly as the previous unbounded read did; the only added behaviour
+    /// is a <see cref="ResponseContentTooLargeException"/> when the body exceeds <paramref name="maxBytes"/>
+    /// (including a cheap up-front rejection of an over-cap declared <c>Content-Length</c>).
+    /// Exposed as an internal seam so the cap is unit-testable without the static <see cref="SharedClient"/>.
+    /// </summary>
+    internal static async Task<JsonElement> ReadBoundedJsonAsync(
+        HttpResponseMessage response, long maxBytes, CancellationToken ct)
     {
-        var json = await response.Content.ReadAsStringAsync(ct);
+        var json = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, maxBytes, ct);
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.Clone();
     }
