@@ -420,6 +420,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             // so applying it here preserves the prior control flow and side-effect ordering.
             await PrepareTurnAsync(session, message, typedAgentId, typedSessionId, sessionId, cancellationToken);
 
+            // #1518: capture the run's authoritative session identity (id + conversation) NOW,
+            // before the agent run starts. Every post-run finalizer write below is fenced against
+            // it so a delete/reset that lands while the run is in flight cannot be undone by the
+            // finalizer resurrecting or clobbering the row.
+            var runFence = SessionWriteFence.Capture(session);
+
             try
             {
                 var handle = await _supervisor.GetOrCreateAsync(typedAgentId, typedSessionId, cancellationToken);
@@ -561,7 +567,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             },
                         MaxPersistedToolResultBytes: maxPersistedToolResultBytes),
                         _sessionLifecycleEvents,
-                        cancellationToken);
+                        finalSaveFence: runFence,
+                        cancellationToken: cancellationToken);
                     }
                     finally
                     {
@@ -647,7 +654,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     saveActivity?.SetTag("botnexus.agent.id", session.AgentId);
                     try
                     {
-                        await _sessions.SaveAsync(session, cancellationToken);
+                        // #1518: fenced finalizer write. If the session was deleted, sealed by a
+                        // reset, or rebound while this (non-streaming) turn ran, the save no-ops
+                        // instead of resurrecting/clobbering the row.
+                        var finalizerOutcome = await _sessions.SaveAsync(session, runFence, cancellationToken);
+                        if (finalizerOutcome == SessionSaveOutcome.Rebound)
+                        {
+                            _logger.LogInformation(
+                                "Session transcript save skipped as rebound for session '{SessionId}': the session was " +
+                                "deleted or reset while the turn was in flight; the completed turn was not persisted (#1518).",
+                                sessionId);
+                        }
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {

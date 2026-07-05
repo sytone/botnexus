@@ -168,6 +168,118 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Issue #1518: fenced post-run finalizer write. Unlike the base-interface default (which
+    /// re-reads via <see cref="GetAsync"/> and then calls the unfenced save - two separate lock
+    /// acquisitions), this override performs the identity re-read and the upsert under a
+    /// <b>single</b> striped session lock, so a concurrent
+    /// <see cref="DeleteAsync"/>/<see cref="ArchiveAsync"/> cannot slip between the check and the
+    /// write. The re-read deliberately hits SQLite directly (not the in-memory cache): the cache
+    /// may still hold the pre-delete session, whereas the authoritative row is what a competing
+    /// delete/reset mutated. When the fence fails the cache entry for the (now rebound) session is
+    /// evicted so a subsequent read does not serve the stale, resurrected view.
+    /// </remarks>
+    public override async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using var activity = ActivitySource.StartActivity("session.save.fenced", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", session.SessionId);
+        activity?.SetTag("botnexus.agent.id", session.AgentId);
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        // Backfill before the per-session lock so the resolver's per-agent lock does not
+        // interleave with concurrent saves of the same session (mirrors the unfenced SaveAsync).
+        await EnsureConversationIdStampedAsync(session, cancellationToken).ConfigureAwait(false);
+
+        var sessionLock = await AcquireSessionLockAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var persisted = await RetryOnTransientAsync(async () =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                // Re-read the authoritative row identity (conversation + status) directly from
+                // SQLite, inside the lock, before deciding whether to write. A NULL result means
+                // the row was deleted mid-run; a diverged conversation_id or a sealed/expired
+                // status means a competing reset rebound/sealed it. Either way the fence fails.
+                var snapshot = await ReadFenceSnapshotAsync(connection, session.SessionId, cancellationToken).ConfigureAwait(false);
+                if (!SessionFenceEvaluator.Passes(fence, snapshot))
+                {
+                    activity?.SetTag("botnexus.session.fence.rebound", true);
+                    return false;
+                }
+
+                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (persisted)
+            {
+                // Only refresh the cache on a real write. On a rebound, evict any stale entry so a
+                // later read re-materialises the authoritative (deleted/sealed/rebound) state.
+                _cache.Set(session.SessionId, session);
+                return SessionSaveOutcome.Persisted;
+            }
+
+            _cache.Remove(session.SessionId);
+            _logger.LogInformation(
+                "Fenced session save for {SessionId} skipped as rebound: the on-disk row was deleted, sealed, " +
+                "or rebound to another conversation while the run was in flight (#1518).",
+                session.SessionId);
+            return SessionSaveOutcome.Rebound;
+        }
+        finally { sessionLock.Dispose(); }
+    }
+
+    /// <summary>
+    /// Lightweight, lock-scoped read of just the fence-relevant fields (conversation_id + status)
+    /// for issue #1518. Returns a synthetic <see cref="GatewaySession"/> carrying only those two
+    /// values (never touches history or the conversation store) so
+    /// <see cref="SessionFenceEvaluator.Passes"/> can evaluate it, or <c>null</c> when the row no
+    /// longer exists. Deliberately avoids <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>,
+    /// which hydrates AgentId from the conversation store and would throw if a competing reset had
+    /// already removed the conversation - the fence must observe "row gone" as a clean skip, not an
+    /// exception.
+    /// </summary>
+    private async Task<GatewaySession?> ReadFenceSnapshotAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT status, conversation_id
+            FROM sessions
+            WHERE id = $sessionId
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            return null;
+
+        var status = reader.IsDBNull(0) ? null : reader.GetString(0);
+        var conversationIdValue = reader.IsDBNull(1) ? null : reader.GetString(1);
+
+        // Build a minimal session carrying only the fence-relevant fields. AgentId is left
+        // unhydrated on purpose - SessionFenceEvaluator only inspects ConversationId and Status.
+        var snapshot = new GatewaySession(new Session { SessionId = sessionId }, _redactor)
+        {
+            Status = ParseStatus(status)
+        };
+        if (conversationIdValue is not null)
+            snapshot.ConversationId = ConversationId.From(conversationIdValue);
+
+        return snapshot;
+    }
+
+    /// <inheritdoc />
     public override async Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
