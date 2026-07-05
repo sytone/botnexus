@@ -804,7 +804,21 @@ public sealed class SqliteSessionStore : SessionStoreBase
             {
                 var convId = reader.GetString(0);
                 var json = reader.GetString(1);
-                var participants = DeserializeParticipants(json);
+                List<SessionParticipant> participants;
+                try
+                {
+                    participants = DeserializeParticipants(json);
+                }
+                catch (JsonException ex)
+                {
+                    // #1751: skip a single corrupt participants_json row rather than aborting the
+                    // whole backfill scan. The other valid rows must still be forwarded.
+                    _logger.LogWarning(
+                        ex,
+                        "Skipping corrupt participants_json while backfilling participants for conversation '{ConversationId}'.",
+                        convId);
+                    continue;
+                }
                 if (participants.Count == 0)
                     continue;
 

@@ -134,6 +134,66 @@ public sealed class SqliteCronStoreTests
     }
 
     [Fact]
+    public async Task ListAsync_WithCorruptMetadataJsonOnOneJob_LoadsOtherJobs_AndCorruptJobHasNullMetadata()
+    {
+        // Regression (#1751): a single corrupted metadata_json value must not poison the
+        // whole scan. The bare JsonSerializer.Deserialize used to throw JsonException and
+        // abort the entire ListAsync enumeration, so the scheduler could not read ANY jobs.
+        // The guard now catches the parse failure, logs a warning with the job id, and lets
+        // the job load with null Metadata so the remaining valid jobs still enumerate.
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-good", "agent-a"));
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-bad", "agent-b"));
+
+        // Corrupt the metadata_json of exactly one row directly in SQLite.
+        await using (var connection = new SqliteConnection($"Data Source={context.DbPath}"))
+        {
+            await connection.OpenAsync();
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE cron_jobs SET metadata_json = $bad WHERE id = 'job-bad';";
+            corrupt.Parameters.AddWithValue("$bad", "{ this is not valid json ");
+            (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+        SqliteConnection.ClearAllPools();
+
+        // Must NOT throw: the corrupt row is skipped-to-safe (null metadata), not fatal.
+        var jobs = await context.Store.ListAsync();
+
+        jobs.Select(job => job.Id.Value).OrderBy(id => id).ShouldBe(["job-bad", "job-good"]);
+        var good = jobs.Single(job => job.Id.Value == "job-good");
+        good.Metadata.ShouldNotBeNull();
+        good.Metadata!.ShouldContainKey("source");
+        good.Metadata!["source"]!.ToString().ShouldBe("tests");
+        var bad = jobs.Single(job => job.Id.Value == "job-bad");
+        bad.Metadata.ShouldBeNull("A corrupt metadata_json must degrade to null metadata, not abort the load.");
+    }
+
+    [Fact]
+    public async Task GetAsync_WithCorruptTemplateParametersJson_LoadsJobWithNullTemplateParameters()
+    {
+        // Regression (#1751): a corrupt template_parameters_json must not throw out of the
+        // reader. The job still loads; TemplateParameters degrades to null.
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-tpl", "agent-a"));
+
+        await using (var connection = new SqliteConnection($"Data Source={context.DbPath}"))
+        {
+            await connection.OpenAsync();
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE cron_jobs SET template_parameters_json = $bad WHERE id = 'job-tpl';";
+            corrupt.Parameters.AddWithValue("$bad", "[not, valid");
+            (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+        SqliteConnection.ClearAllPools();
+
+        var loaded = await context.Store.GetAsync(JobId.From("job-tpl"));
+
+        loaded.ShouldNotBeNull();
+        loaded!.Id.Value.ShouldBe("job-tpl");
+        loaded.TemplateParameters.ShouldBeNull("A corrupt template_parameters_json must degrade to null, not abort the load.");
+    }
+
+    [Fact]
     public async Task DeleteAsync_RemovesJob()
     {
         await using var context = await CronStoreTestContext.CreateAsync();

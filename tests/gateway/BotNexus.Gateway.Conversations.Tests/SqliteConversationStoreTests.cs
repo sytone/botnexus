@@ -790,6 +790,65 @@ public sealed class SqliteConversationStoreTests
         after.ShouldBeGreaterThan(before);
     }
 
+    [Fact]
+    public async Task GetAsync_WithCorruptMetadataColumn_FallsBackToEmptyMetadata_WithoutThrowing()
+    {
+        // Regression (#1751): a corrupted metadata column value must not throw JsonException
+        // out of the row mapper and abort the load. The guard now logs a warning with the
+        // conversation id and hydrates an empty metadata dictionary so the row still loads.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conv = CreateConversation(Agent("agent-a"), "corrupt-meta");
+        await store.CreateAsync(conv);
+
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE conversations SET metadata = $bad WHERE id = $id;";
+            corrupt.Parameters.AddWithValue("$bad", "{ this is not valid json ");
+            corrupt.Parameters.AddWithValue("$id", conv.ConversationId.Value);
+            (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+        SqliteConnection.ClearAllPools();
+
+        // Fresh store (empty cache) forces a real column read + hydrate. Must NOT throw.
+        var loaded = await fixture.CreateStore().GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.Title.ShouldBe("corrupt-meta");
+        loaded.Metadata.ShouldBeEmpty("A corrupt metadata column must degrade to an empty dictionary, not abort the load.");
+    }
+
+    [Fact]
+    public async Task ListAsync_WithCorruptMetadataOnOneRow_StillReturnsAllConversations()
+    {
+        // Regression (#1751): one corrupt metadata row must not poison a list/scan. The other
+        // valid conversations must still enumerate.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var good = CreateConversation(Agent("agent-a"), "good-row");
+        var bad = CreateConversation(Agent("agent-a"), "bad-row");
+        await store.CreateAsync(good);
+        await store.CreateAsync(bad);
+
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE conversations SET metadata = $bad WHERE id = $id;";
+            corrupt.Parameters.AddWithValue("$bad", "]not even close[");
+            corrupt.Parameters.AddWithValue("$id", bad.ConversationId.Value);
+            (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+        SqliteConnection.ClearAllPools();
+
+        var all = await fixture.CreateStore().ListAsync(Agent("agent-a"));
+
+        all.Select(c => c.Title).OrderBy(t => t).ShouldBe(["bad-row", "good-row"]);
+        all.Single(c => c.Title == "bad-row").Metadata.ShouldBeEmpty();
+    }
+
     private static string TempDb()
         => Path.Combine(Path.GetTempPath(), $"bn-conv-test-{Guid.NewGuid():N}.db");
 

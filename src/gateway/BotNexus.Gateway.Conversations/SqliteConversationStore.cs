@@ -1084,7 +1084,7 @@ public sealed class SqliteConversationStore : IConversationStore
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
             return null;
 
-        var conversation = ConversationRowMapper.MapConversation(reader);
+        var conversation = ConversationRowMapper.MapConversation(reader, logger);
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
@@ -1166,7 +1166,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                var conversation = ConversationRowMapper.MapConversation(reader);
+                var conversation = ConversationRowMapper.MapConversation(reader, _logger);
                 conversation.ChannelBindings = [];
                 conversation.Participants = [];
                 byId[conversation.ConversationId.Value] = conversation;
@@ -1448,7 +1448,7 @@ public sealed class SqliteConversationStore : IConversationStore
             CreatedAt = conversation.CreatedAt,
             UpdatedAt = conversation.UpdatedAt,
             ActiveSessionId = conversation.ActiveSessionId,
-            Metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(conversation.Metadata, JsonOptions), JsonOptions) ?? [],
+            Metadata = CloneMetadata(conversation.Metadata),
             ChannelBindings = conversation.ChannelBindings.Select(binding => new ChannelBinding
             {
                 BindingId = binding.BindingId,
@@ -1470,6 +1470,25 @@ public sealed class SqliteConversationStore : IConversationStore
                 .Select(p => new SessionParticipant { CitizenId = p.CitizenId, Role = p.Role })
                 .ToList()
         };
+
+    // #1751: defensive guard for the deep-clone metadata round-trip. A round-trip of a well-formed
+    // in-memory dictionary does not normally throw, but if a value cannot be re-materialised into a
+    // Dictionary<string, object?> we fall back to an empty dictionary rather than letting the clone
+    // (and therefore every list/cache-seed path that clones) abort. This method is static and has no
+    // instance logger; the row is degraded silently to a safe default which is acceptable because the
+    // authoritative on-disk read path (ConversationRowMapper.DeserializeMetadata) already logs.
+    private static Dictionary<string, object?> CloneMetadata(IReadOnlyDictionary<string, object?> metadata)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                JsonSerializer.Serialize(metadata, JsonOptions), JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     // ── Canvas State ───────────────────────────────────────────────────────
 
