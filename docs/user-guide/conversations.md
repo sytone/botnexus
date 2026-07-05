@@ -160,6 +160,47 @@ An agent can have multiple conversations — one per channel address, or one per
 
 ---
 
+## Managing conversations with the `conversation` tool
+
+Agents that are granted the built-in **`conversation`** tool can inspect and manage conversation context programmatically — get, list, create, annotate, and archive persistent conversations. This is how an agent starts a new conversation, posts an update into an existing one, or renames/annotates a thread from inside its own loop.
+
+### Actions
+
+| Action | What it does |
+|---|---|
+| `get` | Fetch a conversation's details (title, purpose, status). |
+| `list` | List conversations, optionally filtered by `status` (`active` or `archived`). |
+| `new` | Create a new conversation, optionally seeded with an initial message. |
+| `message` | Post a message into an existing conversation. |
+| `set_title` | Rename a conversation's display title. |
+| `set_purpose` | Set a conversation's purpose annotation. |
+| `set` | Update title/purpose in one call. |
+| `archive` | Archive a conversation (read-only; drops out of fan-out). |
+
+### Cross-agent access
+
+By default the tool operates on the calling agent's own conversations. The `get`, `list`, and `new` actions accept a `targetAgentId` to reach another agent's conversations, subject to the gateway's `conversationAccess` policy:
+
+| `conversationAccess.level` | Reach |
+|---|---|
+| `own` | Only the calling agent's conversations. |
+| `allowlist` | The calling agent's plus the agents named in `conversationAccess.allowedAgents`. |
+| `all` | Any agent's conversations. |
+
+See [Configuration — Gateway settings](./configuration#gateway-settings) for the `conversationAccess` keys.
+
+### Which role an agent's post is recorded under (`speak_as`)
+
+When an agent posts via the `message` or `new` action, the message is stamped into conversation history under a **role**. The rule (the *Hybrid* rule, priority order):
+
+1. If the call sets **`speak_as`** (`"assistant"` or `"user"`), that role is honoured verbatim.
+2. Otherwise, an **agent** sender defaults to **`assistant`** — the agent speaking as itself.
+3. Otherwise, a **human user** sender stays **`user`** (unchanged from prior behaviour).
+
+So an agent posting to a conversation records as **`assistant`** by default — its message appears as the agent's own turn, not as a fabricated user prompt. Set `speak_as: "user"` only for a genuine *on-behalf-of-a-user* kickoff (e.g. seeding a conversation as if the user had asked). Only `assistant` and `user` are accepted — the tool cannot record a message under a system, tool, or notification role.
+
+---
+
 ## Threading
 
 Some channels support native threads or topics (Telegram forum groups, Teams channels, Slack threads). BotNexus maps each thread to its own conversation; the originating channel adapter encodes the native thread identifier into the `channelAddress` so the core can treat all addresses uniformly:
