@@ -73,6 +73,43 @@ public sealed class SignalRBlazorAssetEncodingTests
         encoding.ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData("/_framework/dotnet.native.veuqw8a0w9.wasm")]
+    [InlineData("/_framework/System.Private.CoreLib.s1cucomlii.wasm")]
+    [InlineData("/_framework/dotnet.runtime.a6jcqbs390.js")]
+    [InlineData("/_framework/icudt_EFIGS.tptq2av103.dat")]
+    public void ResolveCacheControl_FingerprintedFrameworkAsset_IsImmutable(string subPath)
+    {
+        // Content-hashed assets never mutate in place (a change yields a new filename),
+        // so they are safe to cache for a year and skip re-download on repeat loads.
+        SignalREndpointContributor.ResolveCacheControl(subPath)
+            .ShouldBe("public, max-age=31536000, immutable");
+    }
+
+    [Theory]
+    [InlineData("/index.html")]
+    [InlineData("/appsettings.json")]
+    [InlineData("/manifest.json")]
+    [InlineData("/css/mobile.css")]
+    [InlineData("/js/markdown.js")]
+    public void ResolveCacheControl_StablePathAsset_MustRevalidate(string subPath)
+    {
+        // Files served under a stable, non-fingerprinted path must revalidate so a new
+        // deployment is picked up immediately rather than served stale from cache.
+        SignalREndpointContributor.ResolveCacheControl(subPath)
+            .ShouldBe("no-cache");
+    }
+
+    [Theory]
+    [InlineData("/_framework/blazor.boot.json")]     // boot manifest points at the fingerprints; must be fresh
+    [InlineData("/_framework/blazor.webassembly.js")] // no content hash in the name
+    [InlineData("/_framework/dotnet.js")]             // loader entry point, no hash
+    public void ResolveCacheControl_NonFingerprintedFrameworkAsset_MustRevalidate(string subPath)
+    {
+        SignalREndpointContributor.ResolveCacheControl(subPath)
+            .ShouldBe("no-cache");
+    }
+
     private sealed class StubFileProvider(params string[] existingPaths) : IFileProvider
     {
         private readonly HashSet<string> _existing = new(existingPaths, StringComparer.Ordinal);
