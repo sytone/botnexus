@@ -41,6 +41,50 @@ public interface ISessionStore
     Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Persists the session state <b>only if</b> the on-disk row still matches the run identity
+    /// captured in <paramref name="fence"/>. When the row was deleted, sealed by a competing
+    /// reset, or rebound to a different conversation while the run was in flight, the write is
+    /// skipped and <see cref="SessionSaveOutcome.Rebound"/> is returned instead of resurrecting
+    /// or clobbering the row. See issue #1518 and <see cref="SessionWriteFence"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the write path the gateway's post-run finalizer uses (turn-transcript
+    /// persistence, compaction record, metadata patch). The plain
+    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/> overload keeps its
+    /// unconditional create-or-update semantics for pre-run write-ahead saves (the user
+    /// message and crash sentinel) that must be able to create the row.
+    /// </para>
+    /// <para>
+    /// The default implementation re-reads the session via <see cref="GetAsync"/> and applies
+    /// the fence before delegating to the unfenced <see cref="SaveAsync(GatewaySession, CancellationToken)"/>.
+    /// Stores that can perform the re-read and the write under a single lock (e.g. the SQLite
+    /// store) override this to close the check-then-write window atomically.
+    /// </para>
+    /// </remarks>
+    /// <param name="session">The session to persist.</param>
+    /// <param name="fence">The run identity captured at run start.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// <see cref="SessionSaveOutcome.Persisted"/> when the fence passed and the session was
+    /// written; <see cref="SessionSaveOutcome.Rebound"/> when the write was skipped.
+    /// </returns>
+    async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var current = await GetAsync(fence.ExpectedSessionId, cancellationToken).ConfigureAwait(false);
+        if (!SessionFenceEvaluator.Passes(fence, current))
+            return SessionSaveOutcome.Rebound;
+
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return SessionSaveOutcome.Persisted;
+    }
+
+    /// <summary>
     /// Deletes a session and its history.
     /// </summary>
     Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);

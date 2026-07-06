@@ -19,6 +19,14 @@ public static class StreamingSessionHelper
     /// <param name="sessionStore">The session store used to persist changes.</param>
     /// <param name="options">Optional behavior overrides.</param>
     /// <param name="lifecycleEvents">Optional lifecycle event publisher.</param>
+    /// <param name="finalSaveFence">
+    /// Optional run-identity fence (issue #1518). When supplied, the <b>final authoritative
+    /// post-run write</b> is fenced against it: if the session was deleted, sealed by a reset,
+    /// or rebound to another conversation while the stream was in flight, the final save (and
+    /// the <c>Closed</c> lifecycle publish) is skipped instead of resurrecting or clobbering the
+    /// row. The eager mid-run write-ahead flushes (tool-start / turn-end) remain best-effort and
+    /// unfenced - they only ever run while the session is still the run's live session.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The accumulated streaming result details.</returns>
     public static async Task<StreamingSessionResult> ProcessAndSaveAsync(
@@ -27,6 +35,7 @@ public static class StreamingSessionHelper
         ISessionStore sessionStore,
         StreamingSessionOptions? options = null,
         SessionLifecycleEvents? lifecycleEvents = null,
+        SessionWriteFence? finalSaveFence = null,
         CancellationToken cancellationToken = default)
     {
         options ??= new StreamingSessionOptions();
@@ -198,8 +207,16 @@ public static class StreamingSessionHelper
 
         // Remove crash sentinel on clean completion (#363).
         session.RemoveCrashSentinels();
-        await sessionStore.SaveAsync(session, cancellationToken);
-        if (lifecycleEvents is not null)
+
+        // #1518: the final write is the authoritative post-run finalizer save. When a fence was
+        // supplied, honour it so a delete/reset that landed mid-stream cannot be undone here. On
+        // a rebound we skip the save AND the Closed lifecycle publish - the session this run owned
+        // no longer exists (or belongs to someone else), so emitting Closed for it would be wrong.
+        var finalOutcome = finalSaveFence is { } fence
+            ? await sessionStore.SaveAsync(session, fence, cancellationToken)
+            : await SaveUnfencedAsync(sessionStore, session, cancellationToken);
+
+        if (finalOutcome == SessionSaveOutcome.Persisted && lifecycleEvents is not null)
         {
             await lifecycleEvents.PublishAsync(
                 new SessionLifecycleEvent(
@@ -211,6 +228,20 @@ public static class StreamingSessionHelper
         }
 
         return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries);
+    }
+
+    /// <summary>
+    /// Performs an unfenced final save and reports it as <see cref="SessionSaveOutcome.Persisted"/>,
+    /// so the caller can treat the fenced and unfenced paths uniformly. Used when no
+    /// <see cref="SessionWriteFence"/> was supplied (issue #1518 back-compat for existing callers).
+    /// </summary>
+    private static async Task<SessionSaveOutcome> SaveUnfencedAsync(
+        ISessionStore sessionStore,
+        GatewaySession session,
+        CancellationToken cancellationToken)
+    {
+        await sessionStore.SaveAsync(session, cancellationToken);
+        return SessionSaveOutcome.Persisted;
     }
 
     /// <summary>

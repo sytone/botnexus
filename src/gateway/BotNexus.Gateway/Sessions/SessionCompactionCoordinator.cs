@@ -58,6 +58,12 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         }
         var sessionId = session.SessionId;
 
+        // #1518: capture the run's authoritative session identity BEFORE the (potentially
+        // long-running) summarization call. The post-run persistence at step 3 is then fenced
+        // against it so a delete/reset that lands while we are summarising cannot be undone by
+        // the compaction record write resurrecting or un-sealing the row.
+        var fence = SessionWriteFence.Capture(session);
+
         // 1. Optional pre-compaction memory flush. Best-effort: failures are logged
         //    and swallowed so compaction always proceeds (mirrors auto-compact path).
         if (_memoryFlusher is not null && _memoryFlusher.ShouldFlush(session.Session, options))
@@ -120,7 +126,27 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             }
         }
 
-        await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        var saveOutcome = await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
+        if (saveOutcome == SessionSaveOutcome.Rebound)
+        {
+            // #1518: the session was deleted, sealed, or rebound while we summarised. Do NOT
+            // resurrect it and do NOT evict the agent handle (there is nothing to rebuild) -
+            // surface an aborted outcome so channel callers see the compaction did not land.
+            _logger.LogInformation(
+                "Session {SessionId} compaction discarded as rebound: the session was deleted or reset " +
+                "while compaction was in flight; the compaction record was not persisted (#1518).",
+                sessionId);
+            return new SessionCompactionOutcome(
+                Succeeded: result.Succeeded,
+                Applied: false,
+                HistoryOutcome: HistoryReplaceOutcome.Aborted,
+                EntriesSummarized: result.EntriesSummarized,
+                EntriesPreserved: result.EntriesPreserved,
+                TokensBefore: result.TokensBefore,
+                TokensAfter: result.TokensAfter,
+                FailureReason: "Compaction was discarded because the session was deleted or reset while it was in progress.");
+        }
+
         _logger.LogInformation(
             "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved (applied={Applied}, outcome={Outcome}).",
             sessionId, result.EntriesSummarized, result.EntriesPreserved, applied, historyOutcome);

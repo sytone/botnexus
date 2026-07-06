@@ -29,6 +29,30 @@ public abstract class SessionStoreBase : ISessionStore
 
     public abstract Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Fenced post-run finalizer save (issue #1518). Default implementation re-reads the session
+    /// via <see cref="GetAsync"/> and evaluates the fence through
+    /// <see cref="SessionFenceEvaluator.Passes"/> before delegating to the unfenced
+    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/>. This closes the resurrect/clobber
+    /// window for File and InMemory stores. <see cref="SqliteSessionStore"/> overrides this to
+    /// perform the re-read and the write under a single per-session lock so the check-then-write
+    /// is atomic against a concurrent delete/reset.
+    /// </summary>
+    public virtual async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var current = await GetAsync(fence.ExpectedSessionId, cancellationToken).ConfigureAwait(false);
+        if (!SessionFenceEvaluator.Passes(fence, current))
+            return SessionSaveOutcome.Rebound;
+
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return SessionSaveOutcome.Persisted;
+    }
+
     public abstract Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     public abstract Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default);
