@@ -139,12 +139,13 @@ public class SignalREndpointContributor : IEndpointContributor
         return (null, null);
     }
 
-    private static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    internal static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
         ".html" => "text/html",
         ".css" => "text/css",
         ".js" => "application/javascript",
         ".json" => "application/json",
+        ".webmanifest" => "application/manifest+json",
         ".wasm" => "application/wasm",
         ".dll" => "application/octet-stream",
         ".pdb" => "application/octet-stream",

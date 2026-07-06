@@ -51,6 +51,12 @@
         };
     </script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+    <script>
+        // Register the PWA service worker so Edge/Chromium treats the portal as installable.
+        // The published build swaps service-worker.js -> service-worker.published.js via the
+        // csproj <ServiceWorker> item, so registering 'service-worker.js' is correct for both.
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('service-worker.js'); }
+    </script>
 </body>
 
 </html>
