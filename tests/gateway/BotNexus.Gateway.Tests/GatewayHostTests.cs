@@ -3,6 +3,10 @@ using BotNexus.Domain.World;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -10,6 +14,8 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
@@ -101,6 +107,138 @@ public sealed class GatewayHostTests
             Times.Once);
         // Write-ahead (user msg + sentinel) + ProcessAndSaveAsync final = at least 3 saves
         sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.AtLeast(1));
+    }
+
+    // #739/#1695 regression: a STREAMING turn (portal/SignalR is the dominant path) on a
+    // still-default-titled conversation must trigger auto-title generation. The service-level
+    // ConversationAutoTitleServiceTests prove the titler works in isolation; this asserts the
+    // GatewayHost streaming finalizer actually wires it, which is where the live no-fire lived:
+    // 82 portal conversations sat on "New conversation" despite real exchanges because nothing
+    // exercised this path end-to-end.
+    [Fact]
+    public async Task DispatchAsync_Streaming_DefaultTitledConversation_TriggersAutoTitle()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var agentId = BotNexus.Domain.Primitives.AgentId.From("agent-a");
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("web:addr-1:agent-a");
+        var convId = BotNexus.Domain.Primitives.ConversationId.From("c_autotitlestream1");
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(agentId);
+        handle.SetupGet(h => h.SessionId).Returns(sessionId);
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "the answer " },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "is 42" }
+            ]));
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(agentId, sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        await sessions.GetOrCreateAsync(sessionId, agentId);
+
+        // Conversation row exists in the store with the default title (#739 gate).
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.SaveAsync(
+            new BotNexus.Gateway.Abstractions.Models.Conversation
+            {
+                ConversationId = convId,
+                AgentId = agentId,
+                Title = ConversationAutoTitleService.DefaultTitle,
+            },
+            CancellationToken.None);
+
+        // Dispatcher stamps the session with the resolved conversation id so the auto-title
+        // guard's IsInitialized() check passes on the streaming path.
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(convId, sessionId, false, false)));
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: true);
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(channel.Object),
+            conversationDispatcher: conversationDispatcher.Object,
+            conversationStore: conversationStore,
+            llmClient: CreateFakeTitleLlmClient("Meaning Of Life"));
+
+        await host.DispatchAsync(CreateMessage("what is the answer", channelType: "web", conversationId: "addr-1"));
+
+        // TriggerBestEffort is fire-and-forget (Task.Run); poll for the persisted title change.
+        string? finalTitle = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
+            finalTitle = conv?.Title;
+            if (!ConversationAutoTitleService.IsDefaultTitle(finalTitle))
+                break;
+            await Task.Delay(100);
+        }
+
+        finalTitle.ShouldBe("Meaning Of Life");
+    }
+
+    // Minimal LlmClient backed by a fake provider returning a fixed title, mirroring the seam in
+    // ConversationAutoTitleServiceTests so the GatewayHost-level auto-title wiring is exercisable.
+    private static LlmClient CreateFakeTitleLlmClient(string responseText)
+    {
+        var modelRegistry = new ModelRegistry();
+        var fakeModel = new LlmModel(
+            Id: "fake-model",
+            Name: "fake-model",
+            Api: "fake-api",
+            Provider: "fake",
+            BaseUrl: "https://fake.example.com",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 4096,
+            MaxTokens: 512);
+        modelRegistry.Register("fake", fakeModel);
+
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new FakeTitleApiProvider(responseText));
+        return new LlmClient(providerRegistry, modelRegistry);
+    }
+
+    private sealed class FakeTitleApiProvider : IApiProvider
+    {
+        private readonly string _responseText;
+        public FakeTitleApiProvider(string responseText) => _responseText = responseText;
+        public string Api => "fake-api";
+
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+            => throw new NotImplementedException("FakeTitleApiProvider only supports StreamSimple");
+
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
+        {
+            var msg = new AssistantMessage(
+                Content: [new TextContent(_responseText)],
+                Api: "fake-api",
+                Provider: "fake",
+                ModelId: "fake-model",
+                Usage: new Usage(),
+                StopReason: StopReason.Stop,
+                ErrorMessage: null,
+                ResponseId: null,
+                Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var stream = new LlmStream();
+            stream.Push(new DoneEvent(StopReason.Stop, msg));
+            return stream;
+        }
     }
 
     [Fact]
@@ -1585,7 +1723,10 @@ public sealed class GatewayHostTests
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
         IConversationRouter? conversationRouter = null,
-        PendingAskUserInterceptor? pendingAskUserInterceptor = null)
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null,
+        IConversationStore? conversationStore = null,
+        IOptions<PlatformConfig>? platformConfig = null,
+        LlmClient? llmClient = null)
         => new(
             supervisor,
             router,
@@ -1598,7 +1739,10 @@ public sealed class GatewayHostTests
             sessionQueueCapacity,
             conversationDispatcher: conversationDispatcher,
             conversationRouter: conversationRouter,
-            pendingAskUserInterceptor: pendingAskUserInterceptor);
+            pendingAskUserInterceptor: pendingAskUserInterceptor,
+            conversationStore: conversationStore,
+            platformConfig: platformConfig,
+            llmClient: llmClient);
 
     private static InboundMessage CreateMessage(
         string content,
