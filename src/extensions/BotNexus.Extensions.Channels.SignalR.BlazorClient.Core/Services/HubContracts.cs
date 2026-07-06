@@ -36,7 +36,8 @@ public sealed record SessionResetPayload(
 public sealed record ContentDeltaPayload(
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("contentDelta")] string? ContentDelta,
-    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null,
+    [property: JsonPropertyName("role")] string? Role = null);
 
 /// <summary>Agent stream event for MessageStart, ThinkingDelta, ToolStart, ToolEnd, MessageEnd, Error.</summary>
 public sealed record AgentStreamEvent
@@ -49,6 +50,12 @@ public sealed record AgentStreamEvent
 
     [JsonPropertyName("conversationId")]
     public string? ConversationId { get; init; }
+
+    // #1651: role the buffered/relayed content should render under. Present on the
+    // non-streaming SendAsync fan-out for an agent-post the gateway stamped with a specific
+    // role; null for ordinary streamed content, where the client keeps its "Assistant" default.
+    [JsonPropertyName("role")]
+    public string? Role { get; init; }
 
     [JsonPropertyName("contentDelta")]
     public string? ContentDelta { get; init; }

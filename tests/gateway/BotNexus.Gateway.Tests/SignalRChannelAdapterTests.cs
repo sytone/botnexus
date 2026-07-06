@@ -177,4 +177,76 @@ public sealed class SignalRChannelAdapterTests
             evt.SessionId == SessionId.From("sess-4"))), Times.Once);
     }
 
+    // #1651 (post-as-assistant Step 3/3): the non-streaming SendAsync fan-out previously
+    // produced a ContentDeltaPayload that dropped the role entirely, so the client could only
+    // ever render the post as an assistant bubble. The stamped role now rides on
+    // OutboundMessage.SpeakAs and must be carried through onto the wire payload so the live
+    // fan-out reflects the correct role for both the assistant and user cases.
+    [Fact]
+    public async Task SendAsync_CarriesSpeakAsRoleOntoContentDeltaPayload()
+    {
+        var clientProxy = new Mock<IGatewayHubClient>();
+        clientProxy.Setup(proxy => proxy.ContentDelta(It.IsAny<object>()))
+            .Returns(Task.CompletedTask);
+
+        var clients = new Mock<IHubClients<IGatewayHubClient>>();
+        clients.Setup(value => value.Group("conversation:conv-5")).Returns(clientProxy.Object);
+
+        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
+        hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
+
+        var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("addr-5"),
+            Content = "kicking off on behalf of the user",
+            SessionId = "session-5",
+            ConversationId = "conv-5",
+            SpeakAs = MessageRole.User
+        });
+
+        clientProxy.Verify(proxy => proxy.ContentDelta(
+                It.Is<object>(arg =>
+                    arg is ContentDeltaPayload &&
+                    ((ContentDeltaPayload)arg).Role == "user" &&
+                    ((ContentDeltaPayload)arg).ConversationId == "conv-5")),
+            Times.Once);
+    }
+
+    // #1651: no regression -- when the outbound post carries no SpeakAs override (the common
+    // case: the agent's own reply / ordinary fan-out) the payload role is null so the client
+    // falls back to its existing "Assistant" default.
+    [Fact]
+    public async Task SendAsync_LeavesRoleNull_WhenNoSpeakAsOverride()
+    {
+        var clientProxy = new Mock<IGatewayHubClient>();
+        clientProxy.Setup(proxy => proxy.ContentDelta(It.IsAny<object>()))
+            .Returns(Task.CompletedTask);
+
+        var clients = new Mock<IHubClients<IGatewayHubClient>>();
+        clients.Setup(value => value.Group("conversation:conv-6")).Returns(clientProxy.Object);
+
+        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
+        hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
+
+        var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("addr-6"),
+            Content = "an ordinary reply",
+            SessionId = "session-6",
+            ConversationId = "conv-6"
+        });
+
+        clientProxy.Verify(proxy => proxy.ContentDelta(
+                It.Is<object>(arg =>
+                    arg is ContentDeltaPayload &&
+                    ((ContentDeltaPayload)arg).Role == null)),
+            Times.Once);
+    }
+
 }

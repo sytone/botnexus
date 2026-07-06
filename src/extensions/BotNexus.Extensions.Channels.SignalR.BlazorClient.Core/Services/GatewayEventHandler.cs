@@ -169,6 +169,13 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (conv is null) return;
 
         conv.StreamState.AppendBuffer(evt.ContentDelta);
+        // #1651: a non-streaming SendAsync fan-out can stamp the role the delivered content
+        // should render under (e.g. an on-behalf-of-user kickoff carried as `user`). Record it
+        // so the terminal flush commits the bubble under that role instead of the default
+        // assistant. Absent/blank leaves any prior value untouched; the common streamed reply
+        // carries no role and flushes as assistant exactly as before.
+        if (!string.IsNullOrWhiteSpace(evt.Role))
+            conv.StreamState.PendingRole = evt.Role;
         agent.ProcessingStage = "🤖 Agent is responding…";
         _store.NotifyChangedThrottled();
     }
@@ -289,6 +296,23 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // Suppress it silently — users must never see "NO_REPLY" as a chat message.
     private const string NoReplySentinel = "NO_REPLY";
 
+    // #1651: maps a pending stream role (carried on the ContentDelta.role field) to the
+    // ChatMessage.Role string ChatPanel keys assistant-vs-user rendering off. A null/blank
+    // pending role -- the default for every ordinary streamed reply -- resolves to "Assistant",
+    // preserving the pre-post-as-assistant behaviour. Mirrors AgentInteractionService.MapRole so
+    // the live-fan-out path and the history-replay path agree on the displayed role.
+    private static string ResolveFlushRole(string? pendingRole) =>
+        (pendingRole ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "" => "Assistant",
+            "user" => "User",
+            "assistant" => "Assistant",
+            "tool" => "Tool",
+            "error" => "Error",
+            "system" => "System",
+            var other => other,
+        };
+
     public void HandleMessageEnd(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
@@ -306,7 +330,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (!isNoReply && (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null))
         {
-            conv.AppendMessage(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
+            // #1651: honour a role stamped on the delivered content (via ContentDelta.role) so a
+            // user-stamped agent-post flushes as a user bubble. PendingRole is null for the
+            // ordinary streamed reply, defaulting to the assistant bubble as before.
+            conv.AppendMessage(new ChatMessage(ResolveFlushRole(conv.StreamState.PendingRole), conv.StreamState.Buffer, DateTimeOffset.UtcNow)
             {
                 ThinkingContent = thinkingContent,
                 InputTokens = evt.Usage?.InputTokens,

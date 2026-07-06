@@ -53,10 +53,18 @@ public sealed record SessionResetPayload(
     [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
 /// <summary>Payload sent via the <c>ContentDelta</c> client method from the channel adapter.</summary>
+/// <remarks>
+/// <see cref="Role"/> carries the stamped message role for post-as-assistant (#1651). It is
+/// <c>null</c> for ordinary streamed/relayed content (the client then defaults to the assistant
+/// bubble, matching every pre-#1651 payload) and only set when an agent-post must render under a
+/// specific role (e.g. an on-behalf-of-user kickoff stamped <c>user</c>). Trailing-optional so
+/// existing wire messages deserialize unchanged.
+/// </remarks>
 public sealed record ContentDeltaPayload(
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("contentDelta")] string? ContentDelta,
-    [property: JsonPropertyName("conversationId")] string? ConversationId = null);
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null,
+    [property: JsonPropertyName("role")] string? Role = null);
 
 /// <summary>Payload sent via sub-agent lifecycle client methods (Spawned, Completed, Failed, Killed).</summary>
 public sealed record SubAgentEventPayload(

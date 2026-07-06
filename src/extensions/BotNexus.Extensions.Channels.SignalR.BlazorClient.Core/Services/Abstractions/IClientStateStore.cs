@@ -472,6 +472,18 @@ public sealed class ConversationStreamState
     private readonly System.Text.StringBuilder _buffer = new();
     private readonly System.Text.StringBuilder _thinkingBuffer = new();
 
+    /// <summary>
+    /// Role the currently-buffered content should be committed under when the stream flushes
+    /// (#1651). <see langword="null"/> -- the default and overwhelmingly common case -- means
+    /// "no override", so the terminal flush commits an <c>Assistant</c> message exactly as it
+    /// did before post-as-assistant. Set from the <c>role</c> field on a <c>ContentDelta</c>
+    /// event when the live SignalR fan-out delivers an agent-post the gateway stamped with a
+    /// specific role (e.g. <c>user</c> for an on-behalf-of-user kickoff), so the buffered post
+    /// renders as a user bubble rather than being forced to assistant. Cleared with the buffers
+    /// on every reset so a role from one post never bleeds into the next turn.
+    /// </summary>
+    public string? PendingRole { get; set; }
+
     /// <summary>Append a content delta to <see cref="Buffer"/>. A <see langword="null"/>
     /// delta is treated as empty. O(1) amortised -- does not copy the accumulated reply.</summary>
     public void AppendBuffer(string? delta)
@@ -494,6 +506,7 @@ public sealed class ConversationStreamState
     {
         _buffer.Clear();
         _thinkingBuffer.Clear();
+        PendingRole = null;
     }
 
     /// <summary>In-progress tool calls for this conversation keyed by tool-call ID.</summary>
@@ -519,6 +532,7 @@ public sealed class ConversationStreamState
         IsStreaming = false;
         _buffer.Clear();
         _thinkingBuffer.Clear();
+        PendingRole = null;
     }
 
     /// <summary>
