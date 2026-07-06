@@ -12,32 +12,37 @@ using Moq;
 namespace BotNexus.Gateway.Tests.Sessions;
 
 /// <summary>
-/// Regression tests for #1635: the compaction summarization call must apply the per-provider
-/// API-endpoint override (e.g. enterprise vs individual GitHub Copilot) to the resolved candidate
-/// model(s), exactly as the live agent path does in <c>InProcessIsolationStrategy</c>. Without this,
-/// a model registered with the static individual Copilot BaseUrl is POSTed to the wrong host on an
-/// enterprise account, returns HTTP 421 Misdirected Request, the summary comes back empty, and the
-/// session is wedged (cannot shed context) until the circuit breaker eventually gives up.
+/// Regression guard migrated from #1635/#1638 to #1639. Originally the compaction call had to
+/// re-apply the per-provider API-endpoint override (enterprise vs individual GitHub Copilot) to the
+/// resolved candidate model, because the model was registered with the static individual BaseUrl.
+/// After #1639 the model is BORN with the correct host (resolved at registration in
+/// BuiltInModels/discovery), so the compactor applies no override. This guard proves the end-to-end
+/// property that still matters: the model that actually reaches the provider carries the ENTERPRISE
+/// host - now purely by construction, with NO consumer-side <c>with { BaseUrl }</c> patch in the
+/// compaction path.
 /// </summary>
 public sealed class LlmSessionCompactorEndpointOverrideTests
 {
-    // A copilot-shaped model registered with the STATIC individual BaseUrl (as BuiltInModels does).
-    private static readonly LlmModel IndividualModel = new(
+    private const string EnterpriseEndpoint = "https://api.enterprise.githubcopilot.com";
+    private const string IndividualEndpoint = "https://api.individual.githubcopilot.com";
+
+    // A copilot-shaped model registered ALREADY carrying the enterprise BaseUrl, exactly as
+    // BuiltInModels/discovery would produce it on an enterprise account after #1639.
+    private static readonly LlmModel EnterpriseModel = new(
         Id: "claude-opus-4.8", Name: "Opus", Api: "copilot-api", Provider: "github-copilot",
-        BaseUrl: "https://api.individual.githubcopilot.com", Reasoning: false, Input: ["text"],
+        BaseUrl: EnterpriseEndpoint, Reasoning: false, Input: ["text"],
         Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 128000, MaxTokens: 4096);
 
-    private const string EnterpriseEndpoint = "https://api.enterprise.githubcopilot.com";
+    // The same model as an individual account would register it.
+    private static readonly LlmModel IndividualModel = EnterpriseModel with { BaseUrl = IndividualEndpoint };
 
     [Fact]
-    public async Task CompactAsync_AppliesEndpointOverride_ToModelReachingProvider()
+    public async Task CompactAsync_ModelReachingProvider_CarriesEnterpriseHost_ByConstruction()
     {
-        // The endpoint resolver returns the enterprise endpoint for github-copilot (mirrors
-        // GatewayAuthManager.GetApiEndpoint reading auth.json's endpoint field).
+        // The registry holds the enterprise-resolved model (no consumer override anywhere).
         LlmModel? modelSeenByProvider = null;
         var compactor = CreateCompactor(
-            endpointResolver: provider =>
-                provider == "github-copilot" ? EnterpriseEndpoint : null,
+            registeredModel: EnterpriseModel,
             captureModel: m => modelSeenByProvider = m,
             summary: "compacted ok");
 
@@ -48,78 +53,50 @@ public sealed class LlmSessionCompactorEndpointOverrideTests
 
         result.Succeeded.ShouldBeTrue();
         modelSeenByProvider.ShouldNotBeNull();
-        // The model that actually hit the transport must carry the ENTERPRISE BaseUrl, not the
-        // static individual one it was registered with.
+        // The model that actually hit the transport must carry the ENTERPRISE BaseUrl - now purely
+        // because it was registered that way, with no override in the compaction path.
         modelSeenByProvider!.BaseUrl.ShouldBe(EnterpriseEndpoint);
     }
 
     [Fact]
-    public void BuildCandidateModels_AppliesEndpointOverride_ToAllCandidates()
+    public void BuildCandidateModels_LeavesRegisteredEnterpriseBaseUrlIntact()
     {
         var compactor = CreateCompactor(
-            endpointResolver: _ => EnterpriseEndpoint,
+            registeredModel: EnterpriseModel,
             captureModel: null,
             summary: "x");
 
-        var candidates = compactor.BuildCandidateModels(IndividualModel.Id, IndividualModel.Provider);
+        var candidates = compactor.BuildCandidateModels(EnterpriseModel.Id, EnterpriseModel.Provider);
 
         candidates.ShouldNotBeEmpty();
+        // Candidates flow through untouched - the enterprise host is preserved by construction.
         candidates.ShouldAllBe(c => c.BaseUrl == EnterpriseEndpoint);
     }
 
     [Fact]
-    public void BuildCandidateModels_NoEndpointOverride_LeavesBaseUrlUnchanged()
+    public void BuildCandidateModels_IndividualModel_KeepsIndividualBaseUrl()
     {
-        // Resolver returns null (no override configured) → static BaseUrl preserved.
+        // An individual account registers the individual host; the compactor must not rewrite it.
         var compactor = CreateCompactor(
-            endpointResolver: _ => null,
+            registeredModel: IndividualModel,
             captureModel: null,
             summary: "x");
 
         var candidates = compactor.BuildCandidateModels(IndividualModel.Id, IndividualModel.Provider);
 
         candidates.ShouldNotBeEmpty();
-        candidates[0].BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
-    }
-
-    [Fact]
-    public void BuildCandidateModels_EmptyEndpoint_LeavesBaseUrlUnchanged()
-    {
-        // A whitespace/empty endpoint must be treated as "no override".
-        var compactor = CreateCompactor(
-            endpointResolver: _ => "   ",
-            captureModel: null,
-            summary: "x");
-
-        var candidates = compactor.BuildCandidateModels(IndividualModel.Id, IndividualModel.Provider);
-
-        candidates[0].BaseUrl.ShouldBe(IndividualModel.BaseUrl);
-    }
-
-    [Fact]
-    public void BuildCandidateModels_NullResolver_LeavesBaseUrlUnchanged()
-    {
-        // No resolver at all (e.g. no auth manager) → static BaseUrl preserved, no crash.
-        var compactor = CreateCompactor(
-            endpointResolver: null,
-            captureModel: null,
-            summary: "x");
-
-        var candidates = compactor.BuildCandidateModels(IndividualModel.Id, IndividualModel.Provider);
-
-        candidates[0].BaseUrl.ShouldBe(IndividualModel.BaseUrl);
+        candidates[0].BaseUrl.ShouldBe(IndividualEndpoint);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
-
     private static CompactionOptions OverrideOptions() => new()
     {
         ContextWindowTokens = 100,
         TokenThresholdRatio = 0.01,
         PreservedTurns = 2,
         MaxSummaryChars = 5000,
-        SummarizationModel = IndividualModel.Id,
-        SummarizationProvider = IndividualModel.Provider
+        SummarizationModel = EnterpriseModel.Id,
+        SummarizationProvider = EnterpriseModel.Provider
     };
 
     private static LlmStream SuccessStream(string summary)
@@ -137,16 +114,16 @@ public sealed class LlmSessionCompactorEndpointOverrideTests
     }
 
     private static LlmSessionCompactor CreateCompactor(
-        Func<string, string?>? endpointResolver,
+        LlmModel registeredModel,
         Action<LlmModel>? captureModel,
         string summary)
     {
         var providers = new ApiProviderRegistry();
         var models = new ModelRegistry();
-        models.Register(IndividualModel.Provider, IndividualModel);
+        models.Register(registeredModel.Provider, registeredModel);
 
         var provider = new Mock<IApiProvider>();
-        provider.SetupGet(p => p.Api).Returns(IndividualModel.Api);
+        provider.SetupGet(p => p.Api).Returns(registeredModel.Api);
         provider.Setup(p => p.StreamSimple(
                 It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()))
             .Returns((LlmModel m, Context _, SimpleStreamOptions? _) =>
@@ -159,8 +136,7 @@ public sealed class LlmSessionCompactorEndpointOverrideTests
         var llmClient = new LlmClient(providers, models);
         return new LlmSessionCompactor(
             llmClient,
-            NullLogger<LlmSessionCompactor>.Instance,
-            endpointResolver: endpointResolver);
+            NullLogger<LlmSessionCompactor>.Instance);
     }
 
     private static GatewaySession CreateLargeSession(int entryCount)
@@ -170,6 +146,7 @@ public sealed class LlmSessionCompactorEndpointOverrideTests
             SessionId = SessionId.From(Guid.NewGuid().ToString("N")),
             AgentId = AgentId.From("agent")
         };
+
         var entries = new List<SessionEntry>();
         for (var i = 0; i < entryCount; i++)
         {
@@ -179,6 +156,7 @@ public sealed class LlmSessionCompactorEndpointOverrideTests
                 Content = $"message {i} " + new string('x', 50)
             });
         }
+
         session.AddEntries(entries);
         return session;
     }
