@@ -94,7 +94,7 @@ Events the server pushes to subscribed clients. Defined by the typed
 |---|---|
 | `MessageStart(evt)` | The agent began producing a message. |
 | `ThinkingDelta(evt)` | A chunk of reasoning/thinking output (when the provider streams it). |
-| `ContentDelta(evt)` | A chunk of assistant message content. |
+| `ContentDelta(evt)` | A chunk of assistant message content. The payload carries an optional `role` field (see note below). |
 | `ToolStart(evt)` | A tool call began. |
 | `ToolEnd(evt)` | A tool call finished. |
 | `MessageEnd(evt)` | The agent finished producing a message. |
@@ -122,6 +122,11 @@ Events the server pushes to subscribed clients. Defined by the typed
 ## Notes
 
 - All gateway-originated messages use `channelType = "signalr"`.
+- The `ContentDelta` payload carries an optional `role` field. It is `null` for ordinary
+  streamed/relayed content — the client then renders the assistant bubble, matching every
+  pre-existing payload — and is only set when an agent-post must render under a specific role
+  (e.g. an on-behalf-of-user kickoff stamped `user`). The field is trailing-optional, so older
+  clients and existing wire messages deserialize unchanged.
 - Clients should call `SubscribeAll` after connecting and on reconnect.
 - Channel switching is a client-only UI operation. Do not call join/leave methods.
 - Session fan-out uses SignalR groups: `session:{sessionId}`.
