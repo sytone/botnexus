@@ -120,6 +120,23 @@ builder.Services.AddOpenTelemetry()
         }
     });
 
+// Response compression (#1781): compress dynamic JSON/text responses (Brotli + Gzip).
+// BREACH note: gateway is dev-first / loopback-oriented, so the classic
+// compression-oracle (CRIME/BREACH) risk is low here; still, responses that reflect
+// attacker-influenced input alongside secrets in the same body are a consideration.
+// Fastest level is used deliberately to avoid a CPU cliff on hot dynamic paths.
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+    options.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes
+        .Concat(new[] { "application/json", "application/manifest+json" });
+});
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(
+    o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProviderOptions>(
+    o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
 builder.Services.AddBotNexusGateway(builder.Configuration);
 builder.Services.AddDiagnosticsHardening();
 builder.Services.AddProviderHealthCheck();
@@ -425,6 +442,13 @@ if (!string.IsNullOrWhiteSpace(listenUrl))
 AssemblyLoadContextExtensionLoader.MapExtensionEndpoints(app);
 
 app.UseCors(GatewayCorsPolicy);
+// Response compression must run early (right after CORS, before auth/correlation)
+// so it wraps API responses. The built-in ResponseCompressionMiddleware skips any
+// response that already carries a Content-Encoding header, so precompressed static
+// assets served by SignalREndpointContributor (Content-Encoding: br) are NOT
+// double-compressed. Accept-Encoding is honoured and Vary: Accept-Encoding is
+// emitted automatically by the middleware.
+app.UseResponseCompression();
 app.UseSerilogRequestLogging();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
