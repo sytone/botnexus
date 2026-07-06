@@ -69,4 +69,13 @@ public sealed class WebFetchConfig
     /// </summary>
     [JsonPropertyName("additionalBlockedHosts")]
     public IReadOnlyList<string> AdditionalBlockedHosts { get; set; } = [];
+
+    /// <summary>
+    /// Maximum number of bytes read from a fetched response body before the read is aborted.
+    /// The fetched URL is fully agent/attacker-controlled, so an oversized or maliciously
+    /// streamed body must be capped <em>during</em> the read (not truncated after buffering the
+    /// whole thing) to prevent an out-of-memory denial of service on the gateway. Default: 16 MiB.
+    /// </summary>
+    [JsonPropertyName("maxResponseBytes")]
+    public long MaxResponseBytes { get; set; } = 16L * 1024 * 1024;
 }
