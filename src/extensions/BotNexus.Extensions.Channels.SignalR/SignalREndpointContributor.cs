@@ -92,6 +92,7 @@ public class SignalREndpointContributor : IEndpointContributor
                 if (encoding is not null)
                     context.Response.Headers.ContentEncoding = encoding;
                 context.Response.Headers.Vary = "Accept-Encoding";
+                context.Response.Headers.CacheControl = ResolveCacheControl(subPath);
                 context.Response.ContentLength = fileToServe.Length;
                 await using var stream = fileToServe.CreateReadStream();
                 await stream.CopyToAsync(context.Response.Body);
@@ -108,6 +109,61 @@ public class SignalREndpointContributor : IEndpointContributor
 
             await next();
         });
+    }
+
+    // Chooses a Cache-Control policy for a served asset. Blazor publish content-hashes
+    // every _framework asset (e.g. dotnet.native.veuqw8a0w9.wasm), so those bytes are
+    // immutable: a content change produces a NEW filename, never a mutated one. Those
+    // can be cached aggressively (a year, immutable) so repeat loads skip the ~1.6 MB
+    // runtime re-download entirely. Everything else (index.html, appsettings.json,
+    // manifests, hand-authored css/js) is served under a stable path and MUST revalidate
+    // so a new deployment is picked up immediately -> no-cache (store but always
+    // revalidate). We intentionally do not emit ETags: the immutable set does not need
+    // them, and the mutable set already round-trips a conditional GET via no-cache.
+    internal static string ResolveCacheControl(string subPath)
+    {
+        // Fingerprinted framework assets live under _framework/ and carry a content hash
+        // in the filename. index.html itself is not fingerprinted and stays revalidated.
+        var fileName = subPath[(subPath.LastIndexOf('/') + 1)..];
+        var isFramework = subPath.StartsWith("/_framework/", StringComparison.OrdinalIgnoreCase);
+        var isFingerprinted = isFramework
+            && !fileName.Equals("blazor.boot.json", StringComparison.OrdinalIgnoreCase)
+            && HasContentHash(fileName);
+
+        return isFingerprinted
+            ? "public, max-age=31536000, immutable"
+            : "no-cache";
+    }
+
+    // Blazor fingerprints assets by inserting a base36 content hash segment between the
+    // base name and the extension, e.g. "dotnet.native.veuqw8a0w9.wasm" or
+    // "System.Private.CoreLib.s1cucomlii.wasm". We treat a file as fingerprinted when it
+    // has at least three dot-separated segments and the penultimate segment looks like a
+    // hash: >=8 lowercase-alphanumeric chars AND containing at least one digit. The digit
+    // requirement is what separates a real content hash (always has digits, e.g.
+    // "veuqw8a0w9") from a word-like segment ("webassembly" in blazor.webassembly.js),
+    // so loader entry points stay revalidated. This is deliberately conservative: an
+    // unrecognized file simply falls back to the safe no-cache policy.
+    private static bool HasContentHash(string fileName)
+    {
+        var segments = fileName.Split('.');
+        if (segments.Length < 3)
+            return false;
+
+        var hash = segments[^2];
+        if (hash.Length < 8)
+            return false;
+
+        var hasDigit = false;
+        foreach (var ch in hash)
+        {
+            if (ch is >= '0' and <= '9')
+                hasDigit = true;
+            else if (ch is not (>= 'a' and <= 'z'))
+                return false;
+        }
+
+        return hasDigit;
     }
 
     // Returns the precompressed sibling file and its Content-Encoding token when the
@@ -139,12 +195,13 @@ public class SignalREndpointContributor : IEndpointContributor
         return (null, null);
     }
 
-    private static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    internal static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
         ".html" => "text/html",
         ".css" => "text/css",
         ".js" => "application/javascript",
         ".json" => "application/json",
+        ".webmanifest" => "application/manifest+json",
         ".wasm" => "application/wasm",
         ".dll" => "application/octet-stream",
         ".pdb" => "application/octet-stream",

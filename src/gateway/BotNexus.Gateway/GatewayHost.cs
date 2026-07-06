@@ -1311,17 +1311,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
     {
         // Diagnostic: previously these guards no-op'd silently, so a conversation stuck on the
-        // default title gave no signal about why auto-titling never ran. Log at Debug so the path
-        // is observable when investigating, without spamming INFO on every successful turn.
+        // default title gave no signal about why auto-titling never ran (#739 live no-fire: 82
+        // portal conversations sat on the default title with zero log evidence). These states are
+        // wiring/config conditions, not per-turn hot-path noise, so log at Information to make the
+        // no-fire observable on a standard INFO gateway without needing Debug enabled.
         if (_autoTitleService is null)
         {
-            _logger.LogDebug(
-                "Auto-title not triggered: service not wired (no LLM client or conversation store).");
+            _logger.LogInformation(
+                "Auto-title not triggered: service not wired (LLM client or conversation store missing at gateway construction).");
             return;
         }
         if (!session.ConversationId.IsInitialized())
         {
-            _logger.LogDebug(
+            _logger.LogInformation(
                 "Auto-title not triggered: session '{SessionId}' has no resolved conversation.",
                 session.SessionId);
             return;
@@ -1330,14 +1332,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         var titling = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
         if (titling is { Enabled: false })
         {
-            _logger.LogDebug(
+            _logger.LogInformation(
                 "Auto-title not triggered: disabled via gateway.auxiliary.titling.enabled.");
             return;
         }
 
         var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History, _logger);
         if (userText is null || assistantText is null)
+        {
+            // ShouldTriggerAutoTitle already logs its own Debug guard-skip (insufficient
+            // user/assistant exchange). No-op here; the title stays default until a later turn.
             return;
+        }
 
         _autoTitleService.TriggerBestEffort(
             session.ConversationId,
