@@ -195,151 +195,69 @@ public sealed class ConversationAutoTitleServiceTests
     }
 
     // -----------------------------------------------------------------------
-    // Endpoint-override regression tests (#1636)
+    // Endpoint-resolution regression guard (migrated #1636 -> #1639)
     //
-    // The auto-title call must apply the per-provider API-endpoint override (e.g.
-    // enterprise vs individual GitHub Copilot) to the resolved titling model before
-    // CompleteSimpleAsync, exactly as the live agent path does in
-    // InProcessIsolationStrategy and the compactor does after #1635/PR #1638. Without
-    // it, a model registered with the static individual Copilot BaseUrl is POSTed to
-    // the wrong host on an enterprise account, returns HTTP 421 Misdirected Request,
-    // auto-titling silently fails, and conversations keep the default title.
+    // Originally the auto-title call had to re-apply the per-provider API-endpoint override
+    // (enterprise vs individual GitHub Copilot) to the resolved titling model, because the model was
+    // registered with the static individual BaseUrl. After #1639 the model is BORN with the correct
+    // host (resolved at registration), so the service applies no override. These guards prove the
+    // end-to-end property that still matters: the model that actually reaches the provider carries
+    // the host it was registered with - now purely by construction, with NO consumer-side
+    // `with { BaseUrl }` patch in the titling path.
     // -----------------------------------------------------------------------
 
-    // A copilot-shaped model registered with the STATIC individual BaseUrl.
-    private static readonly LlmModel IndividualModel = new(
+    // A copilot-shaped model registered ALREADY carrying the enterprise BaseUrl, exactly as
+    // BuiltInModels/discovery would produce it on an enterprise account after #1639.
+    private const string EnterpriseEndpoint = "https://api.enterprise.githubcopilot.com";
+    private const string IndividualEndpoint = "https://api.individual.githubcopilot.com";
+
+    private static readonly LlmModel EnterpriseModel = new(
         Id: "title-model", Name: "Title", Api: "capture-api", Provider: "github-copilot",
-        BaseUrl: "https://api.individual.githubcopilot.com", Reasoning: false, Input: ["text"],
+        BaseUrl: EnterpriseEndpoint, Reasoning: false, Input: ["text"],
         Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 4096, MaxTokens: 512);
 
-    private const string EnterpriseEndpoint = "https://api.enterprise.githubcopilot.com";
+    private static readonly LlmModel IndividualModel = EnterpriseModel with { BaseUrl = IndividualEndpoint };
 
     [Fact]
-    public async Task GenerateAndSaveAsync_AppliesEndpointOverride_ToModelReachingProvider()
+    public async Task GenerateAndSaveAsync_ModelReachingProvider_CarriesEnterpriseHost_ByConstruction()
     {
-        // The endpoint resolver returns the enterprise endpoint for github-copilot (mirrors
-        // GatewayAuthManager.GetApiEndpoint reading auth.json's endpoint field).
         LlmModel? modelSeenByProvider = null;
-        var llmClient = CreateCapturingLlmClient("Chat About Cats", m => modelSeenByProvider = m);
-
-        var conv = new Conversation
-        {
-            ConversationId = ConvId,
-            AgentId = AgentId,
-            Title = ConversationAutoTitleService.DefaultTitle
-        };
+        var llmClient = CreateCapturingLlmClient("Chat About Cats", EnterpriseModel, m => modelSeenByProvider = m);
+        var conv = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = ConversationAutoTitleService.DefaultTitle };
         var store = new Mock<IConversationStore>();
         store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
         store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var svc = new ConversationAutoTitleService(
-            store.Object,
-            llmClient,
-            NullLogger.Instance,
-            notifier: null,
-            endpointResolver: provider => provider == "github-copilot" ? EnterpriseEndpoint : null);
+        var svc = new ConversationAutoTitleService(store.Object, llmClient, NullLogger.Instance);
 
         var result = await svc.GenerateAndSaveAsync(
             ConvId, AgentId, "What do cats eat?", "Cats eat...", null, 30, CancellationToken.None);
 
         result.ShouldBe("Chat About Cats");
         modelSeenByProvider.ShouldNotBeNull();
-        // The model that actually hit the transport must carry the ENTERPRISE BaseUrl, not the
-        // static individual one it was registered with.
+        // Enterprise host reaches the wire purely because the model was registered that way.
         modelSeenByProvider!.BaseUrl.ShouldBe(EnterpriseEndpoint);
     }
 
     [Fact]
-    public async Task GenerateAndSaveAsync_NoEndpointOverride_LeavesModelBaseUrlUnchanged()
+    public async Task GenerateAndSaveAsync_IndividualModel_ReachesProviderWithIndividualHost()
     {
-        // Resolver returns null (no override configured) => static BaseUrl preserved.
         LlmModel? modelSeenByProvider = null;
-        var llmClient = CreateCapturingLlmClient("Some Title", m => modelSeenByProvider = m);
-
-        var conv = new Conversation
-        {
-            ConversationId = ConvId,
-            AgentId = AgentId,
-            Title = ConversationAutoTitleService.DefaultTitle
-        };
+        var llmClient = CreateCapturingLlmClient("Some Title", IndividualModel, m => modelSeenByProvider = m);
+        var conv = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = ConversationAutoTitleService.DefaultTitle };
         var store = new Mock<IConversationStore>();
         store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
         store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var svc = new ConversationAutoTitleService(
-            store.Object,
-            llmClient,
-            NullLogger.Instance,
-            notifier: null,
-            endpointResolver: _ => null);
+        var svc = new ConversationAutoTitleService(store.Object, llmClient, NullLogger.Instance);
 
         var result = await svc.GenerateAndSaveAsync(
             ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBe("Some Title");
         modelSeenByProvider.ShouldNotBeNull();
-        modelSeenByProvider!.BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
+        modelSeenByProvider!.BaseUrl.ShouldBe(IndividualEndpoint); // unchanged - no override applied
     }
-
-    [Fact]
-    public async Task GenerateAndSaveAsync_EmptyEndpointOverride_LeavesModelBaseUrlUnchanged()
-    {
-        // A whitespace/empty endpoint must be treated as "no override".
-        LlmModel? modelSeenByProvider = null;
-        var llmClient = CreateCapturingLlmClient("Some Title", m => modelSeenByProvider = m);
-
-        var conv = new Conversation
-        {
-            ConversationId = ConvId,
-            AgentId = AgentId,
-            Title = ConversationAutoTitleService.DefaultTitle
-        };
-        var store = new Mock<IConversationStore>();
-        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
-        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var svc = new ConversationAutoTitleService(
-            store.Object,
-            llmClient,
-            NullLogger.Instance,
-            notifier: null,
-            endpointResolver: _ => "   ");
-
-        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
-
-        modelSeenByProvider.ShouldNotBeNull();
-        modelSeenByProvider!.BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
-    }
-
-    [Fact]
-    public async Task GenerateAndSaveAsync_NullResolver_LeavesModelBaseUrlUnchanged()
-    {
-        // No resolver at all (e.g. no auth manager) => static BaseUrl preserved, no crash.
-        LlmModel? modelSeenByProvider = null;
-        var llmClient = CreateCapturingLlmClient("Some Title", m => modelSeenByProvider = m);
-
-        var conv = new Conversation
-        {
-            ConversationId = ConvId,
-            AgentId = AgentId,
-            Title = ConversationAutoTitleService.DefaultTitle
-        };
-        var store = new Mock<IConversationStore>();
-        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
-        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        // Public ctor with no auth manager => resolver is null internally.
-        var svc = new ConversationAutoTitleService(
-            store.Object,
-            llmClient,
-            NullLogger.Instance);
-
-        await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
-
-        modelSeenByProvider.ShouldNotBeNull();
-        modelSeenByProvider!.BaseUrl.ShouldBe(IndividualModel.BaseUrl); // unchanged
-    }
-
     // -----------------------------------------------------------------------
     // Timeout wiring (#auto-title config): timeoutSeconds is now honoured
     // -----------------------------------------------------------------------
@@ -534,10 +452,10 @@ public sealed class ConversationAutoTitleServiceTests
     /// capturing provider that records the model instance actually passed to the transport, so
     /// the endpoint-override (#1636) can be asserted against the model that hit the wire.
     /// </summary>
-    private static LlmClient CreateCapturingLlmClient(string responseText, Action<LlmModel> captureModel)
+    private static LlmClient CreateCapturingLlmClient(string responseText, LlmModel registeredModel, Action<LlmModel> captureModel)
     {
         var modelRegistry = new ModelRegistry();
-        modelRegistry.Register(IndividualModel.Provider, IndividualModel);
+        modelRegistry.Register(registeredModel.Provider, registeredModel);
 
         var providerRegistry = new ApiProviderRegistry();
         providerRegistry.Register(new CapturingApiProvider(responseText, captureModel));
