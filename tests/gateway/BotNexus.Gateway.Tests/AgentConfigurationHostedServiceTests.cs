@@ -84,8 +84,9 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             CreateDescriptor("agent-c")
         ]);
 
-        // Allow debounce (zero delay still needs task continuation to fire)
-        await Task.Delay(200);
+        // Zero debounce still applies via a background Task.Delay(0).ContinueWith continuation;
+        // poll deterministically instead of a fixed sleep so a starved CI threadpool cannot flake.
+        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-c"));
 
         registry.Contains(AgentId.From("agent-a")).ShouldBeTrue();
         registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("Agent A v2");
@@ -116,7 +117,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         callback.ShouldNotBeNull();
 
         callback!([CreateDescriptor("agent-new")]);
-        await Task.Delay(200);
+        // Poll for the background apply continuation instead of a fixed sleep (CI-threadpool-safe).
+        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-new"));
 
         registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
         registry.RegisterOperations.ShouldContain("agent-new");
@@ -243,6 +245,23 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
 
         registry.RegisterOperations.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Polls <paramref name="condition"/> until it returns true or the timeout elapses. Used to await
+    /// the service's background debounce/apply continuation deterministically. A fixed Task.Delay is
+    /// flaky on CI: the zero-delay apply runs on a threadpool continuation that can be starved, so a
+    /// hard-coded sleep occasionally expires before the apply lands (root cause of #1800).
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 5000, int pollMs = 10)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException($"Condition was not met within {timeoutMs}ms.");
+            await Task.Delay(pollMs);
+        }
     }
 
     private static AgentDescriptor CreateDescriptor(string agentId, string? displayName = null)
