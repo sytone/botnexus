@@ -219,4 +219,46 @@ public sealed class ConfigSchemaBuilderTests
         node["x-ui-validation"]!.AsObject()["minimum"]!.GetValue<double>().ShouldBe(1);
         node["x-ui-default"]!.GetValue<int>().ShouldBe(60);
     }
+
+    // -- 8. Humanized label fallback (#1804) --------------------------------
+
+    [Theory]
+    [InlineData("listenUrl", "Listen URL")]
+    [InlineData("apiKey", "API Key")]
+    [InlineData("defaultAgentId", "Default Agent ID")]
+    [InlineData("logLevel", "Log Level")]
+    [InlineData("promptTemplates", "Prompt Templates")]
+    [InlineData("baseUrl", "Base URL")]
+    [InlineData("webhookUrl", "Webhook URL")]
+    [InlineData("api_key", "API Key")]
+    [InlineData("cross-world", "Cross World")]
+    [InlineData("enabled", "Enabled")]
+    public void Humanize_ProducesReadableLabel(string input, string expected)
+    {
+        ConfigSchemaBuilder.Humanize(input).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Build_UnannotatedField_FallsBackToHumanizedLabel()
+    {
+        var schema = BuildSchema();
+
+        // PlatformConfig.ApiKey has no [Display] -- must not regress to the raw "apiKey" JSON key.
+        var node = GetPropertyNode(schema, "apiKey");
+        node["x-ui-label"]!.GetValue<string>().ShouldBe("API Key");
+    }
+
+    // -- 9. Grouping honored from [Display] alone, no [ConfigField] required --
+
+    [Fact]
+    public void Build_ProviderField_EmitsGroupThroughDictionaryValueSchema()
+    {
+        var schema = BuildSchema();
+
+        // Group/order must be emitted for fields reached through a dictionary value schema so they
+        // land in a named section rather than the single unnamed catch-all group. ConfigField group
+        // "provider" wins when both [ConfigField(Group)] and [Display(GroupName)] are present.
+        var node = GetPropertyNode(schema, "providers", "enabled");
+        node["x-ui-group"]!.GetValue<string>().ShouldBe("provider");
+    }
 }
