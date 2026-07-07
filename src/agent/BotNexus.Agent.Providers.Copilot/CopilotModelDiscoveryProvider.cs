@@ -123,7 +123,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
         var family = info.Capabilities?.Family ?? string.Empty;
         var vendor = info.Vendor ?? string.Empty;
 
-        var api = ResolveApiFormat(id, family, vendor);
+        var api = ResolveApiFormat(id, family, vendor, info.SupportedEndpoints);
         var reasoning = IsReasoningModel(id, family);
         var supportsExtraHigh = SupportsExtraHighThinking(id, family);
         var input = ResolveInputModalities(info);
@@ -147,9 +147,51 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     }
 
     /// <summary>
-    /// Resolves the API format based on model family/vendor/id heuristics.
+    /// Resolves the API format for a discovered model. #1762: when Copilot advertises the
+    /// endpoints it serves this model on (<paramref name="supportedEndpoints"/>), that list is
+    /// authoritative and is honored directly; the model-name heuristic is only a fallback for
+    /// older / edge responses that omit the list. This stops mis-routing any model whose actual
+    /// endpoint diverges from what its name implies (e.g. a future gpt-5.x served only on
+    /// <c>/chat/completions</c>, or a non-gpt-5/o3/o4 reasoning model served on <c>/responses</c>).
     /// </summary>
+    /// <param name="id">The model id.</param>
+    /// <param name="family">The model family (from capabilities).</param>
+    /// <param name="vendor">The model vendor.</param>
+    /// <param name="supportedEndpoints">
+    /// The endpoints Copilot advertises for this model, when present. Preferred over the name heuristic.
+    /// </param>
+    public static string ResolveApiFormat(string id, string family, string vendor, IReadOnlyList<string>? supportedEndpoints)
+    {
+        // Prefer the advertised endpoint list when Copilot supplies one (#1762).
+        if (supportedEndpoints is { Count: > 0 })
+        {
+            if (ContainsEndpoint(supportedEndpoints, "/v1/messages"))
+                return "github-copilot-messages";
+            if (ContainsEndpoint(supportedEndpoints, "/responses"))
+                return "github-copilot-responses";
+            if (ContainsEndpoint(supportedEndpoints, "/chat/completions"))
+                return "github-copilot-completions";
+            // An advertised-but-unrecognised list falls through to the name heuristic below.
+        }
+
+        return ResolveApiFormatFromName(id, family, vendor);
+    }
+
+    /// <summary>
+    /// Resolves the API format for a discovered model using only the name heuristic. Retained as an
+    /// overload for the discovery-mapping call path and callers that have no advertised endpoint list.
+    /// </summary>
+    /// <param name="id">The model id.</param>
+    /// <param name="family">The model family (from capabilities).</param>
+    /// <param name="vendor">The model vendor.</param>
     public static string ResolveApiFormat(string id, string family, string vendor)
+        => ResolveApiFormat(id, family, vendor, supportedEndpoints: null);
+
+    /// <summary>
+    /// The legacy model-name heuristic. Used only when Copilot does not advertise a supported
+    /// endpoint list for the model (#1762 fallback).
+    /// </summary>
+    private static string ResolveApiFormatFromName(string id, string family, string vendor)
     {
         // Claude models use the messages API
         if (family.StartsWith("claude", StringComparison.OrdinalIgnoreCase) ||
@@ -164,6 +206,20 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
 
         // Everything else (GPT-4, Gemini, Grok, etc.) uses completions
         return "github-copilot-completions";
+    }
+
+    // Matches an advertised endpoint by suffix so full paths (e.g. "/v1/chat/completions") and
+    // bare forms (e.g. "/chat/completions") both resolve. Case-insensitive for robustness.
+    private static bool ContainsEndpoint(IReadOnlyList<string> endpoints, string suffix)
+    {
+        foreach (var endpoint in endpoints)
+        {
+            if (!string.IsNullOrWhiteSpace(endpoint) &&
+                endpoint.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
