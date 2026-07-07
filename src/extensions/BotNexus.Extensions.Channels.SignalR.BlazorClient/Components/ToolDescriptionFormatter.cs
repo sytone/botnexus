@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 
@@ -213,6 +214,6 @@ public static class ToolDescriptionFormatter
     private static string Truncate(string value)
     {
         if (value.Length <= MaxPreviewLength) return value;
-        return value[..MaxPreviewLength] + "…";
+        return SurrogateSafeText.SurrogateSafeTruncate(value, MaxPreviewLength) + "…";
     }
 }
