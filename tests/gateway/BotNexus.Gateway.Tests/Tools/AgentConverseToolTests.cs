@@ -188,6 +188,7 @@ public sealed class AgentConverseToolTests
 
         var agentIdDescription = tool.Definition.Parameters
             .GetProperty("properties").GetProperty("agentId").GetProperty("description").GetString();
+        agentIdDescription.ShouldNotBeNull();
         agentIdDescription.ShouldContain("canConverse");
     }
 
