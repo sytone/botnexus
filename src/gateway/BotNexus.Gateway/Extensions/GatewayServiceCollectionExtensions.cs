@@ -84,6 +84,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<AgentExchangeOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
+            services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
 
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
