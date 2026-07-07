@@ -502,6 +502,42 @@ public class WebFetchToolTests
         output.ShouldContain("HTTP 404");
     }
 
+    [Fact]
+    [Trait("Category", "Security")]
+    public async Task ExecuteAsync_WithOversizedBody_DiscardsAndReturnsBoundedError()
+    {
+        // A fully agent/attacker-controlled URL that streams an oversized body must be capped
+        // during the read, not truncated after buffering, to prevent an OOM DoS on the gateway.
+        var handler = new MockHttpMessageHandler();
+        var oversized = new string('a', 4096);
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, oversized, "text/html");
+        var httpClient = new HttpClient(handler);
+        var config = new WebFetchConfig { MaxLengthChars = 20_000, TimeoutSeconds = 5, MaxResponseBytes = 1024 };
+        using var tool = new WebFetchTool(config, httpClient);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/big" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("exceeded");
+        result.Content[0].Value.ShouldContain("1024");
+        result.Content[0].Value.ShouldNotContain("aaaa");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithBodyUnderCap_ReturnsContent()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(System.Net.HttpStatusCode.OK, "<html><body>within cap</body></html>", "text/html");
+        var httpClient = new HttpClient(handler);
+        var config = new WebFetchConfig { MaxLengthChars = 20_000, TimeoutSeconds = 5, MaxResponseBytes = 1024 };
+        using var tool = new WebFetchTool(config, httpClient);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/small" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("within cap");
+    }
+
     private static WebFetchTool CreateTool(MockHttpMessageHandler handler)
     {
         var httpClient = new HttpClient(handler);

@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Utilities;
 using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Extensions.WebTools;
@@ -195,7 +196,10 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
                     $"{errorJson}\n\nHTTP {statusCode} {response.ReasonPhrase} when fetching {url}");
             }
 
-            var html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var html = await BoundedHttpContent.ReadStringWithLimitAsync(
+                response.Content,
+                _config.MaxResponseBytes,
+                cancellationToken).ConfigureAwait(false);
 
             var content = raw ? html : HtmlToText.Convert(html);
 
@@ -232,6 +236,11 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             }
 
             return TextResult($"{metadataJson}\n\n{output}");
+        }
+        catch (ResponseContentTooLargeException ex)
+        {
+            return TextResult(
+                $"Response body exceeded the {ex.MaxBytes}-byte limit and was discarded to protect the gateway from excessive memory use.");
         }
         catch (HttpRequestException ex)
         {
