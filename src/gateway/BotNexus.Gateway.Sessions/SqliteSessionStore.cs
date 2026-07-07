@@ -15,6 +15,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using BotNexus.Gateway.Abstractions.Concurrency;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -33,6 +34,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     public const int DefaultSessionCacheCapacity = 500;
 
     private readonly string _connectionString;
+    private readonly SqliteWalMaintenance _walMaintenance = new();
     private readonly SemaphoreSlim _initLock = new(1, 1);
     // Striped write locks: a fixed pool hashed by session id. This bounds the number
     // of sync primitives (no per-session SemaphoreSlim leak across the process
@@ -509,9 +511,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
             await using var connection = CreateConnection();
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            await using var walCmd = connection.CreateCommand();
-            walCmd.CommandText = "PRAGMA journal_mode=WAL;";
-            await walCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network
+            // mounts) with bounded wal_autocheckpoint, consolidated into the shared helper.
+            await _walMaintenance.ApplyJournalModeAsync(connection, connection.DataSource, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
             command.CommandText = """

@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using System.Text;
 using System.Text.Json;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Extensions.DataStore;
 
@@ -11,6 +12,7 @@ namespace BotNexus.Extensions.DataStore;
 internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 {
     private readonly string _dbPath;
+    private readonly SqliteWalMaintenance _walMaintenance = new();
     private readonly long _maxSizeBytes;
     private readonly int _maxQueryRows;
     private SqliteConnection? _connection;
@@ -345,9 +347,14 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
         // cached and reused for the lifetime of the backend, so applying it here once covers every
         // operation. busy_timeout lets a concurrent cross-process writer wait briefly for the lock
         // instead of failing immediately with SQLITE_BUSY (#1450).
+        // busy_timeout is per-connection and must be re-applied on every open (#1450).
         using var pragmas = _connection.CreateCommand();
-        pragmas.CommandText = "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;";
+        pragmas.CommandText = "PRAGMA busy_timeout=5000;";
         await pragmas.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network mounts)
+        // with bounded wal_autocheckpoint, consolidated into the shared helper.
+        await _walMaintenance.ApplyJournalModeAsync(_connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
 
         return _connection;
     }
