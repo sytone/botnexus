@@ -35,6 +35,16 @@ public class ExecToolTests : IDisposable
     }
 
     [Fact]
+    public void Definition_SurfacesPointOfUseGotchas()
+    {
+        var description = _tool.Definition.Description;
+
+        description.ShouldContain("${var}");
+        description.ShouldContain("PYTHONUTF8");
+        description.ShouldContain("here-string");
+    }
+
+    [Fact]
     public async Task ExecuteSimpleEchoCommand()
     {
         var args = BuildArgs(GetEchoCommand("hello world"));

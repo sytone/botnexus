@@ -309,13 +309,17 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
-    serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
+    // #1639: resolve the per-provider API endpoint (enterprise vs individual GitHub Copilot
+    // host from auth.json) up-front and hand it to RegisterAll so every Copilot model is born
+    // with the CORRECT BaseUrl. No downstream consumer patches model.BaseUrl anymore.
+    var authManager = serviceProvider.GetRequiredService<GatewayAuthManager>();
+
+    serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models, authManager.GetApiEndpoint);
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
 
     // Dynamic model discovery: overlay live API models onto built-in registry.
     // Discovery is best-effort — failures fall back to built-in models.
-    var authManager = serviceProvider.GetRequiredService<GatewayAuthManager>();
     var discoveryClient = new CopilotDiscoveryClient(httpClient);
     var copilotDiscovery = new CopilotModelDiscoveryProvider(
         discoveryClient,
