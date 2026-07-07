@@ -410,7 +410,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             context,
             workspacePath,
             pathValidator,
-            provider => _authManager.GetApiEndpoint(provider),
+            _authManager.GetCopilotMcpEndpoint(descriptor.ApiProvider),
             (provider, ct) => _authManager.GetApiKeyAsync(provider, ct));
 
         foreach (var contributor in _toolContributors)

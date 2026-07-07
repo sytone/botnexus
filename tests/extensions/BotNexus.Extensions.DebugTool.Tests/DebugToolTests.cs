@@ -922,7 +922,7 @@ public sealed class DebugToolTests : IDisposable
             executionContext,
             Path.GetTempPath(),
             null!,
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
     }
 

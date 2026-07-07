@@ -38,7 +38,7 @@ public sealed class McpAuthReferenceTests
             new AgentExecutionContext { SessionId = SessionId.Create() },
             Path.GetTempPath(),
             new AllowAllPathValidator(),
-            _ => null,
+            null,
             getApiKey ?? ((_, _) => Task.FromResult<string?>(null)));
 
     private sealed class AllowAllPathValidator : IPathValidator

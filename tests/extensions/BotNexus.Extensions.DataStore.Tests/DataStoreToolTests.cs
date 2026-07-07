@@ -503,7 +503,7 @@ public sealed class DataStoreToolContributorTests
             new AgentExecutionContext { SessionId = SessionId.Create() },
             Path.Combine(Path.GetTempPath(), "test-workspace"),
             new AllowAllPathValidator(),
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
     }
 

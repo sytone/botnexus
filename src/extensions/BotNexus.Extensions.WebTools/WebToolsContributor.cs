@@ -40,7 +40,7 @@ public sealed class WebToolsContributor : IAgentToolContributor
             if (useCopilotProvider || hasApiKey)
             {
                 var copilotApiEndpoint = useCopilotProvider
-                    ? ResolveCopilotMcpEndpoint(context.GetProviderEndpoint(context.Descriptor.ApiProvider))
+                    ? context.CopilotMcpEndpoint
                     : null;
 
                 tools.Add(new WebSearchTool(
@@ -71,31 +71,5 @@ public sealed class WebToolsContributor : IAgentToolContributor
         }
 
         return null;
-    }
-
-    private static string ResolveCopilotMcpEndpoint(string? baseEndpoint)
-    {
-        const string fallbackEndpoint = "https://api.githubcopilot.com/mcp";
-        if (string.IsNullOrWhiteSpace(baseEndpoint))
-            return fallbackEndpoint;
-
-        if (Uri.TryCreate(baseEndpoint, UriKind.Absolute, out var absoluteUri))
-        {
-            var path = absoluteUri.AbsolutePath.TrimEnd('/');
-            if (path.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase))
-                return absoluteUri.ToString().TrimEnd('/');
-
-            var builder = new UriBuilder(absoluteUri)
-            {
-                Path = string.IsNullOrEmpty(path) || path == "/" ? "/mcp" : $"{path}/mcp"
-            };
-
-            return builder.Uri.ToString().TrimEnd('/');
-        }
-
-        var trimmed = baseEndpoint.TrimEnd('/');
-        return trimmed.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase)
-            ? trimmed
-            : $"{trimmed}/mcp";
     }
 }

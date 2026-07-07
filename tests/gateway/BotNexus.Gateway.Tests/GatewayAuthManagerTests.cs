@@ -256,6 +256,59 @@ public sealed class GatewayAuthManagerTests : IDisposable
         endpoint.ShouldBeNull();
     }
 
+    [Fact]
+    public void GetCopilotMcpEndpoint_WhenEnterpriseEndpointConfigured_DerivesEnterpriseMcpHost()
+    {
+        _fileSystem.File.WriteAllText(_authFilePath, """
+                                        {
+                                          "github-copilot": {
+                                            "type": "oauth",
+                                            "refresh": "unused",
+                                            "access": "copilot-access-key",
+                                            "expires": 4102444800000,
+                                            "endpoint": "https://api.enterprise.githubcopilot.com"
+                                          }
+                                        }
+                                        """);
+
+        var manager = CreateManager(new PlatformConfig());
+
+        // The enterprise chat host must flow through to a ready-to-use MCP endpoint (#1797).
+        manager.GetCopilotMcpEndpoint("github-copilot")
+            .ShouldBe("https://api.enterprise.githubcopilot.com/mcp");
+    }
+
+    [Fact]
+    public void GetCopilotMcpEndpoint_WhenEndpointAlreadyHasMcpPath_DoesNotDoubleAppend()
+    {
+        _fileSystem.File.WriteAllText(_authFilePath, """
+                                        {
+                                          "github-copilot": {
+                                            "type": "oauth",
+                                            "refresh": "unused",
+                                            "access": "copilot-access-key",
+                                            "expires": 4102444800000,
+                                            "endpoint": "https://api.enterprise.githubcopilot.com/mcp"
+                                          }
+                                        }
+                                        """);
+
+        var manager = CreateManager(new PlatformConfig());
+
+        manager.GetCopilotMcpEndpoint("github-copilot")
+            .ShouldBe("https://api.enterprise.githubcopilot.com/mcp");
+    }
+
+    [Fact]
+    public void GetCopilotMcpEndpoint_WhenNoEndpointConfigured_ReturnsIndividualFallbackHost()
+    {
+        var manager = CreateManager(new PlatformConfig());
+
+        // No override => individual/fallback host, unchanged from prior behaviour (#1797).
+        manager.GetCopilotMcpEndpoint("github-copilot")
+            .ShouldBe("https://api.githubcopilot.com/mcp");
+    }
+
     public void Dispose()
     {
         foreach (var (name, value) in _originalEnvironmentVariables)
