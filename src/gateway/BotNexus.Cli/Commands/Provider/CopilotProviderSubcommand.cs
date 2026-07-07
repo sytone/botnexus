@@ -285,22 +285,20 @@ internal static class CopilotProviderSubcommand
             return 1;
         }
 
+        // #1639: register the models with the account's resolved endpoint so the model is born with
+        // the correct host (enterprise vs individual). The carved-out providers read BaseUrl off the
+        // model, so no post-hoc BaseUrl patch is needed here anymore.
         var registry = new ModelRegistry();
-        new BuiltInModels().RegisterAll(registry);
+        new BuiltInModels().RegisterAll(registry, providerKey =>
+            providerKey == "github-copilot" && !string.IsNullOrWhiteSpace(auth.ApiEndpoint)
+                ? auth.ApiEndpoint
+                : null);
         var model = registry.GetModel("github-copilot", modelId);
         if (model is null)
         {
             AnsiConsole.MarkupLine($"[red]Unknown Copilot model:[/] {Markup.Escape(modelId)}");
             AnsiConsole.MarkupLine("Run [green]botnexus provider copilot models[/] to see what your account is entitled to.");
             return 1;
-        }
-
-        // The carved-out providers read BaseUrl off the model; substitute the
-        // user's actual resolved endpoint (enterprise vs individual) so the
-        // test request lands in the right place.
-        if (!string.IsNullOrWhiteSpace(auth.ApiEndpoint))
-        {
-            model = model with { BaseUrl = auth.ApiEndpoint };
         }
 
         var context = new Context(

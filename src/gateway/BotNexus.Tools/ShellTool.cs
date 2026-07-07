@@ -115,7 +115,12 @@ public sealed class ShellTool : IAgentTool
     public Tool Definition => new(
         Name,
         _shellPreference == ShellPreference.Pwsh
-            ? "Execute a PowerShell command in the current working directory and return stdout/stderr."
+            ? "Execute a PowerShell command in the current working directory and return stdout/stderr. " +
+              "PowerShell gotchas (avoid ParserError): inside double-quoted strings wrap a variable followed by ':' as ${var} " +
+              "(or use single quotes); no backtick line-continuations; pass -Filter a single string, not an array; for " +
+              "multi-line or complex scripts write a tmp/*.ps1 file and run it. Inline Python on Windows prints cp1252 by " +
+              "default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file and " +
+              "run 'python -X utf8 file.py'. Never pipe a here-string into an interpreter; write a temp file and execute it."
             : "Execute a bash command in the current working directory and return stdout/stderr.",
         JsonDocument.Parse("""
             {

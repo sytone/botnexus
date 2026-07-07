@@ -53,7 +53,11 @@ public sealed class ExecTool : IAgentTool
     /// <inheritdoc />
     public Tool Definition => new(
         Name,
-        "Execute a command with advanced process management: timeouts, background mode, stdin piping, and environment variable merging.",
+        "Execute a command with advanced process management: timeouts, background mode, stdin piping, and environment variable merging. " +
+        "On Windows PowerShell: wrap a variable followed by ':' as ${var} inside double-quoted strings (or use single quotes); " +
+        "no backtick line-continuations; for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
+        "cp1252 by default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file " +
+        "and run 'python -X utf8 file.py'. Never pipe a here-string into an interpreter; write a temp file and execute it.",
         JsonDocument.Parse("""
             {
               "type": "object",
