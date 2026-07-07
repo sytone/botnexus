@@ -211,6 +211,18 @@ public sealed class ShellToolTests
     }
 
     [Fact]
+    public void Definition_Pwsh_SurfacesPointOfUseGotchas()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+
+        var description = tool.Definition.Description;
+
+        description.ShouldContain("${var}");
+        description.ShouldContain("PYTHONUTF8");
+        description.ShouldContain("here-string");
+    }
+
+    [Fact]
     public void FindBashExecutable_WhenGitIsInstalledOnWindows_ReturnsPath()
     {
         if (!OperatingSystem.IsWindows())
