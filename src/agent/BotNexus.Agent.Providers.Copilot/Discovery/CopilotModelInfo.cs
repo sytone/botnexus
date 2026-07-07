@@ -46,6 +46,15 @@ public sealed class CopilotModelInfo
 
     [JsonPropertyName("billing")]
     public CopilotModelBilling? Billing { get; set; }
+
+    /// <summary>
+    /// The wire endpoints Copilot advertises for this model (e.g. <c>/v1/messages</c>,
+    /// <c>/responses</c>, <c>/chat/completions</c>). #1762: when present this is the
+    /// authoritative signal for endpoint routing and is preferred over the model-name
+    /// heuristic. Absent on older / edge responses, in which case the name heuristic applies.
+    /// </summary>
+    [JsonPropertyName("supported_endpoints")]
+    public List<string>? SupportedEndpoints { get; set; }
 }
 
 public sealed class CopilotModelCapabilities
