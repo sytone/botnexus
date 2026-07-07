@@ -54,6 +54,48 @@ public sealed class GatewayAuthManager
         return null;
     }
 
+    // #1797: the individual/fallback GitHub Copilot MCP host. Distinct from the chat BaseUrl host
+    // (api.individual.githubcopilot.com) - the MCP surface lives on api.githubcopilot.com.
+    private const string CopilotMcpFallbackEndpoint = "https://api.githubcopilot.com/mcp";
+
+    /// <summary>
+    /// Resolves the ready-to-use GitHub Copilot MCP endpoint for a provider (#1797).
+    /// Derives the MCP host from the provider's configured endpoint override (enterprise host)
+    /// and falls back to the individual host (<c>https://api.githubcopilot.com/mcp</c>) when no
+    /// override is declared. This is the single seam for extension-facing Copilot MCP endpoint
+    /// resolution - contributors consume the resolved value rather than re-deriving it from a raw
+    /// endpoint override.
+    /// </summary>
+    public string GetCopilotMcpEndpoint(string provider)
+        => DeriveCopilotMcpEndpoint(GetApiEndpoint(provider));
+
+    // Turns a raw provider endpoint override (the chat host) into the MCP endpoint by appending the
+    // /mcp path, or returns the individual fallback when no override is present. Pure and null-safe.
+    private static string DeriveCopilotMcpEndpoint(string? baseEndpoint)
+    {
+        if (string.IsNullOrWhiteSpace(baseEndpoint))
+            return CopilotMcpFallbackEndpoint;
+
+        if (Uri.TryCreate(baseEndpoint, UriKind.Absolute, out var absoluteUri))
+        {
+            var path = absoluteUri.AbsolutePath.TrimEnd('/');
+            if (path.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase))
+                return absoluteUri.ToString().TrimEnd('/');
+
+            var builder = new UriBuilder(absoluteUri)
+            {
+                Path = string.IsNullOrEmpty(path) || path == "/" ? "/mcp" : $"{path}/mcp"
+            };
+
+            return builder.Uri.ToString().TrimEnd('/');
+        }
+
+        var trimmed = baseEndpoint.TrimEnd('/');
+        return trimmed.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : $"{trimmed}/mcp";
+    }
+
     /// <summary>
     /// Resolves an API key from <c>~/.botnexus/auth.json</c>, environment variables, or platform config.
     /// </summary>

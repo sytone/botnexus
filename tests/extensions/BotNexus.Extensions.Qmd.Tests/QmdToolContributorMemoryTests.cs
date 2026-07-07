@@ -30,7 +30,7 @@ public sealed class QmdToolContributorMemoryTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("sess1") },
             "/tmp/workspace",
             Mock.Of<BotNexus.Gateway.Abstractions.Security.IPathValidator>(),
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
 
         var contributor = new QmdToolContributor(null, registry.Object);
@@ -63,7 +63,7 @@ public sealed class QmdToolContributorMemoryTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("sess1") },
             "/tmp/workspace",
             Mock.Of<BotNexus.Gateway.Abstractions.Security.IPathValidator>(),
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
 
         var contributor = new QmdToolContributor(null, registry.Object);
@@ -93,7 +93,7 @@ public sealed class QmdToolContributorMemoryTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("sess1") },
             "/tmp/workspace",
             Mock.Of<BotNexus.Gateway.Abstractions.Security.IPathValidator>(),
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
 
         // No registry passed

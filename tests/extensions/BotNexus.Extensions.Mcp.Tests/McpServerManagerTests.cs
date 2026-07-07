@@ -319,7 +319,7 @@ public class McpServerManagerTests
             new AgentExecutionContext { SessionId = SessionId.Create() },
             Path.GetTempPath(),
             new AllowAllPathValidator(),
-            _ => null,
+            null,
             (_, _) => Task.FromResult<string?>(null));
 
     private sealed class AllowAllPathValidator : IPathValidator
