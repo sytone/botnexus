@@ -136,11 +136,9 @@ public sealed class LlmSessionCompactorStreamIdleCapTests
         providers.Register(provider.Object);
 
         var llmClient = new LlmClient(providers, models);
-        // No endpoint override (null resolver) so the registered BaseUrl reaches the provider as-is.
         return new LlmSessionCompactor(
             llmClient,
-            NullLogger<LlmSessionCompactor>.Instance,
-            endpointResolver: null);
+            NullLogger<LlmSessionCompactor>.Instance);
     }
 
     private static GatewaySession CreateLargeSession(int entryCount)

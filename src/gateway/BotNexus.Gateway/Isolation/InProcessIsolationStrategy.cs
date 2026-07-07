@@ -104,13 +104,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// <inheritdoc />
     public async Task<IAgentHandle> CreateAsync(AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken cancellationToken = default)
     {
+        // #1639: the model is already registered with the correct per-provider endpoint (enterprise
+        // vs individual GitHub Copilot resolved at registration in BuiltInModels/discovery), so no
+        // consumer-side BaseUrl patch is needed here anymore.
         var model = _llmClient.Models.GetModel(descriptor.ApiProvider, descriptor.ModelId)
             ?? throw new InvalidOperationException($"Model '{descriptor.ModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
-
-        // Override model BaseUrl from auth endpoint or provider config (e.g., enterprise Copilot)
-        var apiEndpoint = _authManager.GetApiEndpoint(descriptor.ApiProvider);
-        if (!string.IsNullOrWhiteSpace(apiEndpoint))
-            model = model with { BaseUrl = apiEndpoint };
 
         var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, cancellationToken);
 
