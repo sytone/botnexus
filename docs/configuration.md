@@ -587,15 +587,16 @@ Social channel integrations. Keys in `Instances` dict are case-insensitive and m
 
 **Folder:** `extensions/channels/telegram/`
 
+The Telegram adapter binds directly from the `channels:telegram` section (it does **not** use the generic `Channels.Instances` shape above). The real option names come from `TelegramGatewayOptions`:
+
 ```json
 {
-  "Channels": {
-    "Instances": {
-      "telegram": {
-        "Enabled": true,
-        "BotToken": "123456789:ABCdefGHijKlmnoPQRstuvWXYZ",
-        "AllowFrom": ["12345", "67890"]
-      }
+  "channels": {
+    "telegram": {
+      "botToken": "123456789:ABCdefGHijKlmnoPQRstuvWXYZ",
+      "agentId": "my-agent",
+      "allowedUserIds": [12345, 67890],
+      "allowedChatIds": []
     }
   }
 }
@@ -1241,7 +1242,7 @@ export BotNexus__Providers__copilot__ApiBase=https://api.githubcopilot.com
 export BotNexus__Gateway__Port=9000
 
 # Override Telegram bot token
-export BotNexus__Channels__Instances__telegram__BotToken=123456789:ABCdef...
+export BotNexus__channels__telegram__botToken=123456789:ABCdef...
 
 # Override planner agent model
 export BotNexus__Agents__Named__planner__Model=gpt-4-turbo
@@ -1929,7 +1930,7 @@ export BotNexus__Gateway__ApiKey="$(openssl rand -hex 32)"
 
 1. Check `DefaultAgent` is set and matches a named agent (if using named agents)
 2. Verify provider config: `Auth`, `ApiKey` (for apikey auth), or OAuth token (for oauth)
-3. Check `Enabled` flag on channels if using Telegram/Discord/Slack
+3. Check the channel is configured under the right section (Telegram binds `channels:telegram` with a valid `botToken` and `agentId` - it has no `Enabled` flag; Discord/Slack use the `Channels.Instances` shape)
 4. View logs for provider initialization errors
 
 ### Token Expiration Errors
