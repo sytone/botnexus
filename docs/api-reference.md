@@ -15,6 +15,7 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 9. [Session Management](#session-management)
 10. [System & Status](#system--status)
 11. [Error Handling](#error-handling)
+12. [Webhooks](#webhooks)
 
 ---
 
@@ -1786,6 +1787,44 @@ Iteration 2: search_files("") → BLOCKED (count: 2 >= MaxRepeatedToolCalls: 2)
 - **Exploratory/research agents:** Use `MaxToolIterations=50+, MaxRepeatedToolCalls=3-5`
 
 For detailed configuration guidance, see [Configuration Guide § Agent Iteration & Loop Detection](configuration.md#agent-iteration--loop-detection).
+
+---
+
+## Webhooks
+
+Webhooks let external systems deliver a message to an agent over signed HTTP. All
+routes live under pi/webhooks. This section is a summary; see the full
+[Webhooks API reference](api/webhooks.md) and the [Webhooks guide](guides/webhooks.md)
+for concepts, response modes, and worked HMAC signing examples.
+
+### Registration management
+
+| Method & path | Description |
+|---------------|-------------|
+| POST /api/webhooks/registrations | Create a registration. Returns the secret **once**. |
+| GET /api/webhooks/registrations/{webhookId} | Get a registration (no secret). |
+| GET /api/webhooks/registrations | List registrations (optional ?agentId=). |
+| PUT /api/webhooks/registrations/{webhookId} | Update label / enabled / default response mode. |
+| DELETE /api/webhooks/registrations/{webhookId} | Delete a registration (204). |
+| GET /api/webhooks/runs/{runId} | Poll a run's status. |
+| GET /api/webhooks/registrations/{webhookId}/runs | List recent runs (?limit=, 1–100, default 20). |
+
+### Inbound delivery
+
+`	ext
+POST /api/webhooks/{agentId}/{webhookId}
+X-BotNexus-Signature-256: sha256=<hex>
+`
+
+Body: `{ "message": string, "responseMode": "async"|"sync"|"callback"|null,
+"agentAction": bool|null, "callbackUrl": string|null }`.
+
+- **async** (default): 202 + Location poll URL; agent runs in background.
+- **sync**: 200 with the agent response inline (≤120s, else downgrades to 202).
+- **callback**: 202; result POSTed to callbackUrl on completion.
+
+The signature is sha256= + lowercase hex of HMAC-SHA256(secret, rawBody). An
+invalid or missing signature returns 401 { "error": "Invalid signature." }.
 
 ---
 

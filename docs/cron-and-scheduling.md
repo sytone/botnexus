@@ -1212,6 +1212,39 @@ Agent cron job 'incident-status-check' scheduled with expression '*/15 * * * *'
 
 ---
 
+### Triggering webhooks from cron
+
+A cron job can drive a webhook the same way any external system does: by POSTing a
+signed message to the inbound endpoint `POST /api/webhooks/{agentId}/{webhookId}`.
+This is useful when you want a scheduled trigger to run through the same webhook
+pipeline (conversation pinning, run records, response modes) rather than a direct
+agent prompt.
+
+The request must include an `X-BotNexus-Signature-256: sha256=<hex>` header
+computed as `HMAC-SHA256(secret, rawBody)` over the exact bytes sent. For example,
+a scheduled PowerShell job:
+
+```powershell
+$secret = $env:WEBHOOK_SECRET            # whsec_... stored securely
+$url    = 'https://your-host/api/webhooks/my-agent/wh_9f2c...'
+$body   = '{"message":"Run the nightly summary."}'
+
+$raw    = [System.Text.Encoding]::UTF8.GetBytes($body)
+$hmac   = [System.Security.Cryptography.HMACSHA256]::new([System.Text.Encoding]::UTF8.GetBytes($secret))
+$hex    = ([System.BitConverter]::ToString($hmac.ComputeHash($raw)) -replace '-','').ToLowerInvariant()
+
+Invoke-RestMethod -Method Post -Uri $url -Body $raw -ContentType 'application/json' `
+  -Headers @{ 'X-BotNexus-Signature-256' = "sha256=$hex" }
+```
+
+Because agent runs can take 30–120 seconds, prefer the default **async** response
+mode and let the job fire-and-forget; poll `GET /api/webhooks/runs/{runId}` later
+if the job needs the result. See the [Webhooks guide](./guides/webhooks.md) for
+response modes and signing details, and the
+[Webhooks API reference](./api/webhooks.md) for the full contract.
+
+---
+
 ## Architecture Diagram
 
 ```text

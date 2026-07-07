@@ -32,6 +32,9 @@ features:
   - icon: 💾
     title: Session Persistence
     details: Durable conversation history in JSONL format with hot reload.
+  - icon: 🪝
+    title: Inbound Webhooks
+    details: Trigger agents over signed HTTP with async, sync, or callback responses.
 ---
 
 ## Quick Start
