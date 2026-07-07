@@ -33,6 +33,11 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
 
     private static readonly ModelCost FreeCost = new(0, 0, 0, 0);
 
+    /// <summary>
+    /// The individual GitHub Copilot host, used when no resolved endpoint is supplied (#1639).
+    /// </summary>
+    private const string DefaultCopilotBaseUrl = "https://api.individual.githubcopilot.com";
+
     private readonly CopilotDiscoveryClient _discoveryClient;
     private readonly Func<CancellationToken, Task<(string? SessionToken, string? Endpoint)>> _credentialResolver;
     private readonly ILogger<CopilotModelDiscoveryProvider> _logger;
@@ -82,7 +87,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             if (string.IsNullOrWhiteSpace(info.Id))
                 continue;
 
-            var model = MapToLlmModel(info);
+            var model = MapToLlmModel(info, endpoint);
             if (model is not null)
                 models.Add(model);
         }
@@ -96,9 +101,22 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// and input modalities.
     /// </summary>
     public static LlmModel? MapToLlmModel(CopilotModelInfo info)
+        => MapToLlmModel(info, DefaultCopilotBaseUrl);
+
+    /// <summary>
+    /// Maps a <see cref="CopilotModelInfo"/> to an <see cref="LlmModel"/>, stamping the supplied
+    /// resolved host onto <see cref="LlmModel.BaseUrl"/>. #1639: the discovered model is born with
+    /// the CORRECT host (enterprise vs individual GitHub Copilot) so no consumer patches BaseUrl.
+    /// A null/whitespace <paramref name="baseUrl"/> falls back to the individual host.
+    /// </summary>
+    /// <param name="info">The Copilot model info.</param>
+    /// <param name="baseUrl">The resolved API host to stamp onto the model.</param>
+    public static LlmModel? MapToLlmModel(CopilotModelInfo info, string? baseUrl)
     {
         if (string.IsNullOrWhiteSpace(info.Id))
             return null;
+
+        var resolvedBaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? DefaultCopilotBaseUrl : baseUrl;
 
         var id = info.Id;
         var name = info.Name ?? info.Id;
@@ -117,7 +135,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             Name: name,
             Api: api,
             Provider: "github-copilot",
-            BaseUrl: "https://api.individual.githubcopilot.com",
+            BaseUrl: resolvedBaseUrl,
             Reasoning: reasoning,
             Input: input,
             Cost: FreeCost,
