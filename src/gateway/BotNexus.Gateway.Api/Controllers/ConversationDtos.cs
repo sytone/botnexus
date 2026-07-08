@@ -33,7 +33,24 @@ public sealed record ConversationResponse(
     string? ActiveSessionId,
     IReadOnlyList<BindingResponse> Bindings,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? ModelOverride = null,
+    string? ThinkingOverride = null,
+    int? ContextWindowOverride = null);
+
+/// <summary>
+/// Request body for setting or clearing a conversation's model / thinking / context override
+/// (PBI5, issue #1706). Each field is independent: a <c>null</c> field clears that single
+/// override back to the agent default, while a non-null field sets it. Sending all three as
+/// <c>null</c> clears every conversation-level override.
+/// </summary>
+/// <param name="Model">Optional model-id override; <c>null</c> clears the model override.</param>
+/// <param name="Thinking">Optional thinking-level wire token (e.g. <c>high</c>, <c>max</c>); <c>null</c> clears the thinking override.</param>
+/// <param name="ContextWindow">Optional context-window override in tokens; <c>null</c> clears the context override.</param>
+public sealed record SetConversationOverrideRequest(
+    string? Model = null,
+    string? Thinking = null,
+    int? ContextWindow = null);
 
 /// <summary>Channel binding response.</summary>
 public sealed record BindingResponse(

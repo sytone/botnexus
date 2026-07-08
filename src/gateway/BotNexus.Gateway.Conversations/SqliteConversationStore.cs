@@ -608,7 +608,10 @@ public sealed class SqliteConversationStore : IConversationStore
                     metadata TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    world_id TEXT NOT NULL DEFAULT ''
+                    world_id TEXT NOT NULL DEFAULT '',
+                    model_override TEXT,
+                    thinking_override TEXT,
+                    context_window_override INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS conversation_bindings (
@@ -646,6 +649,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureTodoJsonColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsurePendingAskUserJsonColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureModelOverrideColumnsAsync(connection, ct).ConfigureAwait(false);
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
@@ -809,6 +813,37 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var pendingAskUserAlterCommand = connection.CreateCommand();
         pendingAskUserAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN pending_ask_user_json TEXT;";
         await pendingAskUserAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    // #1706: per-conversation model / thinking / context override columns. Additive migration that
+    // mirrors the instructions/todo_json/pending_ask_user_json pattern - probe table_info and ALTER
+    // in any column that predates this change so older databases converge without a migration script.
+    private static async Task EnsureModelOverrideColumnsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var tableInfoCommand = connection.CreateCommand())
+        {
+            tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+            await using var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                existing.Add(reader.GetString(1));
+        }
+
+        var additions = new (string Column, string Ddl)[]
+        {
+            ("model_override", "ALTER TABLE conversations ADD COLUMN model_override TEXT;"),
+            ("thinking_override", "ALTER TABLE conversations ADD COLUMN thinking_override TEXT;"),
+            ("context_window_override", "ALTER TABLE conversations ADD COLUMN context_window_override INTEGER;")
+        };
+
+        foreach (var (column, ddl) in additions)
+        {
+            if (existing.Contains(column))
+                continue;
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = ddl;
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
     }
 
     private static async Task EnsureInitiatorColumnAsync(SqliteConnection connection, CancellationToken ct)
@@ -1074,7 +1109,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
             FROM conversations
             WHERE id = $id
             """;
@@ -1158,7 +1193,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1326,8 +1361,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1346,11 +1381,14 @@ public sealed class SqliteConversationStore : IConversationStore
                     is_pinned = excluded.is_pinned,
                     pinned_at = excluded.pinned_at,
                     todo_json = excluded.todo_json,
-                    pending_ask_user_json = excluded.pending_ask_user_json
+                    pending_ask_user_json = excluded.pending_ask_user_json,
+                    model_override = excluded.model_override,
+                    thinking_override = excluded.thinking_override,
+                    context_window_override = excluded.context_window_override
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1371,6 +1409,9 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$pinnedAt", conversation.PinnedAt.HasValue ? (object)conversation.PinnedAt.Value.ToString("O") : DBNull.Value);
         conversationCommand.Parameters.AddWithValue("$todoJson", conversation.TodoJson is null ? (object)DBNull.Value : conversation.TodoJson);
         conversationCommand.Parameters.AddWithValue("$pendingAskUserJson", conversation.PendingAskUserJson is null ? (object)DBNull.Value : conversation.PendingAskUserJson);
+        conversationCommand.Parameters.AddWithValue("$modelOverride", conversation.ModelOverride is null ? (object)DBNull.Value : conversation.ModelOverride);
+        conversationCommand.Parameters.AddWithValue("$thinkingOverride", conversation.ThinkingOverride is null ? (object)DBNull.Value : conversation.ThinkingOverride);
+        conversationCommand.Parameters.AddWithValue("$contextWindowOverride", conversation.ContextWindowOverride.HasValue ? conversation.ContextWindowOverride.Value : (object)DBNull.Value);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();

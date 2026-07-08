@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Json;
+using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -198,6 +198,34 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
         var response = await _http.DeleteAsync(
             $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}", ct);
         return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
+    public async Task<ConversationResponseDto?> SetConversationOverrideAsync(
+        string conversationId,
+        SetConversationOverrideRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var response = await _http.PutAsJsonAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/override",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ConversationResponseDto>(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<ConversationResponseDto?> ClearConversationOverrideAsync(
+        string conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var response = await _http.DeleteAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/override",
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ConversationResponseDto>(cancellationToken);
     }
     /// <inheritdoc />
     public async Task<WorkspaceResponseDto?> GetWorkspaceAsync(
