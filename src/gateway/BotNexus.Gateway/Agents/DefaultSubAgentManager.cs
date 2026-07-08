@@ -12,6 +12,7 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Resolution;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
@@ -190,7 +191,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             ParentAgentId = request.ParentAgentId.Value,
             ChildAgentId = childAgentId.Value,
             Task = request.Task,
-            Model = modelOverride ?? configuredDefaultModel ?? baseDescriptor.ModelId,
+            Model = ModelOverrideResolver.Resolve(
+                modelDefaults: new ModelOverrideLayer(Model: baseDescriptor.ModelId),
+                agent: new ModelOverrideLayer(Model: configuredDefaultModel),
+                conversation: new ModelOverrideLayer(Model: modelOverride)).Model,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
