@@ -92,6 +92,38 @@
                         }
                         @if (HasBadge("ModelId")) { <span class="world-default-badge">World default</span> }
                     </div>
+
+                    <label>Thinking Level</label>
+                    <div>
+                        <select class="cfg-input" value="@(_model.Thinking ?? "")" @onchange="OnThinkingChange"
+                                disabled="@(_supportedThinkingLevels.Count == 0)">
+                            <option value="">- model default -</option>
+                            @foreach (var level in _supportedThinkingLevels)
+                            {
+                                <option value="@level">@level</option>
+                            }
+                        </select>
+                        @if (_supportedThinkingLevels.Count == 0)
+                        {
+                            <span class="agents-field-loading">Model does not support selectable thinking.</span>
+                        }
+                    </div>
+
+                    <label>Context Window</label>
+                    <div>
+                        <select class="cfg-input" value="@(_model.ContextWindow?.ToString() ?? "")" @onchange="OnContextWindowChange"
+                                disabled="@(_supportedContextSizes.Count <= 1)">
+                            <option value="">- model default -</option>
+                            @foreach (var size in _supportedContextSizes)
+                            {
+                                <option value="@size">@size.ToString("N0") tokens</option>
+                            }
+                        </select>
+                        @if (_supportedContextSizes.Count <= 1)
+                        {
+                            <span class="agents-field-loading">Model has a fixed context window.</span>
+                        }
+                    </div>
                 </div>
             </div>
         </details>
@@ -482,6 +514,8 @@
         public string ModelId { get; set; } = "";
         public string? SystemPrompt { get; set; }
         public string? SystemPromptFile { get; set; }
+        public string? Thinking { get; set; }
+        public int? ContextWindow { get; set; }
         public List<string> SystemPromptFiles { get; set; } = [];
         public List<string> ToolIds { get; set; } = [];
         public int? ToolTimeoutSeconds { get; set; }
@@ -570,7 +604,7 @@
     }
 
     private record ProviderItem(string Id, string Name);
-    private record ModelItem(string ModelId, string Name);
+    private record ModelItem(string ModelId, string Name, List<string>? SupportedThinkingLevels = null, List<int>? SupportedContextSizes = null);
 
     // ── State ─────────────────────────────────────────────────────────────
     private AgentEditModel? _model;
@@ -587,6 +621,8 @@
     private List<string> _knownAgents = [];
     private List<ProviderItem> _providers = [];
     private List<ModelItem> _models = [];
+    private List<string> _supportedThinkingLevels = [];
+    private List<int> _supportedContextSizes = [];
     private bool _loadingModels;
     private string _newToolId = "";
     private string _newReadPath = "";
@@ -620,7 +656,25 @@
     private void OnEmojiInput(ChangeEventArgs e) { _model!.Emoji = e.Value?.ToString(); MarkDirty(); }
     private void OnProviderInput(ChangeEventArgs e) { _model!.ApiProvider = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnModelInput(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; MarkDirty(); }
-    private void OnModelChange(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; MarkDirty(); }
+    private void OnModelChange(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; RefreshModelCapabilities(); MarkDirty(); }
+    private void OnThinkingChange(ChangeEventArgs e) { var v = e.Value?.ToString(); _model!.Thinking = string.IsNullOrEmpty(v) ? null : v; MarkDirty(); }
+    private void OnContextWindowChange(ChangeEventArgs e) { var v = e.Value?.ToString(); _model!.ContextWindow = int.TryParse(v, out var n) ? n : null; MarkDirty(); }
+
+    // Recompute the thinking/context option sets from the currently selected model, clearing any
+    // now-invalid selection so the editor never persists a value the model cannot honour (#1705).
+    private void RefreshModelCapabilities()
+    {
+        var selected = _models.FirstOrDefault(m => m.ModelId == _model?.ModelId);
+        _supportedThinkingLevels = selected?.SupportedThinkingLevels ?? [];
+        _supportedContextSizes = selected?.SupportedContextSizes ?? [];
+        if (_model is not null)
+        {
+            if (_model.Thinking is not null && !_supportedThinkingLevels.Contains(_model.Thinking))
+                _model.Thinking = null;
+            if (_model.ContextWindow is not null && !_supportedContextSizes.Contains(_model.ContextWindow.Value))
+                _model.ContextWindow = null;
+        }
+    }
     private void OnSystemPromptInput(ChangeEventArgs e) { _model!.SystemPrompt = e.Value?.ToString(); MarkDirty(); }
     private void OnSystemPromptFileInput(ChangeEventArgs e) { _model!.SystemPromptFile = e.Value?.ToString(); MarkDirty(); }
     private void OnToolTimeoutInput(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var v)) { _model!.ToolTimeoutSeconds = v == 0 ? null : v; MarkDirty(); } }
@@ -754,6 +808,7 @@
             var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var items = await Http.GetFromJsonAsync<List<ModelItem>>(url, opts);
             _models = items ?? [];
+            RefreshModelCapabilities();
         }
         catch { _models = []; }
         finally { _loadingModels = false; }
@@ -801,6 +856,8 @@
         _model.ApiProvider = e.Value?.ToString() ?? "";
         _model.ModelId = "";
         _models = [];
+        _supportedThinkingLevels = [];
+        _supportedContextSizes = [];
         MarkDirty();
         if (!string.IsNullOrEmpty(_model.ApiProvider))
             await LoadModelsAsync(_model.ApiProvider);
@@ -820,6 +877,8 @@
             ModelId = GetStr(el, "modelId") ?? "",
             SystemPrompt = GetStr(el, "systemPrompt"),
             SystemPromptFile = GetStr(el, "systemPromptFile"),
+            Thinking = GetStr(el, "thinking"),
+            ContextWindow = el.TryGetProperty("contextWindow", out var cwp) && cwp.ValueKind == JsonValueKind.Number ? cwp.GetInt32() : null,
             IsolationStrategy = GetStr(el, "isolationStrategy") ?? "in-process",
             MaxConcurrentSessions = GetInt(el, "maxConcurrentSessions", 0),
             ToolTimeoutSeconds = el.TryGetProperty("toolTimeoutSeconds", out var tp) && tp.ValueKind != JsonValueKind.Null ? tp.GetInt32() : null,

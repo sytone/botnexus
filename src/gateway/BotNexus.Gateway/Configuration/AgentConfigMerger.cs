@@ -44,6 +44,8 @@ public static class AgentConfigMerger
             DisplayName = agent.DisplayName,
             Description = agent.Description,
             Model = agent.Model,
+            Thinking = agent.Thinking,
+            ContextWindow = agent.ContextWindow,
             AllowedModels = agent.AllowedModels,
             SystemPromptFile = agent.SystemPromptFile,
             SystemPromptFiles = agent.SystemPromptFiles,

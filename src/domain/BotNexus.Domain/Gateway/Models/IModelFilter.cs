@@ -21,4 +21,17 @@ public interface IModelFilter
 /// <param name="Id">Model identifier.</param>
 /// <param name="Name">Display model name.</param>
 /// <param name="Provider">Provider identifier.</param>
-public sealed record LlmModelInfo(string Id, string Name, string Provider);
+/// <param name="SupportedThinkingLevels">
+/// Wire-form thinking levels this model supports (minimal..max), so the agent editor offers
+/// only valid choices. Empty for non-reasoning models. (#1705)
+/// </param>
+/// <param name="SupportedContextSizes">
+/// Context-window sizes (tokens) this model supports. A single value for fixed-window models;
+/// the selectable tiers for models advertising the extended-context capability. (#1705)
+/// </param>
+public sealed record LlmModelInfo(
+    string Id,
+    string Name,
+    string Provider,
+    IReadOnlyList<string>? SupportedThinkingLevels = null,
+    IReadOnlyList<int>? SupportedContextSizes = null);

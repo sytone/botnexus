@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 
@@ -48,7 +49,14 @@ public sealed class ConfigModelFilter : IModelFilter
             : models.Where(model => allowlist.Contains(model.Id, StringComparer.OrdinalIgnoreCase));
 
         return filteredModels
-            .Select(model => new LlmModelInfo(model.Id, model.Name, model.Provider))
+            .Select(model => new LlmModelInfo(
+                model.Id,
+                model.Name,
+                model.Provider,
+                // #1705: surface the model's capability set so the agent editor offers only
+                // valid thinking/context choices.
+                ModelRegistry.GetSupportedThinkingLevels(model).Select(ThinkingToWire).ToList(),
+                ModelRegistry.GetSupportedContextSizes(model).ToList()))
             .OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -64,6 +72,17 @@ public sealed class ConfigModelFilter : IModelFilter
             .Where(model => agentAllowedModelIds.Contains(model.Id, StringComparer.OrdinalIgnoreCase))
             .ToList();
     }
+
+    private static string ThinkingToWire(ThinkingLevel level) => level switch
+    {
+        ThinkingLevel.Minimal => "minimal",
+        ThinkingLevel.Low => "low",
+        ThinkingLevel.Medium => "medium",
+        ThinkingLevel.High => "high",
+        ThinkingLevel.ExtraHigh => "xhigh",
+        ThinkingLevel.Max => "max",
+        _ => level.ToString().ToLowerInvariant()
+    };
 
     private bool IsProviderEnabled(string provider, Dictionary<string, ProviderConfig> providerConfigs)
     {

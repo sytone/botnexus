@@ -105,6 +105,53 @@ public sealed class AgentDetailPanelTests : IDisposable
         Assert.Contains("Yes, Delete", cut.Markup);
     }
 
+    // --- PBI4 (#1705): thinking + context pickers driven by model capabilities ---
+
+    private static string ReasoningAgentJson() =>
+        JsonSerializer.Serialize(new
+        {
+            agentId = "test-agent",
+            displayName = "Test Agent",
+            enabled = true,
+            apiProvider = "openai",
+            modelId = "reasoning-model",
+            thinking = "high",
+            contextWindow = 1000000
+        });
+
+    private static string ModelsWithCapabilitiesJson() =>
+        JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                name = "Reasoning Model",
+                modelId = "reasoning-model",
+                id = "reasoning-model",
+                provider = "openai",
+                supportedThinkingLevels = new[] { "minimal", "low", "medium", "high", "xhigh", "max" },
+                supportedContextSizes = new[] { 200000, 1000000 }
+            }
+        });
+
+    [Fact]
+    public void AgentDetailPanel_RendersThinkingPicker_WithModelSupportedLevels()
+    {
+        _httpHandler.SetupResponse("/api/agents/test-agent", ReasoningAgentJson());
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", "[]");
+        _httpHandler.SetupResponse("/api/models", ModelsWithCapabilitiesJson());
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "test-agent"));
+
+        cut.WaitForState(() => cut.Markup.Contains("Thinking Level"), TimeSpan.FromSeconds(3));
+
+        Assert.Contains("Thinking Level", cut.Markup);
+        Assert.Contains("Context Window", cut.Markup);
+        // The capability-driven option set must be offered (xhigh only exists on capable models).
+        Assert.Contains("xhigh", cut.Markup);
+        Assert.Contains("1,000,000 tokens", cut.Markup);
+    }
+
     /// <summary>Simple mock HTTP handler reused from AgentsPageTests pattern.</summary>
     internal sealed class MockHttpMessageHandler : HttpMessageHandler
     {

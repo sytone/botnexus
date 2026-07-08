@@ -252,6 +252,8 @@ internal sealed class AgentConfigurationHostedService(
         if (a.SystemPromptFile != b.SystemPromptFile) return false;
         if (a.IsolationStrategy != b.IsolationStrategy) return false;
         if (a.CacheRetentionMode != b.CacheRetentionMode) return false;
+        if (a.Thinking != b.Thinking) return false;
+        if (a.ContextWindow != b.ContextWindow) return false;
         if (a.MaxConcurrentSessions != b.MaxConcurrentSessions) return false;
         if (a.SessionAccessLevel != b.SessionAccessLevel) return false;
         if (a.ConversationAccessLevel != b.ConversationAccessLevel) return false;

@@ -119,9 +119,18 @@ public sealed class ModelResolutionCentralizationArchitectureTests
         @"\.GetModel\s*\([^)]*\.ModelId\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    // The resolver is the one sanctioned home; no production file legitimately resolves a
-    // raw ModelId today, so the allowlist starts empty and the hygiene test keeps it honest.
-    private static readonly HashSet<string> s_allowlist = new(StringComparer.OrdinalIgnoreCase);
+    // The resolver is the one sanctioned home for producing the *effective* turn model.
+    // The allowlist holds files that call GetModel(...ModelId) for a DIFFERENT, legitimate
+    // reason - capability validation, not effective-model resolution - and the hygiene test
+    // keeps every entry honest (must still exist AND still trip the fence).
+    private static readonly HashSet<string> s_allowlist = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // AgentDescriptorValidator looks up the model by its raw ModelId solely to read the
+        // model's capability set (supported thinking levels / context sizes) so it can REJECT
+        // an agent-level thinking/context value the model does not support (PBI4, #1705). It
+        // never resolves an effective turn model - that stays with ModelOverrideResolver.
+        Path.Combine("gateway", "BotNexus.Gateway", "Agents", "AgentDescriptorValidator.cs"),
+    };
 
     private static IEnumerable<string> EnumerateProductionCsFiles(string srcRoot)
     {

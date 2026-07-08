@@ -1176,6 +1176,126 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.CacheRetentionMode.ShouldBeNull();
     }
 
+    // --- PBI4 (#1705): agent-level thinking + context mapping and capability gating ---
+
+    private static ModelRegistry MakeThinkingRegistry()
+    {
+        var registry = new ModelRegistry();
+        // github-copilot is the canonical provider for the "copilot" alias used in these configs.
+        registry.Register("github-copilot", new LlmModel(
+            Id: "reasoning-model",
+            Name: "Reasoning Model",
+            Api: "github-copilot-responses",
+            Provider: "github-copilot",
+            BaseUrl: "https://example.invalid",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 200_000,
+            MaxTokens: 64_000,
+            SupportsExtraHighThinking: true));
+        registry.Register("github-copilot", new LlmModel(
+            Id: "plain-model",
+            Name: "Plain Model",
+            Api: "github-copilot-completions",
+            Provider: "github-copilot",
+            BaseUrl: "https://example.invalid",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 128_000,
+            MaxTokens: 16_000));
+        return registry;
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithSupportedThinkingAndContext_MapsOntoDescriptor()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "reasoning-model",
+                  "Enabled": true,
+                  "Thinking": "high",
+                  "ContextWindow": 200000
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            locationResolver: null,
+            modelRegistry: MakeThinkingRegistry());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Thinking.ShouldBe("high");
+        descriptor.ContextWindow.ShouldBe(200000);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithThinkingOnNonReasoningModel_SkipsAgent()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "plain-model",
+                  "Enabled": true,
+                  "Thinking": "high"
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            locationResolver: null,
+            modelRegistry: MakeThinkingRegistry());
+
+        // Invalid-for-model thinking causes the agent to be skipped at load time.
+        (await source.LoadAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithoutThinking_DescriptorThinkingIsNull()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "reasoning-model",
+                  "Enabled": true
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            locationResolver: null,
+            modelRegistry: MakeThinkingRegistry());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Thinking.ShouldBeNull();
+        descriptor.ContextWindow.ShouldBeNull();
+    }
+
     private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
     {
         private readonly IReadOnlyDictionary<string, string> _paths = paths;

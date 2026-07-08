@@ -116,6 +116,41 @@ public sealed record AgentDescriptor : ICitizen
     public string? CacheRetentionMode { get; init; }
 
     /// <summary>
+    /// Agent-level default thinking (reasoning) level. This is the agent layer of the
+    /// three-layer <c>ModelOverrideResolver</c> stack (model defaults -&gt; agent -&gt;
+    /// conversation); when <see langword="null"/> the resolver falls through to the model
+    /// default. Stored as the wire-form string of
+    /// <c>BotNexus.Agent.Providers.Core.Models.ThinkingLevel</c>
+    /// (<c>"minimal"</c>, <c>"low"</c>, <c>"medium"</c>, <c>"high"</c>, <c>"xhigh"</c>,
+    /// <c>"max"</c>) rather than the enum itself so the Domain assembly keeps its zero
+    /// non-framework dependency surface (same rationale as <see cref="CacheRetentionMode"/>).
+    /// A value the selected model does not advertise as supported is rejected at
+    /// registration time (REST and tool paths) and skipped when loaded from config.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Display(
+        Name = "Thinking level",
+        Description = "Default reasoning effort this agent requests, validated against the model's capabilities.",
+        GroupName = "Agent",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 4)]
+    public string? Thinking { get; init; }
+
+    /// <summary>
+    /// Agent-level default context-window size (in tokens). This is the agent layer of the
+    /// three-layer <c>ModelOverrideResolver</c> stack; when <see langword="null"/> the resolver
+    /// falls through to the model default. Only sizes the selected model advertises as
+    /// supported (via <c>ModelRegistry.GetSupportedContextSizes</c>) are accepted; an
+    /// unsupported size is rejected at registration time and skipped when loaded from config.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Display(
+        Name = "Context window",
+        Description = "Default context-window size (tokens) this agent requests, validated against the model's capabilities.",
+        GroupName = "Agent",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
+    public int? ContextWindow { get; init; }
+
+    /// <summary>
     /// Maximum concurrent sessions allowed for this agent.
     /// Zero means unlimited.
     /// </summary>
