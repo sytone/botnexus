@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Gateway.Webhooks;
 
@@ -16,6 +17,7 @@ public sealed class SqliteWebhookRegistrationStore(
     ILogger<SqliteWebhookRegistrationStore>? logger = null) : IWebhookRegistrationStore
 {
     private readonly string _dbPath = dbPath;
+    private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly ILogger<SqliteWebhookRegistrationStore> _logger = logger ?? NullLogger<SqliteWebhookRegistrationStore>.Instance;
@@ -35,10 +37,12 @@ public sealed class SqliteWebhookRegistrationStore(
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
+            // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network
+            // mounts) with bounded wal_autocheckpoint, consolidated into the shared helper.
+            await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
+
             await using var cmd = connection.CreateCommand();
             cmd.CommandText = """
-                PRAGMA journal_mode = WAL;
-
                 CREATE TABLE IF NOT EXISTS webhook_registrations (
                     id TEXT PRIMARY KEY,
                     label TEXT NOT NULL,
