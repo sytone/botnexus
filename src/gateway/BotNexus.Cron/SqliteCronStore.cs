@@ -4,12 +4,14 @@ using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Cron;
 
 public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = null, ILogger<SqliteCronStore>? logger = null) : ICronStore
 {
     private readonly string _dbPath = dbPath;
+    private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly ILogger<SqliteCronStore> _logger = logger ?? NullLogger<SqliteCronStore>.Instance;
@@ -36,10 +38,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
+            // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network
+            // mounts) with bounded wal_autocheckpoint, consolidated into the shared helper.
+            await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
+
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                PRAGMA journal_mode = WAL;
-
                 CREATE TABLE IF NOT EXISTS cron_jobs (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,

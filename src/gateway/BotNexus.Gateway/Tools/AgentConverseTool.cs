@@ -24,12 +24,12 @@ public sealed class AgentConverseTool(
 
     public Tool Definition => new(
         Name,
-        "Start a conversation with another registered agent.",
+        "Start a conversation with another registered agent. Not every agent is reachable: converse is governed by policy. Call list_agents first and only target an agent whose 'canConverse' is true -- targeting an agent with canConverse=false is a deterministic policy denial that wastes the turn and will never succeed on retry.",
         JsonDocument.Parse($$"""
             {
               "type": "object",
               "properties": {
-                "agentId": { "type": "string", "description": "The target agent's ID." },
+                "agentId": { "type": "string", "description": "The target agent's ID. Must be an agent whose 'canConverse' is true in list_agents output; otherwise the call is denied by policy." },
                 "message": { "type": "string", "description": "Opening message to send." },
                 "objective": { "type": "string", "description": "What you want to achieve." },
                 "maxTurns": {
