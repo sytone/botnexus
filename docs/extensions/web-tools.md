@@ -50,7 +50,8 @@ Configure in your agent's extension config block:
         "timeoutSeconds": 30,
         "userAgent": "BotNexus/1.0 (compatible; bot)",
         "allowPrivateNetworks": false,
-        "additionalBlockedHosts": []
+        "additionalBlockedHosts": [],
+        "maxResponseBytes": 16777216
       }
     }
   }
@@ -74,6 +75,7 @@ Configure in your agent's extension config block:
 | `userAgent` | string | `"BotNexus/1.0 (compatible; bot)"` | User-Agent header for requests. |
 | `allowPrivateNetworks` | boolean | false | Allow requests to private/loopback IPs. See [Security](#security). |
 | `additionalBlockedHosts` | string[] | `[]` | Hostnames always blocked, even when `allowPrivateNetworks` is true. |
+| `maxResponseBytes` | integer | 16777216 | Maximum bytes read from a fetched response body before the read is aborted. Because the fetched URL is fully agent-controlled, an oversized or maliciously streamed body is capped *during* the read to prevent an out-of-memory denial of service. Default: 16 MiB. |
 
 ## Search Providers
 

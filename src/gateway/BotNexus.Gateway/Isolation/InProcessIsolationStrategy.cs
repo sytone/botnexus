@@ -8,6 +8,7 @@ using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Resolution;
 using BotNexus.Cron;
 using BotNexus.Cron.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -104,11 +105,22 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// <inheritdoc />
     public async Task<IAgentHandle> CreateAsync(AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken cancellationToken = default)
     {
+        // #1704: resolve the effective model through the centralized three-layer override
+        // resolver (model defaults -> agent -> conversation) instead of reading descriptor.ModelId
+        // ad hoc. Today only the agent layer is populated (descriptor.ModelId); the agent-level and
+        // conversation-level override fields land in PBI4/PBI5 and slot into the same call without
+        // changing this site.
+        var effectiveModel = ModelOverrideResolver.Resolve(
+            modelDefaults: default,
+            agent: new ModelOverrideLayer(Model: descriptor.ModelId),
+            conversation: default);
+        var resolvedModelId = effectiveModel.Model ?? descriptor.ModelId;
+
         // #1639: the model is already registered with the correct per-provider endpoint (enterprise
         // vs individual GitHub Copilot resolved at registration in BuiltInModels/discovery), so no
         // consumer-side BaseUrl patch is needed here anymore.
-        var model = _llmClient.Models.GetModel(descriptor.ApiProvider, descriptor.ModelId)
-            ?? throw new InvalidOperationException($"Model '{descriptor.ModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
+        var model = _llmClient.Models.GetModel(descriptor.ApiProvider, resolvedModelId)
+            ?? throw new InvalidOperationException($"Model '{resolvedModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
 
         var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, cancellationToken);
 

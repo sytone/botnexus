@@ -20,6 +20,7 @@
     <Compile Include="WebhookRunRetentionOptions.cs" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>

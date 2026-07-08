@@ -46,8 +46,13 @@ public sealed class SqliteBusyTimeoutArchitectureTests
     private static readonly Regex BusyTimeoutPragma =
         new(@"PRAGMA\s+busy_timeout", RegexOptions.IgnoreCase);
 
+    // Post-#1436: the seven unblocked stores delegate journal-mode selection to the shared
+    // SqliteWalMaintenance helper (WAL on local disk, DELETE on network mounts) instead of an
+    // inline `PRAGMA journal_mode = WAL`. Either shape satisfies the "this store manages WAL"
+    // precondition of the busy_timeout fence: the literal pragma (still used by the deferred
+    // SqliteConversationStore) OR a call to the helper's ApplyJournalModeAsync.
     private static readonly Regex JournalModeWalPragma =
-        new(@"PRAGMA\s+journal_mode\s*=\s*WAL", RegexOptions.IgnoreCase);
+        new(@"PRAGMA\s+journal_mode\s*=\s*WAL|ApplyJournalModeAsync", RegexOptions.IgnoreCase);
 
     [Fact]
     public void AllCoveredStoreFiles_Exist()
@@ -67,10 +72,12 @@ public sealed class SqliteBusyTimeoutArchitectureTests
             var path = Path.Combine(RepoRoot, rel.Replace('/', Path.DirectorySeparatorChar));
             var source = File.ReadAllText(path);
 
-            // Sanity: the file must still set WAL - otherwise the fence is matching the wrong file.
+            // Sanity: the file must still manage WAL - either the inline pragma or the shared
+            // SqliteWalMaintenance helper (#1436) - otherwise the fence is matching the wrong file.
             JournalModeWalPragma.IsMatch(source).ShouldBeTrue(
-                $"Expected `PRAGMA journal_mode = WAL` in {rel}. If WAL was removed, update this fence " +
-                "to match the new connection-init shape. See #1450.");
+                $"Expected `PRAGMA journal_mode = WAL` or a SqliteWalMaintenance.ApplyJournalModeAsync " +
+                $"call in {rel}. If WAL management was removed, update this fence to match the new " +
+                "connection-init shape. See #1450/#1436.");
 
             BusyTimeoutPragma.IsMatch(source).ShouldBeTrue(
                 $"{rel} sets `PRAGMA journal_mode = WAL` but never sets `PRAGMA busy_timeout`. " +

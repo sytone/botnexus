@@ -178,6 +178,20 @@ public sealed class AgentConverseToolTests
         maximum.ShouldBe(12);
     }
 
+    [Fact]
+    public void Definition_SurfacesConverseAllowListGuidance()
+    {
+        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
+
+        tool.Definition.Description.ShouldContain("list_agents");
+        tool.Definition.Description.ShouldContain("canConverse");
+
+        var agentIdDescription = tool.Definition.Parameters
+            .GetProperty("properties").GetProperty("agentId").GetProperty("description").GetString();
+        agentIdDescription.ShouldNotBeNull();
+        agentIdDescription.ShouldContain("canConverse");
+    }
+
     private static (Mock<IAgentExchangeService> Service, StrongBox<AgentExchangeRequest?> Captured) CreateCapturingService()
     {
         var captured = new StrongBox<AgentExchangeRequest?>(null);
