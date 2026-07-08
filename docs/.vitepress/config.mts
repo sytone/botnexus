@@ -13,6 +13,7 @@ export default defineConfig({
     // srcExclude'd content directories: referenced as related reading but not
     // part of the deployed docs build (kept in repo, see srcExclude below)
     /\/training\//,
+    /\/api\//,
     // localhost links (expected in setup guides)
     /localhost/,
   ],

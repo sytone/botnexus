@@ -3,6 +3,7 @@ using System.Text;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Memory;
 
@@ -13,6 +14,7 @@ public sealed class SqliteMemoryStore(
 {
     private const double DefaultHalfLifeDays = 30d;
     private readonly string _dbPath = dbPath;
+    private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -39,10 +41,12 @@ public sealed class SqliteMemoryStore(
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
+            // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network
+            // mounts) with bounded wal_autocheckpoint, consolidated into the shared helper.
+            await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
+
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                PRAGMA journal_mode = WAL;
-
                 CREATE TABLE IF NOT EXISTS memories (
                     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT NOT NULL UNIQUE,
