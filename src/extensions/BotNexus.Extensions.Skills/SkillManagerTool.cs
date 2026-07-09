@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Extensions.Skills.Security;
+using BotNexus.Extensions.Skills.Telemetry;
 using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills;
@@ -19,7 +20,9 @@ public sealed class SkillManagerTool(
     string? workspaceSkillsDir,
     string? globalSkillsDir,
     SkillsConfig config,
-    IFileSystem? fileSystem = null) : IAgentTool
+    IFileSystem? fileSystem = null,
+    ISkillUsageTelemetry? telemetry = null,
+    string? createdBy = null) : IAgentTool
 {
     private readonly IFileSystem _fs = fileSystem ?? new FileSystem();
 
@@ -177,6 +180,9 @@ public sealed class SkillManagerTool(
             return Error($"Skill creation blocked: security scan found {scan.Critical} critical finding(s). Rolled back.\n{FormatFindings(scan)}");
         }
 
+        // Stamp provenance so a later curator can identify agent-created skills (#1833).
+        RecordTelemetry(t => t.RecordCreatedAsync(name, createdBy ?? "unknown"));
+
         return Ok($"Skill '{name}' created at '{skillDir}'.\nSecurity scan: {scan.ScannedFiles} file(s) scanned, {scan.Warn} warning(s).");
     }
 
@@ -223,6 +229,9 @@ public sealed class SkillManagerTool(
 
             return Error($"Skill edit blocked: security scan found {scan.Critical} critical finding(s). Rolled back.\n{FormatFindings(scan)}");
         }
+
+        // A full-body edit is a mutation; count it toward the skill's patch telemetry (#1833).
+        RecordTelemetry(t => t.RecordPatchAsync(name));
 
         return Ok($"Skill '{name}' updated at '{skillDir}'.\nSecurity scan: {scan.ScannedFiles} file(s) scanned, {scan.Warn} warning(s).");
     }
@@ -287,6 +296,9 @@ public sealed class SkillManagerTool(
             _fs.File.WriteAllText(targetPath, backup);
             return Error($"Patch blocked: security scan found {scan.Critical} critical finding(s). Rolled back.\n{FormatFindings(scan)}");
         }
+
+        // Count the patch toward the skill's telemetry (#1833).
+        RecordTelemetry(t => t.RecordPatchAsync(name));
 
         var occurrences = replaceAll ? CountOccurrences(current, oldText) : 1;
         return Ok($"Patched '{relPath}' in skill '{name}' ({occurrences} replacement(s)).\nSecurity scan: {scan.ScannedFiles} file(s) scanned, {scan.Warn} warning(s).");
@@ -359,6 +371,9 @@ public sealed class SkillManagerTool(
             _fs.File.Delete(targetPath);
             return Error($"File write blocked: security scan found {scan.Critical} critical finding(s). Rolled back.\n{FormatFindings(scan)}");
         }
+
+        // Writing a support file is a mutation of the skill; count it as a patch (#1833).
+        RecordTelemetry(t => t.RecordPatchAsync(name));
 
         return Ok($"Wrote '{relPath}' in skill '{name}'.\nSecurity scan: {scan.ScannedFiles} file(s) scanned, {scan.Warn} warning(s).");
     }
@@ -583,4 +598,24 @@ public sealed class SkillManagerTool(
 
     private static AgentToolResult Error(string message)
         => new([new AgentToolContent(AgentToolContentType.Text, $"Error: {message}")]);
+
+    /// <summary>
+    /// Best-effort telemetry recording (#1833). Runs the recording action synchronously and swallows
+    /// any failure: skill management must never break because the telemetry sink is unavailable or a
+    /// transient SQLite lock occurs. No-ops when no telemetry sink is configured.
+    /// </summary>
+    private void RecordTelemetry(Func<ISkillUsageTelemetry, Task> record)
+    {
+        if (telemetry is null)
+            return;
+
+        try
+        {
+            record(telemetry).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Telemetry is an observability side-channel; never surface its failure to the caller.
+        }
+    }
 }

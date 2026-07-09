@@ -5,6 +5,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Extensions.Skills.Security;
+using BotNexus.Extensions.Skills.Telemetry;
 using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills;
@@ -17,21 +18,22 @@ public sealed class SkillTool(
     string? globalSkillsDir,
     string? agentSkillsDir,
     string? workspaceSkillsDir,
-    SkillsConfig? config) : IAgentTool
+    SkillsConfig? config,
+    ISkillUsageTelemetry? telemetry = null) : IAgentTool
 {
     private readonly IFileSystem _fileSystem = new FileSystem();
     private readonly ConcurrentDictionary<string, byte> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Creates a SkillTool with a static skill list (for testing).</summary>
-    internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config)
-        : this(null, null, null, config)
+    internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config, ISkillUsageTelemetry? telemetry = null)
+        : this(null, null, null, config, telemetry)
     {
         _staticSkills = allSkills;
     }
 
     /// <summary>Creates a SkillTool with a static skill list and an injected filesystem (for testing view_file).</summary>
-    internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config, IFileSystem fileSystem)
-        : this(null, null, null, config)
+    internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config, IFileSystem fileSystem, ISkillUsageTelemetry? telemetry = null)
+        : this(null, null, null, config, telemetry)
     {
         _staticSkills = allSkills;
         _fileSystem = fileSystem;
@@ -102,23 +104,23 @@ public sealed class SkillTool(
         return Task.FromResult(arguments);
     }
 
-    public Task<AgentToolResult> ExecuteAsync(
+    public async Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default,
         AgentToolUpdateCallback? onUpdate = null)
     {
         var action = ReadString(arguments, "action") ?? "list";
-        return Task.FromResult(action.ToLowerInvariant() switch
+        return action.ToLowerInvariant() switch
         {
-            "list" => ListSkills(),
-            "load" => LoadSkill(arguments),
-            "view_file" => ViewFile(arguments),
+            "list" => await ListSkillsAsync(cancellationToken).ConfigureAwait(false),
+            "load" => await LoadSkillAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "view_file" => await ViewFileAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => TextResult($"Unknown action: {action}")
-        });
+        };
     }
 
-    private AgentToolResult ListSkills()
+    private async Task<AgentToolResult> ListSkillsAsync(CancellationToken cancellationToken)
     {
         var currentSkills = DiscoverSkills();
         var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: _sessionLoaded.Keys.ToList());
@@ -151,10 +153,14 @@ public sealed class SkillTool(
         if (lines.Count == 0)
             lines.Add("No skills available.");
 
+        // Record a view for every surfaced skill so telemetry reflects listing activity (#1833).
+        foreach (var s in resolution.Loaded.Concat(resolution.Available))
+            await RecordAsync(t => t.RecordViewAsync(s.Name, cancellationToken)).ConfigureAwait(false);
+
         return TextResult(string.Join("\n", lines));
     }
 
-    private AgentToolResult LoadSkill(IReadOnlyDictionary<string, object?> arguments)
+    private async Task<AgentToolResult> LoadSkillAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
         var skillName = ReadString(arguments, "skillName");
         if (string.IsNullOrWhiteSpace(skillName))
@@ -181,6 +187,9 @@ public sealed class SkillTool(
 
         if (!_sessionLoaded.TryAdd(skill.Name, 0))
             return TextResult($"Skill '{skill.Name}' is already loaded.");
+
+        // Record the load as a use once it has actually been added to the session (#1833).
+        await RecordAsync(t => t.RecordUseAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
 
         return TextResult($"""
             ## Skill: {skill.Name}
@@ -223,7 +232,7 @@ public sealed class SkillTool(
     /// directory. The requested path is validated to prevent traversal, must resolve inside
     /// the skill directory, and honours the existing symlink/trust boundary checks.
     /// </summary>
-    private AgentToolResult ViewFile(IReadOnlyDictionary<string, object?> arguments)
+    private async Task<AgentToolResult> ViewFileAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
         var skillName = ReadString(arguments, "skillName");
         if (string.IsNullOrWhiteSpace(skillName))
@@ -265,12 +274,35 @@ public sealed class SkillTool(
         var content = _fileSystem.File.ReadAllText(targetPath);
         var normalized = relPath.Replace('\\', '/');
 
+        // Viewing a support file counts as a view of the owning skill (#1833).
+        await RecordAsync(t => t.RecordViewAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
+
         return TextResult($"""
             ## Skill file: {skill.Name}/{normalized}
             **Path:** {targetPath}
 
             {content}
             """);
+    }
+
+    /// <summary>
+    /// Runs a best-effort telemetry recording action. Telemetry is an observability side-channel:
+    /// a failure to record must never break skill listing/loading, so any exception (including a
+    /// transient SQLite lock) is swallowed. No-ops when no telemetry sink is configured.
+    /// </summary>
+    private async Task RecordAsync(Func<ISkillUsageTelemetry, Task> record)
+    {
+        if (telemetry is null)
+            return;
+
+        try
+        {
+            await record(telemetry).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort: telemetry must not affect the skill tool's result.
+        }
     }
 
     /// <summary>
