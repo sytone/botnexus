@@ -258,6 +258,9 @@ public static class GatewayServiceCollectionExtensions
         // Built-in tools
         services.AddBotNexusTools();
 
+        // Outbound fan-out delivery (#1811): focused collaborator extracted from GatewayHost.
+        services.TryAddSingleton<IOutboundResponseDeliverer, OutboundResponseDeliverer>();
+
         // Gateway host
         services.TryAddSingleton<GatewayHost>();
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
