@@ -4751,3 +4751,36 @@ h3.conversation-title.editable:hover {
     white-space: nowrap;
     color: var(--text-muted, #999);
 }
+/* ── Window Controls Overlay (installed PWA on Windows/desktop) ──────── */
+/* When the app runs as an installed PWA with window-controls-overlay,
+   the OS title bar is removed and the app banner spans the titlebar area.
+   Make the banner act as the draggable title bar, but keep interactive
+   controls (buttons, selects) non-draggable so clicks still work.
+   Uses the titlebar-area-* env() safe-area insets to avoid overlapping
+   the OS-drawn window control buttons. Non-installed browsers ignore this
+   block because the media feature does not match. */
+@media (display-mode: window-controls-overlay) {
+    .app-banner {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        left: env(titlebar-area-x, 0);
+        width: env(titlebar-area-width, 100%);
+        height: env(titlebar-area-height, auto);
+    }
+
+    .banner-header {
+        -webkit-app-region: drag;
+        app-region: drag;
+        padding-left: max(20px, env(titlebar-area-x, 0));
+    }
+
+    /* Interactive controls must remain clickable, not draggable. */
+    .banner-header button,
+    .banner-header select,
+    .banner-header a {
+        -webkit-app-region: no-drag;
+        app-region: no-drag;
+    }
+}
+
