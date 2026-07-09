@@ -419,6 +419,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         builder.AppendLine("## In Progress -- tool calls / sub-tasks mid-flight");
         builder.AppendLine("## Pending User Asks -- questions waiting for user response");
         builder.AppendLine("## Remaining Work -- planned but not started");
+        builder.AppendLine("## Relevant Files & Artifacts -- [path: why it matters, or (none)]");
+        builder.AppendLine();
+        builder.AppendLine("Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers when known.");
         builder.AppendLine();
         builder.AppendLine($"Keep the summary under {maxChars} characters.");
 
@@ -454,6 +457,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             builder.AppendLine("## In Progress -- tool calls / sub-tasks mid-flight");
             builder.AppendLine("## Pending User Asks -- questions waiting for user response");
             builder.AppendLine("## Remaining Work -- planned but not started");
+            builder.AppendLine("## Relevant Files & Artifacts -- [path: why it matters, or (none)]");
+            builder.AppendLine();
+            builder.AppendLine("Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers when known.");
             builder.AppendLine();
             builder.AppendLine($"Keep the summary under {maxChars} characters.");
             builder.AppendLine();
