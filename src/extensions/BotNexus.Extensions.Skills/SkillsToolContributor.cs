@@ -25,9 +25,15 @@ public sealed class SkillsToolContributor : IAgentToolContributor
         // Seed the global skills directory with an example skill on first use.
         SkillsSeeder.EnsureGlobalSkillsSeed(globalSkillsDir);
 
+        // Single implementation; the explicit aliases delegate to it and share its per-session
+        // loaded-skill state so all three tool names stay perfectly consistent (#1831).
+        var skillTool = new SkillTool(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, config);
+
         IReadOnlyList<IAgentTool> tools =
         [
-            new SkillTool(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, config)
+            skillTool,
+            SkillAliasTool.CreateListAlias(skillTool),
+            SkillAliasTool.CreateViewAlias(skillTool)
         ];
 
         return Task.FromResult(new AgentToolContribution(tools));
