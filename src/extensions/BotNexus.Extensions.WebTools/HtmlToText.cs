@@ -19,6 +19,24 @@ internal static partial class HtmlToText
     [GeneratedRegex(@"<(nav|footer|header)[^>]*?>.*?</\1>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex NavigationTagRegex();
 
+    // Matches an unterminated <script>/<style> opener - one with no closing </script>/</style>
+    // remaining in the input - and everything from it to end-of-input. Runs only after the
+    // well-formed script/style blocks have already been removed, so any surviving opener is
+    // by definition unterminated and its raw content must not leak into the output (#1825).
+    [GeneratedRegex(@"<(?:script|style)\b[\s\S]*$", RegexOptions.IgnoreCase)]
+    private static partial Regex UnterminatedRawTextRegex();
+
+    // Matches an unterminated <noscript> opener - one with no matching </noscript> ahead -
+    // and strips it to end-of-input. The negative lookahead preserves well-formed <noscript>
+    // blocks (whose text content is left in place by the existing tag-stripping pass).
+    [GeneratedRegex(@"<noscript\b(?![\s\S]*</noscript>)[\s\S]*$", RegexOptions.IgnoreCase)]
+    private static partial Regex UnterminatedNoscriptRegex();
+
+    // Matches a dangling tag tail at end-of-input: a '<' that starts a tag-like token but is
+    // never closed by a '>'. Dropped so malformed trailing markup is not emitted as text (#1825).
+    [GeneratedRegex(@"<[a-zA-Z!/][^>]*$", RegexOptions.None)]
+    private static partial Regex DanglingTagTailRegex();
+
     [GeneratedRegex(@"<a\s+[^>]*?href=[""']([^""']+)[""'][^>]*?>(.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex LinkTagRegex();
 
@@ -49,7 +67,14 @@ internal static partial class HtmlToText
         text = StyleTagRegex().Replace(text, string.Empty);
         text = NavigationTagRegex().Replace(text, string.Empty);
 
-        // Convert links to markdown format: <a href="url">text</a> → [text](url)
+        // Harden against malformed input (#1825): strip unterminated raw-text openers
+        // (<script>/<style>/<noscript> with no closing tag) from the opener to end-of-input
+        // so their content cannot leak, then drop a dangling tag tail with no closing '>'.
+        text = UnterminatedRawTextRegex().Replace(text, string.Empty);
+        text = UnterminatedNoscriptRegex().Replace(text, string.Empty);
+        text = DanglingTagTailRegex().Replace(text, string.Empty);
+
+        // Convert links to markdown format: <a href="url">text</a>  [text](url)
         text = LinkTagRegex().Replace(text, match =>
         {
             var url = match.Groups[1].Value;
