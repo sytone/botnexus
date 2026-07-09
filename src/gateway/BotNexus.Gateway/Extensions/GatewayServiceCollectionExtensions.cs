@@ -91,6 +91,7 @@ public static class GatewayServiceCollectionExtensions
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
                     SqliteWalCheckpointOptions.DefaultIntervalMinutes));
+            services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
 
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
