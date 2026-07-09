@@ -46,7 +46,7 @@ public sealed class SkillManagerTool(
 
     public Tool Definition => new(
         Name,
-        "Create, edit, patch, and delete skills, and manage supporting files within a skill directory. Only available when skill management is enabled for this agent.",
+        "Create, edit, patch, and delete skills and their supporting files. Create a skill when a complex task succeeded, errors were overcome, a user-corrected approach worked, a non-trivial workflow was discovered, or the user asks to remember a procedure. Update a skill when its instructions are stale, wrong, or missing pitfalls. Prefer patch over a full edit. A good skill has trigger conditions, numbered steps, exact commands, pitfalls, and verification steps; put reusable content in support files under references/, templates/, scripts/, or assets/. Avoid one-off PR/issue/session-artifact skills. Ask before creating or deleting skills in the foreground unless the user explicitly requested it. Only available when skill management is enabled for this agent.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -54,7 +54,7 @@ public sealed class SkillManagerTool(
                 "action": {
                   "type": "string",
                   "enum": ["create", "edit", "patch", "delete", "write_file", "remove_file"],
-                  "description": "Action to perform: 'create' - create a new skill; 'edit' - full rewrite of SKILL.md; 'patch' - targeted find-replace within a skill file; 'delete' - remove a skill; 'write_file' - write a supporting file (references/, templates/, scripts/, assets/); 'remove_file' - delete a supporting file."
+                  "description": "Action to perform: 'create' - create a new skill (create when a complex task succeeded, errors were overcome, a user-corrected approach worked, a non-trivial workflow was discovered, or the user asks to remember a procedure; ask first unless explicitly requested); 'edit' - full rewrite of SKILL.md (prefer 'patch' instead); 'patch' - targeted find-replace within a skill file, preferred over 'edit' for updates when instructions are stale, wrong, or missing pitfalls; 'delete' - remove a skill (ask first unless explicitly requested); 'write_file' - write a supporting file under references/, templates/, scripts/, or assets/ for reusable content; 'remove_file' - delete a supporting file. A good skill has trigger conditions, numbered steps, exact commands, pitfalls, and verification steps; avoid one-off PR/issue/session-artifact skills."
                 },
                 "name": {
                   "type": "string",
