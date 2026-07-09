@@ -47,6 +47,8 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalList(entry, "subAgents", descriptor.SubAgentIds);
             SetOptionalList(entry, "toolIds", descriptor.ToolIds);
             SetOptionalString(entry, "isolationStrategy", descriptor.IsolationStrategy);
+            SetOptionalString(entry, "thinking", descriptor.Thinking);
+            SetOptionalContextWindow(entry, "contextWindow", descriptor.ContextWindow);
             SetOptionalInt(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
             SetOptionalObject(entry, "metadata", descriptor.Metadata);
             SetOptionalObject(entry, "isolationOptions", descriptor.IsolationOptions);
@@ -100,6 +102,20 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         }
 
         target[propertyName] = value;
+    }
+
+    // Nullable int variant: absent (null) removes the key; any set value (including a large
+    // context window) is written verbatim. Distinct from SetOptionalInt, whose <=0 sentinel
+    // does not apply to a selectable context-window size.
+    private static void SetOptionalContextWindow(JsonObject target, string propertyName, int? value)
+    {
+        if (value is null)
+        {
+            target.Remove(propertyName);
+            return;
+        }
+
+        target[propertyName] = value.Value;
     }
 
     private static void SetOptionalObject(JsonObject target, string propertyName, IReadOnlyDictionary<string, object?> values)

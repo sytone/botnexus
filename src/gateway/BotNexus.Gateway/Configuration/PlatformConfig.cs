@@ -174,6 +174,15 @@ public sealed class GatewaySettingsConfig
     public string? SessionsDirectory { get; set; }
     /// <summary>Session store selection and configuration.</summary>
     public SessionStoreConfig? SessionStore { get; set; }
+
+    /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
+    [Display(
+        Name = "WAL checkpoint interval (min)",
+        Description = "Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Default 30.",
+        GroupName = "Gateway",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 3)]
+    public int? WalCheckpointIntervalMinutes { get; set; }
     /// <summary>Session compaction settings.</summary>
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
@@ -712,6 +721,34 @@ public sealed class AgentDefinitionConfig
     /// <summary>Prompt caching retention policy for this agent. Null means provider default (short) is used.</summary>
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.CacheRetention>))]
     public BotNexus.Agent.Providers.Core.Models.CacheRetention? CacheRetention { get; set; }
+    /// <summary>
+    /// Agent-level default thinking (reasoning) level. Agent layer of the three-layer
+    /// model/thinking/context override stack consumed by <c>ModelOverrideResolver</c>.
+    /// Null means "unset - inherit the model default". Validated against the selected
+    /// model's advertised capabilities when the descriptor is built; an unsupported value
+    /// causes the agent to be skipped at config load with a warning.
+    /// </summary>
+    [Display(
+        Name = "Thinking level",
+        Description = "Default reasoning effort this agent requests (validated against the model's capabilities).",
+        GroupName = "Agent",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 4)]
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.ThinkingLevel>))]
+    public BotNexus.Agent.Providers.Core.Models.ThinkingLevel? Thinking { get; set; }
+    /// <summary>
+    /// Agent-level default context-window size in tokens. Agent layer of the three-layer
+    /// override stack. Null means "unset - inherit the model default". Validated against the
+    /// selected model's advertised context sizes; an unsupported value causes the agent to be
+    /// skipped at config load with a warning.
+    /// </summary>
+    [Display(
+        Name = "Context window",
+        Description = "Default context-window size (tokens) this agent requests (validated against the model's capabilities).",
+        GroupName = "Agent",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
+    public int? ContextWindow { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>
     public int? MaxConcurrentSessions { get; set; }
     /// <summary>Agent-level metadata.</summary>

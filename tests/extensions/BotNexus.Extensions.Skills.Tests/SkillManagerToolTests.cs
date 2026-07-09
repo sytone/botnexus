@@ -518,4 +518,77 @@ public sealed class SkillManagerToolTests
         ResultText(result).ShouldContain("Error:");
         ResultText(result).ShouldContain("Unknown action");
     }
+
+    // ── schema description guidance ───────────────────────────────────────────
+
+    private static string SchemaText()
+    {
+        var fs = new MockFileSystem();
+        var tool = new SkillManagerTool(AgentSkillsDir, WorkspaceSkillsDir, EnabledConfig(), fs);
+        var def = tool.Definition;
+        var actionDesc = def.Parameters
+            .GetProperty("properties").GetProperty("action").GetProperty("description").GetString() ?? "";
+        return def.Description + "\n" + actionDesc;
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesCreationCriteria()
+    {
+        var text = SchemaText();
+        text.ShouldContain("complex task succeeded");
+        text.ShouldContain("errors were overcome");
+        text.ShouldContain("user-corrected approach");
+        text.ShouldContain("non-trivial workflow");
+        text.ShouldContain("remember a procedure");
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesUpdateCriteria()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("stale");
+        text.ShouldContain("pitfall");
+    }
+
+    [Fact]
+    public void Schema_Description_PrefersPatchOverEdit()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("prefer patch");
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesAvoidOneOffRule()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("avoid one-off");
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesQualityGuidance()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("trigger conditions");
+        text.ShouldContain("numbered steps");
+        text.ShouldContain("exact commands");
+        text.ShouldContain("verification steps");
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesSupportFileGuidance()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("references/");
+        text.ShouldContain("templates/");
+        text.ShouldContain("scripts/");
+        text.ShouldContain("assets/");
+    }
+
+    [Fact]
+    public void Schema_Description_IncludesAskBeforeForegroundRule()
+    {
+        var text = SchemaText().ToLowerInvariant();
+        text.ShouldContain("ask");
+        text.ShouldContain("explicitly requested");
+    }
 }

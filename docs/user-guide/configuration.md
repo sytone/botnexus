@@ -184,6 +184,8 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `provider` | string | (required) | Provider key (e.g., `copilot`, `anthropic`, `openai`) |
 | `model` | string | (required) | Default model ID for this agent |
 | `allowedModels` | array | `[]` | Models this agent can use. Empty = unrestricted within provider |
+| `thinking` | string | `null` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the 3-layer model/thinking/context override stack (model default -> agent -> conversation); `null` falls through to the model default. Rejected at registration if the selected model does not support it |
+| `contextWindow` | int | `null` | Agent-level default context-window size in tokens. Agent layer of the override stack; `null` falls through to the model default. Only sizes the model advertises as supported are accepted |
 | `systemPromptFiles` | array | `[]` | System prompt files to load (in order). Empty = default order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md` |
 | `systemPromptFile` | string | `null` | (Legacy) Single system prompt file path |
 | `toolIds` | array | `[]` | Tool identifiers this agent can use |

@@ -3,6 +3,8 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Persistence.Sqlite;
+using Microsoft.Data.Sqlite;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Citizens;
@@ -72,6 +74,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<DelayToolOptions>();
         services.AddOptions<FileWatcherToolOptions>();
         services.AddOptions<CompactionOptions>();
+        services.AddOptions<SqliteWalCheckpointOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -84,6 +87,10 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<AgentExchangeOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
+            services.Configure<SqliteWalCheckpointOptions>(o =>
+                o.IntervalMinutes = ParseInt(
+                    config["gateway:walCheckpointIntervalMinutes"],
+                    SqliteWalCheckpointOptions.DefaultIntervalMinutes));
             services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
 
             var compactionSection = config.GetSection("gateway:compaction");
@@ -224,15 +231,26 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IIsolationStrategy, DockerSandboxIsolationStrategy>();
         services.TryAddSingleton<IDockerSandboxRunner, NullDockerSandboxRunner>();
 
+        // SQLite WAL maintenance (#1438 Step 3): shared database registry + network-path detector
+        // consumed by the periodic checkpoint hosted service. Stores opt in by registering their
+        // resolved on-disk path with the registry as they are wired below.
+        services.TryAddSingleton<ISqliteDatabaseRegistry, SqliteDatabaseRegistry>();
+        services.TryAddSingleton<INetworkPathDetector>(sp =>
+            new NetworkPathDetector(sp.GetRequiredService<IFileSystem>()));
+
         // Extension state store
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
             var dbPath = Path.Combine(home.RootPath, "data", "extension-state.db");
+            serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(dbPath);
             var fs = serviceProvider.GetRequiredService<IFileSystem>();
             var storeLogger = serviceProvider.GetRequiredService<ILogger<SqliteExtensionStateStore>>();
             return new SqliteExtensionStateStore(dbPath, fs, storeLogger);
         });
+
+        // Periodic WAL checkpoint (#1438): PASSIVE on interval, TRUNCATE on shutdown.
+        services.AddHostedService<SqliteWalCheckpointHostedService>();
 
         // Memory pressure diagnostics
         services.AddSingleton<Diagnostics.MemoryPressureMonitor>();
@@ -354,7 +372,8 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
                 configDirectory,
                 serviceProvider.GetRequiredService<ILogger<PlatformConfigAgentSource>>(),
-                serviceProvider.GetRequiredService<ILocationResolver>()));
+                serviceProvider.GetRequiredService<ILocationResolver>(),
+                serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>()));
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
             CreatePlatformConfigWriter(
                 resolvedConfigPath,
@@ -445,6 +464,27 @@ public static class GatewayServiceCollectionExtensions
         return new PlatformConfigWriter(configPath, fileSystem, backup);
     }
 
+    /// <summary>
+    /// Extracts the on-disk data-source path from a SQLite connection string and registers it with
+    /// the shared <see cref="ISqliteDatabaseRegistry"/> so the periodic WAL checkpoint service (#1438)
+    /// includes it in each sweep. Best-effort: an unparseable connection string is skipped silently.
+    /// </summary>
+    private static void RegisterSqliteDatabasePath(IServiceProvider serviceProvider, string connectionString)
+    {
+        try
+        {
+            var dataSource = new SqliteConnectionStringBuilder(connectionString).DataSource;
+            if (!string.IsNullOrWhiteSpace(dataSource))
+            {
+                serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(dataSource);
+            }
+        }
+        catch
+        {
+            // Non-fatal: a connection string we cannot parse simply is not checkpointed.
+        }
+    }
+
     private static int ParseInt(string? value, int defaultValue)
         => int.TryParse(value, out var parsed) ? parsed : defaultValue;
 
@@ -526,10 +566,13 @@ public static class GatewayServiceCollectionExtensions
                 : $"Data Source={Path.Combine(dataDirectory, "sessions.sqlite")}";
 
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
-                new SqliteSessionStore(
+            {
+                RegisterSqliteDatabasePath(serviceProvider, connectionString);
+                return new SqliteSessionStore(
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
-                    serviceProvider.GetRequiredService<IConversationStore>())));
+                    serviceProvider.GetRequiredService<IConversationStore>());
+            }));
             return;
         }
 
@@ -584,10 +627,13 @@ public static class GatewayServiceCollectionExtensions
                 : $"Data Source={Path.Combine(dataDirectory, "sessions.sqlite")}";
 
             services.Replace(ServiceDescriptor.Singleton<IConversationStore>(serviceProvider =>
-                new SqliteConversationStore(
+            {
+                RegisterSqliteDatabasePath(serviceProvider, connectionString);
+                return new SqliteConversationStore(
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
-                    serviceProvider.GetService<IWorldContext>())));
+                    serviceProvider.GetService<IWorldContext>());
+            }));
 
             services.AddSingleton<IConversationAuditLog>(
                 new SqliteConversationAuditLog(connectionString));

@@ -601,6 +601,88 @@ public sealed class InProcessIsolationStrategyTests
             => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
     }
 
+    // #1705 -- agent-level thinking + context forwarding through ModelOverrideResolver into GenerationSettings
+
+    private static InProcessIsolationStrategy CreateStrategyWithReasoningModel()
+    {
+        var modelRegistry = new ModelRegistry();
+        modelRegistry.Register("test-provider", new LlmModel(
+            Id: "reasoning-model",
+            Name: "reasoning-model",
+            Api: "test-api",
+            Provider: "test-provider",
+            BaseUrl: "http://localhost",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 200_000,
+            MaxTokens: 64_000,
+            SupportsExtraHighThinking: true,
+            SupportsExtendedContextWindow: true));
+
+        var llmClient = new LlmClient(new ApiProviderRegistry(), modelRegistry);
+        return new InProcessIsolationStrategy(
+            llmClient,
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new PassthroughContextBuilder(),
+            new StaticAgentToolFactory(),
+            new TestWorkspaceManager(),
+            new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
+            new StubMemoryStoreFactory(),
+            new StubAgentMemoryFactory(),
+            new ServiceCollection().BuildServiceProvider(),
+            NullLogger<InProcessIsolationStrategy>.Instance);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithAgentThinkingAndContext_ForwardsToGenerationSettings()
+    {
+        var strategy = CreateStrategyWithReasoningModel();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "reasoning-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            Thinking = "high",
+            ContextWindow = 1_000_000
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-think") });
+
+        var options = GetAgentOptions(handle);
+        var settings = options.GenerationSettings.ShouldBeOfType<SimpleStreamOptions>();
+        settings.Reasoning.ShouldBe(ThinkingLevel.High);
+        settings.ContextWindow.ShouldBe(1_000_000);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutAgentThinking_LeavesReasoningUnset()
+    {
+        var strategy = CreateStrategyWithReasoningModel();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "reasoning-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent."
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-nothink") });
+
+        var options = GetAgentOptions(handle);
+        var settings = options.GenerationSettings.ShouldBeOfType<SimpleStreamOptions>();
+        settings.Reasoning.ShouldBeNull();
+        settings.ContextWindow.ShouldBeNull();
+    }
+
     // #803 -- CacheRetention forwarding from AgentDescriptor to GenerationSettings
 
     [Fact]

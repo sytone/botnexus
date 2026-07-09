@@ -43,8 +43,12 @@ public sealed class SqliteBusyTimeoutArchitectureTests
         "src/gateway/BotNexus.Gateway.Conversations/SqliteConversationStore.cs",
     };
 
+    // Post-#1541: the busy_timeout policy is owned by the shared SqliteConnectionFactory, which
+    // attaches a StateChange Open-handler that applies `PRAGMA busy_timeout` on every open. A store
+    // satisfies the fence either by the literal inline pragma (legacy shape) OR by routing through
+    // the factory (SqliteConnectionFactory.Create / AttachBusyTimeout).
     private static readonly Regex BusyTimeoutPragma =
-        new(@"PRAGMA\s+busy_timeout", RegexOptions.IgnoreCase);
+        new(@"PRAGMA\s+busy_timeout|SqliteConnectionFactory\.(Create|AttachBusyTimeout)", RegexOptions.IgnoreCase);
 
     // Post-#1436: the seven unblocked stores delegate journal-mode selection to the shared
     // SqliteWalMaintenance helper (WAL on local disk, DELETE on network mounts) instead of an

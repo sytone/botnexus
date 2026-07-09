@@ -143,6 +143,67 @@ public sealed class SkillsGuidanceSectionTests
     }
 
     [Fact]
+    public void Build_RequiresLoadingPartiallyRelevantSkills()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithSkillTools);
+        var text = string.Join("\n", lines);
+
+        // Mandatory-load language (Hermes pattern): even partially-relevant skills MUST be loaded.
+        text.ShouldContain("partially", Case.Insensitive);
+        text.ShouldContain("MUST", Case.Sensitive);
+        lines.ShouldContain(l =>
+            l.Contains("partially", StringComparison.OrdinalIgnoreCase)
+            && l.Contains("load", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_ContainsPatchStaleSkillDirective()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithSkillTools);
+
+        lines.ShouldContain(l =>
+            l.Contains("patch", StringComparison.OrdinalIgnoreCase)
+            && l.Contains("skill_manage", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_ContainsSaveReusableProcedureDirective()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithSkillTools);
+        var text = string.Join("\n", lines);
+
+        text.ShouldContain("reusable", Case.Insensitive);
+    }
+
+    [Fact]
+    public void Build_ContainsUmbrellaPreferenceOverOneOff()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithSkillTools);
+
+        lines.ShouldContain(l =>
+            l.Contains("umbrella", StringComparison.OrdinalIgnoreCase)
+            && l.Contains("one-off", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_ContainsDoNotImproviseDirective()
+    {
+        var section = SkillsGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithSkillTools);
+
+        lines.ShouldContain(l => l.Contains("improvise", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void OrderIsAfterToolEnforcement()
     {
         SkillsGuidanceSection.SectionOrder.ShouldBeGreaterThan(ToolEnforcementSection.SectionOrder);

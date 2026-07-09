@@ -491,6 +491,125 @@ public sealed class AgentManagementToolTests
         result.Content[0].Value.ShouldNotContain("error");
     }
 
+
+    // --- PBI4 (#1705): thinking + context defaults validated against model capabilities ---
+
+    private static ModelRegistry MakeCapabilityRegistry()
+    {
+        var registry = new ModelRegistry();
+        // Reasoning model with extended context: supports thinking levels and 200K/1M windows.
+        registry.Register("anthropic", new LlmModel(
+            Id: "claude-reasoning",
+            Name: "Claude Reasoning",
+            Api: "anthropic-messages",
+            Provider: "anthropic",
+            BaseUrl: "https://example.invalid",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 200_000,
+            MaxTokens: 64_000,
+            SupportsExtraHighThinking: true,
+            SupportsExtendedContextWindow: true));
+        // Non-reasoning, fixed-window model: any thinking or non-default context is invalid.
+        registry.Register("anthropic", new LlmModel(
+            Id: "claude-plain",
+            Name: "Claude Plain",
+            Api: "anthropic-messages",
+            Provider: "anthropic",
+            BaseUrl: "https://example.invalid",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 128_000,
+            MaxTokens: 16_000));
+        return registry;
+    }
+
+    [Fact]
+    public async Task CreateAgent_WithSupportedThinkingAndContext_PersistsThem()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "thinky-agent"),
+            ("displayName", "Thinky"),
+            ("modelId", "claude-reasoning"),
+            ("apiProvider", "anthropic"),
+            ("thinking", "high"),
+            ("contextWindow", 1_000_000)));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        registry.Verify(r => r.Register(It.Is<AgentDescriptor>(d =>
+            d.Thinking == "high" && d.ContextWindow == 1_000_000)), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAgent_WithThinkingOnNonReasoningModel_ReturnsErrorAndDoesNotRegister()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "bad-agent"),
+            ("displayName", "Bad"),
+            ("modelId", "claude-plain"),
+            ("apiProvider", "anthropic"),
+            ("thinking", "high")));
+
+        result.Content[0].Value.ShouldContain("error");
+        registry.Verify(r => r.Register(It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAgent_WithUnsupportedContextWindow_ReturnsErrorAndDoesNotRegister()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "bad-agent"),
+            ("displayName", "Bad"),
+            ("modelId", "claude-reasoning"),
+            ("apiProvider", "anthropic"),
+            ("contextWindow", 999_999)));
+
+        result.Content[0].Value.ShouldContain("error");
+        registry.Verify(r => r.Register(It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAgent_WithSupportedThinking_PersistsIt()
+    {
+        var existing = MakeDescriptor("thinky-agent") with { ModelId = "claude-reasoning", ApiProvider = "anthropic" };
+        var (registry, writer, home, notifier) = MakeDeps(agentExists: true, existingId: "thinky-agent", existingDescriptor: existing);
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], null, MakeCapabilityRegistry());
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "thinky-agent"),
+            ("thinking", "medium")));
+
+        result.Content[0].Value.ShouldNotContain("error");
+        registry.Verify(r => r.Update(AgentId.From("thinky-agent"),
+            It.Is<AgentDescriptor>(d => d.Thinking == "medium")), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateAgent_WithUnsupportedThinking_ReturnsErrorAndDoesNotUpdate()
+    {
+        var existing = MakeDescriptor("thinky-agent") with { ModelId = "claude-plain", ApiProvider = "anthropic" };
+        var (registry, writer, home, notifier) = MakeDeps(agentExists: true, existingId: "thinky-agent", existingDescriptor: existing);
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], null, MakeCapabilityRegistry());
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "thinky-agent"),
+            ("thinking", "high")));
+
+        result.Content[0].Value.ShouldContain("error");
+        registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
     private sealed class FakeProvider(string api) : IApiProvider
     {
         public string Api => api;
