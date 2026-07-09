@@ -227,14 +227,21 @@ public sealed class FanOutRedundantReadTests
 
     private static Task InvokeFanOutAsync(GatewayHost host, InboundMessage message, string sessionId, string? lastAssistantContent, ConversationId conversationId)
     {
-        var method = typeof(GatewayHost).GetMethod("FanOutResponseAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (Task)method.Invoke(host, [message, SessionId.From(sessionId), lastAssistantContent, conversationId, CancellationToken.None])!;
+        // #1811: fan-out delivery was extracted from GatewayHost into IOutboundResponseDeliverer.
+        // GatewayHost builds one internally when a conversation router is supplied; drive it directly
+        // through the collaborator the host now delegates to (public FanOutAsync entry point).
+        var deliverer = GetDeliverer(host);
+        return deliverer.FanOutAsync(message, SessionId.From(sessionId), lastAssistantContent, conversationId, CancellationToken.None);
     }
 
     private static Task InvokeDeliverToBindingAsync(GatewayHost host, ChannelBinding binding, string content, string sessionId, ConversationId conversationId)
     {
-        var method = typeof(GatewayHost).GetMethod("DeliverToBindingAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (Task)method.Invoke(host, [binding, content, SessionId.From(sessionId), conversationId, CancellationToken.None])!;
+        // #1811: DeliverToBindingAsync moved onto OutboundResponseDeliverer. Reach the private per-binding
+        // delivery unit on the collaborator the host delegates to so the stale-heal / swallow behaviour
+        // stays directly exercised post-extraction.
+        var deliverer = GetDeliverer(host);
+        var method = deliverer.GetType().GetMethod("DeliverToBindingAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (Task)method.Invoke(deliverer, [binding, content, SessionId.From(sessionId), conversationId, CancellationToken.None])!;
     }
 
     // ── harness ──────────────────────────────────────────────────────────────
@@ -360,6 +367,13 @@ public sealed class FanOutRedundantReadTests
     /// test can assert the fan-out path makes no redundant store read (#1394). All other operations
     /// forward to the inner store unchanged.
     /// </summary>
+    // #1811: resolves the IOutboundResponseDeliverer GatewayHost builds internally (from the conversation
+    // router these tests supply) so fan-out behaviour is exercised through the extracted collaborator.
+    private static BotNexus.Gateway.IOutboundResponseDeliverer GetDeliverer(GatewayHost host)
+    {
+        var field = typeof(GatewayHost).GetField("_deliverer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (BotNexus.Gateway.IOutboundResponseDeliverer)field.GetValue(host)!;
+    }
     private sealed class CountingSessionStore(InMemorySessionStore inner) : ISessionStore
     {
         private int _getCount;

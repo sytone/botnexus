@@ -66,6 +66,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IActivityTracker? _activityTracker;
     private readonly IActiveLoopTracker? _activeLoopTracker;
     private readonly GatewayAuthManager? _authManager;
+    private readonly IOutboundResponseDeliverer _deliverer;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -91,7 +92,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IConversationChangeNotifier? conversationChangeNotifier = null,
         IActivityTracker? activityTracker = null,
         IActiveLoopTracker? activeLoopTracker = null,
-        GatewayAuthManager? authManager = null)
+        GatewayAuthManager? authManager = null,
+        IOutboundResponseDeliverer? outboundResponseDeliverer = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -113,6 +115,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _activityTracker = activityTracker;
         _activeLoopTracker = activeLoopTracker;
         _authManager = authManager;
+        // Outbound fan-out delivery is a focused collaborator (#1811). Tests that construct
+        // GatewayHost directly may not provide one; build a fallback from the deps we already
+        // have so behaviour matches production. When no conversation router is configured there
+        // is nothing to fan out to, so a null-object deliverer preserves the prior no-op path.
+        _deliverer = outboundResponseDeliverer
+            ?? (conversationRouter is not null
+                ? new OutboundResponseDeliverer(
+                    conversationRouter,
+                    channelManager,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboundResponseDeliverer>.Instance)
+                : NullOutboundResponseDeliverer.Instance);
         // Wire up the auto-title service when the required dependencies are present. The auth
         // manager is threaded through so the titling call applies the same per-provider
         // API-endpoint override the live agent path uses (#1636).
@@ -693,7 +706,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 // the store purely to recover the last assistant entry (#1394).
                 var lastAssistantContent = session.GetHistorySnapshot()
                     .LastOrDefault(e => e.Role == MessageRole.Assistant)?.Content;
-                await FanOutResponseAsync(message, typedSessionId, lastAssistantContent, session.ConversationId, cancellationToken);
+                await _deliverer.FanOutAsync(message, typedSessionId, lastAssistantContent, session.ConversationId, cancellationToken);
 
                 // Bump UpdatedAt on the conversation so the portal list ordering and
                 // retention thresholds reflect the time of the last message, not the
@@ -1381,144 +1394,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     }
 
     /// <summary>
-    /// Delivers the just-produced assistant reply to every other binding in the conversation.
-    /// </summary>
-    /// <remarks>
-    /// The caller already holds the assistant content (it just generated and delivered it) and the
-    /// conversation id (from the in-memory session it just saved), so both are passed in. This avoids
-    /// the previously redundant <c>ISessionStore.GetAsync</c> round-trip + history re-scan that ran on
-    /// every multi-binding fan-out purely to recover content the caller already had (#1394). On the
-    /// SQLite backend that re-read is itself the multi-query path (#1379), so eliminating it removes
-    /// real I/O from the common outbound path.
-    /// </remarks>
-    /// <param name="message">The originating inbound message (used to exclude its own binding).</param>
-    /// <param name="typedSessionId">The session whose bindings to fan out to.</param>
-    /// <param name="lastAssistantContent">The assistant reply to deliver. When null/empty there is nothing to fan out.</param>
-    /// <param name="conversationId">The conversation id, used to demote stale bindings to Muted on self-heal.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    private async Task FanOutResponseAsync(
-        InboundMessage message,
-        SessionId typedSessionId,
-        string? lastAssistantContent,
-        ConversationId conversationId,
-        CancellationToken cancellationToken)
-    {
-        if (_conversationRouter is null)
-            return;
-
-        // Nothing to deliver — e.g. a NO_REPLY turn that produced no assistant entry. Preserves the
-        // prior behaviour where a missing last-assistant entry short-circuited the fan-out.
-        if (string.IsNullOrEmpty(lastAssistantContent))
-            return;
-
-        try
-        {
-            var otherBindings = await _conversationRouter.GetOutboundBindingsAsync(
-                typedSessionId,
-                message.BindingId,
-                cancellationToken);
-
-            if (otherBindings.Count == 0)
-                return;
-
-            foreach (var binding in otherBindings)
-                await DeliverToBindingAsync(binding, lastAssistantContent, typedSessionId, conversationId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", typedSessionId.Value);
-        }
-    }
-
-    /// <summary>
-    /// Delivers a single fan-out message to one binding, with stale-binding self-heal.
-    /// </summary>
-    /// <remarks>
-    /// Extracted from <see cref="FanOutResponseAsync"/> (#1394 Finding 2) so the resolve-adapter →
-    /// send → catch-stale → demote-to-Muted unit is a flat, independently testable method rather than
-    /// logic buried ~5 levels deep inside two try blocks and a foreach. A stale connection demotes the
-    /// binding to Muted (so future fan-outs skip it); any other send failure is logged and swallowed so
-    /// one bad binding never blocks delivery to the rest.
-    /// </remarks>
-    private async Task DeliverToBindingAsync(
-        ChannelBinding binding,
-        string content,
-        SessionId typedSessionId,
-        ConversationId conversationId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Cron sessions create conversation bindings with channel type "cron" which
-            // has no registered adapter (by design). Skip silently to avoid log noise.
-            if (IsNonDeliverableChannel(binding.ChannelType))
-            {
-                _logger.LogDebug(
-                    "Fan-out: skipping non-deliverable channel type '{ChannelType}' (binding {BindingId}).",
-                    binding.ChannelType,
-                    binding.BindingId);
-                return;
-            }
-
-            var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
-            if (adapter is null)
-            {
-                _logger.LogWarning(
-                    "Fan-out: no channel adapter for type '{ChannelType}' (binding {BindingId}). Skipping.",
-                    binding.ChannelType,
-                    binding.BindingId);
-                return;
-            }
-
-            await adapter.SendAsync(new OutboundMessage
-            {
-                ChannelType = binding.ChannelType,
-                ChannelAddress = binding.ChannelAddress,
-                Content = content,
-                SessionId = typedSessionId.Value,
-                // Binding-aware fields: let the adapter render prefix decoration when
-                // configured. Native sub-addresses (e.g. Telegram forum topics) are
-                // already encoded in ChannelAddress by the originating adapter.
-                BindingId = binding.BindingId,
-                DisplayPrefix = binding.DisplayPrefix
-            }, cancellationToken);
-
-            _logger.LogDebug(
-                "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
-                binding.ChannelType, binding.ChannelAddress, typedSessionId.Value);
-        }
-        catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
-        {
-            // Self-heal: demote stale bindings to Muted so future fan-outs skip them.
-            _logger.LogWarning(
-                ex,
-                "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
-                ex.BindingId, ex.ConversationId);
-
-            if (_conversationRouter is not null && conversationId.IsInitialized())
-                await _conversationRouter.MuteBindingAsync(conversationId, ex.BindingId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Fan-out failed for binding {BindingId} ({ChannelType}:{ChannelAddress}). Continuing.",
-                binding.BindingId, binding.ChannelType, binding.ChannelAddress);
-        }
-    }
-
-    /// <summary>
     /// Channel types that are not deliverable (no adapter exists by design).
     /// Fan-out skips these silently at DEBUG level instead of logging a WARNING.
+    /// Delegates to <see cref="OutboundResponseDeliverer"/>, the owner of the outbound
+    /// fan-out cluster (#1811); kept here as the stable classification surface for callers/tests.
     /// </summary>
-    internal static readonly HashSet<string> NonDeliverableChannels = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "cron",
-        "exchange"
-    };
+    internal static IReadOnlySet<string> NonDeliverableChannels => OutboundResponseDeliverer.NonDeliverableChannels;
 
     internal static bool IsNonDeliverableChannel(ChannelKey channelType) =>
-        NonDeliverableChannels.Contains(channelType.Value);
+        OutboundResponseDeliverer.IsNonDeliverableChannel(channelType);
 
     private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType, string? adapterId = null)
     {
