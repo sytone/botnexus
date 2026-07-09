@@ -46,4 +46,16 @@ public interface IPortalLoadService
     /// Intended for mobile app-resume and manual refresh flows.
     /// </summary>
     Task RefreshAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Liveness-verified hub reset for mobile app resume (#1838). On foreground return, iOS may
+    /// have silently recycled the background WebSocket, leaving <see cref="IsSignalRConnected"/>
+    /// reporting connected on a dead "zombie" socket. This probes the hub with a short-timeout
+    /// round-trip; on success the existing connection is kept (equivalent to <see cref="RefreshAsync"/>),
+    /// and on probe failure the connection is torn down and rebuilt with a fresh negotiate before
+    /// refreshing. A reentrancy guard collapses rapid visibility toggles to a single reset so
+    /// concurrent rebuilds cannot stack.
+    /// </summary>
+    /// <returns>The outcome describing whether the connection was kept alive, rebuilt, or skipped.</returns>
+    Task<HubResumeOutcome> ResumeAsync(CancellationToken cancellationToken = default);
 }

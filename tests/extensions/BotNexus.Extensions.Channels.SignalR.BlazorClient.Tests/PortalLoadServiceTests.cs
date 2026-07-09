@@ -221,4 +221,16 @@ public sealed class PortalLoadServiceTests
         Assert.True(agent.Conversations.ContainsKey("fresh-conv"));
         Assert.False(agent.Conversations.ContainsKey("stale-conv"));
     }
+
+    /// <summary>
+    /// #1838: ResumeAsync is a no-op that reports <see cref="HubResumeOutcome.Skipped"/> before the
+    /// initial load has established a hub URL. There is no live connection to probe or rebuild yet,
+    /// so a stray resume (e.g. a visibility event that races startup) must not attempt a reset.
+    /// </summary>
+    [Fact]
+    public async Task ResumeAsync_BeforeInitialize_ReturnsSkipped()
+    {
+        var outcome = await _service.ResumeAsync();
+        outcome.ShouldBe(HubResumeOutcome.Skipped);
+    }
 }

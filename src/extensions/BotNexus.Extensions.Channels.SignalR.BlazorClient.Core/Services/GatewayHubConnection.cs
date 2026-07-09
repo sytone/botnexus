@@ -188,6 +188,62 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     public async Task<SubscribeAllResult> SubscribeAllAsync()
         => await _connection!.InvokeAsync<SubscribeAllResult>("SubscribeAll");
 
+    /// <summary>
+    /// Performs a lightweight liveness round-trip against the hub (#1838). Invokes the server
+    /// <c>Ping</c> method under the supplied cancellation token so callers can bound it with a
+    /// short timeout. Unlike <see cref="IsConnected"/> -- which merely reflects the client-side
+    /// <see cref="HubConnectionState"/> and stays <c>Connected</c> on an iOS zombie socket -- a
+    /// completed Ping proves the transport is alive end-to-end. Returns <c>false</c> when there is
+    /// no connection, when the round-trip throws, or when it is cancelled by the timeout.
+    /// </summary>
+    /// <param name="cancellationToken">Fires after the caller''s short probe timeout.</param>
+    /// <returns><c>true</c> when the Ping round-trip completed; otherwise <c>false</c>.</returns>
+    public async Task<bool> ProbeAsync(CancellationToken cancellationToken = default)
+    {
+        if (_connection is null)
+            return false;
+
+        try
+        {
+            _ = await _connection.InvokeAsync<long>("Ping", cancellationToken);
+            return true;
+        }
+        catch
+        {
+            // Any failure -- cancellation by the short timeout, a dead socket surfacing as an
+            // invocation error, or the connection dropping mid-probe -- means the connection is
+            // not verifiably alive, so the caller must rebuild rather than trust it.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Stops and disposes the current connection so the next <see cref="ConnectAsync"/> performs a
+    /// fresh negotiate (#1838). Used by the app-resume reset when the liveness probe fails: the
+    /// zombie connection is torn down explicitly rather than waiting on Blazor''s reconnect budget.
+    /// Safe to call when no connection exists. After this returns, <see cref="IsConnected"/> is
+    /// <c>false</c> and handlers registered on the old connection are gone (a rebuild re-registers).
+    /// </summary>
+    public async Task StopAndDisposeAsync()
+    {
+        var connection = _connection;
+        _connection = null;
+        if (connection is null)
+            return;
+
+        try
+        {
+            await connection.StopAsync();
+        }
+        catch
+        {
+            // A zombie/half-open socket can throw on StopAsync; dispose still needs to run to
+            // release the transport, so the stop failure is swallowed deliberately.
+        }
+
+        await connection.DisposeAsync();
+    }
+
     /// <summary>Send a message to the specified agent, optionally targeting a specific conversation.</summary>
     public async Task<SendMessageResult> SendMessageAsync(string agentId, string channelType, string content, string? conversationId = null)
     {

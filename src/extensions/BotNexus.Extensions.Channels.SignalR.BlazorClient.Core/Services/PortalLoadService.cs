@@ -11,6 +11,9 @@ public sealed class PortalLoadService : IPortalLoadService
     private readonly IGatewayEventHandler _eventHandler;
     private readonly IAgentInteractionService? _agentInteraction;
 
+    // Serialises app-resume resets and enforces the liveness-probe-then-rebuild algorithm (#1838).
+    private readonly HubResumeCoordinator _resumeCoordinator = new();
+
     private string? _hubUrl;
 
     public bool IsReady { get; private set; }
@@ -282,5 +285,43 @@ public sealed class PortalLoadService : IPortalLoadService
         {
             Console.Error.WriteLine($"[PortalLoadService] RefreshAsync failed: {ex.Message}");
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<HubResumeOutcome> ResumeAsync(CancellationToken cancellationToken = default)
+    {
+        // Nothing to reset before the initial load has established a hub URL.
+        if (_hubUrl is null)
+            return HubResumeOutcome.Skipped;
+
+        return await _resumeCoordinator.ResumeAsync(
+            probe: token => _hub.ProbeAsync(token),
+            rebuild: RebuildConnectionAsync,
+            refresh: () => RefreshAsync(cancellationToken));
+    }
+
+    /// <summary>
+    /// Tears down the (zombie) hub connection and rebuilds it through the shared
+    /// <see cref="GatewayHubConnection.ConnectAsync"/> path -- fresh negotiate, handler
+    /// re-registration -- then re-subscribes so the connection resumes receiving streaming and
+    /// conversation events. Hub construction logic is not forked: the same ConnectAsync used at
+    /// initial load rebuilds here (#1838).
+    /// </summary>
+    private async Task RebuildConnectionAsync()
+    {
+        await _hub.StopAndDisposeAsync();
+        await _hub.ConnectAsync(_hubUrl!, ClientKind);
+
+        // Re-wire connection-state notifications on the fresh connection so the UI keeps
+        // reflecting reconnecting/reconnected/disconnected transitions after the reset.
+        _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
+        _hub.OnReconnected += () => OnConnectionStateChanged?.Invoke();
+        _hub.OnDisconnected += () => OnConnectionStateChanged?.Invoke();
+
+        var subscribeResult = await _hub.SubscribeAllAsync();
+        foreach (var session in subscribeResult.Sessions)
+            _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+
+        OnConnectionStateChanged?.Invoke();
     }
 }

@@ -58,7 +58,10 @@ public sealed class ConversationRowMapperTests
                 1 AS is_pinned,
                 '2026-03-04T05:06:07.0000000+00:00' AS pinned_at,
                 '[{"id":"t"}]' AS todo_json,
-                '{"q":1}' AS pending_ask_user_json
+                '{"q":1}' AS pending_ask_user_json,
+                'gpt-4.1' AS model_override,
+                'high' AS thinking_override,
+                200000 AS context_window_override
             """);
 
         var conversation = ConversationRowMapper.MapConversation(reader);
@@ -81,6 +84,9 @@ public sealed class ConversationRowMapperTests
         conversation.PinnedAt.ShouldBe(DateTimeOffset.Parse("2026-03-04T05:06:07.0000000+00:00"));
         conversation.TodoJson.ShouldBe("[{\"id\":\"t\"}]");
         conversation.PendingAskUserJson.ShouldBe("{\"q\":1}");
+        conversation.ModelOverride.ShouldBe("gpt-4.1");
+        conversation.ThinkingOverride.ShouldBe("high");
+        conversation.ContextWindowOverride.ShouldBe(200000);
     }
 
     [Fact]
@@ -107,7 +113,10 @@ public sealed class ConversationRowMapperTests
                 0 AS is_pinned,
                 NULL AS pinned_at,
                 NULL AS todo_json,
-                NULL AS pending_ask_user_json
+                NULL AS pending_ask_user_json,
+                NULL AS model_override,
+                NULL AS thinking_override,
+                NULL AS context_window_override
             """);
 
         var conversation = ConversationRowMapper.MapConversation(reader);
@@ -124,6 +133,9 @@ public sealed class ConversationRowMapperTests
         conversation.PinnedAt.ShouldBeNull();
         conversation.TodoJson.ShouldBeNull();
         conversation.PendingAskUserJson.ShouldBeNull();
+        conversation.ModelOverride.ShouldBeNull();
+        conversation.ThinkingOverride.ShouldBeNull();
+        conversation.ContextWindowOverride.ShouldBeNull();
     }
 
     [Fact]

@@ -223,8 +223,50 @@ The `ThreadingMode` on a binding controls outbound formatting:
 
 ---
 
-## Conversation lifecycle
+## Per-conversation model, reasoning, and context override
 
+By default every session in a conversation runs on the agent's configured model, thinking level,
+and context window. You can override any of these for a single conversation without changing the
+agent - useful when one thread needs a stronger model, deeper reasoning, or a smaller context
+window to save cost.
+
+The override sits at the **top** of a three-layer precedence stack resolved per field:
+
+```
+model defaults  <  agent configuration  <  conversation override   (most specific wins)
+```
+
+Each field is resolved independently. Overriding only the reasoning level for a conversation still
+inherits the agent's model and context window; the other two fields fall through unchanged.
+
+### Setting an override
+
+- **Portal** - open the conversation's override picker, choose a model / reasoning level / context
+  window, and save. Clearing a field reverts it to the agent default.
+- **Slash commands** (any channel):
+  - `/model` shows the current model override; `/model <model-id>` sets it; `/model clear` reverts to
+    the agent default.
+  - `/reasoning` shows the current thinking override; `/reasoning <minimal|low|medium|high|xhigh|max>`
+    sets it; `/reasoning clear` reverts to the agent default.
+- **REST API**:
+  - `PUT /api/conversations/{id}/override` with a JSON body of `{ "model": ..., "thinking": ...,
+    "contextWindow": ... }`. Any field left null clears that single override.
+  - `DELETE /api/conversations/{id}/override` clears all three back to the agent default.
+
+### Validation
+
+Overrides are validated against the resolved model's capabilities before they are stored. A thinking
+level a model cannot express (for example a top-tier reasoning level on a model that does not support
+it, or any reasoning override on a non-reasoning model) is rejected, as is a context window larger
+than the model's maximum. Invalid requests return `400` and leave the existing override untouched.
+
+Overrides persist across gateway restarts and apply to the next session started in the conversation.
+Clearing an override removes it durably - the conversation immediately falls back to the agent
+default.
+
+---
+
+## Conversation lifecycle
 ```
 Created ──► Active ──► Archived
                          (read-only)
@@ -248,6 +290,7 @@ For a virtual cron conversation the action is labelled **Close conversation** in
 |---|---|---|
 | Conversation history | Yes | SQLite (`~/.botnexus/sessions.sqlite`) |
 | Channel bindings | Yes | SQLite |
+| Model / reasoning / context override | Yes | SQLite (conversation row) |
 | Session context (agent memory) | Yes — if session is still Active | SQLite (`~/.botnexus/sessions.sqlite`) |
 | Streaming state | No | In-process only |
 | SignalR connection | No | Reconnects on page load |

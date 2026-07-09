@@ -159,4 +159,33 @@ public sealed record Conversation
     /// </para>
     /// </remarks>
     public List<SessionParticipant> Participants { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the per-conversation model override - the model identifier that beats the
+    /// agent's configured default for every session in this conversation. <c>null</c> means no
+    /// conversation-level override is set, so resolution falls through to the agent layer (see
+    /// <c>ModelOverrideResolver</c>, PBI5 / issue #1706). Persisted on the conversation row
+    /// alongside <see cref="Instructions"/> and <see cref="TodoJson"/>; the store treats it as an
+    /// opaque model-id string and does not validate it (capability validation happens at the API
+    /// boundary before the value is stored).
+    /// </summary>
+    public string? ModelOverride { get; set; }
+
+    /// <summary>
+    /// Gets or sets the per-conversation thinking-level override as its wire token (e.g.
+    /// <c>minimal</c>, <c>low</c>, <c>medium</c>, <c>high</c>, <c>xhigh</c>, <c>max</c>). <c>null</c>
+    /// means no conversation-level override, so resolution falls through to the agent layer.
+    /// Stored as the opaque token string mirroring the <see cref="ModelOverride"/> pattern so the
+    /// domain layer does not take a dependency on the provider enum; the API boundary parses and
+    /// validates it against the resolved model's capabilities before persistence (issue #1706).
+    /// </summary>
+    public string? ThinkingOverride { get; set; }
+
+    /// <summary>
+    /// Gets or sets the per-conversation context-window override in tokens. <c>null</c> means no
+    /// conversation-level override, so resolution falls through to the agent layer. Validated at the
+    /// API boundary against the resolved model's maximum context window before persistence
+    /// (issue #1706).
+    /// </summary>
+    public int? ContextWindowOverride { get; set; }
 }

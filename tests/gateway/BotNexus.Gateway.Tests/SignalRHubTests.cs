@@ -29,6 +29,22 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class SignalRHubTests
 {
+    /// <summary>
+    /// #1838: the lightweight Ping method is the client-side liveness probe used on mobile app
+    /// resume. It must complete with a non-negative server tick value so a completed round-trip
+    /// proves the transport is alive end-to-end (unlike client-side HubConnectionState, which
+    /// stays Connected on an iOS zombie socket).
+    /// </summary>
+    [Fact]
+    public async Task GatewayHub_Ping_ReturnsServerTicks()
+    {
+        var hub = CreateHubForTest();
+
+        var ticks = await hub.Ping();
+
+        ticks.ShouldBeGreaterThan(0L);
+    }
+
     [Fact]
     public async Task GatewayHub_OnConnected_SendsConnectionInfo()
     {
