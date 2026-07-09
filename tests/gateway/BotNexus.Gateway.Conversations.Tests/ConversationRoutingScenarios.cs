@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 using Moq;
 using Shouldly;
 
-namespace BotNexus.Gateway.ConversationTests;
+namespace BotNexus.Gateway.Conversations.Tests;
 
 /// <summary>
 /// End-to-end conversation routing scenarios using real in-memory stores and a real
