@@ -16,6 +16,12 @@ public static class SkillDiscovery
     private const long MaxSkillFileBytes = 524_288; // 512 KB
 
     /// <summary>
+    /// Top-level support directories whose contents are surfaced as load-on-demand
+    /// linked files. Mirrors the allowed supporting directories in SkillManagerTool.
+    /// </summary>
+    private static readonly string[] LinkedFileDirs = ["references", "templates", "scripts", "assets"];
+
+    /// <summary>
     /// Discovers and merges skills from global, agent, and workspace directories.
     /// </summary>
     /// <param name="globalSkillsDir">Optional path to the global skills directory.</param>
@@ -108,20 +114,65 @@ public static class SkillDiscovery
 
                         // Warn mode: log but allow
                         logger?.LogWarning(
-                            "Skill at '{SkillDir}' has trust violations ({Violations}) — loading anyway (trust mode: warn).",
+                            "Skill at '{SkillDir}' has trust violations ({Violations}) - loading anyway (trust mode: warn).",
                             skillDir, violations);
                     }
                 }
 
-                skills[skill.Name] = skill;
+                // Enrich the skill with its bundled support files so they can be surfaced
+                // as load-on-demand context without injecting the entire directory.
+                skills[skill.Name] = skill with { LinkedFiles = DiscoverLinkedFiles(skillDir, fileSystem) };
             }
             catch (Exception ex)
             {
                 logger?.LogWarning(ex,
-                    "Skill at '{SkillDir}' skipped: SKILL.md could not be loaded — {Message}.",
+                    "Skill at '{SkillDir}' skipped: SKILL.md could not be loaded - {Message}.",
                     skillDir, ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Enumerates support files under the well-known linked-file directories
+    /// (references/, templates/, scripts/, assets/) for a single skill. Paths are returned
+    /// relative to the skill directory with forward slashes for cross-platform stability.
+    /// </summary>
+    private static IReadOnlyList<SkillLinkedFile> DiscoverLinkedFiles(string skillDir, IFileSystem fileSystem)
+    {
+        var linked = new List<SkillLinkedFile>();
+
+        foreach (var group in LinkedFileDirs)
+        {
+            var groupDir = Path.Combine(skillDir, group);
+            if (!fileSystem.Directory.Exists(groupDir))
+                continue;
+
+            foreach (var file in fileSystem.Directory.GetFiles(groupDir, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(skillDir, file).Replace('\\', '/');
+                long size = 0;
+                try
+                {
+                    size = fileSystem.FileInfo.New(file).Length;
+                }
+                catch
+                {
+                    // Size is best-effort display metadata; a stat failure must not drop the file.
+                }
+
+                linked.Add(new SkillLinkedFile
+                {
+                    RelativePath = relative,
+                    Directory = group,
+                    SizeBytes = size
+                });
+            }
+        }
+
+        // Deterministic ordering keeps the "Linked files" listing stable across runs.
+        return linked
+            .OrderBy(f => f.RelativePath, StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -169,7 +220,7 @@ public static class SkillDiscovery
         // Skills with disable-model-invocation are excluded from model context
         if (skill.DisableModelInvocation)
         {
-            failureReason = "disable-model-invocation is set — skill is excluded from context injection";
+            failureReason = "disable-model-invocation is set - skill is excluded from context injection";
             return false;
         }
 
