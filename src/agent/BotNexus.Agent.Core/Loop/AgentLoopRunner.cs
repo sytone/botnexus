@@ -157,9 +157,24 @@ public static class AgentLoopRunner
 
             var hasMoreToolCalls = true;
 
-            while (hasMoreToolCalls || pendingMessages.Count > 0)
+            // #1845: system-injected side turns (e.g. a pre-compaction memory flush) arrive as
+            // steered messages carrying UserMessage.DeferWhileBusy. Held aside here while the run
+            // still has pending tool calls so the flush cannot consume the loop's continuation and
+            // abandon the original in-flight task. Released only at a genuine idle boundary, where
+            // it runs as a normal user turn after the original work has settled.
+            var deferredMessages = new List<AgentMessage>();
+
+            while (hasMoreToolCalls || pendingMessages.Count > 0 || deferredMessages.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // Release deferred (defer-while-busy) messages only once the original run is idle:
+                // no more tool calls in flight and nothing else already queued for this turn.
+                if (!hasMoreToolCalls && pendingMessages.Count == 0 && deferredMessages.Count > 0)
+                {
+                    pendingMessages = deferredMessages;
+                    deferredMessages = new List<AgentMessage>();
+                }
 
                 if (!firstTurn)
                 {
@@ -279,8 +294,15 @@ public static class AgentLoopRunner
                 // "back" a later no-tool fabrication turn for the whole run.
                 await AuditClaimsAsync(config, assistantMessage, turnToolNames, emit).ConfigureAwait(false);
 
-                pendingMessages = (await GetMessagesAsync(config.GetSteeringMessages, cancellationToken).ConfigureAwait(false))
+                var drained = (await GetMessagesAsync(config.GetSteeringMessages, cancellationToken).ConfigureAwait(false))
                     .ToList();
+
+                // #1845: a defer-while-busy message (memory flush) that lands mid-flight is pulled
+                // out of this turn's injection set and held until the loop reaches idle. Only the
+                // mid-loop drain is filtered; the initial steering poll is left untouched so the
+                // genuinely-idle flush path is unchanged.
+                ExtractDeferWhileBusy(drained, deferredMessages);
+                pendingMessages = drained;
             }
 
             var followUps = await GetMessagesAsync(config.GetFollowUpMessages, cancellationToken).ConfigureAwait(false);
@@ -369,6 +391,31 @@ public static class AgentLoopRunner
         }
 
         return await getMessages(cancellationToken).ConfigureAwait(false) ?? [];
+    }
+
+    /// <summary>
+    /// Moves any defer-while-busy user messages (#1845 - e.g. a pre-compaction memory flush)
+    /// out of <paramref name="drained"/> and into <paramref name="deferred"/>, preserving order.
+    /// A defer-while-busy message must not be injected into a turn while the run still has
+    /// pending tool calls, because the model typically answers such a system side turn with plain
+    /// text; injecting it mid-chain would let that plain-text turn terminate the loop and abandon
+    /// the original in-flight task. Non-deferred messages are left in place and drive turns as usual.
+    /// </summary>
+    private static void ExtractDeferWhileBusy(List<AgentMessage> drained, List<AgentMessage> deferred)
+    {
+        if (drained.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = drained.Count - 1; i >= 0; i--)
+        {
+            if (drained[i] is BotNexus.Agent.Core.Types.UserMessage { DeferWhileBusy: true })
+            {
+                deferred.Insert(0, drained[i]);
+                drained.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>
