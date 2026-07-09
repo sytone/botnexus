@@ -243,24 +243,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         _ = SafeDispatchAsync(
             () => _app.AcceptAsync(
-                new InboundMessage
-                {
-                    ChannelType = ChannelKey.From("signalr"),
-                    SenderId = connectionId,
-                    Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
-                    ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address -- one portal conversation per agent
-                    RoutingHints = new InboundMessageRoutingHints(
+                BuildInboundMessage(
+                    typedAgentId, connectionId, content, "message-with-media",
+                    new InboundMessageRoutingHints(
                         RequestedAgentId: typedAgentId,
                         RequestedSessionId: resolution.SessionId,
                         RequestedConversationId: null),
-                    Content = content,
-                    ContentParts = parts,
-                    Metadata = new Dictionary<string, object?>
-                    {
-                        ["messageType"] = "message-with-media",
-                        ["clientKind"] = ResolveClientKind()
-                    }
-                },
+                    parts),
                 CancellationToken.None),
             typedAgentId,
             resolution.SessionId);
@@ -274,24 +263,34 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
         string messageType, string senderId, string? conversationId = null)
         => _app.AcceptAsync(
-            new InboundMessage
-            {
-                ChannelType = ChannelKey.From("signalr"),
-                SenderId = senderId,
-                Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
-                ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address -- one portal conversation per agent
-                RoutingHints = new InboundMessageRoutingHints(
+            BuildInboundMessage(
+                typedAgentId, senderId, content, messageType,
+                new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
                     RequestedSessionId: typedSessionId,
-                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
-                Content = content,
-                Metadata = new Dictionary<string, object?>
-                {
-                    ["messageType"] = messageType,
-                    ["clientKind"] = ResolveClientKind()
-                }
-            },
+                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId))),
             CancellationToken.None);
+
+    // Centralizes the channel-invariant InboundMessage fields shared by the SignalR hub dispatch
+    // paths: signalr type, authenticated sender, stable per-agent address, and clientKind metadata.
+    private InboundMessage BuildInboundMessage(
+        AgentId typedAgentId, string senderId, string content, string messageType,
+        InboundMessageRoutingHints routingHints, IReadOnlyList<MessageContentPart>? contentParts = null)
+        => new()
+        {
+            ChannelType = ChannelKey.From("signalr"),
+            SenderId = senderId,
+            Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
+            ChannelAddress = ChannelAddress.From(typedAgentId.Value),
+            RoutingHints = routingHints,
+            Content = content,
+            ContentParts = contentParts,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["messageType"] = messageType,
+                ["clientKind"] = ResolveClientKind()
+            }
+        };
 
     /// <summary>
     /// Fire-and-forget dispatch wrapper. Catches exceptions and publishes them

@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -151,6 +152,58 @@ public sealed class SignalRHubTests
         dispatched.RoutingHints.ShouldNotBeNull();
         dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("agent-a");
         dispatched.Content.ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_BuildsInboundMessageWithChannelInvariantFields()
+    {
+        // F-C-1 (#612): the SendMessage -> DispatchMessageAsync path routes through the shared
+        // BuildInboundMessage factory. Assert the channel-invariant fields the factory centralizes
+        // (signalr channel type, authenticated sender identity, stable per-agent channel address,
+        // and the clientKind + messageType metadata) so a refactor cannot silently change them.
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", userIdentifier: "user-9");
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        dispatched.ChannelType.ShouldBe(ChannelKey.From("signalr"));
+        dispatched.SenderId.ShouldBe("conn-1");
+        dispatched.Sender.ShouldBe(CitizenId.Of(UserId.From("user-9")));
+        dispatched.ChannelAddress.ShouldBe(ChannelAddress.From("agent-a"));
+        dispatched.ContentParts.ShouldBeNull();
+        dispatched.Metadata["messageType"].ShouldBe("message");
+        dispatched.Metadata["clientKind"].ShouldBe("desktop");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessageWithMedia_BuildsInboundMessageWithChannelInvariantFieldsAndParts()
+    {
+        // F-C-1 (#612): the SendMessageWithMedia path shares the same BuildInboundMessage factory
+        // but supplies per-call ContentParts and a distinct messageType. Assert both the invariant
+        // fields and the media-specific parts survive the factory extraction unchanged.
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", userIdentifier: "user-9");
+
+        var parts = new List<MediaContentPartDto>
+        {
+            new() { MimeType = "text/plain", Text = "caption" }
+        };
+
+        await hub.SendMessageWithMedia(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello", parts);
+
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        dispatched.ChannelType.ShouldBe(ChannelKey.From("signalr"));
+        dispatched.SenderId.ShouldBe("conn-1");
+        dispatched.Sender.ShouldBe(CitizenId.Of(UserId.From("user-9")));
+        dispatched.ChannelAddress.ShouldBe(ChannelAddress.From("agent-a"));
+        dispatched.Content.ShouldBe("hello");
+        dispatched.ContentParts.ShouldNotBeNull();
+        dispatched.ContentParts!.ShouldHaveSingleItem();
+        dispatched.Metadata["messageType"].ShouldBe("message-with-media");
+        dispatched.Metadata["clientKind"].ShouldBe("desktop");
     }
 
     [Fact]
