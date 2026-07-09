@@ -174,6 +174,15 @@ public sealed class GatewaySettingsConfig
     public string? SessionsDirectory { get; set; }
     /// <summary>Session store selection and configuration.</summary>
     public SessionStoreConfig? SessionStore { get; set; }
+
+    /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
+    [Display(
+        Name = "WAL checkpoint interval (min)",
+        Description = "Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Default 30.",
+        GroupName = "Gateway",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 3)]
+    public int? WalCheckpointIntervalMinutes { get; set; }
     /// <summary>Session compaction settings.</summary>
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
