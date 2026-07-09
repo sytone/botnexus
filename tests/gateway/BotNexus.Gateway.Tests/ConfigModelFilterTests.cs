@@ -106,6 +106,66 @@ public sealed class ConfigModelFilterTests
         models.ShouldHaveSingleItem().Id.ShouldBe("gpt-4.1");
     }
 
+    [Fact]
+    public void GetModels_DynamicReasoningModel_SurfacesFullThinkingSetToPicker()
+    {
+        // PBI6 (#1707): a dynamic model registered with the inferred reasoning + extra-high
+        // capabilities must surface the full thinking-level set (including the top tiers) so the
+        // agent + conversation pickers offer only - and all - the valid options.
+        var caps = DynamicModelCapabilities.Infer("gpt-5.2");
+        var registry = new ModelRegistry();
+        registry.Register("custom", new LlmModel(
+            Id: "gpt-5.2",
+            Name: "gpt-5.2",
+            Api: "openai-completions",
+            Provider: "custom",
+            BaseUrl: "https://example.com",
+            Reasoning: caps.Reasoning,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 200000,
+            MaxTokens: 32000,
+            SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
+            SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
+        var filter = CreateFilter(registry, new PlatformConfig());
+
+        var model = filter.GetModels("custom").ShouldHaveSingleItem();
+
+        var thinking = model.SupportedThinkingLevels.ShouldNotBeNull();
+        thinking.ShouldContain("max");
+        thinking.ShouldContain("xhigh");
+        thinking.Count.ShouldBe(6);
+    }
+
+    [Fact]
+    public void GetModels_DynamicNonReasoningModel_OffersNoInvalidThinkingChoice()
+    {
+        // A dynamic non-reasoning model must offer NO thinking levels so the picker never presents
+        // an invalid choice.
+        var caps = DynamicModelCapabilities.Infer("llama3.1");
+        var registry = new ModelRegistry();
+        registry.Register("custom", new LlmModel(
+            Id: "llama3.1",
+            Name: "llama3.1",
+            Api: "openai-completions",
+            Provider: "custom",
+            BaseUrl: "https://example.com",
+            Reasoning: caps.Reasoning,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 32000,
+            SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
+            SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
+        var filter = CreateFilter(registry, new PlatformConfig());
+
+        var model = filter.GetModels("custom").ShouldHaveSingleItem();
+
+        model.SupportedThinkingLevels.ShouldNotBeNull().ShouldBeEmpty();
+        // A standard-context model exposes exactly its single window - no invalid 1M choice.
+        model.SupportedContextSizes.ShouldNotBeNull().ShouldBe(new[] { 128000 });
+    }
+
     private static ConfigModelFilter CreateFilter(ModelRegistry registry, PlatformConfig config)
     {
         var options = new Mock<IOptionsMonitor<PlatformConfig>>();

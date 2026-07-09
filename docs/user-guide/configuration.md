@@ -371,6 +371,51 @@ Providers connect BotNexus to LLM APIs. Each provider has its own configuration 
 | `baseUrl` | string | (varies) | API base URL (provider-specific default if omitted) |
 | `defaultModel` | string | (varies) | Default model for agents using this provider |
 | `models` | array | `null` | Allowed models. `null` = all models, `[]` = none |
+| `api` | string | `openai-completions` | API format used when registering models from `models` for a custom provider |
+| `reasoning` | bool | `null` | Dynamic-model capability: whether these models support a thinking override. `null` = infer from the model family |
+| `supportsExtraHighThinking` | bool | `null` | Dynamic-model capability: whether these models support the `xhigh` / `max` thinking tiers. `null` = infer from the family |
+| `supportsExtendedContextWindow` | bool | `null` | Dynamic-model capability: whether these models expose the extended (1M) context tier. `null` = infer from the family |
+| `contextWindow` | int | `128000` | Dynamic-model capability: default context-window size (tokens) for these models |
+
+### Dynamic Model Capabilities
+
+Models you define under a provider's `models` list (or that an agent references on a
+config-only provider) are **dynamic models** - they are not part of the hand-curated built-in
+model table. So the agent and conversation pickers know which reasoning levels and context
+sizes to offer, each dynamic model carries a capability set:
+
+- **Supported thinking levels** - drives the reasoning picker. A non-reasoning model offers
+  none; a reasoning model offers `minimal`..`high`, plus `xhigh` and `max` when it supports the
+  extra-high tiers.
+- **Supported context sizes** - drives the context-window picker. A standard model exposes its
+  single window; an extended-context model additionally exposes the 1M tier.
+
+When you omit the capability fields, BotNexus **infers sensible defaults from the model
+family** (for example `claude-opus-4.6` and `gpt-5.2` are recognised as reasoning models with
+the extra-high tiers; `claude-sonnet-4*` carries the extended context window). Declare the
+fields explicitly when the family heuristic does not recognise your model id - for example a
+local Ollama or LM Studio build:
+
+```json
+{
+  "providers": {
+    "local-llm": {
+      "enabled": true,
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "models": ["my-custom-reasoner"],
+      "reasoning": true,
+      "supportsExtraHighThinking": true,
+      "contextWindow": 262144
+    }
+  }
+}
+```
+
+Because pickers read these capabilities, a dynamic model **never offers an invalid choice** -
+the reasoning picker is empty for a non-reasoning model, and the context picker only lists sizes
+the model can actually address. An explicit `supportsExtraHighThinking: true` on a model
+declared `reasoning: false` is ignored (a non-reasoning model has no thinking tiers).
 
 ### Supported Providers
 
@@ -407,6 +452,86 @@ The Copilot provider supports **26 models** across multiple families:
 ```
 
 On first use, BotNexus prompts for GitHub OAuth and stores tokens in `~/.botnexus/tokens/copilot.json`.
+
+---
+
+## Model, Thinking, and Context: The 3-Layer Override Model
+
+BotNexus resolves the effective model, thinking (reasoning) level, and context-window size for
+every turn from a **three-layer precedence stack**. Each field is resolved independently and the
+most specific layer that sets it wins:
+
+```
+model defaults  <  agent configuration  <  conversation override   (most specific wins)
+```
+
+| Layer | Where it is set | Scope | Falls through when unset |
+|-------|-----------------|-------|--------------------------|
+| **Model defaults** | The model's capability set (built-in table, or inferred/declared for a dynamic model) | Every agent using that model | (base layer) |
+| **Agent configuration** | `agents.<id>.model` / `thinking` / `contextWindow` | All conversations for that agent | to the model defaults |
+| **Conversation override** | Portal picker, `/model` and `/reasoning` commands, or the override REST API | One conversation | to the agent configuration |
+
+Because each field falls through independently, overriding only the reasoning level for a
+conversation still inherits the agent's model and context window.
+
+### How capabilities gate each layer
+
+A field can only be set to a value the underlying model actually supports. The **model layer** is
+the source of truth for what is valid:
+
+- **Built-in models** carry their capability set in the curated model table.
+- **Dynamic models** (declared under a provider's `models` list, or referenced by an agent on a
+  config-only provider) carry a capability set too - declared explicitly, or inferred from the
+  model family when omitted (see [Dynamic Model Capabilities](#dynamic-model-capabilities)).
+
+Every picker reads the same capability set, so only valid options are ever offered:
+
+- The reasoning picker lists exactly the thinking levels the model supports (empty for a
+  non-reasoning model, and `xhigh` / `max` appear only for models with the extra-high tiers).
+- The context picker lists exactly the context sizes the model supports (its single window, plus
+  the 1M tier only for extended-context models).
+
+Both the **agent level** and the **conversation level** enforce this: an agent-level `thinking` or
+`contextWindow` a model cannot express is rejected at registration, and a conversation override a
+model cannot express is rejected with `400` and leaves the stored override untouched. A dynamic
+model behaves identically to a built-in one here - it never surfaces or accepts an invalid choice.
+
+### Worked example
+
+```json
+{
+  "providers": {
+    "local-llm": {
+      "enabled": true,
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "models": ["my-custom-reasoner"],
+      "reasoning": true,
+      "supportsExtraHighThinking": true,
+      "contextWindow": 262144
+    }
+  },
+  "agents": {
+    "researcher": {
+      "provider": "local-llm",
+      "model": "my-custom-reasoner",
+      "thinking": "high",
+      "contextWindow": 131072
+    }
+  }
+}
+```
+
+1. **Model layer** - `my-custom-reasoner` is a dynamic model. Its declared capabilities make the
+   reasoning picker offer `minimal`..`max` and the context picker default to a 262144 window.
+2. **Agent layer** - the `researcher` agent defaults to `high` reasoning and a 131072 context
+   window. Both are valid for the model, so registration succeeds.
+3. **Conversation layer** - a single conversation can run `/reasoning max` to deepen reasoning for
+   one thread; the model and context window fall through from the agent unchanged.
+
+See also: [Agent Configuration](#agent-configuration) for the agent layer, and the
+[Conversations guide](conversations.md#per-conversation-model-reasoning-and-context-override) for
+the conversation layer.
 
 ---
 

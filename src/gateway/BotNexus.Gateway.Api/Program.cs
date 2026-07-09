@@ -360,17 +360,27 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             {
                 foreach (var modelId in providerConfig.Models)
                 {
+                    // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
+                    // so the agent + conversation pickers offer only valid thinking/context choices.
+                    // Explicit declarations win; anything omitted is inferred from the model family.
+                    var caps = DynamicModelCapabilities.Infer(
+                        modelId,
+                        declaredReasoning: providerConfig.Reasoning,
+                        declaredExtraHighThinking: providerConfig.SupportsExtraHighThinking,
+                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow);
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
                         Api: apiName,
                         Provider: providerName,
                         BaseUrl: providerConfig.BaseUrl ?? string.Empty,
-                        Reasoning: modelId.Contains("reasoning", StringComparison.OrdinalIgnoreCase),
+                        Reasoning: caps.Reasoning,
                         Input: ["text"],
                         Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: 128000,
-                        MaxTokens: 32000));
+                        ContextWindow: providerConfig.ContextWindow ?? 128000,
+                        MaxTokens: 32000,
+                        SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
+                        SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
                 }
             }
         }
@@ -394,17 +404,26 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
                 continue;
 
+            // PBI6 (#1707): same capability inference for an agent-referenced dynamic model, so a
+            // provider that only appears via an agent's model reference still exposes valid pickers.
+            var agentModelCaps = DynamicModelCapabilities.Infer(
+                agentConfig.Model,
+                declaredReasoning: agentProvider.Reasoning,
+                declaredExtraHighThinking: agentProvider.SupportsExtraHighThinking,
+                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow);
             models.Register(agentConfig.Provider, new LlmModel(
                 Id: agentConfig.Model,
                 Name: agentConfig.Model,
                 Api: apiName,
                 Provider: agentConfig.Provider,
                 BaseUrl: agentProvider.BaseUrl ?? string.Empty,
-                Reasoning: agentConfig.Model.Contains("reasoning", StringComparison.OrdinalIgnoreCase),
+                Reasoning: agentModelCaps.Reasoning,
                 Input: ["text"],
                 Cost: new ModelCost(0, 0, 0, 0),
-                ContextWindow: 128000,
-                MaxTokens: 32000));
+                ContextWindow: agentProvider.ContextWindow ?? 128000,
+                MaxTokens: 32000,
+                SupportsExtraHighThinking: agentModelCaps.SupportsExtraHighThinking,
+                SupportsExtendedContextWindow: agentModelCaps.SupportsExtendedContextWindow));
         }
     }
 
