@@ -2,8 +2,10 @@ namespace BotNexus.Gateway.Prompts;
 
 /// <summary>
 /// Provides the built-in skills-guidance prompt section that instructs agents to
-/// proactively load skills for domain-specific knowledge and create new skills
-/// to capture reusable procedures.
+/// treat skills as mandatory carriers of project conventions: any partially-relevant
+/// skill must be loaded before acting, stale skills must be patched, and reusable
+/// procedures should be captured (preferring to extend an umbrella skill over
+/// creating narrow one-off skills).
 /// </summary>
 public static class SkillsGuidanceSection
 {
@@ -26,11 +28,13 @@ public static class SkillsGuidanceSection
 
     private static readonly string[] Lines =
     [
-        "Before starting domain-specific work, check available skills with `skills list` and load relevant ones.",
-        "Skills contain reusable procedures, references, and templates — always load before improvising.",
-        "When you discover a repeatable multi-step procedure, create a skill to capture it for future use.",
-        "Skill names must be lowercase alphanumeric with hyphens (e.g. `deploy-staging`, `review-pr`).",
-        "Keep skill content focused: one skill per procedure, with clear steps and examples."
+        "Before replying, scan the available skills. If a skill is even partially relevant to the task, it MUST be loaded before you act - do not defer it.",
+        "Err on the side of loading: skills carry project conventions, API details, exact tool commands, and proven workflows you cannot reconstruct reliably from general knowledge.",
+        "Do not improvise from general knowledge when a relevant skill exists. Load it and follow it.",
+        "If a loaded skill is stale, wrong, or missing a pitfall you discover while working, patch it with `skill_manage` before you finish.",
+        "After a difficult or iterative task, consider saving the reusable approach as a skill so future work is faster.",
+        "Prefer patching an existing umbrella skill over creating a narrow one-off skill. Create new skills only for reusable classes of work, never for one-off task outcomes.",
+        "Skill names must be lowercase alphanumeric with hyphens (e.g. `deploy-staging`, `review-pr`)."
     ];
 
     /// <summary>

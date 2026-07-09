@@ -48,7 +48,7 @@ public sealed class PromptSectionWiringTests
 
         prompt.ShouldContain("<skills>");
         prompt.ShouldContain("</skills>");
-        prompt.ShouldContain("check available skills");
+        prompt.ShouldContain("partially relevant");
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public sealed class PromptSectionWiringTests
     {
         var prompt = BuildFullPrompt(tools: ["read", "write", "shell"]);
 
-        prompt.ShouldNotContain("check available skills");
+        prompt.ShouldNotContain("partially relevant");
     }
 
     [Fact]
