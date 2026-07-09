@@ -25,7 +25,10 @@ export default defineConfig({
     '**/sample-config.json',
     '**/botnexus-config.schema.json',
     '**/webui/**',
-    '**/api/**',
+    // NOTE: docs/api/ is NOT excluded -- api/webhooks.md is an intended,
+    // linked reference page (added in #1791). Only openapi.json lives
+    // alongside it and is not a build input. Excluding '**/api/**' made
+    // every link to api/webhooks.md a dead link and broke the docs build (#1816).
   ],
 
   head: [
