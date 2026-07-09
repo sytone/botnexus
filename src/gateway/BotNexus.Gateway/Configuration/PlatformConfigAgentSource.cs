@@ -1,3 +1,4 @@
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
@@ -18,12 +19,14 @@ public sealed class PlatformConfigAgentSource(
     IOptionsMonitor<PlatformConfig> configOptions,
     string configDirectory,
     ILogger<PlatformConfigAgentSource> logger,
-    ILocationResolver? locationResolver = null) : IAgentConfigurationSource
+    ILocationResolver? locationResolver = null,
+    ModelRegistry? modelRegistry = null) : IAgentConfigurationSource
 {
     private readonly IOptionsMonitor<PlatformConfig> _configOptions = configOptions;
     private readonly string _configDirectory = Path.GetFullPath(configDirectory);
     private readonly ILogger<PlatformConfigAgentSource> _logger = logger;
     private readonly ILocationResolver? _locationResolver = locationResolver;
+    private readonly ModelRegistry? _modelRegistry = modelRegistry;
 
     /// <inheritdoc />
     public Task<IReadOnlyList<AgentDescriptor>> LoadAsync(CancellationToken cancellationToken = default)
@@ -103,6 +106,10 @@ public sealed class PlatformConfigAgentSource(
                 CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
                     ? effectiveConfig.CacheRetention.Value.ToString().ToLowerInvariant()
                     : null,
+                Thinking = effectiveConfig.Thinking.HasValue
+                    ? ThinkingToWire(effectiveConfig.Thinking.Value)
+                    : null,
+                ContextWindow = effectiveConfig.ContextWindow,
                 MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
                 Metadata = metadata,
                 IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
@@ -124,7 +131,7 @@ public sealed class PlatformConfigAgentSource(
                 ShellCommand = effectiveConfig.ShellCommand
             };
 
-            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);
+            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor, modelRegistry: _modelRegistry);
             if (validationErrors.Count > 0)
             {
                 _logger.LogWarning(
@@ -139,6 +146,20 @@ public sealed class PlatformConfigAgentSource(
 
         return descriptors;
     }
+
+    // Wire-form projection of ThinkingLevel matching the strings AgentDescriptor.Thinking stores
+    // (JSON member names: xhigh/max). Kept local so the source does not depend on the provider
+    // JSON converter internals.
+    private static string ThinkingToWire(BotNexus.Agent.Providers.Core.Models.ThinkingLevel level) => level switch
+    {
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Minimal => "minimal",
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Low => "low",
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Medium => "medium",
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.High => "high",
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.ExtraHigh => "xhigh",
+        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Max => "max",
+        _ => level.ToString().ToLowerInvariant()
+    };
 
     private static AgentDefaultsConfig? ExtractInlineAgentDefaults(IReadOnlyDictionary<string, AgentDefinitionConfig> agents)
     {

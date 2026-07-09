@@ -22,7 +22,8 @@ public sealed class CreateAgentTool(
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
     BotNexusHome botNexusHome,
     IOptions<PlatformConfig>? platformConfigOptions = null,
-    ApiProviderRegistry? apiProviderRegistry = null) : IAgentTool
+    ApiProviderRegistry? apiProviderRegistry = null,
+    ModelRegistry? modelRegistry = null) : IAgentTool
 {
     private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9-]*[a-z0-9]$", RegexOptions.Compiled);
 
@@ -69,6 +70,15 @@ public sealed class CreateAgentTool(
                 "toolIds": {
                   "type": "string",
                   "description": "Optional JSON array string of tool IDs the agent has access to (e.g., '[\"read\",\"write\"]')."
+                },
+                "thinking": {
+                  "type": "string",
+                  "description": "Optional default thinking level (minimal, low, medium, high, xhigh, max). Must be supported by the model.",
+                  "enum": ["minimal", "low", "medium", "high", "xhigh", "max"]
+                },
+                "contextWindow": {
+                  "type": "integer",
+                  "description": "Optional default context-window size in tokens. Must be a size the model supports."
                 }
               },
               "required": ["id", "displayName", "modelId", "apiProvider"]
@@ -120,6 +130,9 @@ public sealed class CreateAgentTool(
 
         var toolIds = ParseToolIds(ReadString(arguments, "toolIds"));
 
+        var thinking = ReadString(arguments, "thinking");
+        int? contextWindow = ReadInt(arguments, "contextWindow");
+
         var platformConfig = platformConfigOptions?.Value;
         var memory = BuildMemoryConfig(platformConfig);
         var soul = BuildSoulConfig(platformConfig);
@@ -135,10 +148,18 @@ public sealed class CreateAgentTool(
             ApiProvider = apiProvider,
             SystemPrompt = ReadString(arguments, "systemPrompt"),
             ToolIds = toolIds,
+            Thinking = thinking,
+            ContextWindow = contextWindow,
             Memory = memory,
             Soul = soul,
             ExtensionConfig = extensionConfig
         };
+
+        // #1705: reject thinking/context defaults the selected model cannot honour before the
+        // agent is persisted, mirroring the config-load and REST guards.
+        var capabilityErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateModelCapabilities(descriptor, modelRegistry);
+        if (capabilityErrors.Count > 0)
+            return Error(string.Join(" ", capabilityErrors));
 
         agentRegistry.Register(descriptor);
         await configurationWriter.SaveAsync(descriptor, cancellationToken).ConfigureAwait(false);
@@ -165,6 +186,25 @@ public sealed class CreateAgentTool(
 
         return new AgentToolResult(
             [new AgentToolContent(AgentToolContentType.Text, JsonSerializer.Serialize(result, JsonOptions))]);
+    }
+
+    private static int? ReadInt(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null)
+            return null;
+        switch (value)
+        {
+            case JsonElement { ValueKind: JsonValueKind.Number } n when n.TryGetInt32(out var i):
+                return i;
+            case JsonElement { ValueKind: JsonValueKind.String } s when int.TryParse(s.GetString(), out var i):
+                return i;
+            case int i:
+                return i;
+            case long l:
+                return (int)l;
+            default:
+                return int.TryParse(value.ToString(), out var parsed) ? parsed : null;
+        }
     }
 
     private static IReadOnlyList<string> ParseToolIds(string? raw)

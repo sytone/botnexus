@@ -1,3 +1,5 @@
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 
@@ -144,6 +146,134 @@ public sealed class AgentDescriptorValidatorTests
         errors.ShouldNotContain(error => error.Contains("Kind", StringComparison.Ordinal),
             "Validate (runtime path) must allow Kind = SubAgent — used by DefaultSubAgentManager " +
             "via DefaultAgentSupervisor.GetOrCreateAsync. Errors received: " + string.Join("; ", errors));
+    }
+
+    // ---- PBI4 (#1705): agent-level thinking + context validated against model capabilities ----
+
+    // A reasoning model that advertises extra-high thinking AND extended context, so the full
+    // option set (minimal..max, 200K/1M) is available for happy-path assertions.
+    private const string ReasoningModelId = "cap-model-reasoning";
+    // A non-reasoning, fixed-window model, so any thinking level or non-default context is invalid.
+    private const string PlainModelId = "cap-model-plain";
+    private const string CapProvider = "cap-provider";
+
+    private static LlmModel MakeModel(
+        string id, bool reasoning, int contextWindow,
+        bool extraHigh = false, bool extendedContext = false) =>
+        new(
+            Id: id,
+            Name: id,
+            Api: reasoning ? "messages" : "completions",
+            Provider: CapProvider,
+            BaseUrl: "https://example.invalid",
+            Reasoning: reasoning,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: contextWindow,
+            MaxTokens: 16_000,
+            SupportsExtraHighThinking: extraHigh,
+            SupportsExtendedContextWindow: extendedContext);
+
+    private static ModelRegistry CreateCapabilityRegistry()
+    {
+        var registry = new ModelRegistry();
+        registry.Register(CapProvider, MakeModel(ReasoningModelId, reasoning: true, contextWindow: 200_000, extraHigh: true, extendedContext: true));
+        registry.Register(CapProvider, MakeModel(PlainModelId, reasoning: false, contextWindow: 128_000));
+        return registry;
+    }
+
+    private static AgentDescriptor CapDescriptor(string modelId) =>
+        CreateValidDescriptor() with { ApiProvider = CapProvider, ModelId = modelId };
+
+    [Fact]
+    public void ValidateModelCapabilities_WithSupportedThinkingAndContext_ReturnsNoErrors()
+    {
+        var registry = CreateCapabilityRegistry();
+        var descriptor = CapDescriptor(ReasoningModelId) with { Thinking = "high", ContextWindow = 1_000_000 };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithExtraHighThinkingOnCapableModel_ReturnsNoErrors()
+    {
+        var registry = CreateCapabilityRegistry();
+        var descriptor = CapDescriptor(ReasoningModelId) with { Thinking = "xhigh" };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithThinkingOnNonReasoningModel_ReturnsError()
+    {
+        var registry = CreateCapabilityRegistry();
+        var descriptor = CapDescriptor(PlainModelId) with { Thinking = "high" };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldContain(e => e.Contains("does not support thinking", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithUnsupportedThinkingLevel_ReturnsError()
+    {
+        // xhigh requires the extra-high capability; a reasoning model without it must reject it.
+        var registry = new ModelRegistry();
+        registry.Register(CapProvider, MakeModel("reasoning-basic", reasoning: true, contextWindow: 200_000));
+        var descriptor = CapDescriptor("reasoning-basic") with { Thinking = "xhigh" };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldContain(e => e.Contains("not supported by model", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithUnsupportedContextWindow_ReturnsError()
+    {
+        var registry = CreateCapabilityRegistry();
+        // Plain model exposes only its single 128K window; 1M must be rejected.
+        var descriptor = CapDescriptor(PlainModelId) with { ContextWindow = 1_000_000 };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldContain(e => e.Contains("Context window", StringComparison.Ordinal) &&
+                                  e.Contains("not supported", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithMalformedThinking_ReturnsErrorEvenWithoutRegistry()
+    {
+        var descriptor = CreateValidDescriptor() with { Thinking = "bogus" };
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, modelRegistry: null);
+
+        errors.ShouldContain(e => e.Contains("not a recognised thinking level", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateModelCapabilities_WithNullFields_ReturnsNoErrors()
+    {
+        var registry = CreateCapabilityRegistry();
+        var descriptor = CapDescriptor(ReasoningModelId);
+
+        var errors = AgentDescriptorValidator.ValidateModelCapabilities(descriptor, registry);
+
+        errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WithRegistry_FlowsThroughCapabilityErrors()
+    {
+        var registry = CreateCapabilityRegistry();
+        var descriptor = CapDescriptor(PlainModelId) with { Thinking = "high" };
+
+        var errors = AgentDescriptorValidator.Validate(descriptor, availableIsolationStrategies: null, modelRegistry: registry);
+
+        errors.ShouldContain(e => e.Contains("does not support thinking", StringComparison.Ordinal));
     }
 
     private static AgentDescriptor CreateValidDescriptor()

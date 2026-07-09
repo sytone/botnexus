@@ -112,7 +112,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         // changing this site.
         var effectiveModel = ModelOverrideResolver.Resolve(
             modelDefaults: default,
-            agent: new ModelOverrideLayer(Model: descriptor.ModelId),
+            agent: new ModelOverrideLayer(
+                Model: descriptor.ModelId,
+                Thinking: ParseAgentThinking(descriptor.Thinking),
+                ContextWindow: descriptor.ContextWindow),
             conversation: default);
         var resolvedModelId = effectiveModel.Model ?? descriptor.ModelId;
 
@@ -374,13 +377,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             if (includeCreateAgent)
             {
                 var platformConfigOptions = _serviceProvider.GetService<IOptions<PlatformConfig>>();
-                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions, apiProviderRegistry));
+                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions, apiProviderRegistry, _llmClient.Models));
             }
 
             var includeUpdateAgent = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("update_agent", StringComparer.OrdinalIgnoreCase);
             if (includeUpdateAgent)
-                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers, apiProviderRegistry));
+                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers, apiProviderRegistry, _llmClient.Models));
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
@@ -574,7 +577,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 CacheRetention = Enum.TryParse<BotNexus.Agent.Providers.Core.Models.CacheRetention>(
                     descriptor.CacheRetentionMode, ignoreCase: true, out var parsedRetention)
                     ? parsedRetention
-                    : BotNexus.Agent.Providers.Core.Models.CacheRetention.Short
+                    : BotNexus.Agent.Providers.Core.Models.CacheRetention.Short,
+                // #1705: apply the effective thinking/context resolved through the centralized
+                // three-layer resolver. Null means "provider default" and leaves the option unset.
+                Reasoning = effectiveModel.Thinking,
+                ContextWindow = effectiveModel.ContextWindow
             },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
@@ -611,6 +618,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// </summary>
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
         => toolIds.Count == 0 || (toolIds.Count == 1 && toolIds[0] == "*");
+
+    // Parse the descriptor's wire-form thinking string ("minimal".."max", plus "xhigh") into the
+    // ThinkingLevel enum for the resolver's agent layer. Unset / unrecognised => null (fall through
+    // to the model default). Capability validity is enforced at registration; this is a lenient read.
+    private static BotNexus.Agent.Providers.Core.Models.ThinkingLevel? ParseAgentThinking(string? thinking)
+    {
+        if (string.IsNullOrWhiteSpace(thinking))
+            return null;
+        return AgentDescriptorValidator.TryParseThinking(thinking, out var level) ? level : null;
+    }
     private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)
     {
         if (!descriptor.Metadata.TryGetValue("allowCrossAgentCron", out var raw) || raw is null)

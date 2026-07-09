@@ -1,3 +1,4 @@
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Cron;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -23,6 +24,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentConfigurationWriter _configurationWriter;
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
+    private readonly ModelRegistry? _modelRegistry;
     private readonly ILogger<AgentsController> _logger;
 
     /// <summary>
@@ -34,6 +36,7 @@ public sealed class AgentsController : ControllerBase
         IAgentConfigurationWriter configurationWriter,
         IEnumerable<IAgentChangeNotifier>? agentChangeNotifiers = null,
         IHeartbeatProvisioner? heartbeatProvisioner = null,
+        ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null)
     {
         _registry = registry;
@@ -41,6 +44,7 @@ public sealed class AgentsController : ControllerBase
         _configurationWriter = configurationWriter;
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
         _heartbeatProvisioner = heartbeatProvisioner;
+        _modelRegistry = modelRegistry;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
@@ -68,6 +72,10 @@ public sealed class AgentsController : ControllerBase
                 error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be registered via the REST API."
             });
         }
+
+        var capabilityErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateModelCapabilities(descriptor, _modelRegistry);
+        if (capabilityErrors.Count > 0)
+            return BadRequest(new { error = string.Join(" ", capabilityErrors) });
 
         try
         {
@@ -110,6 +118,10 @@ public sealed class AgentsController : ControllerBase
                 error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be set via the REST API."
             });
         }
+
+        var capabilityErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateModelCapabilities(descriptor, _modelRegistry);
+        if (capabilityErrors.Count > 0)
+            return BadRequest(new { error = string.Join(" ", capabilityErrors) });
 
         var typedAgentId = AgentId.From(agentId);
         var updatedDescriptor = descriptor;

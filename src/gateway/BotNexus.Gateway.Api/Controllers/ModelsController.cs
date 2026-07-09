@@ -53,7 +53,9 @@ public sealed class ModelsController : ControllerBase
                     Name: model.Name,
                     ModelId: model.Id,
                     Id: model.Id,
-                    Provider: model.Provider))
+                    Provider: model.Provider,
+                    SupportedThinkingLevels: model.SupportedThinkingLevels ?? [],
+                    SupportedContextSizes: model.SupportedContextSizes ?? []))
                 .OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -70,7 +72,9 @@ public sealed class ModelsController : ControllerBase
                 Name: model.Name,
                 ModelId: model.Id,
                 Id: model.Id,
-                Provider: model.Provider))
+                Provider: model.Provider,
+                SupportedThinkingLevels: model.SupportedThinkingLevels ?? [],
+                SupportedContextSizes: model.SupportedContextSizes ?? []))
             .OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -105,9 +109,13 @@ public sealed class ModelsController : ControllerBase
 /// <param name="ModelId">Model identifier.</param>
 /// <param name="Id">Model identifier (alias for modelId).</param>
 /// <param name="Provider">Provider name (e.g., github-copilot, anthropic, openai).</param>
+/// <param name="SupportedThinkingLevels">Wire-form thinking levels the model supports (empty when none).</param>
+/// <param name="SupportedContextSizes">Context-window sizes (tokens) the model supports.</param>
 public sealed record ModelInfo(
     string Name,
     string ModelId,
     string Id,
-    string Provider
+    string Provider,
+    IReadOnlyList<string> SupportedThinkingLevels,
+    IReadOnlyList<int> SupportedContextSizes
 );

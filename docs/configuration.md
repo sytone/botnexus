@@ -248,6 +248,8 @@ Override any default for a specific agent:
 | `SystemPromptFile` | string | Path to .txt file with system prompt (if SystemPrompt not set) |
 | `Workspace` | string | Custom workspace directory for this agent |
 | `Model` | string | Override default model for this agent |
+| `Thinking` | string? | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the 3-layer model/thinking/context override stack (model default -> agent -> conversation); `null` falls through to the model default. Rejected at registration if the model does not support it |
+| `ContextWindow` | int? | Agent-level default context-window size in tokens. Agent layer of the override stack; `null` falls through to the model default. Only sizes the model advertises as supported are accepted |
 | `Provider` | string | Override default provider (copilot, openai, anthropic, etc.) |
 | `MaxTokens` | int? | Override default max tokens. When `null`, provider uses its own default |
 | `Temperature` | double? | Override default temperature (0.0-2.0). When `null`, provider uses its own default |

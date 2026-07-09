@@ -17,7 +17,8 @@ public sealed class UpdateAgentTool(
     IAgentRegistry agentRegistry,
     IAgentConfigurationWriter configurationWriter,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
-    ApiProviderRegistry? apiProviderRegistry = null) : IAgentTool
+    ApiProviderRegistry? apiProviderRegistry = null,
+    ModelRegistry? modelRegistry = null) : IAgentTool
 {
     public string Name => "update_agent";
     public string Label => "Update Agent";
@@ -60,6 +61,15 @@ public sealed class UpdateAgentTool(
                 "toolIds": {
                   "type": "string",
                   "description": "Optional JSON array string of tool IDs (replaces existing list)."
+                },
+                "thinking": {
+                  "type": "string",
+                  "description": "New default thinking level (minimal, low, medium, high, xhigh, max), or empty string to clear. Must be supported by the model.",
+                  "enum": ["", "minimal", "low", "medium", "high", "xhigh", "max"]
+                },
+                "contextWindow": {
+                  "type": "integer",
+                  "description": "New default context-window size in tokens, or 0 to clear. Must be a size the model supports."
                 }
               },
               "required": ["id"]
@@ -111,6 +121,22 @@ public sealed class UpdateAgentTool(
             updated = updated with { SystemPrompt = ReadString(arguments, "systemPrompt") };
         if (arguments.ContainsKey("toolIds"))
             updated = updated with { ToolIds = ParseToolIds(ReadString(arguments, "toolIds")) };
+        if (arguments.ContainsKey("thinking"))
+        {
+            var raw = ReadString(arguments, "thinking");
+            updated = updated with { Thinking = string.IsNullOrWhiteSpace(raw) ? null : raw };
+        }
+        if (arguments.ContainsKey("contextWindow"))
+        {
+            var cw = ReadInt(arguments, "contextWindow");
+            updated = updated with { ContextWindow = cw is > 0 ? cw : null };
+        }
+
+        // #1705: validate the resulting thinking/context defaults against the (possibly newly
+        // selected) model before persisting; reject unsupported combinations.
+        var capabilityErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateModelCapabilities(updated, modelRegistry);
+        if (capabilityErrors.Count > 0)
+            return Error(string.Join(" ", capabilityErrors));
 
         agentRegistry.Update(agentId, updated);
         await configurationWriter.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
@@ -129,6 +155,25 @@ public sealed class UpdateAgentTool(
 
         return new AgentToolResult(
             [new AgentToolContent(AgentToolContentType.Text, JsonSerializer.Serialize(updated, JsonOptions))]);
+    }
+
+    private static int? ReadInt(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null)
+            return null;
+        switch (value)
+        {
+            case JsonElement { ValueKind: JsonValueKind.Number } n when n.TryGetInt32(out var i):
+                return i;
+            case JsonElement { ValueKind: JsonValueKind.String } s when int.TryParse(s.GetString(), out var i):
+                return i;
+            case int i:
+                return i;
+            case long l:
+                return (int)l;
+            default:
+                return int.TryParse(value.ToString(), out var parsed) ? parsed : null;
+        }
     }
 
     private static IReadOnlyList<string> ParseToolIds(string? raw)
