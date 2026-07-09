@@ -927,6 +927,51 @@ public sealed class LlmSessionCompactorTests
         capturedPrompt.ShouldContain("## Remaining Work");
     }
 
+    /// <summary>The summarization prompt must request a Relevant Files &amp; Artifacts section and
+    /// instruct the model to preserve exact identifiers, so files relevant to the work
+    /// survive compaction (issue #1809).</summary>
+    [Fact]
+    public async Task CompactAsync_SummarizationPrompt_HasRelevantFilesSectionAndPreserveIdentifiers()
+    {
+        var session = CreateSession(
+            ("user", "build it"),
+            ("assistant", "building"),
+            ("user", "recent"));
+        string? capturedPrompt = null;
+        var compactor = CreateCompactorCapturingPrompt("summary", p => capturedPrompt = p);
+
+        await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        capturedPrompt.ShouldNotBeNull();
+        capturedPrompt!.ShouldContain("## Relevant Files & Artifacts");
+        capturedPrompt.ShouldContain("Preserve exact file paths");
+    }
+
+    /// <summary>The truncated prompt variant (built when history exceeds the max prompt size)
+    /// must also request the Relevant Files section and the preserve-identifiers instruction.</summary>
+    [Fact]
+    public async Task CompactAsync_TruncatedSummarizationPrompt_HasRelevantFilesSectionAndPreserveIdentifiers()
+    {
+        var session = CreateLargeSession(400);
+        string? capturedPrompt = null;
+        var compactor = CreateCompactorCapturingPrompt("summary", p => capturedPrompt = p);
+
+        await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        capturedPrompt.ShouldNotBeNull();
+        capturedPrompt!.Length.ShouldBeLessThanOrEqualTo(LlmSessionCompactor.MaxSummarizationPromptChars);
+        capturedPrompt.ShouldContain("## Relevant Files & Artifacts");
+        capturedPrompt.ShouldContain("Preserve exact file paths");
+    }
+
     /// <summary>Guardrail prefix must be visible in the LLM message list when the session is projected.
     /// On the NEXT compaction cycle the prefix appears in the summarization prompt,
     /// proving it will be LLM-visible during normal operation.</summary>
