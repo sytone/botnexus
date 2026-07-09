@@ -14,8 +14,15 @@ public static class SessionTranscriptRenderer
     /// </summary>
     /// <param name="session">The session to render.</param>
     /// <param name="agentId">The agent ID that owns this session.</param>
+    /// <param name="redactSecrets">
+    /// When true, applies <see cref="TranscriptSecretRedactor"/> to entry content, tool
+    /// arguments, and tool results so recognised credential shapes are replaced
+    /// before the transcript leaves the process (e.g. via the export API).
+    /// Defaults to false so rendering stays byte-identical to the un-redacted
+    /// behaviour unless a caller explicitly opts in.
+    /// </param>
     /// <returns>A markdown string, or null if the session has no entries.</returns>
-    public static string? RenderMarkdown(GatewaySession session, string? agentId = null)
+    public static string? RenderMarkdown(GatewaySession session, string? agentId = null, bool redactSecrets = false)
     {
         ArgumentNullException.ThrowIfNull(session);
 
@@ -45,12 +52,13 @@ public static class SessionTranscriptRenderer
                 continue;
 
             var timestamp = entry.Timestamp.ToString("HH:mm:ss");
+            var content = Scrub(entry.Content, redactSecrets);
 
             if (entry.Role == MessageRole.User)
             {
                 sb.AppendLine($"## 🧑 User [{timestamp}]");
                 sb.AppendLine();
-                foreach (var line in entry.Content.Split('\n'))
+                foreach (var line in content.Split('\n'))
                 {
                     sb.Append("> ");
                     sb.AppendLine(line);
@@ -61,7 +69,7 @@ public static class SessionTranscriptRenderer
             {
                 sb.AppendLine($"## 🤖 Assistant [{timestamp}]");
                 sb.AppendLine();
-                sb.AppendLine(entry.Content);
+                sb.AppendLine(content);
                 sb.AppendLine();
             }
             else if (entry.Role == MessageRole.Tool)
@@ -71,7 +79,7 @@ public static class SessionTranscriptRenderer
                     sb.AppendLine($"### 🔧 Tool Call: `{entry.ToolName}` [{timestamp}]");
                     sb.AppendLine();
                     sb.AppendLine("```json");
-                    sb.AppendLine(entry.ToolArgs);
+                    sb.AppendLine(Scrub(entry.ToolArgs, redactSecrets));
                     sb.AppendLine("```");
                     sb.AppendLine();
                 }
@@ -82,7 +90,7 @@ public static class SessionTranscriptRenderer
                     sb.AppendLine($"### 📋 {label}{toolLabel} [{timestamp}]");
                     sb.AppendLine();
                     sb.AppendLine("```");
-                    sb.AppendLine(Truncate(entry.Content, 2000));
+                    sb.AppendLine(Truncate(content, 2000));
                     sb.AppendLine("```");
                     sb.AppendLine();
                 }
@@ -91,18 +99,21 @@ public static class SessionTranscriptRenderer
             {
                 sb.AppendLine($"### ⚙️ System [{timestamp}]");
                 sb.AppendLine();
-                sb.AppendLine($"_{entry.Content}_");
+                sb.AppendLine($"_{content}_");
                 sb.AppendLine();
             }
             else if (entry.Role == MessageRole.Notification)
             {
-                sb.AppendLine($"> **ℹ️ Notification [{timestamp}]:** {entry.Content}");
+                sb.AppendLine($"> **ℹ️ Notification [{timestamp}]:** {content}");
                 sb.AppendLine();
             }
         }
 
         return sb.ToString();
     }
+
+    private static string Scrub(string value, bool redactSecrets)
+        => redactSecrets ? TranscriptSecretRedactor.Redact(value) ?? value : value;
 
     private static string Truncate(string value, int maxLength)
         => value.Length > maxLength ? value[..maxLength] + "\n... (truncated)" : value;
