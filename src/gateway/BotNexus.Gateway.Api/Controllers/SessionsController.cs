@@ -10,6 +10,7 @@ using BotNexus.Gateway.Api;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -31,6 +32,7 @@ public sealed class SessionsController : ControllerBase
     private readonly ISubAgentManager _subAgentManager;
     private readonly ISecurityEventSink? _securityEvents;
     private readonly ILogger<SessionsController>? _logger;
+    private readonly TranscriptExportOptions _transcriptExport;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
@@ -39,12 +41,15 @@ public sealed class SessionsController : ControllerBase
     /// <param name="subAgentManager">Sub-agent manager for session-scoped sub-agent lifecycle operations.</param>
     /// <param name="securityEvents">Trusted security-event sink for authorization denials, or null to disable emission.</param>
     /// <param name="logger">Optional logger for swallowed sink faults.</param>
+    /// <param name="transcriptExport">Transcript export options controlling render-time secret redaction; when null, redaction defaults off.</param>
     public SessionsController(
         ISessionStore sessions,
         ISubAgentManager? subAgentManager = null,
         ISecurityEventSink? securityEvents = null,
-        ILogger<SessionsController>? logger = null)
+        ILogger<SessionsController>? logger = null,
+        IOptions<TranscriptExportOptions>? transcriptExport = null)
     {
+        _transcriptExport = transcriptExport?.Value ?? new TranscriptExportOptions();
         _sessions = sessions;
         _subAgentManager = subAgentManager ?? NoOpSubAgentManager.Instance;
         _securityEvents = securityEvents;
@@ -281,7 +286,7 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
-        var markdown = BotNexus.Gateway.Sessions.SessionTranscriptRenderer.RenderMarkdown(session, session.AgentId.Value);
+        var markdown = BotNexus.Gateway.Sessions.SessionTranscriptRenderer.RenderMarkdown(session, session.AgentId.Value, _transcriptExport.RedactSecrets);
         if (markdown is null)
             return NoContent();
 
