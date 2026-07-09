@@ -352,7 +352,9 @@ else
                 : 0;
             await ForceScrollToBottomAsync();
 
-            // Register visibilitychange listener for app-resume reconnect (mobile PWA).
+            // Register the full PWA lifecycle listeners (visibilitychange/pagehide/freeze/resume)
+            // for app-resume reconnect (mobile PWA, #1841). All events funnel into the single
+            // OnAppResumed callback, which drives the PBI1 liveness-verified hub reset (#1838).
             if (!_appResumeListenerRegistered)
             {
                 try
