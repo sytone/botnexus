@@ -357,6 +357,6 @@
     {
         if (string.IsNullOrEmpty(content)) return "(empty)";
         if (content.Length <= max) return content;
-        return string.Concat(content.AsSpan(0, max), "…");
+        return SurrogateSafeText.SurrogateSafeTruncate(content, max) + "…";
     }
 }
