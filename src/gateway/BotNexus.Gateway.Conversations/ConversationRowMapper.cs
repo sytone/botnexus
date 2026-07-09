@@ -59,7 +59,10 @@ internal static class ConversationRowMapper
             IsPinned = !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             PinnedAt = GetNullableTimestamp(reader, "pinned_at"),
             TodoJson = GetNullableString(reader, "todo_json"),
-            PendingAskUserJson = GetNullableString(reader, "pending_ask_user_json")
+            PendingAskUserJson = GetNullableString(reader, "pending_ask_user_json"),
+            ModelOverride = GetNullableString(reader, "model_override"),
+            ThinkingOverride = GetNullableString(reader, "thinking_override"),
+            ContextWindowOverride = GetNullableInt(reader, "context_window_override")
         };
 
         var activeSessionOrdinal = reader.GetOrdinal("active_session_id");
@@ -147,6 +150,12 @@ internal static class ConversationRowMapper
     {
         var ordinal = reader.GetOrdinal(column);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static int? GetNullableInt(SqliteDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : checked((int)reader.GetInt64(ordinal));
     }
 
     private static DateTimeOffset? GetNullableTimestamp(SqliteDataReader reader, string column)

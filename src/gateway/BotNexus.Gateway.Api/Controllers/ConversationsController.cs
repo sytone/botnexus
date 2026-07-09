@@ -7,6 +7,10 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Resolution;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics.CodeAnalysis;
@@ -31,6 +35,8 @@ public sealed class ConversationsController : ControllerBase
     private readonly IConversationResetService? _resetService;
     private readonly IConversationAuditLog? _auditLog;
     private readonly IConversationHistoryAssembler _historyAssembler;
+    private readonly ModelRegistry? _modelRegistry;
+    private readonly IAgentRegistry? _agentRegistry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -47,6 +53,8 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="auditLog">Optional audit log for recording conversation mutations.</param>
     /// <param name="historyAssembler">Assembles cross-session conversation history. When omitted (legacy
     /// test harnesses constructing the controller directly), a default instance over the same stores is used.</param>
+    /// <param name="modelRegistry">Optional model registry used to validate per-conversation model / thinking / context overrides against real model capabilities. When omitted, override values are stored without capability validation.</param>
+    /// <param name="agentRegistry">Optional agent registry used to resolve the owning agent's provider and default model when validating overrides.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -55,7 +63,9 @@ public sealed class ConversationsController : ControllerBase
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         IConversationResetService? resetService = null,
         IConversationAuditLog? auditLog = null,
-        IConversationHistoryAssembler? historyAssembler = null)
+        IConversationHistoryAssembler? historyAssembler = null,
+        ModelRegistry? modelRegistry = null,
+        IAgentRegistry? agentRegistry = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -68,6 +78,8 @@ public sealed class ConversationsController : ControllerBase
         // directly), fall back to the default implementation over the same stores so the
         // history endpoint keeps working without an explicit registration.
         _historyAssembler = historyAssembler ?? new ConversationHistoryAssembler(conversations, sessions);
+        _modelRegistry = modelRegistry;
+        _agentRegistry = agentRegistry;
     }
 
     /// <summary>
@@ -528,7 +540,10 @@ public sealed class ConversationsController : ControllerBase
         ActiveSessionId: c.ActiveSessionId?.Value,
         Bindings: c.ChannelBindings.Select(ToBindingResponse).ToList(),
         CreatedAt: c.CreatedAt,
-        UpdatedAt: c.UpdatedAt);
+        UpdatedAt: c.UpdatedAt,
+        ModelOverride: c.ModelOverride,
+        ThinkingOverride: c.ThinkingOverride,
+        ContextWindowOverride: c.ContextWindowOverride);
 
     private static BindingResponse ToBindingResponse(ChannelBinding b) => new(
         BindingId: b.BindingId.Value,
@@ -594,6 +609,140 @@ public sealed class ConversationsController : ControllerBase
             return NoContent();
         return Content(conversation.PendingAskUserJson, "application/json");
     }
+
+    /// <summary>
+    /// Sets or clears the per-conversation model / thinking / context override (PBI5, issue #1706).
+    /// Each field is applied independently: a non-null value sets that override, a null value clears
+    /// it back to the agent default. Requested overrides are validated against the resolved model's
+    /// capabilities (reasoning support, top thinking tier, maximum context window) before being
+    /// persisted, so an override the model cannot express is rejected with 400 rather than silently
+    /// stored. The persisted override is consumed as the top precedence layer by
+    /// <c>ModelOverrideResolver</c> when the next session in this conversation starts.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="request">The override request body. Fields left null clear that override.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>200 with the updated conversation, 400 when an override is invalid, or 404 if not found.</returns>
+    [HttpPut("{conversationId}/override")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> SetOverride(
+        string conversationId,
+        [FromBody] SetConversationOverrideRequest request,
+        CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        if (IsResolverOwnedLegacyConversation(conversation))
+            return BadRequest(new { error = "legacy conversations are managed by the system and cannot be modified." });
+
+        // The requested (or already-persisted) model id determines which capability set we validate
+        // the thinking / context overrides against. Prefer the incoming model override, then any
+        // existing conversation override, then the agent's configured default.
+        var effectiveModelId = NormalizeOverrideString(request.Model)
+            ?? conversation.ModelOverride
+            ?? _agentRegistry?.Get(conversation.AgentId)?.ModelId;
+
+        var resolvedModel = ResolveModelForValidation(conversation.AgentId, effectiveModelId);
+
+        // Model override: only validate that the requested id is registered/known when we can.
+        if (NormalizeOverrideString(request.Model) is { } requestedModelId
+            && _modelRegistry is not null
+            && resolvedModel is null)
+        {
+            return BadRequest(new { error = $"Model '{requestedModelId}' is not registered for this agent's provider." });
+        }
+
+        // Thinking override: parse the wire token and validate against model capabilities.
+        if (NormalizeOverrideString(request.Thinking) is { } thinkingToken)
+        {
+            if (!TryParseThinkingLevel(thinkingToken, out var thinking))
+                return BadRequest(new { error = $"Unknown thinking level '{thinkingToken}'." });
+            if (resolvedModel is not null
+                && ConversationOverrideValidator.ValidateThinking(resolvedModel, thinking) is { IsValid: false } tErr)
+                return BadRequest(new { error = tErr.Error });
+        }
+
+        // Context override: validate against the model's maximum context window.
+        if (request.ContextWindow is { } contextWindow)
+        {
+            if (resolvedModel is not null
+                && ConversationOverrideValidator.ValidateContextWindow(resolvedModel, contextWindow) is { IsValid: false } cErr)
+                return BadRequest(new { error = cErr.Error });
+            else if (contextWindow <= 0)
+                return BadRequest(new { error = "Context window override must be a positive number of tokens." });
+        }
+
+        var prevModel = conversation.ModelOverride;
+        var prevThinking = conversation.ThinkingOverride;
+        var prevContext = conversation.ContextWindowOverride;
+
+        conversation.ModelOverride = NormalizeOverrideString(request.Model);
+        conversation.ThinkingOverride = NormalizeOverrideString(request.Thinking);
+        conversation.ContextWindowOverride = request.ContextWindow;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await _conversations.SaveAsync(conversation, cancellationToken);
+
+        await AuditAsync(conversationId, "model_override_set", "api", "rest-api", prevModel, conversation.ModelOverride, cancellationToken);
+        await AuditAsync(conversationId, "thinking_override_set", "api", "rest-api", prevThinking, conversation.ThinkingOverride, cancellationToken);
+        await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), conversation.ContextWindowOverride?.ToString(), cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
+        return Ok(ToResponse(conversation));
+    }
+
+    /// <summary>Clears every per-conversation override, reverting all three fields to the agent default.</summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>200 with the updated conversation, or 404 if not found.</returns>
+    [HttpDelete("{conversationId}/override")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> ClearOverride(string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        var prevModel = conversation.ModelOverride;
+        conversation.ModelOverride = null;
+        conversation.ThinkingOverride = null;
+        conversation.ContextWindowOverride = null;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await _conversations.SaveAsync(conversation, cancellationToken);
+        await AuditAsync(conversationId, "model_override_cleared", "api", "rest-api", prevModel, null, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
+        return Ok(ToResponse(conversation));
+    }
+
+    private LlmModel? ResolveModelForValidation(AgentId agentId, string? modelId)
+    {
+        if (_modelRegistry is null || string.IsNullOrWhiteSpace(modelId))
+            return null;
+        var provider = _agentRegistry?.Get(agentId)?.ApiProvider;
+        if (string.IsNullOrWhiteSpace(provider))
+            return null;
+        return _modelRegistry.GetModel(provider, modelId);
+    }
+
+    private static bool TryParseThinkingLevel(string token, out ThinkingLevel level)
+    {
+        switch (token.Trim().ToLowerInvariant())
+        {
+            case "minimal": level = ThinkingLevel.Minimal; return true;
+            case "low": level = ThinkingLevel.Low; return true;
+            case "medium": level = ThinkingLevel.Medium; return true;
+            case "high": level = ThinkingLevel.High; return true;
+            case "xhigh": level = ThinkingLevel.ExtraHigh; return true;
+            case "max": level = ThinkingLevel.Max; return true;
+            default: level = default; return false;
+        }
+    }
+
+    private static string? NormalizeOverrideString(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>Pins a conversation to the top of the list.</summary>
     [HttpPost("{conversationId}/pin")]

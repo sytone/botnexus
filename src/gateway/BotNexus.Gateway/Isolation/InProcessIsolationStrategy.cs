@@ -105,18 +105,43 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// <inheritdoc />
     public async Task<IAgentHandle> CreateAsync(AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken cancellationToken = default)
     {
-        // #1704: resolve the effective model through the centralized three-layer override
+        // #1382 Finding 2: resolve the conversation id at most once per CreateAsync call, shared by
+        // both the #1706 conversation-override layer and the conversation-aware tools below. The
+        // lookup is a read-only function of (store, sessionStore, agentId, sessionId) fixed for this
+        // call, so it is safe to memoise; first invocation resolves, later ones return the cache.
+        var conversationIdResolved = false;
+        ConversationId? resolvedConversationId = null;
+        async Task<ConversationId?> GetConversationIdAsync(IConversationStore store, ISessionStore? sessionStoreForResolve)
+        {
+            if (conversationIdResolved)
+                return resolvedConversationId;
+            resolvedConversationId = await ResolveConversationIdAsync(
+                store,
+                sessionStoreForResolve,
+                descriptor.AgentId,
+                context.SessionId,
+                cancellationToken).ConfigureAwait(false);
+            conversationIdResolved = true;
+            return resolvedConversationId;
+        }
+
+        // #1704 / #1706: resolve the effective model through the centralized three-layer override
         // resolver (model defaults -> agent -> conversation) instead of reading descriptor.ModelId
-        // ad hoc. Today only the agent layer is populated (descriptor.ModelId); the agent-level and
-        // conversation-level override fields land in PBI4/PBI5 and slot into the same call without
-        // changing this site.
+        // ad hoc. The agent layer carries descriptor.ModelId; the conversation layer (PBI5) carries
+        // the per-conversation override stored on the bound conversation and, being most-specific,
+        // beats the agent default. An unset conversation override falls through unchanged. The
+        // conversation-id lookup reuses the memoised GetConversationIdAsync so this adds no second
+        // DB round-trip.
+        var conversationOverrideLayer = await ResolveConversationOverrideLayerAsync(
+            conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
+            cancellationToken).ConfigureAwait(false);
         var effectiveModel = ModelOverrideResolver.Resolve(
             modelDefaults: default,
             agent: new ModelOverrideLayer(
                 Model: descriptor.ModelId,
                 Thinking: ParseAgentThinking(descriptor.Thinking),
                 ContextWindow: descriptor.ContextWindow),
-            conversation: default);
+            conversation: conversationOverrideLayer);
         var resolvedModelId = effectiveModel.Model ?? descriptor.ModelId;
 
         // #1639: the model is already registered with the correct per-provider endpoint (enterprise
@@ -149,30 +174,6 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             .Concat(extensionTools.Where(tool => !workspaceToolNames.Contains(tool.Name)))
             .ToList();
 
-        // #1382 Finding 2 — resolve the conversation id at most once per CreateAsync call.
-        // Several conversation-aware tools (conversation, ask_user, spawn_subagent, canvas)
-        // need the conversation bound to this session, and each previously performed an
-        // identical store lookup. The lookup is a read-only function of (store, sessionStore,
-        // agentId, sessionId) — all fixed for the duration of this call — so the result is
-        // safe to memoise. This collapses up to four redundant DB round-trips into one on the
-        // hot agent-handle-creation path. The first invocation runs the resolution; later
-        // invocations return the cached value (which may legitimately be null).
-        var conversationIdResolved = false;
-        ConversationId? resolvedConversationId = null;
-        async Task<ConversationId?> GetConversationIdAsync(IConversationStore store, ISessionStore? sessionStoreForResolve)
-        {
-            if (conversationIdResolved)
-                return resolvedConversationId;
-
-            resolvedConversationId = await ResolveConversationIdAsync(
-                store,
-                sessionStoreForResolve,
-                descriptor.AgentId,
-                context.SessionId,
-                cancellationToken).ConfigureAwait(false);
-            conversationIdResolved = true;
-            return resolvedConversationId;
-        }
 
         _logger.LogInformation(
             "Tool setup for '{AgentId}': workspace={WorkspaceCount} extension={ExtCount} total={Total} toolIds={ToolIdCount} workspace={WorkspacePath}",
@@ -761,6 +762,55 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         return (level, allowed);
+    }
+
+    // #1706: build the conversation-level override layer for the resolver from the conversation
+    // bound to this session. Returns default (all-null) when there is no conversation store, no
+    // bound conversation, or the conversation carries no overrides - so the resolver falls through
+    // to the agent layer. The bound conversation id is resolved via the caller-supplied memoised
+    // delegate (shared with the tool wiring) so this does not add a second DB round-trip. The
+    // thinking token is parsed back to the provider enum here; an unrecognised persisted token is
+    // treated as unset rather than throwing, because the API boundary validates tokens before they
+    // are stored.
+    private async Task<ModelOverrideLayer> ResolveConversationOverrideLayerAsync(
+        Func<IConversationStore, Task<ConversationId?>> resolveConversationId,
+        CancellationToken cancellationToken)
+    {
+        var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        if (conversationStore is null)
+            return default;
+
+        var conversationId = await resolveConversationId(conversationStore).ConfigureAwait(false);
+        if (conversationId is not { } id)
+            return default;
+
+        var conversation = await conversationStore.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return default;
+
+        ThinkingLevel? thinking = null;
+        if (!string.IsNullOrWhiteSpace(conversation.ThinkingOverride)
+            && TryParseThinkingToken(conversation.ThinkingOverride, out var parsed))
+            thinking = parsed;
+
+        return new ModelOverrideLayer(
+            Model: string.IsNullOrWhiteSpace(conversation.ModelOverride) ? null : conversation.ModelOverride,
+            Thinking: thinking,
+            ContextWindow: conversation.ContextWindowOverride);
+    }
+
+    private static bool TryParseThinkingToken(string token, out ThinkingLevel level)
+    {
+        switch (token.Trim().ToLowerInvariant())
+        {
+            case "minimal": level = ThinkingLevel.Minimal; return true;
+            case "low": level = ThinkingLevel.Low; return true;
+            case "medium": level = ThinkingLevel.Medium; return true;
+            case "high": level = ThinkingLevel.High; return true;
+            case "xhigh": level = ThinkingLevel.ExtraHigh; return true;
+            case "max": level = ThinkingLevel.Max; return true;
+            default: level = default; return false;
+        }
     }
 
     private static async Task<ConversationId?> ResolveConversationIdAsync(

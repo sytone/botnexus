@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Conversations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -64,6 +65,18 @@ internal sealed class BuiltInCommandContributor(
             Name = "/compact",
             Description = "Compact the current session context: summarise older messages to free context window.",
             Category = "Session"
+        },
+        new CommandDescriptor
+        {
+            Name = "/model",
+            Description = "Show, set (/model <model-id>), or clear (/model clear) the per-conversation model override.",
+            Category = "Session"
+        },
+        new CommandDescriptor
+        {
+            Name = "/reasoning",
+            Description = "Show, set (/reasoning <minimal|low|medium|high|xhigh|max>), or clear (/reasoning clear) the per-conversation thinking override.",
+            Category = "Session"
         }
     ];
 
@@ -82,6 +95,8 @@ internal sealed class BuiltInCommandContributor(
             "/reset" => Task.FromResult(ClientSideOnlyCommandResult()),
             "/context" => Task.FromResult(ExecuteContext(context)),
             "/compact" => ExecuteCompactAsync(context, cancellationToken),
+            "/model" => ExecuteModelOverrideAsync(context, cancellationToken),
+            "/reasoning" => ExecuteReasoningOverrideAsync(context, cancellationToken),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
@@ -357,5 +372,105 @@ internal sealed class BuiltInCommandContributor(
             Body = notificationText,
             IsError = !outcome.Applied && outcome.FailureReason is not null
         };
+    }
+
+    // #1706: /model and /reasoning drive the per-conversation override that ModelOverrideResolver
+    // consumes as top precedence. With no argument they report the current override; with an
+    // argument they set it; with clear/off/default/agent they clear back to the agent default. The
+    // commands resolve the conversation bound to the active session and no-op safely when there is
+    // no conversation context or conversation store.
+    private async Task<CommandResult> ExecuteModelOverrideAsync(CommandExecutionContext context, CancellationToken cancellationToken)
+    {
+        var (conversation, error) = await ResolveActiveConversationAsync(context, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return new CommandResult { Title = "Model Override", Body = error!, IsError = true };
+
+        var arg = context.Arguments.Count > 0 ? string.Join(' ', context.Arguments).Trim() : null;
+        var store = serviceProvider.GetService<IConversationStore>()!;
+
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            var current = conversation.ModelOverride ?? "(none - using agent default)";
+            return new CommandResult { Title = "Model Override", Body = $"Current model override: {current}", IsError = false };
+        }
+
+        if (IsClearToken(arg))
+        {
+            conversation.ModelOverride = null;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            return new CommandResult { Title = "Model Override", Body = "Cleared model override; reverting to the agent default.", IsError = false };
+        }
+
+        conversation.ModelOverride = arg;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return new CommandResult { Title = "Model Override", Body = $"Set model override to '{arg}' for this conversation.", IsError = false };
+    }
+
+    private async Task<CommandResult> ExecuteReasoningOverrideAsync(CommandExecutionContext context, CancellationToken cancellationToken)
+    {
+        var (conversation, error) = await ResolveActiveConversationAsync(context, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return new CommandResult { Title = "Reasoning Override", Body = error!, IsError = true };
+
+        var arg = context.Arguments.Count > 0 ? context.Arguments[0].Trim() : null;
+        var store = serviceProvider.GetService<IConversationStore>()!;
+
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            var current = conversation.ThinkingOverride ?? "(none - using agent default)";
+            return new CommandResult { Title = "Reasoning Override", Body = $"Current thinking override: {current}", IsError = false };
+        }
+
+        if (IsClearToken(arg))
+        {
+            conversation.ThinkingOverride = null;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            return new CommandResult { Title = "Reasoning Override", Body = "Cleared thinking override; reverting to the agent default.", IsError = false };
+        }
+
+        var token = arg.ToLowerInvariant();
+        if (token is not ("minimal" or "low" or "medium" or "high" or "xhigh" or "max"))
+            return new CommandResult { Title = "Reasoning Override", Body = $"Unknown thinking level '{arg}'. Use minimal, low, medium, high, xhigh, or max.", IsError = true };
+
+        conversation.ThinkingOverride = token;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return new CommandResult { Title = "Reasoning Override", Body = $"Set thinking override to '{token}' for this conversation.", IsError = false };
+    }
+
+    private static bool IsClearToken(string arg)
+        => arg.Equals("clear", StringComparison.OrdinalIgnoreCase)
+            || arg.Equals("off", StringComparison.OrdinalIgnoreCase)
+            || arg.Equals("default", StringComparison.OrdinalIgnoreCase)
+            || arg.Equals("agent", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<(Conversation? Conversation, string? Error)> ResolveActiveConversationAsync(
+        CommandExecutionContext context, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(context.AgentId) || string.IsNullOrWhiteSpace(context.SessionId))
+            return (null, "No active session. Start a conversation first.");
+
+        var store = serviceProvider.GetService<IConversationStore>();
+        if (store is null)
+            return (null, "Conversation store is not available in this gateway instance.");
+
+        var sessionId = SessionId.From(context.SessionId);
+        var session = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is not null && session.ConversationId.IsInitialized())
+        {
+            var bySession = await store.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
+            if (bySession is not null)
+                return (bySession, null);
+        }
+
+        var agentId = AgentId.From(context.AgentId);
+        var conversations = await store.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        var bound = conversations.FirstOrDefault(c => c.ActiveSessionId == sessionId);
+        if (bound is null)
+            return (null, "No conversation is bound to this session yet.");
+        return (bound, null);
     }
 }

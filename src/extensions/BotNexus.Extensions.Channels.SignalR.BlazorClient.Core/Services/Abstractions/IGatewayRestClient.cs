@@ -1,4 +1,4 @@
-﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// All portal REST traffic. Nothing else.
@@ -64,6 +64,17 @@ public interface IGatewayRestClient
 
     /// <summary>DELETE /api/conversations/{conversationId} — soft delete (archive).</summary>
     Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default);
+
+    /// <summary>PUT /api/conversations/{conversationId}/override - set or clear the per-conversation model/thinking/context override (PBI5, #1706).</summary>
+    Task<ConversationResponseDto?> SetConversationOverrideAsync(
+        string conversationId,
+        SetConversationOverrideRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>DELETE /api/conversations/{conversationId}/override - clear all per-conversation overrides back to the agent default (PBI5, #1706).</summary>
+    Task<ConversationResponseDto?> ClearConversationOverrideAsync(
+        string conversationId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>GET /api/agents/{agentId}/workspace or /api/agents/{agentId}/workspace/{path}</summary>
     Task<WorkspaceResponseDto?> GetWorkspaceAsync(

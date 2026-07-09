@@ -40,7 +40,15 @@ public sealed record ConversationResponseDto(
     [property: JsonPropertyName("activeSessionId")] string? ActiveSessionId,
     [property: JsonPropertyName("bindings")] IReadOnlyList<ConversationBindingDto> Bindings,
     [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt);
+    [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
+    [property: JsonPropertyName("modelOverride")] string? ModelOverride = null,
+    [property: JsonPropertyName("thinkingOverride")] string? ThinkingOverride = null,
+    [property: JsonPropertyName("contextWindowOverride")] int? ContextWindowOverride = null);
+
+public sealed record SetConversationOverrideRequestDto(
+    [property: JsonPropertyName("model")] string? Model = null,
+    [property: JsonPropertyName("thinking")] string? Thinking = null,
+    [property: JsonPropertyName("contextWindow")] int? ContextWindow = null);
 
 public sealed record ConversationBindingDto(
     [property: JsonPropertyName("bindingId")] string BindingId,
