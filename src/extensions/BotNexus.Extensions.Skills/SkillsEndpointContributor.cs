@@ -1,6 +1,7 @@
 using System.IO.Abstractions;
 using System.Text;
 using BotNexus.Extensions.Skills.Security;
+using BotNexus.Extensions.Skills.Telemetry;
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -25,10 +26,57 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         var group = app.MapGroup("/api/skills");
 
         group.MapGet("/", (IFileSystem fs, int depth = DefaultTreeDepthLimit) => GetSkillsRoot(fs, depth));
+        // Usage telemetry read surface (#1833). Registered before the catch-all `/{**path}` route so
+        // "telemetry" is matched as a literal segment rather than a skills-relative file path.
+        group.MapGet("/telemetry", (ISkillUsageTelemetry? telemetry) => GetTelemetry(telemetry));
+        group.MapGet("/telemetry/{skillName}", (string skillName, ISkillUsageTelemetry? telemetry) => GetTelemetryForSkill(skillName, telemetry));
         group.MapGet("/{**path}", (string path, IFileSystem fs) => GetSkillsPath(path, fs));
         group.MapPut("/{**path}", (string path, IFileSystem fs, HttpRequest req) => WriteSkillsPath(path, fs, req));
         group.MapDelete("/{**path}", (string path, IFileSystem fs, bool force = false) => DeleteSkillsPath(path, fs, force));
     }
+
+    /// <summary>
+    /// Returns all skill usage telemetry rows (#1833). Returns an empty collection when no telemetry
+    /// sink is configured so the endpoint is always well-formed for admin/UI consumers.
+    /// </summary>
+    internal static async Task<IResult> GetTelemetry(ISkillUsageTelemetry? telemetry)
+    {
+        if (telemetry is null)
+            return Results.Ok(new SkillUsageTelemetryResponse { Skills = [] });
+
+        var records = await telemetry.GetAllAsync();
+        return Results.Ok(new SkillUsageTelemetryResponse
+        {
+            Skills = records.Select(ToDto).ToList()
+        });
+    }
+
+    /// <summary>
+    /// Returns the telemetry row for a single skill (#1833), or 404 when the skill has no recorded
+    /// activity or no telemetry sink is configured.
+    /// </summary>
+    internal static async Task<IResult> GetTelemetryForSkill(string skillName, ISkillUsageTelemetry? telemetry)
+    {
+        if (string.IsNullOrWhiteSpace(skillName))
+            return Results.BadRequest(new { error = "skillName is required." });
+
+        if (telemetry is null)
+            return Results.NotFound();
+
+        var record = await telemetry.GetAsync(skillName);
+        return record is null ? Results.NotFound() : Results.Ok(ToDto(record));
+    }
+
+    private static SkillUsageDto ToDto(SkillUsageRecord record) => new()
+    {
+        SkillName = record.SkillName,
+        ViewCount = record.ViewCount,
+        UseCount = record.UseCount,
+        PatchCount = record.PatchCount,
+        LastUsedAt = record.LastUsedAt,
+        CreatedBy = record.CreatedBy,
+        Pinned = record.Pinned
+    };
 
     internal static IResult GetSkillsRoot(IFileSystem fileSystem, int depth = DefaultTreeDepthLimit)
         => GetSkillsRoot(fileSystem, GetSkillsRootPath(), depth);

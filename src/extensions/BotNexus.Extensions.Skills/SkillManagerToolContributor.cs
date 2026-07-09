@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Extensions.Skills.Telemetry;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -10,7 +11,7 @@ namespace BotNexus.Extensions.Skills;
 /// The write tool is contributed alongside the existing <see cref="SkillTool"/>
 /// (contributed by <see cref="SkillsToolContributor"/>).
 /// </summary>
-public sealed class SkillManagerToolContributor : IAgentToolContributor
+public sealed class SkillManagerToolContributor(ISkillUsageTelemetry? telemetry = null) : IAgentToolContributor
 {
     /// <inheritdoc />
     public Task<AgentToolContribution> ContributeAsync(
@@ -34,7 +35,7 @@ public sealed class SkillManagerToolContributor : IAgentToolContributor
 
         IReadOnlyList<IAgentTool> tools =
         [
-            new SkillManagerTool(agentSkillsDir, workspaceSkillsDir, globalSkillsDir, config)
+            new SkillManagerTool(agentSkillsDir, workspaceSkillsDir, globalSkillsDir, config, fileSystem: null, telemetry: telemetry, createdBy: context.Descriptor.AgentId.Value)
         ];
 
         return Task.FromResult(new AgentToolContribution(tools));
