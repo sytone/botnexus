@@ -35,6 +35,37 @@ public sealed record SkillDefinition
 
     /// <summary>Where this skill was discovered from.</summary>
     public required SkillSource Source { get; init; }
+
+    /// <summary>
+    /// Support files bundled with the skill (references/, templates/, scripts/, assets/),
+    /// discovered so they can be surfaced as load-on-demand context without injecting the
+    /// entire skill directory into the model prompt. Empty when the skill has no support files.
+    /// </summary>
+    public IReadOnlyList<SkillLinkedFile> LinkedFiles { get; init; } = [];
+}
+
+/// <summary>
+/// A support file bundled inside a skill directory (under references/, templates/, scripts/,
+/// or assets/). Exposed as first-class load-on-demand context: the agent can view an individual
+/// file via the skills tool's <c>view_file</c> action rather than loading the whole directory.
+/// </summary>
+public sealed record SkillLinkedFile
+{
+    /// <summary>
+    /// Path relative to the skill directory, using forward slashes
+    /// (e.g. <c>references/api-reference.md</c>). Stable across platforms.
+    /// </summary>
+    public required string RelativePath { get; init; }
+
+    /// <summary>
+    /// The top-level support directory this file lives under
+    /// (<c>references</c>, <c>templates</c>, <c>scripts</c>, or <c>assets</c>).
+    /// Used to group the "Linked files" listing on load.
+    /// </summary>
+    public required string Directory { get; init; }
+
+    /// <summary>Size of the file in bytes, used for display in the linked-file listing.</summary>
+    public long SizeBytes { get; init; }
 }
 
 /// <summary>Where a skill was discovered from (lower values overridden by higher).</summary>
