@@ -28,6 +28,7 @@ public sealed class MobileRefreshReconnectTests : IDisposable
         _portalLoad.LoadError.Returns((string?)null);
         _portalLoad.InitializeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
         _portalLoad.RefreshAsync(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
+        _portalLoad.ResumeAsync(Arg.Any<CancellationToken>()).Returns(HubResumeOutcome.Alive);
         _store.Agents.Returns(new Dictionary<string, AgentState>().AsReadOnly());
         _store.ActiveAgentId.Returns((string?)null);
         _store.GetStreamState(Arg.Any<string>()).Returns(new ConversationStreamState());
@@ -117,15 +118,29 @@ public sealed class MobileRefreshReconnectTests : IDisposable
         Assert.Contains("\u21ba", btn.TextContent);
     }
 
-    // ── OnAppResumed invokes RefreshAsync ─────────────────────────────────────
+    // ── OnAppResumed drives the liveness-verified hub reset (#1838) ───────────
 
     [Fact]
-    public async Task OnAppResumed_calls_PortalLoad_RefreshAsync()
+    public async Task OnAppResumed_calls_PortalLoad_ResumeAsync()
     {
         var cut = _ctx.Render<Chat>();
         await cut.Instance.OnAppResumed();
 
-        await _portalLoad.Received(1).RefreshAsync(Arg.Any<CancellationToken>());
+        // #1838: resume must go through the liveness-verified reset (probe-then-rebuild),
+        // not a bare RefreshAsync that trusts the possibly-zombie connection state.
+        await _portalLoad.Received(1).ResumeAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OnAppResumed_does_not_bypass_reset_with_bare_RefreshAsync()
+    {
+        var cut = _ctx.Render<Chat>();
+        await cut.Instance.OnAppResumed();
+
+        // The component must delegate to ResumeAsync (which internally probes and, only on
+        // failure, rebuilds + refreshes). It must not call RefreshAsync directly, which would
+        // skip the liveness probe and leave an iOS zombie socket in place.
+        await _portalLoad.DidNotReceive().RefreshAsync(Arg.Any<CancellationToken>());
     }
 
     // ── IPortalLoadService.OnConnectionStateChanged subscription ────────────

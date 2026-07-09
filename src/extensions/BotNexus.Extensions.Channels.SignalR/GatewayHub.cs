@@ -614,6 +614,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         => Task.FromResult(_registry.GetAll());
 
     /// <summary>
+    /// Lightweight liveness probe: a no-op server round-trip used by clients to verify the
+    /// hub connection is actually alive rather than a zombie socket (#1838). iOS silently
+    /// recycles background WebSockets, leaving the client-side state reporting Connected on a
+    /// dead socket; a short-timeout Ping that completes proves the transport is live end-to-end.
+    /// Returns the server UTC ticks so the payload is non-trivial and cannot be short-circuited.
+    /// </summary>
+    /// <returns>The server''s current UTC tick count at the time the ping was handled.</returns>
+    public Task<long> Ping() => Task.FromResult(DateTimeOffset.UtcNow.UtcTicks);
+
+    /// <summary>
     /// Executes get agent status.
     /// </summary>
     /// <param name="agentId">The agent id.</param>

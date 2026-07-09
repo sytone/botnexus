@@ -422,7 +422,12 @@ else
     [JSInvokable]
     public async Task OnAppResumed()
     {
-        await PortalLoad.RefreshAsync();
+        // #1838: do not trust HubConnectionState/readyState on resume -- iOS zombie sockets
+        // still report Connected after a silent background recycle. ResumeAsync probes the hub
+        // with a short-timeout round-trip and rebuilds (fresh negotiate + re-subscribe) only when
+        // the probe fails; on success it keeps the connection and refreshes. Its reentrancy guard
+        // means rapid visibility toggles cannot stack concurrent rebuilds.
+        await PortalLoad.ResumeAsync();
         await InvokeAsync(async () =>
         {
             StateHasChanged();
