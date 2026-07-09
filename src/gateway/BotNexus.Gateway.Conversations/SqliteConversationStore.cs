@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
+using BotNexus.Persistence.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Conversations;
@@ -1404,28 +1405,7 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     private SqliteConnection CreateConnection()
-    {
-        var connection = new SqliteConnection(_connectionString);
-        // busy_timeout is per-connection and resets to 0 on every open, so it must be applied on
-        // EVERY connection (this store opens a fresh connection per operation) — not just at init
-        // like the database-level journal_mode=WAL. Without it a concurrent cross-process writer
-        // hits SQLITE_BUSY immediately instead of waiting briefly for the lock to clear (#1450).
-        // The handler fires on OpenAsync (before the init WAL pragma runs), so it also covers the
-        // initialization connection. SqliteConversationStore was the one store #1451 could not
-        // include because this file was locked at the time; this closes that gap with the same
-        // pattern the other fresh-connection stores use.
-        connection.StateChange += (_, e) =>
-        {
-            if (e.CurrentState == System.Data.ConnectionState.Open)
-            {
-                using var pragma = connection.CreateCommand();
-                pragma.CommandText = "PRAGMA busy_timeout=5000;";
-                pragma.ExecuteNonQuery();
-            }
-        };
-
-        return connection;
-    }
+        => SqliteConnectionFactory.Create(_connectionString);
 
     private static Conversation CloneConversation(Conversation conversation)
         => new()

@@ -341,16 +341,11 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
 
         Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
         _connection = new SqliteConnection($"Data Source={_dbPath}");
+        // busy_timeout MUST be set before WAL negotiation and on every open. The shared factory's
+        // StateChange handler re-applies busy_timeout on every open (#1450, #1541); attaching it
+        // before OpenAsync guarantees it runs before the WAL negotiation below.
+        SqliteConnectionFactory.AttachBusyTimeout(_connection);
         await _connection.OpenAsync(ct).ConfigureAwait(false);
-
-        // busy_timeout MUST be set before WAL negotiation and on every open. This connection is
-        // cached and reused for the lifetime of the backend, so applying it here once covers every
-        // operation. busy_timeout lets a concurrent cross-process writer wait briefly for the lock
-        // instead of failing immediately with SQLITE_BUSY (#1450).
-        // busy_timeout is per-connection and must be re-applied on every open (#1450).
-        using var pragmas = _connection.CreateCommand();
-        pragmas.CommandText = "PRAGMA busy_timeout=5000;";
-        await pragmas.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network mounts)
         // with bounded wal_autocheckpoint, consolidated into the shared helper.
