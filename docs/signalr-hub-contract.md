@@ -53,6 +53,7 @@ responds directly (most stream their results back as server events instead).
 | `CompactSession(agentId, sessionId)` → `CompactSessionResult` | Summarise the active session to reduce token usage while preserving full history. |
 | `ResetSession(agentId, sessionId)` | Seal the current session and start a fresh one (history is retained). |
 | `RespondToAskUser(conversationId, requestId, freeFormText, selectedValues, cancelled)` | Submit the user's answer to an outstanding `ask_user` prompt (pairs with the `UserInputRequired` event). |
+| `Ping()` → `long` | Lightweight liveness probe: a no-op server round-trip returning the server's current UTC tick count. Clients use a short-timeout `Ping` to verify the transport is actually alive end-to-end rather than a zombie socket (iOS silently recycles background WebSockets, leaving the client reporting `Connected` on a dead socket). |
 
 > **Durable `ask_user` prompts (#1488).** A pending `ask_user` prompt is persisted on the
 > conversation row, so a reloaded tab, a newly-opened window, or a mobile client that missed the

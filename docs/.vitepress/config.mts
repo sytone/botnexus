@@ -172,6 +172,7 @@ export default defineConfig({
           { text: 'Audio Recording', link: '/guides/audio-recording' },
           { text: 'Observability', link: '/observability' },
           { text: 'Watchdog Setup', link: '/guides/watchdog-setup' },
+          { text: 'Webhooks', link: '/guides/webhooks' },
         ],
       },
       {

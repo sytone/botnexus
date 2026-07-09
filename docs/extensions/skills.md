@@ -6,7 +6,9 @@ The Skills extension provides the runtime infrastructure for loading, managing, 
 
 - **Discovers skills** from the global skills directory (`~/.botnexus/skills/`) and per-agent workspace skills
 - **Injects skill context** into agent system prompts via the prompt pipeline hook system
-- **Provides the `skills` tool** with `list` and `load` actions for on-demand skill activation
+- **Provides the `skills` tool** with `list`, `load`, and `view_file` actions for on-demand skill activation
+- **Exposes explicit alias tools** (`skills_list`, `skill_view`) that map to the multi-action `skills` tool for better model ergonomics
+- **Tracks skill usage telemetry** (view/use/patch counts) in SQLite, readable via the skills API
 - **Manages skill lifecycle** — loading, caching, and unloading skill content
 
 ## Enabling
@@ -44,6 +46,27 @@ Loads a skill's content into the current conversation context.
   "skillName": "my-skill"
 }
 ```
+
+#### `view_file` — Load a single linked support file
+
+Loads one linked support file (under `references/`, `templates/`, `scripts/`, or `assets/`) from a skill **without** injecting the whole skill into context. Use this for progressive disclosure when only a specific reference is needed.
+
+```json
+{
+  "action": "view_file",
+  "skillName": "my-skill",
+  "filePath": "references/api-notes.md"
+}
+```
+
+### Explicit alias tools
+
+For better model ergonomics, two thin alias tools inject a fixed `action` and delegate to the same `skills` implementation (sharing its per-session loaded-skill state). Callers never pass an `action` argument to an alias.
+
+| Tool | Equivalent to | Purpose |
+|------|---------------|---------|
+| `skills_list` | `skills` action `list` | List available skills and their descriptions. |
+| `skill_view` | `skills` action `view_file` | View a single linked support file from a skill without loading the whole skill. |
 
 ### `skill_manage`
 
@@ -121,6 +144,17 @@ skills/
     ├── scripts/           # Executable scripts (tool wrappers)
     └── assets/            # Static assets
 ```
+
+## Usage Telemetry
+
+The Skills extension records per-skill usage counters (view, use, and patch counts, plus `last_used_at`, `created_by`, and a `pinned` flag) in a SQLite store as skills are loaded, viewed, and edited at runtime. This telemetry is exposed read-only via the skills API:
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/skills/telemetry` | Usage records for all skills. |
+| `GET /api/skills/telemetry/{skillName}` | Usage record for a single skill. |
+
+The telemetry surface is passive — it never changes skill discovery, loading, or content; it only surfaces how skills are being used so operators can spot stale or high-churn skills.
 
 ## See Also
 

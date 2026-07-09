@@ -672,6 +672,8 @@ Gateway HTTP server settings.
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
 | `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
 | `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |
+| `WalCheckpointIntervalMinutes` | int | 30 | Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Keeps the write-ahead log from growing unbounded on long-lived stores. |
+| `TranscriptExport.RedactSecrets` | bool | false | When true, exported session transcripts are passed through the transcript secret redactor so recognised credential shapes are replaced with a placeholder before the transcript leaves the process. Off by default so export output stays byte-identical to historical behaviour unless an operator opts in. Render-time only — never changes what is persisted to the session store. |
 | `RateLimit.RequestsPerMinute` | int | 60 | Maximum requests per client per window |
 | `RateLimit.WindowSeconds` | int | 60 | Window size in seconds for request counting |
 | `RateLimit.MaxEntries` | int | 10000 | Maximum distinct client windows tracked in memory. Bounds the per-client dictionary so a flood of distinct client keys cannot exhaust gateway memory. When full, stale entries are pruned then a non-actively-limiting window is evicted; if none can be freed the request is rejected with 429. Actively rate-limited windows are never evicted (a flood cannot clear an attacker's own throttle). A non-positive value disables the cap. |
