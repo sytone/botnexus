@@ -35,6 +35,7 @@
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Telemetry\BotNexus.Gateway.Telemetry.csproj" />
     <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Webhooks\BotNexus.Gateway.Webhooks.csproj" />

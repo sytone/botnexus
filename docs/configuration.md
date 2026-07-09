@@ -1038,6 +1038,24 @@ Configuration for the CodingAgent component (used when running BotNexus as a cod
 
 **Note:** The `DefaultShellTimeoutSeconds` controls the CodingAgent's `bash` tool timeout. This is separate from `Tools.Exec.Timeout` which controls the Gateway's built-in shell tool. Set to `null` to allow unlimited execution time (process runs until the agent cancels it).
 
+### Telemetry: TelemetryConfig
+
+The optional `telemetry` section controls the in-process OpenTelemetry metrics/tracing plane.
+
+```json
+{
+  "telemetry": {
+    "enabled": true
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | When `true`, wires the OpenTelemetry `MeterProvider`/`TracerProvider` for the canonical `"BotNexus"` meter scope. When `false`, the `IMetrics` facade is still registered (so call sites resolve) but no OpenTelemetry providers are attached. |
+
+This PBI lands only the in-process foundation; remote exporter (OTLP) configuration is deferred to a later change, so there is no egress/endpoint surface here yet.
+
 ---
 
 ## JSON Schema Validation
