@@ -203,7 +203,7 @@ public sealed class DefaultConversationRouterTests
             agentId,
             Channel("telegram"),
             ChannelAddress.From("unused"),
-            conversation.ConversationId.Value);
+            conversation.ConversationId);
 
         result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
         var reopened = await conversationStore.GetAsync(conversation.ConversationId);
@@ -492,6 +492,31 @@ public sealed class DefaultConversationRouterTests
 
         result.Conversation.Initiator.ShouldBeNull();
     }
+    [Fact]
+    public async Task ResolveInbound_TypedConversationId_RoundTripsToTargetConversation()
+    {
+        // The conversationId parameter is a typed ConversationId? (issue #612, wave W-4a).
+        // When an explicit typed id is supplied, the router must route directly to that
+        // conversation without any string<->ConversationId round-trip at the boundary.
+        var store = new InMemoryConversationStore();
+        var router = CreateRouter(store);
+        var agentId = Agent();
+        var existing = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "explicit-target"
+        };
+        await store.CreateAsync(existing);
+
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            Channel(),
+            ChannelAddress.From("chat-explicit"),
+            conversationId: existing.ConversationId);
+
+        result.Conversation.ConversationId.ShouldBe(existing.ConversationId);
+    }
 
     [Fact]
     public async Task ResolveInbound_ReopensArchivedConversation_DoesNotOverwriteInitiator()
@@ -561,7 +586,7 @@ public sealed class DefaultConversationRouterTests
             agentId,
             Channel(),
             ChannelAddress.From("unused"),
-            conversation.ConversationId.Value,
+            conversation.ConversationId,
             ct: default,
             initiator: different);
 
@@ -612,7 +637,7 @@ public sealed class DefaultConversationRouterTests
             agentId,
             signalrChannel,
             ChannelAddress.From(agentId.Value),
-            conversation.ConversationId.Value);
+            conversation.ConversationId);
 
         // Assert: a NEW session is created, not the cron one
         result.SessionId.ShouldNotBe(cronSessionId);
@@ -658,7 +683,7 @@ public sealed class DefaultConversationRouterTests
             agentId,
             signalrChannel,
             ChannelAddress.From(agentId.Value),
-            conversation.ConversationId.Value);
+            conversation.ConversationId);
 
         // Assert: same session reused
         result.SessionId.ShouldBe(existingSessionId);

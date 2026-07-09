@@ -61,7 +61,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -133,7 +133,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -222,7 +222,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))

@@ -37,16 +37,15 @@ public sealed class DefaultConversationRouter : IConversationRouter
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        string? conversationId = null,
+        ConversationId? conversationId = null,
         CancellationToken ct = default,
         CitizenId? initiator = null)
     {
         // When the caller knows the exact conversation (e.g. portal with active conversation tab),
         // skip binding lookup entirely.
-        if (conversationId is not null)
+        if (conversationId is { } explicitConversationId)
         {
-            var convId = ConversationId.From(conversationId);
-            var direct = await _conversationStore.GetAsync(convId, ct);
+            var direct = await _conversationStore.GetAsync(explicitConversationId, ct);
             if (direct is null)
             {
                 _logger.LogWarning(
