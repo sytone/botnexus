@@ -5,15 +5,22 @@
 <div class="agent-detail-panel">
     <div class="agent-detail-header">
         <div class="agent-detail-header-left">
-            <span class="agent-detail-id">@AgentId</span>
+            @if (Mode == "edit")
+            {
+                <span class="agent-detail-id">@AgentId</span>
+            }
+            else
+            {
+                <span class="agent-detail-id">@(Mode == "clone" ? "Clone Agent" : "New Agent")</span>
+            }
             @if (IsDirty)
             {
                 <span class="agents-dirty-indicator" title="You have unsaved changes">&#x25CF; Unsaved changes</span>
             }
         </div>
         <div class="agent-detail-header-right">
-            <button class="toolbar-btn primary" @onclick="SaveAsync" disabled="@(_saving || !IsDirty)">
-                @(_saving ? "Saving..." : "Save Changes")
+            <button class="toolbar-btn primary" @onclick="SaveAsync" disabled="@(_saving || !CanSave)">
+                @(_saving ? "Saving..." : SaveLabel)
             </button>
             <button class="toolbar-btn" @onclick="GoBack">&#x2190; Back to list</button>
         </div>
@@ -39,6 +46,17 @@
             <summary class="agent-section-title">Identity &amp; Model</summary>
             <div class="agent-section-body">
                 <div class="agents-form-grid">
+                    <label>Agent ID @if (Mode != "edit") { <span class="required">*</span> }</label>
+                    <div>
+                        <input id="agent-id-input" class="cfg-input @(HasFieldError("AgentId") ? "field-error" : "")"
+                               value="@_model.AgentId" disabled="@(Mode == "edit")"
+                               @oninput="OnAgentIdInput" aria-required="@(Mode != "edit")" />
+                        @if (HasFieldError("AgentId"))
+                        {
+                            <span class="agents-field-error" role="alert">@GetFieldError("AgentId")</span>
+                        }
+                    </div>
+
                     <label>Enabled</label>
                     <input type="checkbox" checked="@_model.Enabled" @onchange="OnEnabledChange" />
 
@@ -56,7 +74,7 @@
                         @if (_providers.Count > 0)
                         {
                             <select class="cfg-input" value="@_model.ApiProvider" @onchange="OnProviderChange">
-                                <option value="">— select provider —</option>
+                                <option value="">- select provider -</option>
                                 @foreach (var p in _providers)
                                 {
                                     <option value="@p.Id">@p.Name</option>
@@ -75,7 +93,7 @@
                         @if (_models.Count > 0)
                         {
                             <select class="cfg-input" value="@_model.ModelId" @onchange="OnModelChange">
-                                <option value="">— select model —</option>
+                                <option value="">- select model -</option>
                                 @foreach (var m in _models)
                                 {
                                     <option value="@m.ModelId">@m.Name</option>
@@ -91,6 +109,39 @@
                             <input class="cfg-input" value="@_model.ModelId" @oninput="OnModelInput" />
                         }
                         @if (HasBadge("ModelId")) { <span class="world-default-badge">World default</span> }
+                    </div>
+
+                    <label>Allowed Models</label>
+                    <div>
+                        @if (_models.Count > 0)
+                        {
+                            <div class="agent-checkbox-list">
+                                @foreach (var m in _models)
+                                {
+                                    var mid = m.ModelId;
+                                    <label class="agent-checkbox-item">
+                                        <input type="checkbox" checked="@_model.AllowedModelIds.Contains(mid)"
+                                               @onchange="@(e => OnAllowedModelToggle(mid, e))" />
+                                        <span>@m.Name</span>
+                                    </label>
+                                }
+                            </div>
+                            <span class="agents-field-loading">Empty selection = unrestricted within provider allowlist.</span>
+                        }
+                        else
+                        {
+                            <div class="agent-tag-list">
+                                @foreach (var am in _model.AllowedModelIds.ToList())
+                                {
+                                    var a = am;
+                                    <span class="agent-tag">@a <button @onclick="@(() => RemoveAllowedModel(a))">&#x2715;</button></span>
+                                }
+                            </div>
+                            <div class="agent-tag-add-row">
+                                <input class="agent-tag-input cfg-input" @bind="_newAllowedModel" placeholder="model-id" />
+                                <button class="toolbar-btn" @onclick="AddAllowedModel">+ Add</button>
+                            </div>
+                        }
                     </div>
 
                     <label>Thinking Level</label>
@@ -192,8 +243,8 @@
                         </div>
                         <div class="agent-tag-add-row">
                             <select class="cfg-input agent-tag-input" @onchange="OnSubAgentAdd">
-                                <option value="">— add sub-agent —</option>
-                                @foreach (var a in _knownAgents.Where(a => a != AgentId && !_model.SubAgentIds.Contains(a)))
+                                <option value="">- add sub-agent -</option>
+                                @foreach (var a in _knownAgents.Where(a => a != _model.AgentId && !_model.SubAgentIds.Contains(a)))
                                 {
                                     <option value="@a">@a</option>
                                 }
@@ -370,7 +421,7 @@
                                 }
                             </div>
                             <select class="cfg-input" @onchange="OnSessionAgentAdd">
-                                <option value="">— add agent —</option>
+                                <option value="">- add agent -</option>
                                 @foreach (var a in _knownAgents.Where(a => !(_model.SessionAccess?.AllowedAgents ?? []).Contains(a)))
                                 {
                                     <option value="@a">@a</option>
@@ -398,7 +449,7 @@
                                 }
                             </div>
                             <select class="cfg-input" @onchange="OnConversationAgentAdd">
-                                <option value="">— add agent —</option>
+                                <option value="">- add agent -</option>
                                 @foreach (var a in _knownAgents.Where(a => !(_model.ConversationAccess?.AllowedAgents ?? []).Contains(a)))
                                 {
                                     <option value="@a">@a</option>
@@ -479,26 +530,38 @@
             </div>
         </details>
 
-        @* ── Danger Zone ───────────────────────────────────────── *@
-        <div class="agent-danger-zone">
-            @if (!_showDeleteConfirm)
-            {
-                <button class="toolbar-btn danger" @onclick="() => _showDeleteConfirm = true">Delete Agent</button>
-            }
-            else
-            {
-                <span>Are you sure you want to delete <strong>@AgentId</strong>? This cannot be undone.</span>
-                <button class="toolbar-btn danger" @onclick="DeleteAsync" disabled="@_deleting">
-                    @(_deleting ? "Deleting..." : "Yes, Delete")
-                </button>
-                <button class="toolbar-btn" @onclick="() => _showDeleteConfirm = false">Cancel</button>
-            }
-        </div>
+        @* ── Danger Zone (edit only) ───────────────────────────── *@
+        @if (Mode == "edit")
+        {
+            <div class="agent-danger-zone">
+                @if (!_showDeleteConfirm)
+                {
+                    <button class="toolbar-btn danger" @onclick="() => _showDeleteConfirm = true">Delete Agent</button>
+                }
+                else
+                {
+                    <span>Are you sure you want to delete <strong>@AgentId</strong>? This cannot be undone.</span>
+                    <button class="toolbar-btn danger" @onclick="DeleteAsync" disabled="@_deleting">
+                        @(_deleting ? "Deleting..." : "Yes, Delete")
+                    </button>
+                    <button class="toolbar-btn" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+                }
+            </div>
+        }
     }
 </div>
 
 @code {
-    [Parameter, EditorRequired] public string AgentId { get; set; } = default!;
+    /// <summary>
+    /// For edit mode this is the ID of the agent to load and update. For clone mode this is
+    /// the ID of the source agent to copy from (the cloned agent gets a new user-supplied ID).
+    /// Null/empty in create mode.
+    /// </summary>
+    [Parameter] public string? AgentId { get; set; }
+
+    /// <summary>Editor mode: <c>edit</c> (default), <c>create</c>, or <c>clone</c>.</summary>
+    [Parameter] public string Mode { get; set; } = "edit";
+
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback OnDeleted { get; set; }
 
@@ -512,6 +575,7 @@
         public bool Enabled { get; set; } = true;
         public string ApiProvider { get; set; } = "";
         public string ModelId { get; set; } = "";
+        public List<string> AllowedModelIds { get; set; } = [];
         public string? SystemPrompt { get; set; }
         public string? SystemPromptFile { get; set; }
         public string? Thinking { get; set; }
@@ -618,6 +682,7 @@
     private string _statusClass = "";
     private CancellationTokenSource? _statusCts;
     private Dictionary<string, string> _inheritedFields = new();
+    private Dictionary<string, string> _fieldErrors = new();
     private List<string> _knownAgents = [];
     private List<ProviderItem> _providers = [];
     private List<ModelItem> _models = [];
@@ -625,6 +690,7 @@
     private List<int> _supportedContextSizes = [];
     private bool _loadingModels;
     private string _newToolId = "";
+    private string _newAllowedModel = "";
     private string _newReadPath = "";
     private string _newWritePath = "";
     private string _newDenyPath = "";
@@ -634,22 +700,38 @@
 
     private bool IsDirty => _model is not null && JsonSerializer.Serialize(_model) != _originalJson;
 
+    // In create/clone the form starts pristine (nothing to update), so gate save on required fields
+    // instead of dirtiness; in edit mode the existing dirty gate applies.
+    private bool CanSave => Mode == "edit" ? IsDirty : _model is not null;
+
+    private string SaveLabel => Mode switch
+    {
+        "create" => "Create Agent",
+        "clone" => "Create Clone",
+        _ => "Save Changes"
+    };
+
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
         _loadError = null;
         _showDeleteConfirm = false;
+        _fieldErrors.Clear();
         StateHasChanged();
         await Task.WhenAll(LoadAgentAsync(), LoadProvidersAsync(), LoadKnownAgentsAsync());
-        _ = TryLoadInheritanceBadgesAsync();
+        if (Mode == "edit")
+            _ = TryLoadInheritanceBadgesAsync();
         _loading = false;
     }
 
     private void MarkDirty() => StateHasChanged();
 
     private bool HasBadge(string field) => _inheritedFields.ContainsKey(field);
+    private bool HasFieldError(string field) => _fieldErrors.ContainsKey(field);
+    private string GetFieldError(string field) => _fieldErrors.GetValueOrDefault(field, "");
 
     // ── Input handlers ────────────────────────────────────────────────────
+    private void OnAgentIdInput(ChangeEventArgs e) { _model!.AgentId = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnEnabledChange(ChangeEventArgs e) { _model!.Enabled = (bool)(e.Value ?? false); MarkDirty(); }
     private void OnDisplayNameInput(ChangeEventArgs e) { _model!.DisplayName = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnDescriptionInput(ChangeEventArgs e) { _model!.Description = e.Value?.ToString(); MarkDirty(); }
@@ -659,6 +741,17 @@
     private void OnModelChange(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; RefreshModelCapabilities(); MarkDirty(); }
     private void OnThinkingChange(ChangeEventArgs e) { var v = e.Value?.ToString(); _model!.Thinking = string.IsNullOrEmpty(v) ? null : v; MarkDirty(); }
     private void OnContextWindowChange(ChangeEventArgs e) { var v = e.Value?.ToString(); _model!.ContextWindow = int.TryParse(v, out var n) ? n : null; MarkDirty(); }
+
+    // Allowed models
+    private void OnAllowedModelToggle(string modelId, ChangeEventArgs e)
+    {
+        var on = (bool)(e.Value ?? false);
+        if (on) { if (!_model!.AllowedModelIds.Contains(modelId)) _model.AllowedModelIds.Add(modelId); }
+        else { _model!.AllowedModelIds.Remove(modelId); }
+        MarkDirty();
+    }
+    private void AddAllowedModel() { if (!string.IsNullOrWhiteSpace(_newAllowedModel) && !_model!.AllowedModelIds.Contains(_newAllowedModel)) { _model.AllowedModelIds.Add(_newAllowedModel); _newAllowedModel = ""; MarkDirty(); } }
+    private void RemoveAllowedModel(string m) { _model!.AllowedModelIds.Remove(m); MarkDirty(); }
 
     // Recompute the thinking/context option sets from the currently selected model, clearing any
     // now-invalid selection so the editor never persists a value the model cannot honour (#1705).
@@ -767,6 +860,14 @@
     {
         try
         {
+            // Create mode starts with a blank model; edit/clone load from the source agent.
+            if (Mode == "create" || string.IsNullOrEmpty(AgentId))
+            {
+                _model = new AgentEditModel();
+                _originalJson = JsonSerializer.Serialize(_model);
+                return;
+            }
+
             var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{Uri.EscapeDataString(AgentId)}";
             using var response = await Http.GetAsync(url);
             if (!response.IsSuccessStatusCode)
@@ -777,6 +878,14 @@
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             _model = MapFromJson(doc.RootElement);
+
+            if (Mode == "clone")
+            {
+                // A clone must get a brand-new unique ID from the user and a distinguishable name.
+                _model.DisplayName = $"Copy of {_model.DisplayName}";
+                _model.AgentId = "";
+            }
+
             _originalJson = JsonSerializer.Serialize(_model);
             if (!string.IsNullOrEmpty(_model.ApiProvider))
                 await LoadModelsAsync(_model.ApiProvider);
@@ -834,7 +943,7 @@
     {
         try
         {
-            var url = Nav.BaseUri.TrimEnd('/') + $"/api/config/agents/{Uri.EscapeDataString(AgentId)}/effective";
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/config/agents/{Uri.EscapeDataString(AgentId!)}/effective";
             using var response = await Http.GetAsync(url);
             if (!response.IsSuccessStatusCode) return;
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -888,6 +997,8 @@
             m.SystemPromptFiles = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
         if (el.TryGetProperty("toolIds", out p) && p.ValueKind == JsonValueKind.Array)
             m.ToolIds = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
+        if (el.TryGetProperty("allowedModelIds", out p) && p.ValueKind == JsonValueKind.Array)
+            m.AllowedModelIds = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
         if (el.TryGetProperty("subAgentIds", out p) && p.ValueKind == JsonValueKind.Array)
             m.SubAgentIds = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
 
@@ -939,6 +1050,18 @@
                 sa.AllowedAgents = sap.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
             m.SessionAccess = sa;
         }
+        else
+        {
+            // AgentDescriptor exposes sessionAccessLevel/sessionAllowedAgents as flat properties.
+            var lvl = GetStr(el, "sessionAccessLevel");
+            if (!string.IsNullOrEmpty(lvl) && lvl != "own")
+            {
+                var sa = new SessionAccessEditModel { Level = lvl };
+                if (el.TryGetProperty("sessionAllowedAgents", out var sap) && sap.ValueKind == JsonValueKind.Array)
+                    sa.AllowedAgents = sap.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
+                m.SessionAccess = sa;
+            }
+        }
 
         if (el.TryGetProperty("conversationAccess", out p) && p.ValueKind == JsonValueKind.Object)
         {
@@ -946,6 +1069,17 @@
             if (p.TryGetProperty("allowedAgents", out var cap) && cap.ValueKind == JsonValueKind.Array)
                 ca.AllowedAgents = cap.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
             m.ConversationAccess = ca;
+        }
+        else
+        {
+            var lvl = GetStr(el, "conversationAccessLevel");
+            if (!string.IsNullOrEmpty(lvl) && lvl != "own")
+            {
+                var ca = new ConversationAccessEditModel { Level = lvl };
+                if (el.TryGetProperty("conversationAllowedAgents", out var cap) && cap.ValueKind == JsonValueKind.Array)
+                    ca.AllowedAgents = cap.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
+                m.ConversationAccess = ca;
+            }
         }
 
         if (el.TryGetProperty("toolPolicy", out p) && p.ValueKind == JsonValueKind.Object)
@@ -973,15 +1107,40 @@
     // ── Save / Delete / Nav ───────────────────────────────────────────────
     private void GoBack() => Nav.NavigateTo("agents");
 
+    private bool ValidateNewAgent()
+    {
+        _fieldErrors.Clear();
+        if (Mode != "edit" && string.IsNullOrWhiteSpace(_model?.AgentId))
+            _fieldErrors["AgentId"] = "Agent ID is required.";
+        return _fieldErrors.Count == 0;
+    }
+
     private async Task SaveAsync()
     {
         if (_model is null) return;
+        if (!ValidateNewAgent())
+        {
+            StateHasChanged();
+            return;
+        }
+
         _saving = true;
         StateHasChanged();
         try
         {
-            var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{Uri.EscapeDataString(AgentId)}";
-            var response = await Http.PutAsJsonAsync(url, _model);
+            HttpResponseMessage response;
+            if (Mode == "edit")
+            {
+                var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{Uri.EscapeDataString(AgentId!)}";
+                response = await Http.PutAsJsonAsync(url, _model);
+            }
+            else
+            {
+                // create and clone both POST to the create endpoint with the user-supplied new ID.
+                var url = Nav.BaseUri.TrimEnd('/') + "/api/agents";
+                response = await Http.PostAsJsonAsync(url, _model);
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
@@ -989,7 +1148,7 @@
                 return;
             }
             _originalJson = JsonSerializer.Serialize(_model);
-            SetStatus("Agent saved.", "success");
+            SetStatus(Mode == "edit" ? "Agent saved." : "Agent created.", "success");
             await OnSaved.InvokeAsync();
         }
         catch (Exception ex)
@@ -1007,7 +1166,7 @@
         _deleting = true;
         try
         {
-            var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{Uri.EscapeDataString(AgentId)}";
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{Uri.EscapeDataString(AgentId!)}";
             var response = await Http.DeleteAsync(url);
             if (!response.IsSuccessStatusCode)
             {

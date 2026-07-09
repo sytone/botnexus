@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -69,34 +70,25 @@ public sealed class AgentsPageTests : IDisposable
     }
 
     [Fact]
-    public void Add_button_shows_form()
+    public void Add_button_shows_full_editor_in_create_mode()
     {
         _httpHandler.SetupResponse("/api/agents", "[]");
         _httpHandler.SetupResponse("/api/providers", "[]");
+        _httpHandler.SetupResponse("/api/models", "[]");
 
         var cut = _ctx.Render<Agents>();
         cut.WaitForState(() => cut.Markup.Contains("Add Agent"));
 
         cut.Find("button.primary").Click();
 
+        cut.WaitForState(() => cut.HasComponent<AgentDetailPanel>(), TimeSpan.FromSeconds(3));
+        Assert.True(cut.HasComponent<AgentDetailPanel>());
+        // The full editor exposes the sectioned schema, not just the legacy 6 fields.
+        Assert.Contains("New Agent", cut.Markup);
         Assert.Contains("Agent ID", cut.Markup);
-        Assert.Contains("Display Name", cut.Markup);
-    }
-
-    [Fact]
-    public void Form_validation_shows_field_errors()
-    {
-        _httpHandler.SetupResponse("/api/agents", "[]");
-        _httpHandler.SetupResponse("/api/providers", "[]");
-
-        var cut = _ctx.Render<Agents>();
-        cut.WaitForState(() => cut.Markup.Contains("Add Agent"));
-
-        cut.Find("button.primary").Click();
-        cut.Find(".agents-form-actions button.primary").Click();
-
-        Assert.Contains("Agent ID is required", cut.Markup);
-        Assert.Contains("Display Name is required", cut.Markup);
+        Assert.Contains("Heartbeat", cut.Markup);
+        Assert.Contains("Tool Policy", cut.Markup);
+        Assert.Contains("Create Agent", cut.Markup);
     }
 
     [Fact]
@@ -155,53 +147,56 @@ public sealed class AgentsPageTests : IDisposable
     }
 
     [Fact]
-    public void Edit_button_populates_form_with_agent_data()
+    public void Edit_button_opens_full_editor_in_edit_mode()
     {
         var agents = JsonSerializer.Serialize(new[]
         {
             new { agentId = "bot-1", displayName = "Bot One", description = "A test bot", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "You are helpful" }
         });
+        _httpHandler.SetupResponse("/api/agents/bot-1", "{\"agentId\":\"bot-1\",\"displayName\":\"Bot One\",\"apiProvider\":\"openai\",\"modelId\":\"gpt-4\"}");
         _httpHandler.SetupResponse("/api/agents", agents);
         _httpHandler.SetupResponse("/api/providers", "[]");
-        _httpHandler.SetupResponse("/api/models?provider=openai", "[]");
+        _httpHandler.SetupResponse("/api/models", "[]");
 
         var cut = _ctx.Render<Agents>();
         cut.WaitForState(() => cut.Markup.Contains("bot-1"));
 
         cut.Find("button.agents-btn-edit").Click();
 
-        Assert.Contains("Edit Agent: bot-1", cut.Markup);
+        cut.WaitForState(() => cut.HasComponent<AgentDetailPanel>(), TimeSpan.FromSeconds(3));
+        Assert.True(cut.HasComponent<AgentDetailPanel>());
+        Assert.Contains("Save Changes", cut.Markup);
     }
 
     [Fact]
-    public void Save_new_agent_refreshes_list_from_api_without_stale_state()
+    public void Clone_button_opens_editor_in_clone_mode_with_copy_prefix()
     {
-        _httpHandler.SetupResponse("/api/agents", "[]");
+        var agents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "A test bot", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "You are helpful" }
+        });
+        // Register the specific agent path first so the substring matcher does not resolve
+        // /api/agents/bot-1 against the /api/agents list response.
+        _httpHandler.SetupResponse("/api/agents/bot-1",
+            "{\"agentId\":\"bot-1\",\"displayName\":\"Bot One\",\"apiProvider\":\"openai\",\"modelId\":\"gpt-4\"}");
+        _httpHandler.SetupResponse("/api/agents", agents);
         _httpHandler.SetupResponse("/api/providers", "[]");
+        _httpHandler.SetupResponse("/api/models", "[]");
 
         var cut = _ctx.Render<Agents>();
-        cut.WaitForState(() => cut.Markup.Contains("Add Agent"));
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
 
-        cut.Find("button.primary").Click();
-        cut.Find("#agent-id-input").Input("bot-2");
-        cut.Find("#display-name-input").Input("Bot Two");
-        cut.Find("#provider-input").Input("openai");
-        cut.Find("#model-id-input").Input("gpt-4.1");
+        cut.Find("button.agents-btn-clone").Click();
 
-        var refreshedAgents = JsonSerializer.Serialize(new[]
-        {
-            new { agentId = "bot-2", displayName = "Bot Two", description = "", apiProvider = "openai", modelId = "gpt-4.1", systemPrompt = "" }
-        });
-        _httpHandler.SetupResponse("/api/agents", refreshedAgents);
-        _httpHandler.SetupStatusResponse("POST", "/api/agents", HttpStatusCode.Created);
-
-        cut.Find(".agents-form-actions button.primary").Click();
-
-        cut.WaitForAssertion(() =>
-        {
-            Assert.Contains("bot-2", cut.Markup);
-            Assert.Contains("Bot Two", cut.Markup);
-        });
+        cut.WaitForState(() => cut.Markup.Contains("Clone Agent"), TimeSpan.FromSeconds(3));
+        Assert.Contains("Clone Agent", cut.Markup);
+        Assert.Contains("Create Clone", cut.Markup);
+        // Clone pre-fills the display name with a "Copy of" prefix and clears the ID.
+        var displayInput = cut.FindAll("input.cfg-input")
+            .FirstOrDefault(i => i.GetAttribute("value") == "Copy of Bot One");
+        Assert.NotNull(displayInput);
+        var idInput = cut.Find("#agent-id-input");
+        Assert.Equal(string.Empty, idInput.GetAttribute("value") ?? string.Empty);
     }
 
     [Fact]
@@ -306,4 +301,3 @@ public sealed class AgentsPageTests : IDisposable
         }
     }
 }
-
