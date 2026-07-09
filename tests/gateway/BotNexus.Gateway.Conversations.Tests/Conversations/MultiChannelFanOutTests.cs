@@ -403,6 +403,13 @@ public sealed class MultiChannelFanOutTests
 
     private sealed record ChannelRecorder(Mock<IChannelAdapter> Adapter, List<OutboundMessage> Messages);
 
+    // #1811: resolves the IOutboundResponseDeliverer GatewayHost builds internally (from the conversation
+    // router these tests supply) so fan-out behaviour is exercised through the extracted collaborator.
+    private static BotNexus.Gateway.IOutboundResponseDeliverer GetDeliverer(GatewayHost host)
+    {
+        var field = typeof(GatewayHost).GetField("_deliverer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (BotNexus.Gateway.IOutboundResponseDeliverer)field.GetValue(host)!;
+    }
     private sealed class TestHarness(
         GatewayHost host,
         DefaultConversationRouter router,
@@ -504,8 +511,11 @@ public sealed class MultiChannelFanOutTests
 
     private static Task InvokeFanOutAsync(GatewayHost host, InboundMessage message, string sessionId, string? lastAssistantContent, BotNexus.Domain.Primitives.ConversationId conversationId)
     {
-        var method = typeof(GatewayHost).GetMethod("FanOutResponseAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (Task)method.Invoke(host, [message, SessionId.From(sessionId), lastAssistantContent, conversationId, CancellationToken.None])!;
+        // #1811: fan-out delivery was extracted from GatewayHost into IOutboundResponseDeliverer.
+        // GatewayHost builds one internally when a conversation router is supplied; drive it directly
+        // through the collaborator the host now delegates to (public FanOutAsync entry point).
+        var deliverer = GetDeliverer(host);
+        return deliverer.FanOutAsync(message, SessionId.From(sessionId), lastAssistantContent, conversationId, CancellationToken.None);
     }
 
     private sealed class RecordingActivityBroadcaster : IActivityBroadcaster
