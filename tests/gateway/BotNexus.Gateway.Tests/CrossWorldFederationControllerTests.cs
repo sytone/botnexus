@@ -1,4 +1,4 @@
-﻿using BotNexus.Domain;
+using BotNexus.Domain;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -825,11 +825,14 @@ public sealed class CrossWorldFederationControllerTests
                     var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
                     if (s is not null)
                     {
-                        // Deliberately write a finishedAgentExchangeId that does NOT match the
-                        // activeAgentExchangeId — simulates a confused/malicious tool writing a
+                        // Deliberately write a finished exchange id that does NOT match the
+                        // active exchange id - simulates a confused/malicious tool writing a
                         // payload from an unrelated exchange (or a previous turn's id).
-                        s.Metadata["finishedAgentExchangeId"] = "an-unrelated-exchange-id";
-                        s.Metadata["finishedAgentExchangeReason"] = "should not be honoured";
+                        s.ExchangeCompletion = (s.ExchangeCompletion ?? new AgentExchangeCompletionState()) with
+                        {
+                            FinishedExchangeId = "an-unrelated-exchange-id",
+                            FinishedReason = "should not be honoured"
+                        };
                         sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }
@@ -1228,12 +1231,13 @@ public sealed class CrossWorldFederationControllerTests
                 if (capturedSessionId is { } sid)
                 {
                     var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
-                    if (s is not null
-                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
-                        && v is string activeId)
+                    if (s?.ExchangeCompletion?.ActiveExchangeId is { Length: > 0 } activeId)
                     {
-                        s.Metadata["finishedAgentExchangeId"] = activeId;
-                        s.Metadata["finishedAgentExchangeReason"] = "shipped";
+                        s.ExchangeCompletion = s.ExchangeCompletion with
+                        {
+                            FinishedExchangeId = activeId,
+                            FinishedReason = "shipped"
+                        };
                         sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }
@@ -1386,14 +1390,14 @@ public sealed class CrossWorldFederationControllerTests
                 if (capturedSessionId is { } sid)
                 {
                     var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
-                    if (s is not null
-                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
-                        && v is string activeId)
+                    if (s?.ExchangeCompletion?.ActiveExchangeId is { Length: > 0 } activeId)
                     {
-                        s.Metadata["finishedAgentExchangeId"] = activeId;
-                        s.Metadata["finishedAgentExchangeReason"] = finishReason;
-                        if (!string.IsNullOrEmpty(finishSummary))
-                            s.Metadata["finishedAgentExchangeSummary"] = finishSummary;
+                        s.ExchangeCompletion = s.ExchangeCompletion with
+                        {
+                            FinishedExchangeId = activeId,
+                            FinishedReason = finishReason,
+                            FinishedSummary = string.IsNullOrEmpty(finishSummary) ? null : finishSummary
+                        };
                         sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }
@@ -1436,14 +1440,14 @@ public sealed class CrossWorldFederationControllerTests
                 if (capturedSessionId is { } sid)
                 {
                     var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
-                    if (s is not null
-                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
-                        && v is string activeId)
+                    if (s?.ExchangeCompletion?.ActiveExchangeId is { Length: > 0 } activeId)
                     {
-                        s.Metadata["finishedAgentExchangeId"] = activeId;
-                        s.Metadata["finishedAgentExchangeReason"] = finishReason;
-                        if (!string.IsNullOrEmpty(finishSummary))
-                            s.Metadata["finishedAgentExchangeSummary"] = finishSummary;
+                        s.ExchangeCompletion = s.ExchangeCompletion with
+                        {
+                            FinishedExchangeId = activeId,
+                            FinishedReason = finishReason,
+                            FinishedSummary = string.IsNullOrEmpty(finishSummary) ? null : finishSummary
+                        };
                         sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }

@@ -23,7 +23,7 @@ public sealed class FinishAgentExchangeToolTests
         var store = new InMemorySessionStore();
         var sid = SessionId.From("test-session-1");
         var session = MakeSession(sid);
-        session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = "active-xchg-123";
+        session.ExchangeCompletion = new AgentExchangeCompletionState { ActiveExchangeId = "active-xchg-123" };
         await store.SaveAsync(session, CancellationToken.None);
 
         var tool = new FinishAgentExchangeTool(store, sid);
@@ -38,9 +38,9 @@ public sealed class FinishAgentExchangeToolTests
 
         result.Content.ShouldNotBeEmpty();
         var refreshed = (await store.GetAsync(sid, CancellationToken.None))!;
-        refreshed.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey].ShouldBe("active-xchg-123");
-        refreshed.Metadata[FinishAgentExchangeTool.FinishedReasonKey].ShouldBe("objective met");
-        refreshed.Metadata[FinishAgentExchangeTool.FinishedSummaryKey].ShouldBe("Reviewed the PR; no blockers.");
+        refreshed.ExchangeCompletion!.FinishedExchangeId.ShouldBe("active-xchg-123");
+        refreshed.ExchangeCompletion.FinishedReason.ShouldBe("objective met");
+        refreshed.ExchangeCompletion.FinishedSummary.ShouldBe("Reviewed the PR; no blockers.");
     }
 
     [Fact]
@@ -64,8 +64,8 @@ public sealed class FinishAgentExchangeToolTests
         ex.Message.ShouldContain("No active agent-to-agent exchange");
 
         var refreshed = (await store.GetAsync(sid, CancellationToken.None))!;
-        refreshed.Metadata.ShouldNotContainKey(FinishAgentExchangeTool.FinishedExchangeIdKey);
-        refreshed.Metadata.ShouldNotContainKey(FinishAgentExchangeTool.FinishedReasonKey);
+        (refreshed.ExchangeCompletion?.FinishedExchangeId).ShouldBeNull();
+        (refreshed.ExchangeCompletion?.FinishedReason).ShouldBeNull();
     }
 
     [Fact]
@@ -77,6 +77,8 @@ public sealed class FinishAgentExchangeToolTests
         var store = new InMemorySessionStore();
         var sid = SessionId.From("test-session-3");
         var session = MakeSession(sid);
+        // Legacy loose key carrying a JsonElement (as Sqlite/File stores round-trip) must still
+        // migrate-on-read into the typed active id.
         session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] =
             JsonDocument.Parse("\"active-xchg-456\"").RootElement;
         await store.SaveAsync(session, CancellationToken.None);
@@ -89,7 +91,7 @@ public sealed class FinishAgentExchangeToolTests
 
         result.Content.ShouldNotBeEmpty();
         var refreshed = (await store.GetAsync(sid, CancellationToken.None))!;
-        refreshed.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey].ShouldBe("active-xchg-456");
+        refreshed.ExchangeCompletion!.FinishedExchangeId.ShouldBe("active-xchg-456");
     }
 
     [Fact]
@@ -100,8 +102,11 @@ public sealed class FinishAgentExchangeToolTests
         var store = new InMemorySessionStore();
         var sid = SessionId.From("test-session-4");
         var session = MakeSession(sid);
-        session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = "active-xchg-789";
-        session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = "prior summary that should not leak";
+        session.ExchangeCompletion = new AgentExchangeCompletionState
+        {
+            ActiveExchangeId = "active-xchg-789",
+            FinishedSummary = "prior summary that should not leak"
+        };
         await store.SaveAsync(session, CancellationToken.None);
 
         var tool = new FinishAgentExchangeTool(store, sid);
@@ -109,7 +114,7 @@ public sealed class FinishAgentExchangeToolTests
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["reason"] = "done" });
 
         var refreshed = (await store.GetAsync(sid, CancellationToken.None))!;
-        refreshed.Metadata.ShouldNotContainKey(FinishAgentExchangeTool.FinishedSummaryKey);
+        (refreshed.ExchangeCompletion?.FinishedSummary).ShouldBeNull();
     }
 
     [Fact]

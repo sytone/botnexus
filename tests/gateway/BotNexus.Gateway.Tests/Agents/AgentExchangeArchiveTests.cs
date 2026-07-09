@@ -411,12 +411,13 @@ public sealed class AgentExchangeArchiveTests
                 if (capturedSessionId is { } sid)
                 {
                     var s = sessionStore.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
-                    if (s is not null
-                        && s.Metadata.TryGetValue(FinishAgentExchangeTool.ActiveExchangeIdKey, out var v)
-                        && v is string activeId)
+                    if (s?.ExchangeCompletion?.ActiveExchangeId is { Length: > 0 } activeId)
                     {
-                        s.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = activeId;
-                        s.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = "shipped";
+                        s.ExchangeCompletion = s.ExchangeCompletion with
+                        {
+                            FinishedExchangeId = activeId,
+                            FinishedReason = "shipped"
+                        };
                         sessionStore.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }

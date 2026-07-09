@@ -219,17 +219,21 @@ public sealed class AgentExchangeService : IAgentExchangeService
                     // SaveAsync persists the canonical metadata view.
                     if (!ReferenceEquals(refreshed, session))
                     {
-                        session.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = exchangeId;
-                        session.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = finishReason ?? string.Empty;
-                        if (!string.IsNullOrEmpty(finishSummary))
-                            session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
+                        session.ExchangeCompletion = (session.ExchangeCompletion ?? new AgentExchangeCompletionState()) with
+                        {
+                            FinishedExchangeId = exchangeId,
+                            FinishedReason = finishReason ?? string.Empty,
+                            FinishedSummary = string.IsNullOrEmpty(finishSummary) ? null : finishSummary
+                        };
                     }
                     return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: true, finishReason, finishSummary);
                 }
 
                 return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: false, null, null);
             },
-            beforeSeal: s => s.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey),
+            beforeSeal: s => s.ExchangeCompletion = s.ExchangeCompletion is { } c
+                ? c with { ActiveExchangeId = null }
+                : null,
             onSealSuccess: static _ => { },
             cancellationToken).ConfigureAwait(false);
     }

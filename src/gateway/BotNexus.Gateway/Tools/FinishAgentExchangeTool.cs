@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 
 namespace BotNexus.Gateway.Tools;
@@ -39,17 +40,17 @@ public sealed class FinishAgentExchangeTool(
     ISessionStore sessionStore,
     SessionId sessionId) : IAgentTool
 {
-    /// <summary>Metadata key for the active exchange id the service writes before each turn.</summary>
-    public const string ActiveExchangeIdKey = "activeAgentExchangeId";
+    /// <summary>Legacy loose metadata key for the active exchange id (retained for back-compat reads).</summary>
+    public const string ActiveExchangeIdKey = AgentExchangeCompletionState.LegacyActiveExchangeIdKey;
 
-    /// <summary>Metadata key the tool writes the matching exchange id into when fired.</summary>
-    public const string FinishedExchangeIdKey = "finishedAgentExchangeId";
+    /// <summary>Legacy loose metadata key the tool wrote the matching exchange id into (retained for back-compat reads).</summary>
+    public const string FinishedExchangeIdKey = AgentExchangeCompletionState.LegacyFinishedExchangeIdKey;
 
-    /// <summary>Metadata key for the caller-supplied completion reason.</summary>
-    public const string FinishedReasonKey = "finishedAgentExchangeReason";
+    /// <summary>Legacy loose metadata key for the caller-supplied completion reason (retained for back-compat reads).</summary>
+    public const string FinishedReasonKey = AgentExchangeCompletionState.LegacyFinishedReasonKey;
 
-    /// <summary>Metadata key for the caller-supplied completion summary.</summary>
-    public const string FinishedSummaryKey = "finishedAgentExchangeSummary";
+    /// <summary>Legacy loose metadata key for the caller-supplied completion summary (retained for back-compat reads).</summary>
+    public const string FinishedSummaryKey = AgentExchangeCompletionState.LegacyFinishedSummaryKey;
 
     public string Name => "finish_agent_exchange";
     public string Label => "Finish agent exchange";
@@ -105,8 +106,8 @@ public sealed class FinishAgentExchangeTool(
             ?? throw new InvalidOperationException(
                 "No active agent exchange to finish (session not found).");
 
-        var activeExchangeId = MetadataString(session.Metadata, ActiveExchangeIdKey);
-        if (string.IsNullOrWhiteSpace(activeExchangeId))
+        var completion = session.ExchangeCompletion;
+        if (completion is null || string.IsNullOrWhiteSpace(completion.ActiveExchangeId))
             throw new InvalidOperationException(
                 "No active agent-to-agent exchange. The finish_agent_exchange tool may only be called "
                 + "during an exchange loop driven by another agent.");
@@ -114,12 +115,12 @@ public sealed class FinishAgentExchangeTool(
         var reason = (ReadString(arguments, "reason") ?? string.Empty).Trim();
         var summary = ReadString(arguments, "summary")?.Trim();
 
-        session.Metadata[FinishedExchangeIdKey] = activeExchangeId;
-        session.Metadata[FinishedReasonKey] = reason;
-        if (!string.IsNullOrEmpty(summary))
-            session.Metadata[FinishedSummaryKey] = summary;
-        else
-            session.Metadata.Remove(FinishedSummaryKey);
+        session.ExchangeCompletion = completion with
+        {
+            FinishedExchangeId = completion.ActiveExchangeId,
+            FinishedReason = reason,
+            FinishedSummary = string.IsNullOrEmpty(summary) ? null : summary
+        };
         await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
         return TextResult(
@@ -135,24 +136,6 @@ public sealed class FinishAgentExchangeTool(
             string s => s,
             JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
             _ => value.ToString()
-        };
-    }
-
-    /// <summary>
-    /// Same JsonElement-tolerant read pattern used by <c>CrossWorldFederationController.MetadataString</c>:
-    /// <c>SqliteSessionStore</c> and <c>FileSessionStore</c> round-trip <c>object?</c> metadata as
-    /// <see cref="JsonElement"/>, so a naive <c>as string</c> cast silently returns <c>null</c>
-    /// and the guard above falsely accepts the call.
-    /// </summary>
-    private static string? MetadataString(IDictionary<string, object?> metadata, string key)
-    {
-        if (!metadata.TryGetValue(key, out var value) || value is null)
-            return null;
-        return value switch
-        {
-            string s => s,
-            JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
-            _ => null
         };
     }
 

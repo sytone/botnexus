@@ -215,16 +215,19 @@ public sealed class CrossWorldFederationController(
 
             // Clear the active-exchange id regardless of outcome so a follow-up turn for the same
             // session starts from a clean slate.
-            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
+            session.ExchangeCompletion = session.ExchangeCompletion is { } activeState
+                ? activeState with { ActiveExchangeId = null }
+                : null;
             if (exchangeFinished)
             {
                 // Echo the consumed payload onto the persisted session metadata for diagnostics
                 // and for any downstream walker that lists sessions for this conversation.
-                session.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = exchangeId;
-                if (finishReason is not null)
-                    session.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = finishReason;
-                if (!string.IsNullOrEmpty(finishSummary))
-                    session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
+                session.ExchangeCompletion = (session.ExchangeCompletion ?? new AgentExchangeCompletionState()) with
+                {
+                    FinishedExchangeId = exchangeId,
+                    FinishedReason = finishReason ?? (session.ExchangeCompletion?.FinishedReason),
+                    FinishedSummary = string.IsNullOrEmpty(finishSummary) ? null : finishSummary
+                };
                 // State-machine closure (bug-hunt MEDIUM-3 on PR #553): once the target agent has
                 // explicitly signalled completion via finish_agent_exchange, the receiver-side
                 // session is terminated. ResolveSessionAsync's sealed-session guard then refuses
@@ -297,7 +300,9 @@ public sealed class CrossWorldFederationController(
             logger.LogWarning(ex,
                 "Cross-world relay failed for session '{SessionId}' on agent '{TargetAgentId}'.",
                 sessionId, session.AgentId);
-            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
+            session.ExchangeCompletion = session.ExchangeCompletion is { } activeState
+                ? activeState with { ActiveExchangeId = null }
+                : null;
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
