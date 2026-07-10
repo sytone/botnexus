@@ -133,7 +133,7 @@ public sealed class ProviderConfig
         Description = "Default model identifier used for this provider when an agent does not specify one.",
         GroupName = "Provider",
         Order = 3)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider", Order = 3, OptionsSource = "models")]
     public string? DefaultModel { get; set; }
 
     /// <summary>Allowed model IDs for this provider. Null means all models, empty means none.</summary>

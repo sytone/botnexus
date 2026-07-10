@@ -21,6 +21,11 @@ builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 // (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.
 builder.Services.AddScoped<PlatformConfigService>();
 
+// #1893: dynamic option sources for schema-driven config select widgets (provider model dropdowns).
+// Same abstraction the desktop registers; SchemaForm lives in Core and depends on it, so mobile
+// must provide an implementation too.
+builder.Services.AddScoped<IModelOptionsProvider, HttpModelOptionsProvider>();
+
 // #1840: bind mobile-scoped SignalR keep-alive/timeout tuning from appsettings (section "SignalR")
 // with mobile defaults, so a tunnelled/backgrounded PWA gets a longer server timeout and a
 // tunnel-friendly keep-alive cadence. Registered as a singleton so the Chat page can apply it to
