@@ -33,6 +33,7 @@
     <Project Path="src/gateway/BotNexus.Cli/BotNexus.Cli.csproj" />
     <Project Path="src/gateway/BotNexus.Cron/BotNexus.Cron.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Telemetry.Abstractions/BotNexus.Gateway.Telemetry.Abstractions.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Telemetry/BotNexus.Gateway.Telemetry.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Conversations/BotNexus.Gateway.Conversations.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Dispatching/BotNexus.Gateway.Dispatching.csproj" />
