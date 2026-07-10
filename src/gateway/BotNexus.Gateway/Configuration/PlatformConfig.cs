@@ -147,6 +147,36 @@ public sealed class ProviderConfig
     /// <see cref="BotNexus.Agent.Providers.Core.Registry.IApiProvider"/>.
     /// </summary>
     public string? Api { get; set; }
+
+    /// <summary>
+    /// PBI6 (#1707): explicit reasoning/thinking capability for models registered from this
+    /// provider's <see cref="Models"/> list. When null (the default) the capability is inferred
+    /// from each model's family so a known reasoning family (Claude 4+, GPT-5+, o3/o4, Gemini 3+,
+    /// Grok-code) is picked up automatically; set it explicitly for a local model whose id the
+    /// family heuristic does not recognise.
+    /// </summary>
+    public bool? Reasoning { get; set; }
+
+    /// <summary>
+    /// PBI6 (#1707): explicit extra-high (ExtraHigh / Max) thinking-tier capability for this
+    /// provider's dynamic models. When null the value is inferred from the model family. Ignored
+    /// (clamped off) for a model that does not support reasoning.
+    /// </summary>
+    public bool? SupportsExtraHighThinking { get; set; }
+
+    /// <summary>
+    /// PBI6 (#1707): explicit extended (1M) context-window capability for this provider's dynamic
+    /// models. When null the value is inferred from the model family (Anthropic-direct Claude
+    /// Sonnet 4/4.5 and Opus 4.5). Drives the context-size picker's second (1M) tier.
+    /// </summary>
+    public bool? SupportsExtendedContextWindow { get; set; }
+
+    /// <summary>
+    /// PBI6 (#1707): default context-window size (in tokens) for this provider's dynamic models.
+    /// When null a conservative 128000-token default is used. Sets the standard tier the
+    /// context-size picker offers for a config-declared model.
+    /// </summary>
+    public int? ContextWindow { get; set; }
 }
 
 /// <summary>Gateway runtime configuration.</summary>
