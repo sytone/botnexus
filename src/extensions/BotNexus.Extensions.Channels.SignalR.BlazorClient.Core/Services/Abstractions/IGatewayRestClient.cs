@@ -27,6 +27,14 @@ public interface IGatewayRestClient
         string agentId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// GET /api/conversations - returns the global active conversation summaries across every agent
+    /// (no <c>agentId</c> filter), including participant rosters. Backs the Home / Activity dashboard
+    /// so it can render one cross-platform activity view without fanning out a per-agent request.
+    /// </summary>
+    Task<IReadOnlyList<ConversationSummaryDto>> GetAllConversationsAsync(
+        CancellationToken cancellationToken = default);
+
     /// <summary>GET /api/conversations/{conversationId}/history?limit={limit}&amp;offset={offset}</summary>
     Task<ConversationHistoryResponseDto?> GetHistoryAsync(
         string conversationId,

@@ -4802,3 +4802,136 @@ h3.conversation-title.editable:hover {
     }
 }
 
+
+/* ── Home / Activity dashboard (#1888) ─────────────────────────────────────── */
+.activity-dashboard {
+    padding: 1.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.activity-dashboard-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.activity-dashboard-title {
+    font-size: 1.5rem;
+    margin: 0;
+}
+
+.activity-dashboard-subtitle {
+    color: var(--text-muted, #888);
+    font-size: 0.9rem;
+}
+
+.activity-filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.activity-filter-btn,
+.activity-filter-select {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 6px;
+    background: var(--surface-2, #2a2a2a);
+    color: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.activity-filter-btn.active {
+    background: var(--accent, #3a6ea5);
+    border-color: var(--accent, #3a6ea5);
+    color: #fff;
+}
+
+.activity-loading,
+.activity-error,
+.activity-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted, #888);
+}
+
+.activity-error {
+    color: var(--danger, #c0392b);
+}
+
+.activity-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.activity-table thead th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border-color, #444);
+    color: var(--text-muted, #888);
+    font-weight: 600;
+}
+
+.activity-row {
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+
+.activity-row:hover,
+.activity-row:focus {
+    background: var(--surface-2, #2a2a2a);
+    outline: none;
+}
+
+.activity-row td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border-color-subtle, #333);
+    vertical-align: middle;
+}
+
+.activity-conversation-title {
+    font-weight: 500;
+}
+
+.activity-agent-chip {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    margin: 0.1rem 0.2rem 0.1rem 0;
+    border-radius: 10px;
+    background: var(--surface-3, #383838);
+    font-size: 0.75rem;
+}
+
+.activity-badge {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 8px;
+    font-size: 0.7rem;
+}
+
+.activity-badge-cron {
+    background: var(--accent-muted, #4a5a70);
+    color: #fff;
+}
+
+.activity-status {
+    font-size: 0.8rem;
+    text-transform: capitalize;
+}
+
+.activity-status-archived {
+    color: var(--text-muted, #888);
+}
+
+.activity-row-cron {
+    opacity: 0.9;
+}
+

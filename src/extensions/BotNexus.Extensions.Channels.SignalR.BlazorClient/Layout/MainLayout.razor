@@ -63,7 +63,8 @@
 
             @* Nav links *@
             <nav class="sidebar-nav">
-                <a href="chat" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
+                <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+                <a href="chat" class="sidebar-nav-item @NavClass("chat")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
 
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
@@ -450,10 +451,19 @@
     private string NavClass(string page)
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
-        if (string.IsNullOrEmpty(page))
+
+        // The Activity dashboard owns the root landing route ("" or "activity").
+        if (string.Equals(page, "activity", StringComparison.OrdinalIgnoreCase))
         {
-            return uri == "" ||
-                uri.Equals("chat", StringComparison.OrdinalIgnoreCase) ||
+            return uri == "" || uri.Equals("activity", StringComparison.OrdinalIgnoreCase)
+                ? "active"
+                : "";
+        }
+
+        // The Chat section covers the /chat and /chat/{agent}/{conversation} routes.
+        if (string.Equals(page, "chat", StringComparison.OrdinalIgnoreCase))
+        {
+            return uri.Equals("chat", StringComparison.OrdinalIgnoreCase) ||
                 uri.StartsWith("chat/", StringComparison.OrdinalIgnoreCase)
                 ? "active"
                 : "";

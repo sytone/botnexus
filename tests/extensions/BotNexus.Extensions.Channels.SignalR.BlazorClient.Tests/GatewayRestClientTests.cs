@@ -67,6 +67,34 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task GetAllConversationsAsync_calls_global_url_without_agentId()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations", JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                conversationId = "c1",
+                agentId = "a1",
+                title = "Test",
+                isDefault = true,
+                status = "Active",
+                activeSessionId = (string?)null,
+                bindingCount = 0,
+                createdAt = DateTimeOffset.UtcNow,
+                updatedAt = DateTimeOffset.UtcNow
+            }
+        }));
+
+        var conversations = await client.GetAllConversationsAsync();
+
+        handler.LastRequestUrl.ShouldEndWith("/api/conversations");
+        handler.LastRequestUrl.ShouldNotContain("agentId");
+        conversations.Count.ShouldBe(1);
+        conversations[0].ConversationId.ShouldBe("c1");
+    }
+
+    [Fact]
     public async Task GetHistoryAsync_calls_correct_url_with_limit_and_offset()
     {
         var (client, handler) = CreateClient();
