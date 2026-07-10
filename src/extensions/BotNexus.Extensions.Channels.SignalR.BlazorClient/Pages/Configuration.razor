@@ -35,12 +35,27 @@
     }
     else
     {
-        <div class="config-page">
+        <div class="config-page config-page-sectioned">
+            @* Left sidebar of top-level config sections (#1892). Selecting a section deep-links to
+               /configuration/{section} and feeds only that subtree to SchemaForm, replacing the old
+               single massive scroll. Sections come from the root schema properties (label from
+               x-ui-label, ordered by x-ui-order) minus non-editable metadata/agents. *@
+            <nav class="config-sidebar" aria-label="Configuration sections">
+                @foreach (var (key, label) in Sections)
+                {
+                    <button type="button"
+                            class="config-sidebar-item @(string.Equals(key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+                            data-section="@key"
+                            @onclick="() => SelectSection(key)">
+                        @label
+                    </button>
+                }
+            </nav>
             <div class="config-panel-canvas">
-                @* The whole settings UI is rendered by the generic schema-driven SchemaForm fed by
-                   GET /api/config/schema (config-parity PBI 4/6 of #1579). The eight hand-written
-                   config panels were removed -- every field they exposed is surfaced by the schema. *@
-                <SchemaForm Schema="_schema" Value="_config" ValueChanged="OnConfigChanged" />
+                @* The selected section is rendered by the generic schema-driven SchemaForm fed by
+                   GET /api/config/schema (config-parity PBI 4/6 of #1579). SectionKey narrows the
+                   render to a single root subtree. *@
+                <SchemaForm Schema="_schema" Value="_config" SectionKey="ActiveSection" ValueChanged="OnConfigChanged" />
             </div>
         </div>
     }
