@@ -7,7 +7,6 @@ using System.Text;
 
 namespace BotNexus.Cron.Actions;
 
-#pragma warning disable CS1591
 
 /// <summary>
 /// Optional post-turn skill-review loop (PBI5 of epic #1827). A configurable background pass -

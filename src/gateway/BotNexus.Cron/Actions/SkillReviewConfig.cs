@@ -2,7 +2,6 @@ using System.Text.Json;
 
 namespace BotNexus.Cron.Actions;
 
-#pragma warning disable CS1591
 
 /// <summary>
 /// Configuration for the optional post-turn skill-review loop, read from <c>CronJob.Metadata</c>.
