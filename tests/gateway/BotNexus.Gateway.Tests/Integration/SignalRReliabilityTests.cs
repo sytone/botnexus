@@ -738,7 +738,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
             AgentId agentId,
             ChannelKey channelType,
             ChannelAddress channelAddress,
-            string? conversationId = null,
+            ConversationId? conversationId = null,
             CancellationToken ct = default,
             CitizenId? initiator = null)
             => Task.FromResult(new ConversationRoutingResult(

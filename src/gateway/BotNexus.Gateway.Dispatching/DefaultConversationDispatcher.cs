@@ -36,7 +36,7 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             context.AgentId,
             context.Source.ChannelType,
             context.Source.ChannelAddress,
-            context.RequestedConversationId?.Value,
+            context.RequestedConversationId,
             cancellationToken,
             initiator: context.Message.Sender);
 

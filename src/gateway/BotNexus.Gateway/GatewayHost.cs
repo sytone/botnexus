@@ -875,7 +875,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 typedAgentId,
                 message.ChannelType,
                 message.ChannelAddress,
-                conversationId: hints.RequestedConversationId?.Value,
+                conversationId: hints.RequestedConversationId,
                 cancellationToken,
                 initiator: message.Sender);
             sessionId = routingResult.SessionId.Value;
