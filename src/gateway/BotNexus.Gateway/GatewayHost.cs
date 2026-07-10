@@ -1102,6 +1102,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             SessionId = typedSessionId.Value
         }, cancellationToken);
 
+        // #1903: the steering/portal follow-up path adds a User entry above but historically
+        // never invoked titling, so portal conversations whose first turn was still on the
+        // default title could never title on a Steer turn. Fire best-effort titling here the
+        // same way the main ProcessAsync tail does, reading the freshest session.History.
+        TryTriggerAutoTitle(session, typedAgentId);
+
         _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", typedAgentId.Value, typedSessionId.Value);
         return true;
     }
@@ -1351,10 +1357,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         }
 
         var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(session.History, _logger);
-        if (userText is null || assistantText is null)
+        // #1903: userText may legitimately be null for an agent-initiated conversation (the
+        // assistant-only titling case). Only a null assistantText means there is genuinely
+        // nothing to title yet, so gate solely on the assistant seed being present.
+        if (assistantText is null)
         {
-            // ShouldTriggerAutoTitle already logs its own Debug guard-skip (insufficient
-            // user/assistant exchange). No-op here; the title stays default until a later turn.
+            // ShouldTriggerAutoTitle already logs its own guard-skip (nothing to title yet).
+            // No-op here; the title stays default until a later turn.
             return;
         }
 

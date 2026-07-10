@@ -52,6 +52,28 @@ public sealed class ConversationAutoTitleServiceTests
         prompt.ShouldContain("5 words or fewer");
     }
 
+    [Fact]
+    public void BuildPrompt_NullUserText_UsesAssistantOnlyPrompt()
+    {
+        // #1903: agent-initiated conversations have no user turn, so BuildPrompt must fall back to
+        // an assistant-only titling prompt seeded from the assistant response.
+        var prompt = ConversationAutoTitleService.BuildPrompt(null, "The nightly backup completed.");
+
+        prompt.ShouldContain("The nightly backup completed.");
+        prompt.ShouldContain("assistant response");
+        prompt.ShouldNotContain("User:");
+        prompt.ShouldContain("5 words or fewer");
+    }
+
+    [Fact]
+    public void BuildPrompt_BlankUserText_UsesAssistantOnlyPrompt()
+    {
+        var prompt = ConversationAutoTitleService.BuildPrompt("   ", "Assistant kickoff content.");
+
+        prompt.ShouldContain("Assistant kickoff content.");
+        prompt.ShouldNotContain("User:");
+    }
+
     [Theory]
     [InlineData("\"Hello World\"", "Hello World")]
     [InlineData("'Chat About Cats'", "Chat About Cats")]
@@ -140,6 +162,60 @@ public sealed class ConversationAutoTitleServiceTests
         result.ShouldBe("Chat About Cats");
         store.Verify(s => s.SaveAsync(It.Is<Conversation>(c => c.Title == "Chat About Cats"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_AgentInitiated_NullUserText_GeneratesAndSaves()
+    {
+        // #1903: agent-initiated conversation (user=0, assistant>=1) titles via the assistant-only
+        // prompt. A null userText must not throw and must still produce and persist a title.
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Nightly Backup Job"),
+            NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, null, "Starting the nightly backup job now.", null, 30, CancellationToken.None);
+
+        result.ShouldBe("Nightly Backup Job");
+        store.Verify(s => s.SaveAsync(It.Is<Conversation>(c => c.Title == "Nightly Backup Job"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_AgentInitiated_CustomTitle_NeverOverwritten()
+    {
+        // The IsDefaultTitle re-guard must still protect a custom title even on the agent-initiated
+        // (null userText) path.
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = "Human Named This"
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Generated Title"),
+            NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, null, "Agent opening message.", null, 30, CancellationToken.None);
+
+        result.ShouldBeNull();
+        store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
