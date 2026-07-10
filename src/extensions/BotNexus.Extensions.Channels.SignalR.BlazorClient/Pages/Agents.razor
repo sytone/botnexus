@@ -6,24 +6,29 @@
 @inject GatewayHubConnection Hub
 @implements IDisposable
 
-<PageTitle>BotNexus — Agents</PageTitle>
+<PageTitle>BotNexus - Agents</PageTitle>
 
 <div class="agents-page">
 
-@if (_showDetailPanel && AgentId is not null && AgentId != "new")
+@if (_showEditor)
 {
-    <AgentDetailPanel AgentId="@AgentId" OnSaved="HandleDetailSaved" OnDeleted="HandleDetailDeleted" />
+    <AgentDetailPanel AgentId="@_editorAgentId" Mode="@_editorMode"
+                      OnSaved="HandleEditorSaved" OnDeleted="HandleEditorDeleted" />
+}
+else if (_showDetailPanel && AgentId is not null && AgentId != "new")
+{
+    <AgentDetailPanel AgentId="@AgentId" Mode="edit" OnSaved="HandleDetailSaved" OnDeleted="HandleDetailDeleted" />
 }
 else
 {
     <header class="agents-toolbar">
-        <h2>🤖 Agents</h2>
+        <h2>&#x1F916; Agents</h2>
         <div class="agents-toolbar-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
             {
                 <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="LoadAgentsAsync" disabled="@_loading" title="Refresh agent list">↻ Reload</button>
+            <button class="toolbar-btn" @onclick="LoadAgentsAsync" disabled="@_loading" title="Refresh agent list">&#x21BB; Reload</button>
             <button class="toolbar-btn primary" @onclick="ShowAddForm" title="Add a new agent">+ Add Agent</button>
         </div>
     </header>
@@ -32,125 +37,15 @@ else
     {
         <div class="config-loading" aria-live="polite">
             <div class="loading-spinner small"></div>
-            <span>Loading agents…</span>
+            <span>Loading agents.</span>
         </div>
     }
     else if (_error is not null)
     {
-        <div class="agents-error" role="alert">⚠️ @_error</div>
+        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
     }
     else
     {
-        @* Add / Edit form *@
-        @if (_showForm)
-        {
-            <div class="agents-form-card">
-                <h3>@(_editingId is not null ? $"Edit Agent: {_editingId}" : "Add Agent")</h3>
-                <div class="agents-form-grid">
-                    <label for="agent-id-input">Agent ID <span class="required">*</span></label>
-                    <div>
-                        <input id="agent-id-input" class="cfg-input @(HasFieldError("AgentId") ? "field-error" : "")"
-                               value="@_form.AgentId" disabled="@(_editingId is not null)"
-                               @oninput="OnAgentIdInput" aria-required="true" />
-                        @if (HasFieldError("AgentId"))
-                        {
-                            <span class="agents-field-error" role="alert">@GetFieldError("AgentId")</span>
-                        }
-                    </div>
-
-                    <label for="display-name-input">Display Name <span class="required">*</span></label>
-                    <div>
-                        <input id="display-name-input" class="cfg-input @(HasFieldError("DisplayName") ? "field-error" : "")"
-                               value="@_form.DisplayName"
-                               @oninput="OnDisplayNameInput" aria-required="true" />
-                        @if (HasFieldError("DisplayName"))
-                        {
-                            <span class="agents-field-error" role="alert">@GetFieldError("DisplayName")</span>
-                        }
-                    </div>
-
-                    <label for="description-input">Description</label>
-                    <input id="description-input" class="cfg-input" value="@_form.Description"
-                           @oninput="OnDescriptionInput" />
-
-                    <label for="provider-input">Provider <span class="required">*</span></label>
-                    <div>
-                        @if (_providers.Count > 0)
-                        {
-                            <select id="provider-input" class="cfg-input @(HasFieldError("ApiProvider") ? "field-error" : "")"
-                                    value="@_form.ApiProvider" @onchange="OnProviderChange" aria-required="true">
-                                <option value="">— select provider —</option>
-                                @foreach (var p in _providers)
-                                {
-                                    <option value="@p.Id">@p.Name</option>
-                                }
-                            </select>
-                        }
-                        else
-                        {
-                            <input id="provider-input" class="cfg-input @(HasFieldError("ApiProvider") ? "field-error" : "")"
-                                   value="@_form.ApiProvider" @oninput="OnProviderInput" placeholder="e.g. copilot" aria-required="true" />
-                        }
-                        @if (HasFieldError("ApiProvider"))
-                        {
-                            <span class="agents-field-error" role="alert">@GetFieldError("ApiProvider")</span>
-                        }
-                    </div>
-
-                    <label for="model-id-input">Model ID <span class="required">*</span></label>
-                    <div>
-                        @if (_models.Count > 0)
-                        {
-                            <select id="model-id-input" class="cfg-input @(HasFieldError("ModelId") ? "field-error" : "")"
-                                    value="@_form.ModelId" @onchange="OnModelChange" aria-required="true">
-                                <option value="">— select model —</option>
-                                @foreach (var m in _models)
-                                {
-                                    <option value="@m.ModelId">@m.Name</option>
-                                }
-                            </select>
-                        }
-                        else if (!string.IsNullOrEmpty(_form.ApiProvider) && !_loadingModels)
-                        {
-                            <input id="model-id-input" class="cfg-input @(HasFieldError("ModelId") ? "field-error" : "")"
-                                   value="@_form.ModelId" @oninput="OnModelIdInput" placeholder="e.g. gpt-4.1" aria-required="true" />
-                        }
-                        else if (_loadingModels)
-                        {
-                            <span class="agents-field-loading">Loading models…</span>
-                        }
-                        else
-                        {
-                            <input id="model-id-input" class="cfg-input" value="@_form.ModelId" @oninput="OnModelIdInput"
-                                   placeholder="Select a provider first" disabled />
-                        }
-                        @if (HasFieldError("ModelId"))
-                        {
-                            <span class="agents-field-error" role="alert">@GetFieldError("ModelId")</span>
-                        }
-                    </div>
-
-                    <label for="system-prompt-input">System Prompt</label>
-                    <textarea id="system-prompt-input" class="cfg-textarea" rows="4"
-                              @oninput="OnSystemPromptInput">@_form.SystemPrompt</textarea>
-                </div>
-                @if (!string.IsNullOrEmpty(_formError))
-                {
-                    <div class="agents-form-error" role="alert">⚠️ @_formError</div>
-                }
-                <div class="agents-form-actions">
-                    <button class="toolbar-btn primary" @onclick="SaveFormAsync" disabled="@(_saving || !IsDirty)">
-                        @(_saving ? "Saving…" : (_editingId is not null ? "💾 Save Changes" : "✓ Add Agent"))
-                    </button>
-                    <button class="toolbar-btn" @onclick="CancelForm" disabled="@_saving">Cancel</button>
-                    @if (IsDirty)
-                    {
-                        <span class="agents-dirty-indicator" title="You have unsaved changes">● Unsaved changes</span>
-                    }
-                </div>
-            </div>
-        }
-
         @* Delete confirmation dialog *@
         @if (_confirmDeleteId is not null)
         {
@@ -161,7 +56,7 @@ else
                     <p>Are you sure you want to delete agent <strong>@_confirmDeleteId</strong>? This cannot be undone.</p>
                     <div class="agents-confirm-actions">
                         <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_deleting">
-                            @(_deleting ? "Deleting…" : "Delete")
+                            @(_deleting ? "Deleting." : "Delete")
                         </button>
                         <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_deleting">Cancel</button>
                     </div>
@@ -170,13 +65,13 @@ else
         }
 
         @* Agent list *@
-        @if (_agents.Count == 0 && !_showForm)
+        @if (_agents.Count == 0)
         {
             <div class="agents-empty">
                 <p>No agents configured. Click <strong>+ Add Agent</strong> to create one.</p>
             </div>
         }
-        else if (_agents.Count > 0)
+        else
         {
             <table class="agents-table" aria-label="Agent list">
                 <thead>
@@ -197,8 +92,9 @@ else
                             <td>@agent.ApiProvider</td>
                             <td>@agent.ModelId</td>
                             <td class="agents-actions">
-                                <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId">✏️</button>
-                                <button class="agents-btn-delete" @onclick="() => RequestDelete(agent.AgentId!)" title="Delete @agent.AgentId" aria-label="Delete @agent.AgentId">🗑️</button>
+                                <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId">&#x270F;&#xFE0F;</button>
+                                <button class="agents-btn-clone" @onclick="() => CloneAgent(agent)" title="Clone @agent.AgentId" aria-label="Clone @agent.AgentId">&#x1F4CB;</button>
+                                <button class="agents-btn-delete" @onclick="() => RequestDelete(agent.AgentId!)" title="Delete @agent.AgentId" aria-label="Delete @agent.AgentId">&#x1F5D1;&#xFE0F;</button>
                             </td>
                         </tr>
                     }
@@ -214,16 +110,11 @@ else
 
     private bool _showDetailPanel;
 
-    private record ProviderItem(string Id, string Name);
-    private record ModelItem(string ModelId, string Name);
-
-    private record AgentFormModel(
-        string AgentId = "",
-        string DisplayName = "",
-        string Description = "",
-        string ApiProvider = "",
-        string ModelId = "",
-        string? SystemPrompt = null);
+    // Inline full editor state. When _showEditor is true the sectioned AgentDetailPanel replaces
+    // the table for create/edit/clone flows (issue #290).
+    private bool _showEditor;
+    private string _editorMode = "create";
+    private string? _editorAgentId;
 
     private record AgentRow(
         string? AgentId,
@@ -234,41 +125,47 @@ else
         string? SystemPrompt);
 
     private List<AgentRow> _agents = [];
-    private List<ProviderItem> _providers = [];
-    private List<ModelItem> _models = [];
     private bool _loading = true;
-    private bool _loadingModels;
-    private bool _saving;
     private bool _deleting;
     private string? _error;
     private string? _statusMessage;
     private string _statusClass = "";
-    private bool _showForm;
-    private string? _editingId;
-    private AgentFormModel _form = new();
-    private AgentFormModel _originalForm = new();
-    private string? _formError;
     private string? _confirmDeleteId;
-    private Dictionary<string, string> _fieldErrors = new();
     private CancellationTokenSource? _statusDismissCts;
-
-    /// <summary>True when the form has been modified from its initial state.</summary>
-    private bool IsDirty => _form != _originalForm;
 
     protected override async Task OnParametersSetAsync()
     {
         _showDetailPanel = AgentId is not null && AgentId != "new";
-        if (AgentId == "new") ShowAddForm();
+        if (AgentId == "new")
+        {
+            _editorMode = "create";
+            _editorAgentId = null;
+            _showEditor = true;
+        }
         await base.OnParametersSetAsync();
     }
 
     private void HandleDetailSaved() { SetStatus("Agent saved.", "success"); _ = LoadAgentsAsync(); }
     private void HandleDetailDeleted() { Nav.NavigateTo("agents"); _ = LoadAgentsAsync(); }
 
+    private void HandleEditorSaved()
+    {
+        _showEditor = false;
+        SetStatus("Agent saved.", "success");
+        _ = LoadAgentsAsync();
+    }
+
+    private void HandleEditorDeleted()
+    {
+        _showEditor = false;
+        SetStatus("Agent removed.", "success");
+        _ = LoadAgentsAsync();
+    }
+
     protected override async Task OnInitializedAsync()
     {
         Hub.OnAgentsChanged += HandleAgentsChanged;
-        await Task.WhenAll(LoadAgentsAsync(), LoadProvidersAsync());
+        await LoadAgentsAsync();
     }
 
     public void Dispose()
@@ -280,85 +177,13 @@ else
 
     private void HandleAgentsChanged(AgentsChangedPayload payload)
     {
-        // Server notified that agents changed — refresh the list automatically
+        // Server notified that agents changed - refresh the list automatically
         _ = InvokeAsync(async () =>
         {
             await LoadAgentsAsync();
             SetStatus("Agent list updated from server.", "success");
             StateHasChanged();
         });
-    }
-
-    // ── Field-level validation helpers ─────────────────────────────────────
-    private bool HasFieldError(string field) => _fieldErrors.ContainsKey(field);
-    private string GetFieldError(string field) => _fieldErrors.GetValueOrDefault(field, "");
-
-    private bool ValidateForm()
-    {
-        _fieldErrors.Clear();
-        if (string.IsNullOrWhiteSpace(_form.AgentId))
-            _fieldErrors["AgentId"] = "Agent ID is required.";
-        if (string.IsNullOrWhiteSpace(_form.DisplayName))
-            _fieldErrors["DisplayName"] = "Display Name is required.";
-        if (string.IsNullOrWhiteSpace(_form.ApiProvider))
-            _fieldErrors["ApiProvider"] = "Provider is required.";
-        if (string.IsNullOrWhiteSpace(_form.ModelId))
-            _fieldErrors["ModelId"] = "Model ID is required.";
-        return _fieldErrors.Count == 0;
-    }
-
-    // ── Input handlers ─────────────────────────────────────────────────────
-    private void OnAgentIdInput(ChangeEventArgs e)       => _form = _form with { AgentId = e.Value?.ToString() ?? "" };
-    private void OnDisplayNameInput(ChangeEventArgs e)  => _form = _form with { DisplayName = e.Value?.ToString() ?? "" };
-    private void OnDescriptionInput(ChangeEventArgs e)  => _form = _form with { Description = e.Value?.ToString() ?? "" };
-    private void OnProviderInput(ChangeEventArgs e)     => _form = _form with { ApiProvider = e.Value?.ToString() ?? "" };
-    private void OnModelIdInput(ChangeEventArgs e)      => _form = _form with { ModelId = e.Value?.ToString() ?? "" };
-    private void OnSystemPromptInput(ChangeEventArgs e) => _form = _form with { SystemPrompt = e.Value?.ToString() };
-    private void OnModelChange(ChangeEventArgs e)       => _form = _form with { ModelId = e.Value?.ToString() ?? "" };
-
-    private async Task OnProviderChange(ChangeEventArgs e)
-    {
-        var provider = e.Value?.ToString() ?? "";
-        _form = _form with { ApiProvider = provider, ModelId = "" };
-        _models = [];
-        if (!string.IsNullOrEmpty(provider))
-            await LoadModelsAsync(provider);
-    }
-
-    private async Task LoadProvidersAsync()
-    {
-        try
-        {
-            var url = Nav.BaseUri.TrimEnd('/') + "/api/providers";
-            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var items = await Http.GetFromJsonAsync<List<ProviderItem>>(url, opts);
-            _providers = items ?? [];
-        }
-        catch
-        {
-            _providers = [];
-        }
-    }
-
-    private async Task LoadModelsAsync(string provider)
-    {
-        _loadingModels = true;
-        StateHasChanged();
-        try
-        {
-            var url = Nav.BaseUri.TrimEnd('/') + $"/api/models?provider={Uri.EscapeDataString(provider)}";
-            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var items = await Http.GetFromJsonAsync<List<ModelItem>>(url, opts);
-            _models = items ?? [];
-        }
-        catch
-        {
-            _models = [];
-        }
-        finally
-        {
-            _loadingModels = false;
-        }
     }
 
     private async Task LoadAgentsAsync()
@@ -386,89 +211,23 @@ else
 
     private void ShowAddForm()
     {
-        _editingId = null;
-        _form = new AgentFormModel();
-        _originalForm = new AgentFormModel();
-        _formError = null;
-        _fieldErrors.Clear();
-        _showForm = true;
+        _editorMode = "create";
+        _editorAgentId = null;
+        _showEditor = true;
     }
 
-    private async Task EditAgent(AgentRow agent)
+    private void EditAgent(AgentRow agent)
     {
-        _editingId = agent.AgentId;
-        _form = new AgentFormModel(
-            agent.AgentId ?? "",
-            agent.DisplayName,
-            agent.Description ?? "",
-            agent.ApiProvider,
-            agent.ModelId,
-            agent.SystemPrompt);
-        _originalForm = _form;
-        _formError = null;
-        _fieldErrors.Clear();
-        _models = [];
-        if (!string.IsNullOrEmpty(agent.ApiProvider))
-            await LoadModelsAsync(agent.ApiProvider);
-        _showForm = true;
+        _editorMode = "edit";
+        _editorAgentId = agent.AgentId;
+        _showEditor = true;
     }
 
-    private void CancelForm()
+    private void CloneAgent(AgentRow agent)
     {
-        _showForm = false;
-        _editingId = null;
-        _formError = null;
-        _fieldErrors.Clear();
-    }
-
-    private async Task SaveFormAsync()
-    {
-        _formError = null;
-        if (!ValidateForm())
-            return;
-
-        _saving = true;
-        try
-        {
-            var apiUrl = Nav.BaseUri.TrimEnd('/') + "/api/agents";
-            var payload = new
-            {
-                agentId = _form.AgentId,
-                displayName = _form.DisplayName,
-                description = string.IsNullOrWhiteSpace(_form.Description) ? null : _form.Description,
-                apiProvider = _form.ApiProvider,
-                modelId = _form.ModelId,
-                systemPrompt = _form.SystemPrompt
-            };
-
-            HttpResponseMessage response;
-            if (_editingId is not null)
-                response = await Http.PutAsJsonAsync($"{apiUrl}/{_editingId}", payload);
-            else
-                response = await Http.PostAsJsonAsync(apiUrl, payload);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync();
-                _formError = $"Error {(int)response.StatusCode}: {body}";
-                return;
-            }
-
-            var wasEditing = _editingId is not null;
-            _showForm = false;
-            _editingId = null;
-            _fieldErrors.Clear();
-            SetStatus(wasEditing ? "Agent updated." : "Agent created.", "success");
-            await LoadAgentsAsync();
-        }
-        catch (Exception ex)
-        {
-            _formError = ex.Message;
-        }
-        finally
-        {
-            _saving = false;
-        }
+        _editorMode = "clone";
+        _editorAgentId = agent.AgentId;
+        _showEditor = true;
     }
 
     // ── Delete with confirmation ───────────────────────────────────────────
@@ -528,7 +287,7 @@ else
         }
         catch (TaskCanceledException)
         {
-            // Dismissed or replaced — ignore
+            // Dismissed or replaced - ignore
         }
     }
 }
