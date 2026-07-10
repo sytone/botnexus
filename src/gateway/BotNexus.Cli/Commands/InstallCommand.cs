@@ -37,15 +37,46 @@ internal sealed class InstallCommand
             var repo = context.ParseResult.GetValueForOption(repoOption)!;
             var build = context.ParseResult.GetValueForOption(buildOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            context.ExitCode = await ExecuteAsync(source, repo, build, verbose, context.GetCancellationToken());
+            var targetPath = CliPaths.ResolveSource(source);
+            context.ExitCode = await ExecuteAsync(targetPath, repo, build, verbose, context.GetCancellationToken());
         });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? source, string repo, bool build, bool verbose, CancellationToken cancellationToken)
+    /// <summary>
+    /// Validates a repository spec before it is passed to <c>git clone</c>. A value that
+    /// begins with '-' would be interpreted by git as an option (e.g. <c>--upload-pack=...</c>),
+    /// enabling argument injection. Such values are rejected as defense-in-depth alongside the
+    /// <c>--</c> option terminator used when building the clone arguments.
+    /// </summary>
+    /// <returns>An error message when the repo spec is invalid; otherwise <c>null</c>.</returns>
+    internal static string? ValidateRepo(string repo)
     {
-        var targetPath = CliPaths.ResolveSource(source);
+        if (string.IsNullOrWhiteSpace(repo))
+            return "Repository URL must not be empty.";
+
+        if (repo.StartsWith('-'))
+            return $"Invalid repository URL '{repo}': a repository spec must not begin with '-'.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Builds the <c>git clone</c> argument string. The repo spec is preceded by the <c>--</c>
+    /// option terminator so a value beginning with '-' cannot be reinterpreted as a git option.
+    /// </summary>
+    internal static string BuildCloneArguments(string repo, string targetPath)
+        => $"clone -- \"{repo}\" \"{targetPath}\"";
+
+    internal static async Task<int> ExecuteAsync(string targetPath, string repo, bool build, bool verbose, CancellationToken cancellationToken)
+    {
+        var repoError = ValidateRepo(repo);
+        if (repoError is not null)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(repoError)}");
+            return 1;
+        }
 
         if (Directory.Exists(Path.Combine(targetPath, ".git")))
         {
@@ -54,8 +85,8 @@ internal sealed class InstallCommand
         }
         else
         {
-            AnsiConsole.MarkupLine($"Cloning [dim]{Markup.Escape(repo)}[/] → [dim]{Markup.Escape(targetPath)}[/]");
-            var cloneResult = await RunProcessAsync("git", $"clone \"{repo}\" \"{targetPath}\"", null, verbose, cancellationToken);
+            AnsiConsole.MarkupLine($"Cloning [dim]{Markup.Escape(repo)}[/]  [dim]{Markup.Escape(targetPath)}[/]");
+            var cloneResult = await RunProcessAsync("git", BuildCloneArguments(repo, targetPath), null, verbose, cancellationToken);
             if (cloneResult != 0)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] Clone failed.");
