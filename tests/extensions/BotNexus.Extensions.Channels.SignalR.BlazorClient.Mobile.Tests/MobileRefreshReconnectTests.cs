@@ -36,6 +36,7 @@ public sealed class MobileRefreshReconnectTests : IDisposable
 
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_portalLoad);
+        _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }

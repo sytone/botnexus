@@ -4,6 +4,7 @@
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalLoadService PortalLoad
+@inject BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions HubTuning
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @implements IDisposable
@@ -326,6 +327,9 @@ else
         var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
         var hubUrl = $"{origin}/hub/gateway";
         PortalLoad.ClientKind = "mobile";
+        // #1840: apply the mobile keep-alive/server-timeout and widened reconnect schedule to the
+        // hub build so a tunnelled, backgrounded PWA stops churning through sub-second reconnects.
+        PortalLoad.Tuning = HubTuning.ToTuning();
         await PortalLoad.InitializeAsync(hubUrl);
         await ApplyRouteSelectionAsync();
     }

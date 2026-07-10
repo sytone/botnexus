@@ -45,6 +45,23 @@ public static class SignalRHubLimits
     public const int DefaultStreamBufferCapacity = 10;
 
     /// <summary>
+    /// Default server keep-alive ping interval, in seconds (#1840). The framework default is 15s.
+    /// This value is deliberately kept well under the netbird tunnel idle-cutoff so a quiet mobile
+    /// connection is pinged often enough to keep the tunnel's NAT/idle window open, eliminating the
+    /// sub-second/rapid renegotiate churn seen on the mobile hub path. See
+    /// <c>docs/signalr-mobile-keepalive.md</c> for the tunnel-window reasoning.
+    /// </summary>
+    public const int DefaultKeepAliveIntervalSeconds = 15;
+
+    /// <summary>
+    /// Default server client-timeout interval, in seconds (#1840). Widened from the framework's 30s
+    /// default so a mobile client tunnelled through netbird is not declared dead on a single missed
+    /// ping or a brief radio stall. Kept at exactly 2x the keep-alive interval, the minimum ratio
+    /// SignalR recommends (server timeout should be at least twice the keep-alive interval).
+    /// </summary>
+    public const int DefaultClientTimeoutIntervalSeconds = 30;
+
+    /// <summary>
     /// Applies the configured (or default) hub limits to <paramref name="options"/>.
     /// Non-positive configured values are ignored in favour of the secure default so a misconfig
     /// can never disable the bound.
@@ -70,5 +87,23 @@ public static class SignalRHubLimits
         options.MaximumReceiveMessageSize = maxReceive;
         options.MaximumParallelInvocationsPerClient = maxParallel;
         options.StreamBufferCapacity = streamBuffer;
+
+        // Keep-alive / client-timeout tuning (#1840). Non-positive values fall back to the
+        // mobile-tuned defaults. The client timeout is always coerced to at least twice the
+        // keep-alive interval: SignalR treats a client as gone if no message arrives within the
+        // timeout, and a single ping can be lost, so a ratio below 2x makes an idle connection
+        // flap. This keeps a misconfigured (server timeout < 2x keep-alive) pair from ever
+        // producing the reconnect churn this hub tuning exists to remove.
+        var keepAlive = config?.KeepAliveIntervalSeconds is { } ka && ka > 0
+            ? ka
+            : DefaultKeepAliveIntervalSeconds;
+        var clientTimeout = config?.ClientTimeoutIntervalSeconds is { } ct && ct > 0
+            ? ct
+            : DefaultClientTimeoutIntervalSeconds;
+        if (clientTimeout < keepAlive * 2)
+            clientTimeout = keepAlive * 2;
+
+        options.KeepAliveInterval = TimeSpan.FromSeconds(keepAlive);
+        options.ClientTimeoutInterval = TimeSpan.FromSeconds(clientTimeout);
     }
 }

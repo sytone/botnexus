@@ -28,6 +28,14 @@ public sealed class PortalLoadService : IPortalLoadService
     /// defaults to "desktop" so the historical desktop-portal path is unchanged (AC#5).
     /// </summary>
     public string ClientKind { get; set; } = "desktop";
+
+    /// <summary>
+    /// Optional per-connection keep-alive/timeout and reconnect tuning forwarded to every hub
+    /// build (initial connect, refresh reconnect, and resume rebuild) (#1840). Null on desktop so
+    /// the framework defaults are preserved; the mobile client sets a populated instance before
+    /// <see cref="InitializeAsync"/>.
+    /// </summary>
+    public HubConnectionTuning? Tuning { get; set; }
     public event Action? OnReadyChanged;
     public event Action? OnConnectionStateChanged;
 
@@ -117,7 +125,7 @@ public sealed class PortalLoadService : IPortalLoadService
                 if (agentInteractionRef is not null)
                     concreteHandler.ConversationRefreshDelegate = agentId => agentInteractionRef.RefreshConversationsAsync(agentId);
             }
-            await _hub.ConnectAsync(hubUrl, ClientKind);
+            await _hub.ConnectAsync(hubUrl, ClientKind, Tuning);
 
             // Track SignalR connection state for UI indicators and reconnect flows.
             _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
@@ -272,7 +280,7 @@ public sealed class PortalLoadService : IPortalLoadService
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)
             {
-                await _hub.ConnectAsync(_hubUrl, ClientKind);
+                await _hub.ConnectAsync(_hubUrl, ClientKind, Tuning);
                 var subscribeResult = await _hub.SubscribeAllAsync();
                 foreach (var session in subscribeResult.Sessions)
                     _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
@@ -310,7 +318,7 @@ public sealed class PortalLoadService : IPortalLoadService
     private async Task RebuildConnectionAsync()
     {
         await _hub.StopAndDisposeAsync();
-        await _hub.ConnectAsync(_hubUrl!, ClientKind);
+        await _hub.ConnectAsync(_hubUrl!, ClientKind, Tuning);
 
         // Re-wire connection-state notifications on the fresh connection so the UI keeps
         // reflecting reconnecting/reconnected/disconnected transitions after the reset.
