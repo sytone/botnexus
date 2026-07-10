@@ -115,9 +115,11 @@ public static class CopilotOAuth
                     throw new TimeoutException("GitHub device code expired before authorization was completed.");
             }
 
-            var description = tokenJson.TryGetProperty("error_description", out var descEl)
-                ? descEl.GetString() : "Unknown error";
-            throw new InvalidOperationException($"GitHub OAuth error: {error} - {description}");
+            // Do NOT embed the peer-supplied error_description: GitHub's OAuth error bodies
+            // can reflect the just-submitted credential (refresh_token / device_code) back inside
+            // error_description, which would then leak into the exception text and any log/telemetry
+            // sink that captures it. Throw with the machine error code only. (#1884)
+            throw new InvalidOperationException(BuildOAuthErrorMessage(error));
         }
 
         throw new TimeoutException("Timed out waiting for GitHub device code authorization.");
@@ -251,5 +253,20 @@ public static class CopilotOAuth
         var json = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, maxBytes, ct);
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Builds a safe exception message for a failed GitHub OAuth token exchange.
+    /// Only the machine-readable <paramref name="error"/> code is included; the peer-supplied
+    /// <c>error_description</c> is deliberately omitted because GitHub can reflect the just-submitted
+    /// credential (refresh_token / device_code) back inside it, which would then leak into the
+    /// exception text and any log/telemetry sink that captures it. (#1884)
+    /// </summary>
+    /// <param name="error">The machine-readable OAuth <c>error</c> code from the response, if any.</param>
+    /// <returns>A message containing only the error code, never any peer-supplied description.</returns>
+    internal static string BuildOAuthErrorMessage(string? error)
+    {
+        var code = string.IsNullOrWhiteSpace(error) ? "unknown_error" : error;
+        return $"GitHub OAuth error: {code}";
     }
 }
