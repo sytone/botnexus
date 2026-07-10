@@ -29,6 +29,7 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Prompts\BotNexus.Gateway.Prompts.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Telemetry.Abstractions\BotNexus.Gateway.Telemetry.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

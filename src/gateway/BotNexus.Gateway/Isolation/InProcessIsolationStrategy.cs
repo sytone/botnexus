@@ -28,6 +28,7 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Telemetry;
 using BotNexus.Gateway.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -592,6 +593,29 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             MaybeCompactAsync: maybeCompactAsync);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
+
+        // PBI3 #1851: attach the hot-path metrics listener so turn/tool/provider instruments
+        // actually fire for this agent. The listener subscribes to the agent's event stream and
+        // is added to the handle's dispose list so its subscription is released with the handle.
+        // Resolved defensively (GetService) so unit tests that construct the strategy without the
+        // telemetry graph are unaffected; metrics recording never throws on the hot path.
+        var hotPathMetrics = _serviceProvider.GetService<HotPathMetrics>();
+        if (hotPathMetrics is not null)
+        {
+            var channel = context.Parameters.TryGetValue("channel", out var channelValue)
+                ? channelValue as string
+                : null;
+            var hotPathListener = new HotPathMetricsAgentListener(
+                agent,
+                hotPathMetrics,
+                descriptor.AgentId.Value,
+                channel ?? HotPathMetrics.Unknown,
+                descriptor.ApiProvider,
+                resolvedModelId,
+                _logger);
+            extensionResourcesToDispose.Add(hotPathListener);
+        }
+
         var inProcessHandle = new InProcessAgentHandle(
             agent,
             descriptor.AgentId,
