@@ -2015,6 +2015,8 @@ botnexus debug memory --format json
 
 Directly inspect raw SQLite databases in the BotNexus home directory. Useful for understanding schema and diagnosing storage issues.
 
+Discovery covers **every registered platform store**, not just files ending in `.db`. BotNexus mixes two SQLite file extensions — `.db` (`sessions`, `data/skill-usage`) and `.sqlite` (`cron`, `webhooks`, per-agent `memory`) — and keeps some databases in a `data/` subfolder. All of these are enumerated automatically, so `debug db tables` should be your first-line investigation tool instead of hand-rolled `sqlite3` scripts.
+
 ### Usage
 
 ```powershell
@@ -2034,20 +2036,29 @@ botnexus debug db <COMMAND> [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--db <NAME>` | (all) | Filter to a specific database file |
+| `--db <NAME>` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
+| `--include-agents` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
 | `--format` | `table` | Output format: `table` or `json` |
+
+> `--format` is a `debug db` group option, so it goes **before** the subcommand: `botnexus debug db --format json tables`.
 
 ### Examples
 
 ```powershell
-# List all databases and their sizes
+# List all registered databases and their sizes (cron, webhooks, sessions, skill-usage)
 botnexus debug db size
 
-# Show tables in sessions database
-botnexus debug db tables --db sessions
+# List every table with row counts across all registered databases
+botnexus debug db tables
 
-# Inspect table schema
-botnexus debug db schema --db sessions --table SessionEntries
+# Show tables in a single database (bare name works for .db and .sqlite alike)
+botnexus debug db tables --db cron
+
+# Include per-agent memory stores in the sweep
+botnexus debug db tables --include-agents
+
+# Dump schema as JSON for scripting
+botnexus debug db --format json schema --db sessions
 ```
 
 ---
