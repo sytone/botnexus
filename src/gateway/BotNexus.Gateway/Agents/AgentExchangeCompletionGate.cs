@@ -59,12 +59,14 @@ public static class AgentExchangeCompletionGate
         // (2) Freshness gate: only honour the tool when its persisted payload references THIS
         // turn's active id. Without this, a stale write from a previous turn (or from another
         // tool path that happens to write the same metadata keys) could be replayed.
-        var finishedExchangeId = MetadataString(refreshedMetadata, FinishAgentExchangeTool.FinishedExchangeIdKey);
-        if (!string.Equals(finishedExchangeId, expectedExchangeId, StringComparison.Ordinal))
+        // The typed AgentExchangeCompletionState migrates-on-read from any legacy loose keys.
+        var completion = AgentExchangeCompletionState.FromMetadata(refreshedMetadata);
+        if (completion is null
+            || !string.Equals(completion.FinishedExchangeId, expectedExchangeId, StringComparison.Ordinal))
             return false;
 
-        reason = MetadataString(refreshedMetadata, FinishAgentExchangeTool.FinishedReasonKey);
-        summary = MetadataString(refreshedMetadata, FinishAgentExchangeTool.FinishedSummaryKey);
+        reason = completion.FinishedReason;
+        summary = completion.FinishedSummary;
         return true;
     }
 
@@ -77,28 +79,11 @@ public static class AgentExchangeCompletionGate
     /// </summary>
     public static void PrepareTurn(IDictionary<string, object?> metadata, string exchangeId)
     {
-        metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = exchangeId;
-        metadata.Remove(FinishAgentExchangeTool.FinishedExchangeIdKey);
-        metadata.Remove(FinishAgentExchangeTool.FinishedReasonKey);
-        metadata.Remove(FinishAgentExchangeTool.FinishedSummaryKey);
-    }
-
-    /// <summary>
-    /// JsonElement-tolerant metadata read. <c>SqliteSessionStore</c> and <c>FileSessionStore</c>
-    /// round-trip <c>object?</c> metadata as <see cref="System.Text.Json.JsonElement"/>, so a
-    /// plain <c>as string</c> cast silently returns <c>null</c> — which would turn a freshness
-    /// check into a silent always-fail.
-    /// </summary>
-    public static string? MetadataString(IDictionary<string, object?> metadata, string key)
-    {
-        if (!metadata.TryGetValue(key, out var value) || value is null)
-            return null;
-        return value switch
+        // Set a fresh active id and clear any prior finish payload so a previous turn's write
+        // cannot satisfy the freshness gate. WriteTo also strips the legacy loose keys.
+        AgentExchangeCompletionState.WriteTo(metadata, new AgentExchangeCompletionState
         {
-            string s => s,
-            System.Text.Json.JsonElement element when element.ValueKind == System.Text.Json.JsonValueKind.String
-                => element.GetString(),
-            _ => null
-        };
+            ActiveExchangeId = exchangeId
+        });
     }
 }

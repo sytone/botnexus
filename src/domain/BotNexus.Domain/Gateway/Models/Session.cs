@@ -90,6 +90,22 @@ public sealed record Session
     public Dictionary<string, object?> Metadata { get; set; } = [];
 
     /// <summary>
+    /// Typed agent-to-agent exchange-completion state (issue #612, CC-1). This is a projection
+    /// over <see cref="Metadata"/>: it replaces the four loose <c>activeAgentExchangeId</c> /
+    /// <c>finishedAgentExchangeId</c> / <c>finishedAgentExchangeReason</c> /
+    /// <c>finishedAgentExchangeSummary</c> string keys that previously carried this state.
+    /// Backing storage on <see cref="Metadata"/> keeps the state round-tripping through the
+    /// existing session-store persistence unchanged; the getter migrates-on-read from the legacy
+    /// loose keys so pre-CC-1 persisted rows keep working. <c>null</c> when no exchange completion
+    /// state is present. See <see cref="AgentExchangeCompletionState"/>.
+    /// </summary>
+    public AgentExchangeCompletionState? ExchangeCompletion
+    {
+        get => AgentExchangeCompletionState.FromMetadata(Metadata);
+        set => AgentExchangeCompletionState.WriteTo(Metadata, value);
+    }
+
+    /// <summary>
     /// Gets or sets the history.
     /// </summary>
     public List<SessionEntry> History { get; set; } = [];

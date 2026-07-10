@@ -513,12 +513,15 @@ public sealed class AgentExchangeServiceTests
     {
         var s = store.GetAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
         if (s is null) return;
-        if (!s.Metadata.TryGetValue("activeAgentExchangeId", out var activeRaw) || activeRaw is not string activeId)
+        var completion = s.ExchangeCompletion;
+        if (completion?.ActiveExchangeId is not { Length: > 0 } activeId)
             return;
-        s.Metadata["finishedAgentExchangeId"] = activeId;
-        s.Metadata["finishedAgentExchangeReason"] = reason;
-        if (!string.IsNullOrEmpty(summary))
-            s.Metadata["finishedAgentExchangeSummary"] = summary;
+        s.ExchangeCompletion = completion with
+        {
+            FinishedExchangeId = activeId,
+            FinishedReason = reason,
+            FinishedSummary = string.IsNullOrEmpty(summary) ? null : summary
+        };
         store.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
     }
 

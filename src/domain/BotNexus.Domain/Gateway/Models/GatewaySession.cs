@@ -181,6 +181,18 @@ public sealed class GatewaySession
     }
 
     /// <summary>
+    /// Typed agent-to-agent exchange-completion state (issue #612, CC-1). Facade over
+    /// <see cref="Session"/>.<see cref="Session.ExchangeCompletion"/>; replaces the four loose
+    /// exchange-completion metadata string keys with a single typed nullable record. Mutate
+    /// through this proxy so the reach-through fence stays satisfied.
+    /// </summary>
+    public AgentExchangeCompletionState? ExchangeCompletion
+    {
+        get => Session.ExchangeCompletion;
+        set => Session.ExchangeCompletion = value;
+    }
+
+    /// <summary>
     /// Dedicated outbound-stream reconnect-replay peer for this session. The 8
     /// stream-replay members previously hosted on the facade (#575) collapsed
     /// here so the conversational session surface is no longer mixed with

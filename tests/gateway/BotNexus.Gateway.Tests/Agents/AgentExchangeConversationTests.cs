@@ -292,12 +292,13 @@ public sealed class AgentExchangeConversationTests
                 if (capturedSessionId is { } sid)
                 {
                     var s = sessionStore.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
-                    if (s is not null
-                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
-                        && v is string activeId)
+                    if (s?.ExchangeCompletion?.ActiveExchangeId is { Length: > 0 } activeId)
                     {
-                        s.Metadata["finishedAgentExchangeId"] = activeId;
-                        s.Metadata["finishedAgentExchangeReason"] = "shipped";
+                        s.ExchangeCompletion = s.ExchangeCompletion with
+                        {
+                            FinishedExchangeId = activeId,
+                            FinishedReason = "shipped"
+                        };
                         sessionStore.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
                     }
                 }
