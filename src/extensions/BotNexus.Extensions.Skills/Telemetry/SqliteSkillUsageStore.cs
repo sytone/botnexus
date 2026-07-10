@@ -1,31 +1,40 @@
 using System.Globalization;
 using System.IO.Abstractions;
 using BotNexus.Persistence.Sqlite;
+using BotNexus.Persistence.Sqlite.Telemetry;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Extensions.Skills.Telemetry;
 
 /// <summary>
-/// SQLite-backed <see cref="ISkillUsageTelemetry"/> (#1833). Follows the established BotNexus store
-/// shape (see <c>SqliteMemoryStore</c> / <c>SqliteExtensionStateStore</c>): a per-operation
-/// connection obtained from the shared <see cref="SqliteConnectionFactory"/> (so the standard
-/// busy-timeout policy is applied on every open), filesystem-aware journal mode via
-/// <see cref="SqliteWalMaintenance"/>, and a write lock serialising the upserts.
+/// <see cref="ISkillUsageTelemetry"/> facade over the shared durable usage-telemetry primitive
+/// (#1850). Preserves the original constructor and public surface shipped in #1846 so the Skills
+/// tools, read API, and existing tests do not churn, while delegating all persistence to the
+/// generic <see cref="SqliteUsageTelemetryStore"/> under the fixed namespace <c>"skills"</c>.
 /// </summary>
 /// <remarks>
-/// Counters are upserted with an <c>INSERT ... ON CONFLICT</c> so the first touch of a skill
-/// creates the row and subsequent touches increment in place. Recording is best-effort by
-/// contract; the store itself does not swallow exceptions (callers on the tool hot path do), so
-/// tests can still assert failure behaviour directly against the store.
+/// The three fixed skill counters (<c>view</c>/<c>use</c>/<c>patch</c>) that were dedicated columns
+/// in the old <c>skill_usage</c> schema are now arbitrary named counters in the shared store, and
+/// the generic <see cref="UsageRecord"/> is projected back into the skill-shaped
+/// <see cref="SkillUsageRecord"/> so the <c>/api/skills/telemetry</c> DTO/JSON contract is intact.
+/// <para>
+/// Data migration (no loss): if a legacy <c>skill_usage</c> table exists in the same database file
+/// (the pre-#1850 schema), its rows are imported once into the namespaced tables on first init.
+/// </para>
 /// </remarks>
 public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposable
 {
+    private const string SkillsNamespace = "skills";
+    private const string ViewCounter = "view";
+    private const string UseCounter = "use";
+    private const string PatchCounter = "patch";
+
     private readonly string _dbPath;
-    private readonly SqliteWalMaintenance _walMaintenance;
     private readonly string _connectionString;
     private readonly IFileSystem _fileSystem;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
-    private bool _initialized;
+    private readonly SqliteUsageTelemetryStore _store;
+    private readonly SemaphoreSlim _migrateLock = new(1, 1);
+    private bool _migrated;
 
     /// <summary>
     /// Creates a store persisting to <paramref name="dbPath"/>. The parent directory is created on
@@ -36,169 +45,53 @@ public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposab
         ArgumentException.ThrowIfNullOrWhiteSpace(dbPath);
         _dbPath = dbPath;
         _fileSystem = fileSystem ?? new FileSystem();
-        _walMaintenance = new SqliteWalMaintenance(fileSystem);
         _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
-    }
-
-    private async Task InitializeAsync(CancellationToken ct)
-    {
-        if (_initialized)
-            return;
-
-        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            if (_initialized)
-                return;
-
-            _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(ct).ConfigureAwait(false);
-
-            await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TABLE IF NOT EXISTS skill_usage (
-                    skill_name TEXT PRIMARY KEY,
-                    view_count INTEGER NOT NULL DEFAULT 0,
-                    use_count INTEGER NOT NULL DEFAULT 0,
-                    patch_count INTEGER NOT NULL DEFAULT 0,
-                    last_used_at TEXT NULL,
-                    created_by TEXT NULL,
-                    pinned INTEGER NOT NULL DEFAULT 0
-                );
-                """;
-            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            _initialized = true;
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        _store = new SqliteUsageTelemetryStore(dbPath, fileSystem);
     }
 
     /// <inheritdoc />
-    public Task RecordViewAsync(string skillName, CancellationToken cancellationToken = default)
-        => IncrementAsync(skillName, "view_count", cancellationToken);
-
-    /// <inheritdoc />
-    public Task RecordUseAsync(string skillName, CancellationToken cancellationToken = default)
-        => IncrementAsync(skillName, "use_count", cancellationToken);
-
-    /// <inheritdoc />
-    public Task RecordPatchAsync(string skillName, CancellationToken cancellationToken = default)
-        => IncrementAsync(skillName, "patch_count", cancellationToken);
-
-    // Increments a single counter column and refreshes last_used_at, creating the row on first touch.
-    // The column name is not user-supplied - it comes from the three fixed call sites above - so the
-    // interpolation into SQL is safe; the skill name and timestamp are still bound as parameters.
-    private async Task IncrementAsync(string skillName, string column, CancellationToken ct)
+    public async Task RecordViewAsync(string skillName, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(skillName);
-        await InitializeAsync(ct).ConfigureAwait(false);
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.IncrementAsync(SkillsNamespace, skillName, ViewCounter, cancellationToken).ConfigureAwait(false);
+    }
 
-        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(ct).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
-            command.CommandText = $"""
-                INSERT INTO skill_usage (skill_name, {column}, last_used_at)
-                VALUES ($name, 1, $now)
-                ON CONFLICT(skill_name) DO UPDATE SET
-                    {column} = {column} + 1,
-                    last_used_at = $now;
-                """;
-            command.Parameters.AddWithValue("$name", skillName);
-            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+    /// <inheritdoc />
+    public async Task RecordUseAsync(string skillName, CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.IncrementAsync(SkillsNamespace, skillName, UseCounter, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task RecordPatchAsync(string skillName, CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.IncrementAsync(SkillsNamespace, skillName, PatchCounter, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task RecordCreatedAsync(string skillName, string createdBy, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(skillName);
-        await InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
-            // Stamp provenance on first creation; a later create for the same name (after delete +
-            // recreate) refreshes created_by without disturbing the accumulated counters.
-            command.CommandText = """
-                INSERT INTO skill_usage (skill_name, created_by, last_used_at)
-                VALUES ($name, $createdBy, $now)
-                ON CONFLICT(skill_name) DO UPDATE SET
-                    created_by = $createdBy,
-                    last_used_at = $now;
-                """;
-            command.Parameters.AddWithValue("$name", skillName);
-            command.Parameters.AddWithValue("$createdBy", (object?)createdBy ?? DBNull.Value);
-            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.RecordCreatedAsync(SkillsNamespace, skillName, createdBy, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task SetPinnedAsync(string skillName, bool pinned, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(skillName);
-        await InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                INSERT INTO skill_usage (skill_name, pinned)
-                VALUES ($name, $pinned)
-                ON CONFLICT(skill_name) DO UPDATE SET pinned = $pinned;
-                """;
-            command.Parameters.AddWithValue("$name", skillName);
-            command.Parameters.AddWithValue("$pinned", pinned ? 1 : 0);
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.SetPinnedAsync(SkillsNamespace, skillName, pinned, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<SkillUsageRecord>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        await InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT skill_name, view_count, use_count, patch_count, last_used_at, created_by, pinned
-            FROM skill_usage
-            ORDER BY (last_used_at IS NULL), last_used_at DESC, skill_name ASC;
-            """;
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var results = new List<SkillUsageRecord>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            results.Add(ReadRecord(reader));
-
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        var records = await _store.GetAllAsync(SkillsNamespace, cancellationToken).ConfigureAwait(false);
+        var results = new List<SkillUsageRecord>(records.Count);
+        foreach (var record in records)
+            results.Add(Project(record));
         return results;
     }
 
@@ -206,44 +99,124 @@ public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposab
     public async Task<SkillUsageRecord?> GetAsync(string skillName, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(skillName);
-        await InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT skill_name, view_count, use_count, patch_count, last_used_at, created_by, pinned
-            FROM skill_usage
-            WHERE skill_name = $name;
-            """;
-        command.Parameters.AddWithValue("$name", skillName);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
-            ? ReadRecord(reader)
-            : null;
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        var record = await _store.GetAsync(SkillsNamespace, skillName, cancellationToken).ConfigureAwait(false);
+        return record is null ? null : Project(record);
     }
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        _writeLock.Dispose();
-        return ValueTask.CompletedTask;
+        _migrateLock.Dispose();
+        await _store.DisposeAsync().ConfigureAwait(false);
     }
 
-    private SqliteConnection CreateConnection()
-        => SqliteConnectionFactory.Create(_connectionString);
-
-    private static SkillUsageRecord ReadRecord(SqliteDataReader reader) => new()
+    // Projects the generic namespaced record back into the skill-shaped record so the endpoint
+    // DTO/JSON contract (#1846) is preserved byte-for-byte.
+    private static SkillUsageRecord Project(UsageRecord record) => new()
     {
-        SkillName = reader.GetString(0),
-        ViewCount = reader.GetInt64(1),
-        UseCount = reader.GetInt64(2),
-        PatchCount = reader.GetInt64(3),
-        LastUsedAt = reader.IsDBNull(4)
-            ? null
-            : DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-        CreatedBy = reader.IsDBNull(5) ? null : reader.GetString(5),
-        Pinned = !reader.IsDBNull(6) && reader.GetInt64(6) != 0
+        SkillName = record.Key,
+        ViewCount = record.GetCounter(ViewCounter),
+        UseCount = record.GetCounter(UseCounter),
+        PatchCount = record.GetCounter(PatchCounter),
+        LastUsedAt = record.LastUsedAt,
+        CreatedBy = record.CreatedBy,
+        Pinned = record.Pinned
     };
+
+    // One-time best-effort import of pre-#1850 rows from the legacy `skill_usage` table (if present
+    // in the same file) into the namespaced tables, so migrating consumers keep their history.
+    private async Task EnsureMigratedAsync(CancellationToken ct)
+    {
+        if (_migrated)
+            return;
+
+        await _migrateLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_migrated)
+                return;
+
+            // Nothing to import if the database file does not exist yet (fresh install).
+            if (!_fileSystem.File.Exists(_dbPath))
+            {
+                _migrated = true;
+                return;
+            }
+
+            await using var connection = SqliteConnectionFactory.Create(_connectionString);
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+            if (!await LegacyTableExistsAsync(connection, ct).ConfigureAwait(false))
+            {
+                _migrated = true;
+                return;
+            }
+
+            var legacyRows = await ReadLegacyRowsAsync(connection, ct).ConfigureAwait(false);
+            _migrated = true;
+
+            foreach (var row in legacyRows)
+            {
+                if (row.CreatedBy is not null)
+                    await _store.RecordCreatedAsync(SkillsNamespace, row.SkillName, row.CreatedBy, ct).ConfigureAwait(false);
+
+                await SeedCounterAsync(row.SkillName, ViewCounter, row.ViewCount, ct).ConfigureAwait(false);
+                await SeedCounterAsync(row.SkillName, UseCounter, row.UseCount, ct).ConfigureAwait(false);
+                await SeedCounterAsync(row.SkillName, PatchCounter, row.PatchCount, ct).ConfigureAwait(false);
+
+                if (row.Pinned)
+                    await _store.SetPinnedAsync(SkillsNamespace, row.SkillName, true, ct).ConfigureAwait(false);
+            }
+
+            // Drop the legacy table so the import runs exactly once and cannot double-count.
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = "DROP TABLE IF EXISTS skill_usage;";
+            await drop.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _migrateLock.Release();
+        }
+    }
+
+    private async Task SeedCounterAsync(string skillName, string counter, long count, CancellationToken ct)
+    {
+        for (long i = 0; i < count; i++)
+            await _store.IncrementAsync(SkillsNamespace, skillName, counter, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> LegacyTableExistsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'skill_usage';";
+        var result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return result is not null;
+    }
+
+    private static async Task<List<LegacyRow>> ReadLegacyRowsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT skill_name, view_count, use_count, patch_count, created_by, pinned
+            FROM skill_usage;
+            """;
+        var rows = new List<LegacyRow>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            rows.Add(new LegacyRow(
+                reader.GetString(0),
+                reader.GetInt64(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                !reader.IsDBNull(5) && reader.GetInt64(5) != 0));
+        }
+
+        return rows;
+    }
+
+    private readonly record struct LegacyRow(
+        string SkillName, long ViewCount, long UseCount, long PatchCount, string? CreatedBy, bool Pinned);
 }
