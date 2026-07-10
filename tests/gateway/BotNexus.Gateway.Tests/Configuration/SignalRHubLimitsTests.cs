@@ -108,6 +108,65 @@ public sealed class SignalRHubLimitsTests
     }
 
     [Fact]
+    public void Apply_WithNullConfig_UsesMobileTunedKeepAliveDefaults()
+    {
+        var options = new HubOptions();
+        SignalRHubLimits.Apply(options, config: null);
+
+        options.KeepAliveInterval.ShouldBe(TimeSpan.FromSeconds(SignalRHubLimits.DefaultKeepAliveIntervalSeconds));
+        options.ClientTimeoutInterval.ShouldBe(TimeSpan.FromSeconds(SignalRHubLimits.DefaultClientTimeoutIntervalSeconds));
+    }
+
+    [Fact]
+    public void Apply_DefaultClientTimeout_IsAtLeastTwiceKeepAlive()
+    {
+        // SignalR's own guidance: the server timeout should be at least twice the keep-alive
+        // interval so a single dropped ping does not tear the connection down (#1840).
+        SignalRHubLimits.DefaultClientTimeoutIntervalSeconds
+            .ShouldBeGreaterThanOrEqualTo(SignalRHubLimits.DefaultKeepAliveIntervalSeconds * 2);
+    }
+
+    [Fact]
+    public void Apply_WithExplicitKeepAliveAndTimeout_OverridesDefaults()
+    {
+        var options = new HubOptions();
+        SignalRHubLimits.Apply(options, new SignalRConfig
+        {
+            KeepAliveIntervalSeconds = 20,
+            ClientTimeoutIntervalSeconds = 50,
+        });
+
+        options.KeepAliveInterval.ShouldBe(TimeSpan.FromSeconds(20));
+        options.ClientTimeoutInterval.ShouldBe(TimeSpan.FromSeconds(50));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Apply_WithNonPositiveKeepAlive_FallsBackToDefault(int invalid)
+    {
+        var options = new HubOptions();
+        SignalRHubLimits.Apply(options, new SignalRConfig { KeepAliveIntervalSeconds = invalid });
+
+        options.KeepAliveInterval.ShouldBe(TimeSpan.FromSeconds(SignalRHubLimits.DefaultKeepAliveIntervalSeconds));
+    }
+
+    [Fact]
+    public void Apply_CoercesClientTimeoutToAtLeastTwiceKeepAlive()
+    {
+        // A misconfig where the timeout is below 2x the keep-alive would make an idle connection
+        // flap; Apply must coerce it up rather than honour the unsafe pair (#1840).
+        var options = new HubOptions();
+        SignalRHubLimits.Apply(options, new SignalRConfig
+        {
+            KeepAliveIntervalSeconds = 20,
+            ClientTimeoutIntervalSeconds = 25, // below 2x20 = 40
+        });
+
+        options.ClientTimeoutInterval.ShouldBe(TimeSpan.FromSeconds(40));
+    }
+
+    [Fact]
     public void SignalRConfig_BindsFromGatewaySettingsJson()
     {
         const string json = """
@@ -116,7 +175,9 @@ public sealed class SignalRHubLimitsTests
             "signalR": {
               "maximumReceiveMessageSizeBytes": 5242880,
               "maximumParallelInvocationsPerClient": 8,
-              "streamBufferCapacity": 15
+              "streamBufferCapacity": 15,
+              "keepAliveIntervalSeconds": 20,
+              "clientTimeoutIntervalSeconds": 50
             }
           }
         }
@@ -133,6 +194,8 @@ public sealed class SignalRHubLimitsTests
         platform.Gateway.SignalR!.MaximumReceiveMessageSizeBytes.ShouldBe(5_242_880L);
         platform.Gateway.SignalR.MaximumParallelInvocationsPerClient.ShouldBe(8);
         platform.Gateway.SignalR.StreamBufferCapacity.ShouldBe(15);
+        platform.Gateway.SignalR.KeepAliveIntervalSeconds.ShouldBe(20);
+        platform.Gateway.SignalR.ClientTimeoutIntervalSeconds.ShouldBe(50);
     }
 
     [Fact]

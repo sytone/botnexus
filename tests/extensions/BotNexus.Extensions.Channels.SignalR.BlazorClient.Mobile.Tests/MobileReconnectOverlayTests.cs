@@ -22,6 +22,7 @@ public sealed class MobileReconnectOverlayTests : IDisposable
         _portalLoad.ResumeAsync(Arg.Any<CancellationToken>()).Returns(HubResumeOutcome.Alive);
         _portalLoad.RefreshAsync(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
         _ctx.Services.AddSingleton(_portalLoad);
+        _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

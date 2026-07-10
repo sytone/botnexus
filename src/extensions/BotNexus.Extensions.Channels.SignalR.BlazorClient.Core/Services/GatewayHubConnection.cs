@@ -119,15 +119,37 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// Defaults to "desktop" to preserve the historical desktop-portal behaviour; a
     /// null/blank value is omitted so the hub falls back to its own default.
     /// </param>
-    public async Task ConnectAsync(string hubUrl, string clientKind = "desktop")
+    /// <param name="tuning">
+    /// Optional per-connection keep-alive/timeout and reconnect tuning (#1840). When null (the
+    /// desktop default) the framework's stock <see cref="HubConnection.ServerTimeout"/>,
+    /// <see cref="HubConnection.KeepAliveInterval"/>, and default automatic-reconnect budget are
+    /// used unchanged. The mobile client supplies a populated instance so a tunnelled, backgrounded
+    /// PWA gets a longer server timeout, a tunnel-friendly keep-alive cadence, and a widened,
+    /// indefinitely-retrying reconnect schedule.
+    /// </param>
+    public async Task ConnectAsync(string hubUrl, string clientKind = "desktop", HubConnectionTuning? tuning = null)
     {
         if (_connection is not null)
             await _connection.DisposeAsync();
 
-        _connection = new HubConnectionBuilder()
-            .WithUrl(AppendClientKindQuery(hubUrl, clientKind))
-            .WithAutomaticReconnect()
-            .Build();
+        var builder = new HubConnectionBuilder()
+            .WithUrl(AppendClientKindQuery(hubUrl, clientKind));
+
+        // A supplied retry policy widens the reconnect budget for mobile; otherwise keep the
+        // framework's default ~5x3s budget so the desktop path is unchanged.
+        builder = tuning?.ReconnectRetryPolicy is { } retryPolicy
+            ? builder.WithAutomaticReconnect(retryPolicy)
+            : builder.WithAutomaticReconnect();
+
+        _connection = builder.Build();
+
+        // Keep-alive / server-timeout tuning (#1840). Only overridden when the caller supplies a
+        // value; a null field leaves the framework default (ServerTimeout 30s, KeepAlive 15s) in
+        // place so the desktop client is not regressed.
+        if (tuning?.ServerTimeout is { } serverTimeout)
+            _connection.ServerTimeout = serverTimeout;
+        if (tuning?.KeepAliveInterval is { } keepAlive)
+            _connection.KeepAliveInterval = keepAlive;
 
         // Register server → client event handlers matching IGatewayHubClient
         _connection.On<ConnectedPayload>("Connected", p => OnConnected?.Invoke(p));

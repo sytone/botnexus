@@ -1,6 +1,9 @@
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.App>("#app");
@@ -17,5 +20,13 @@ builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 // #1615: the schema-driven mobile Settings page reads/writes platform config through this service
 // (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.
 builder.Services.AddScoped<PlatformConfigService>();
+
+// #1840: bind mobile-scoped SignalR keep-alive/timeout tuning from appsettings (section "SignalR")
+// with mobile defaults, so a tunnelled/backgrounded PWA gets a longer server timeout and a
+// tunnel-friendly keep-alive cadence. Registered as a singleton so the Chat page can apply it to
+// the hub connection. Mobile-only: the desktop client never constructs this.
+var mobileTuning = new MobileHubTuningOptions();
+builder.Configuration.GetSection("SignalR").Bind(mobileTuning);
+builder.Services.AddSingleton(mobileTuning);
 
 await builder.Build().RunAsync();

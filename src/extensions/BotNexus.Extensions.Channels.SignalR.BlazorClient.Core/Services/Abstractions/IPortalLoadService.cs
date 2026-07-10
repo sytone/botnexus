@@ -25,6 +25,14 @@ public interface IPortalLoadService
     /// </summary>
     string ClientKind { get; set; }
 
+    /// <summary>
+    /// Optional per-connection SignalR keep-alive/timeout and reconnect tuning applied to every hub
+    /// build for this session (#1840). Null (the desktop default) preserves the framework's stock
+    /// timeouts and reconnect budget; the mobile client sets a populated instance before
+    /// <see cref="InitializeAsync"/> to widen them for a tunnelled, backgrounded PWA.
+    /// </summary>
+    HubConnectionTuning? Tuning { get; set; }
+
     /// <summary>Raised when <see cref="IsReady"/>, <see cref="IsLoading"/>, or <see cref="LoadError"/> changes.</summary>
     event Action? OnReadyChanged;
 

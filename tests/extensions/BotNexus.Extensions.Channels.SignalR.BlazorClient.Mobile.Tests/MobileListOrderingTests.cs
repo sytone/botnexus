@@ -191,6 +191,7 @@ public sealed class MobileListOrderingTests : IDisposable
 
         _ctx.Services.AddSingleton(store);
         _ctx.Services.AddSingleton(portalLoad);
+        _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(interaction);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }

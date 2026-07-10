@@ -585,6 +585,24 @@ public sealed class SignalRConfig
     /// Non-positive values fall back to the secure default.
     /// </summary>
     public int? StreamBufferCapacity { get; set; }
+
+    /// <summary>
+    /// Interval, in seconds, at which the server sends keep-alive pings to idle clients (#1840).
+    /// Chosen to sit comfortably under the netbird tunnel idle-cutoff so a quiet mobile connection
+    /// never idles the tunnel out mid-session. Non-positive values fall back to the mobile-tuned
+    /// default. The server timeout (<see cref="ClientTimeoutIntervalSeconds"/>) is always coerced
+    /// to at least twice this value so a single dropped ping cannot terminate the connection.
+    /// </summary>
+    public int? KeepAliveIntervalSeconds { get; set; }
+
+    /// <summary>
+    /// Interval, in seconds, after which the server considers a client dead if no message or ping
+    /// has arrived (#1840). Widened over the framework's 30s default to tolerate the jitter and
+    /// brief stalls of a mobile link tunnelled through netbird. Must be at least twice
+    /// <see cref="KeepAliveIntervalSeconds"/>; smaller (or non-positive) values are coerced up to
+    /// the mobile-tuned default so a misconfig cannot make the server hang up prematurely.
+    /// </summary>
+    public int? ClientTimeoutIntervalSeconds { get; set; }
 }
 
 /// <summary>Cron scheduler configuration.</summary>
