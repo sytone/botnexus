@@ -41,6 +41,12 @@ public static class TelemetryServiceCollectionExtensions
         // Always register the facade so DI resolution never depends on the enabled flag.
         services.AddSingleton<IMetrics, BotNexusMetrics>();
 
+        // Hot-path metric recorder (PBI3 #1851): a single instance owns every turn/tool/
+        // provider/cron/channel/session instrument. Registered unconditionally so the
+        // in-Gateway hot-path seams can resolve it regardless of the enabled flag; when
+        // telemetry is disabled the instruments simply have no MeterProvider subscribed.
+        services.AddSingleton<HotPathMetrics>();
+
         // Proof-of-life smoke counter (botnexus.host.starts) increments on boot.
         services.AddHostedService<HostStartupMetrics>();
 

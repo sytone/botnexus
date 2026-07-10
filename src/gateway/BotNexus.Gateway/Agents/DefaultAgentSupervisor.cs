@@ -325,12 +325,21 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     /// <returns>A parameter dictionary; empty when no relevant metadata is present.</returns>
     private static IReadOnlyDictionary<string, object?> BuildExecutionParameters(GatewaySession? session)
     {
+        var parameters = new Dictionary<string, object?>();
         if (session is not null && TryGetMetadataString(session, "clientKind", out var clientKind))
         {
-            return new Dictionary<string, object?> { ["clientKind"] = clientKind };
+            parameters["clientKind"] = clientKind;
         }
 
-        return new Dictionary<string, object?>();
+        // PBI3 #1851: surface the originating channel type so the isolation strategy can
+        // tag hot-path turn metrics (botnexus.turns.total{channel=...}) with a bounded,
+        // low-cardinality channel dimension. Absent for non-channel-bound sessions.
+        if (session?.ChannelType is { } channelType && !string.IsNullOrWhiteSpace(channelType.Value))
+        {
+            parameters["channel"] = channelType.Value;
+        }
+
+        return parameters;
     }
 
     private async Task DisposeHandleAsync(IAgentHandle handle)
