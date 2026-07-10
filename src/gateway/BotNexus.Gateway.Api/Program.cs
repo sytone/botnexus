@@ -28,6 +28,7 @@ using BotNexus.Domain.World;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
+using BotNexus.Gateway.Telemetry;
 using Serilog;
 using System.Reflection;
 using BotNexus.Gateway.Webhooks;
@@ -101,6 +102,11 @@ catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationE
     Log.Warning(ex, "Failed to load platform config from {ConfigPath} — using defaults", resolvedConfigPath);
     startupPlatformConfig = new PlatformConfig();
 }
+
+// Telemetry foundation (metrics core + OpenTelemetry SDK wiring): registers the IMetrics
+// facade, the botnexus.host.starts smoke counter, and the "BotNexus" meter/tracing scope.
+// AddOpenTelemetry() is idempotent, so the tracing block below augments the same builder.
+builder.Services.AddBotNexusTelemetry(builder.Configuration);
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>

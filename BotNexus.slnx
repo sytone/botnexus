@@ -33,6 +33,7 @@
     <Project Path="src/gateway/BotNexus.Cli/BotNexus.Cli.csproj" />
     <Project Path="src/gateway/BotNexus.Cron/BotNexus.Cron.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Telemetry/BotNexus.Gateway.Telemetry.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Conversations/BotNexus.Gateway.Conversations.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Dispatching/BotNexus.Gateway.Dispatching.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Contracts/BotNexus.Gateway.Contracts.csproj" />
@@ -102,6 +103,7 @@
     <Project Path="tests/gateway/BotNexus.Gateway.Prompts.Tests/BotNexus.Gateway.Prompts.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Sessions.Tests/BotNexus.Gateway.Sessions.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Telemetry.Tests/BotNexus.Gateway.Telemetry.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Memory.Tests/BotNexus.Memory.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Webhooks.Tests/BotNexus.Gateway.Webhooks.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Yaml.Tests/BotNexus.Yaml.Tests.csproj" />
