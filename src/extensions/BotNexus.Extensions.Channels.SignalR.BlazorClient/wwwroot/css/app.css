@@ -4245,6 +4245,10 @@ h3.conversation-title.editable:hover {
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 4px;
+    /* Force text-style (monochrome) rendering so the gear glyph stays transparent
+       and inherits `color` instead of rendering as a boxed color emoji. */
+    font-variant-emoji: text;
+    -webkit-font-feature-settings: normal;
 }
 .banner-settings-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
 
