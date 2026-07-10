@@ -990,3 +990,86 @@ body {
     text-align: center;
     color: #7a9cbf;
 }
+
+/* ── Auto-retrying reconnect overlay (#1839) ──────────────────────────────────
+   The user-facing experience for a transient background/foreground connection drop
+   on the mobile client. Replaces the raw #blazor-error-ui banner: a friendly, centered
+   "Reconnecting..." card with a spinner and a manual "Retry now" affordance. It sits
+   above all app chrome (below only modal z-indexes) and self-dismisses once the hub is
+   live again. Styled to match the mobile dark chat theme. */
+.reconnect-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(6, 14, 26, 0.72);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    animation: reconnectFadeIn 0.2s ease;
+}
+
+.reconnect-overlay-card {
+    background: #111d2e;
+    border: 1px solid rgba(100, 160, 220, 0.25);
+    border-radius: 16px;
+    padding: 24px 22px;
+    max-width: 320px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.reconnect-overlay-spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(100, 160, 220, 0.25);
+    border-top-color: #64a0dc;
+    animation: reconnectSpin 0.9s linear infinite;
+}
+
+.reconnect-overlay-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #d0dff0;
+}
+
+.reconnect-overlay-detail {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #8aa6c8;
+}
+
+.reconnect-overlay-btn {
+    margin-top: 4px;
+    background: #1a4a80;
+    border: none;
+    border-radius: 8px;
+    color: #d0dff0;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 18px;
+    cursor: pointer;
+    touch-action: manipulation;
+    min-width: 120px;
+}
+
+.reconnect-overlay-btn:hover:not(:disabled) { background: #235a99; }
+.reconnect-overlay-btn:disabled { opacity: 0.55; cursor: default; }
+
+@keyframes reconnectSpin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes reconnectFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
