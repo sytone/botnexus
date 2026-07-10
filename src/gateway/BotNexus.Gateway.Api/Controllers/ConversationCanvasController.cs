@@ -14,9 +14,16 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// notifiers, which are orthogonal to conversation lifecycle, bindings, archival, and audit.
 /// All route templates are preserved verbatim from the original controller so client behaviour is
 /// unchanged.
+///
+/// The base route is pinned to <c>api/conversations</c> (NOT the token-expanded <c>api/[controller]</c>)
+/// because the canvas-state endpoints form part of the conversations REST surface. The iframe canvas
+/// bridge (<c>CanvasPanel.HandleCanvasMessage</c>) and the documented contract both POST to
+/// <c>api/conversations/{id}/canvas-state/{key}</c>. The #1732 extraction accidentally token-expanded
+/// this to <c>api/ConversationCanvas/...</c>, which 404'd every iframe write while the agent tool path
+/// (which writes to the store directly, not over HTTP) kept working - hiding the break (#1900).
 /// </summary>
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/conversations")]
 public sealed class ConversationCanvasController : ControllerBase
 {
     private readonly IConversationStore _conversations;

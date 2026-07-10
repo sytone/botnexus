@@ -18,6 +18,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
+    <!-- #1900: the iframe->store round-trip test drives its mock HttpMessageHandler off the REAL
+         server route attributes on ConversationCanvasController (via reflection) so the client<->server
+         seam is exercised end-to-end. This reference exists solely to read those route templates. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>
