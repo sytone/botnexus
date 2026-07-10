@@ -1,8 +1,11 @@
 {
+  "id": "/mobile/",
   "name": "BotNexus",
   "short_name": "BotNexus",
   "start_url": "/mobile/",
+  "scope": "/mobile/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#0a1628",
   "theme_color": "#111d2e",
   "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
