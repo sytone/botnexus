@@ -118,4 +118,5 @@ The Service Bus channel is an **asynchronous request/reply** channel. The follow
 ## See also
 
 - [Service Bus envelope reference](./service-bus-envelope.md) — JSON schema, field reference, and integration examples for developers building clients.
+- [Service Bus deployment example](https://github.com/Sytone/botnexus/tree/main/examples/service-bus) — generic Bicep template that provisions a namespace, queues, and managed-identity RBAC for this channel.
 - [Azure Service Bus documentation](https://learn.microsoft.com/azure/service-bus-messaging/service-bus-messaging-overview)
