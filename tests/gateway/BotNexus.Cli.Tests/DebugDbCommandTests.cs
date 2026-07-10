@@ -19,38 +19,122 @@ public sealed class DebugDbCommandTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
+    private static void CreateDb(string path, string ddl)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var connection = new SqliteConnection($"Data Source={path}");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = ddl;
+        cmd.ExecuteNonQuery();
+    }
+
     private void CreateTestDatabases()
     {
-        // sessions.db
-        using (var connection = new SqliteConnection($"Data Source={Path.Combine(_tempDir, "sessions.db")}"))
-        {
-            connection.Open();
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT);
-                INSERT INTO sessions VALUES ('s1', 'active');
-                INSERT INTO sessions VALUES ('s2', 'sealed');
-                CREATE TABLE session_history (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT);
-                INSERT INTO session_history VALUES (1, 's1', 'hello');
-                INSERT INTO session_history VALUES (2, 's1', 'world');
-                INSERT INTO session_history VALUES (3, 's2', 'done');
-                """;
-            cmd.ExecuteNonQuery();
-        }
+        // sessions.db (home root, .db extension)
+        CreateDb(Path.Combine(_tempDir, "sessions.db"), """
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT);
+            INSERT INTO sessions VALUES ('s1', 'active');
+            INSERT INTO sessions VALUES ('s2', 'sealed');
+            CREATE TABLE session_history (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT);
+            INSERT INTO session_history VALUES (1, 's1', 'hello');
+            INSERT INTO session_history VALUES (2, 's1', 'world');
+            INSERT INTO session_history VALUES (3, 's2', 'done');
+            """);
 
-        // cron.db
-        using (var connection = new SqliteConnection($"Data Source={Path.Combine(_tempDir, "cron.db")}"))
-        {
-            connection.Open();
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE jobs (id TEXT PRIMARY KEY, name TEXT, schedule TEXT);
-                INSERT INTO jobs VALUES ('j1', 'maintenance', '0 * * * *');
-                CREATE TABLE run_history (id INTEGER PRIMARY KEY, job_id TEXT, status TEXT);
-                INSERT INTO run_history VALUES (1, 'j1', 'success');
-                """;
-            cmd.ExecuteNonQuery();
-        }
+        // cron.sqlite (home root, .sqlite extension — previously invisible)
+        CreateDb(Path.Combine(_tempDir, "cron.sqlite"), """
+            CREATE TABLE jobs (id TEXT PRIMARY KEY, name TEXT, schedule TEXT);
+            INSERT INTO jobs VALUES ('j1', 'maintenance', '0 * * * *');
+            CREATE TABLE run_history (id INTEGER PRIMARY KEY, job_id TEXT, status TEXT);
+            INSERT INTO run_history VALUES (1, 'j1', 'success');
+            """);
+
+        // webhooks.sqlite (home root, .sqlite extension — previously invisible)
+        CreateDb(Path.Combine(_tempDir, "webhooks.sqlite"), """
+            CREATE TABLE webhook_registrations (id TEXT PRIMARY KEY, agent_id TEXT);
+            INSERT INTO webhook_registrations VALUES ('w1', 'farnsworth');
+            """);
+
+        // data/skill-usage.db (data subfolder — previously invisible)
+        CreateDb(Path.Combine(_tempDir, "data", "skill-usage.db"), """
+            CREATE TABLE usage_entity (namespace TEXT, key TEXT);
+            INSERT INTO usage_entity VALUES ('skills', 'github');
+            """);
+
+        // agents/<id>/data/memory.sqlite (per-agent — opt-in via --include-agents)
+        CreateDb(Path.Combine(_tempDir, "agents", "farnsworth", "data", "memory.sqlite"), """
+            CREATE TABLE memory_entries (id TEXT PRIMARY KEY, content TEXT);
+            INSERT INTO memory_entries VALUES ('m1', 'note');
+            """);
+    }
+
+    // ─── discovery ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ResolveDbFiles_discovers_both_extensions_and_data_subfolder()
+    {
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, null);
+        var names = files.Select(f => f.Name).ToArray();
+
+        // Home root .db + .sqlite + data/ subfolder — but NOT per-agent (opt-in).
+        Assert.Contains("sessions", names);
+        Assert.Contains("cron", names);
+        Assert.Contains("webhooks", names);
+        Assert.Contains("data/skill-usage", names);
+        Assert.DoesNotContain(names, n => n.Contains("memory"));
+        Assert.Equal(4, files.Length);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_includes_agent_memory_when_opted_in()
+    {
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, null, includeAgents: true);
+        var names = files.Select(f => f.Name).ToArray();
+
+        Assert.Contains("farnsworth/memory", names);
+        Assert.Equal(5, files.Length);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_filters_to_single_db_by_bare_name()
+    {
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "sessions");
+        Assert.Single(files);
+        Assert.Equal("sessions", files[0].Name);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_filters_sqlite_extension_db_by_bare_name()
+    {
+        // cron is a .sqlite file — must resolve from the bare "cron" name.
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "cron");
+        Assert.Single(files);
+        Assert.Equal("cron", files[0].Name);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_filters_with_explicit_sqlite_extension()
+    {
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "webhooks.sqlite");
+        Assert.Single(files);
+        Assert.Equal("webhooks", files[0].Name);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_returns_probe_for_unknown_db()
+    {
+        // memory not present at root — still returns a single probe entry so the
+        // caller emits a "skipped: file not found" warning rather than "no dbs".
+        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "nonexistent");
+        Assert.Single(files);
+    }
+
+    [Fact]
+    public void ResolveDbFiles_returns_empty_for_nonexistent_home()
+    {
+        var files = DebugDbCommand.ResolveDbFiles(Path.Combine(_tempDir, "nonexistent"), null);
+        Assert.Empty(files);
     }
 
     // ─── tables ────────────────────────────────────────────────────────────
@@ -70,6 +154,13 @@ public sealed class DebugDbCommandTests : IDisposable
     }
 
     [Fact]
+    public void ExecuteTables_includes_agents_when_opted_in()
+    {
+        var result = DebugDbCommand.ExecuteTables(_tempDir, null, "json", includeAgents: true);
+        Assert.Equal(0, result);
+    }
+
+    [Fact]
     public void ExecuteTables_returns_error_for_missing_directory()
     {
         var result = DebugDbCommand.ExecuteTables(Path.Combine(_tempDir, "nonexistent"), null, "table");
@@ -77,10 +168,10 @@ public sealed class DebugDbCommandTests : IDisposable
     }
 
     [Fact]
-    public void ExecuteTables_returns_error_when_specific_db_missing()
+    public void ExecuteTables_returns_zero_when_specific_db_missing()
     {
         var result = DebugDbCommand.ExecuteTables(_tempDir, "memory", "table");
-        // memory.db doesn't exist, but we should still get table format (skipped warning)
+        // memory not at root; probe entry skipped with warning, still exit 0.
         Assert.Equal(0, result);
     }
 
@@ -145,36 +236,6 @@ public sealed class DebugDbCommandTests : IDisposable
     }
 
     // ─── utility methods ───────────────────────────────────────────────────
-
-    [Fact]
-    public void ResolveDbFiles_returns_all_dbs_when_no_filter()
-    {
-        var files = DebugDbCommand.ResolveDbFiles(_tempDir, null);
-        Assert.Equal(2, files.Length); // sessions.db + cron.db
-    }
-
-    [Fact]
-    public void ResolveDbFiles_filters_to_single_db()
-    {
-        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "sessions");
-        Assert.Single(files);
-        Assert.Equal("sessions", files[0].Name);
-    }
-
-    [Fact]
-    public void ResolveDbFiles_handles_db_extension_in_name()
-    {
-        var files = DebugDbCommand.ResolveDbFiles(_tempDir, "cron.db");
-        Assert.Single(files);
-        Assert.Equal("cron.db", files[0].Name);
-    }
-
-    [Fact]
-    public void ResolveDbFiles_returns_empty_for_nonexistent_home()
-    {
-        var files = DebugDbCommand.ResolveDbFiles(Path.Combine(_tempDir, "nonexistent"), null);
-        Assert.Empty(files);
-    }
 
     [Theory]
     [InlineData(0, "0 B")]
