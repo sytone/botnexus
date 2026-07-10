@@ -86,6 +86,26 @@ public sealed class SessionCleanupService(
                             session),
                         cancellationToken);
                 }
+                continue;
+            }
+
+            if (options.CronNoopRetention.HasValue &&
+                options.CronNoopRetention.Value > TimeSpan.Zero &&
+                session.SessionId.IsCron &&
+                session.MessageCount <= 2 &&
+                now - session.UpdatedAt > options.CronNoopRetention.Value)
+            {
+                await _sessionStore.DeleteAsync(session.SessionId, cancellationToken);
+                if (_lifecycleEvents is not null)
+                {
+                    await _lifecycleEvents.PublishAsync(
+                        new SessionLifecycleEvent(
+                            session.SessionId.Value,
+                            session.AgentId.Value,
+                            SessionLifecycleEventType.Deleted,
+                            session),
+                        cancellationToken);
+                }
             }
         }
     }

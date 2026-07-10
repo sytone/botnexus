@@ -701,6 +701,31 @@ The gateway registers its SignalR hub with **explicit** transport limits rather 
 The `signalR` section is optional — when absent, the secure defaults are applied automatically. Any non-positive override is ignored in favour of the default so a misconfiguration can never disable the bound.
 
 
+#### Session Cleanup
+
+The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. Beyond the base TTL and closed-session retention, it prunes **near-empty cron "noop wake" sessions**: scheduled cron wakes frequently produce a session with only a wake message (and an optional `NO_REPLY`), which accumulate rapidly and bloat `sessions.db` with rows that are never read again. A cron session is treated as a noop when its id is in the `cron:` namespace and it has at most two persisted messages; such sessions are persisted-then-pruned once their `UpdatedAt` is older than `cronNoopRetention`. This never changes wake or persist behaviour — it only deletes stale near-empty cron sessions after the fact.
+
+```json
+{
+  "gateway": {
+    "sessionCleanup": {
+      "sessionTtl": "1.00:00:00",
+      "closedSessionRetention": null,
+      "cronNoopRetention": "7.00:00:00"
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `sessionCleanup.sessionTtl` | TimeSpan | `1.00:00:00` (24h) | Age after which an idle session is eligible for cleanup. |
+| `sessionCleanup.closedSessionRetention` | TimeSpan? | null | If set, sealed sessions older than this window are pruned. |
+| `sessionCleanup.cronNoopRetention` | TimeSpan? | `7.00:00:00` (7 days) | Retention window for near-empty cron noop sessions (`cron:` id, ≤ 2 messages). Sessions older than this are pruned. Set to `null` or a non-positive value to disable noop pruning. Configurable via `gateway:sessionCleanup:cronNoopRetention`. |
+
+The section is optional — when absent, the 7-day cron noop retention default applies. Because the predicate requires ≤ 2 messages, any cron session that did real work (multiple turns or tool calls, which add history rows) is never pruned by this branch.
+
+
 #### Tool Result Persistence
 
 Large tool results (for example a recursive directory listing or a session-history dump) are otherwise written into `session_history` at full size and re-sent to the model on every subsequent turn — consuming context budget with no ongoing value. The `toolResultPersistence` section caps the size of an individual tool result **at write time**: a result whose UTF-8 byte size exceeds `maxBytes` is truncated on a rune boundary (never splitting a surrogate pair or a multi-byte UTF-8 sequence) and an explicit `[truncated N bytes]` marker is appended before the entry is persisted, so the oversized blob never lands in history nor reaches the next turn's context window.

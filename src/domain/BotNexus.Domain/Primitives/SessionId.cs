@@ -67,6 +67,11 @@ public readonly partial struct SessionId
     /// True when this id matches the <see cref="ForSubAgent(string, string)"/> shape.
     /// </summary>
     public bool IsSubAgent => Value.Contains("::subagent::", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// True when this id targets the cron namespace (a <c>cron:</c> prefix minted by
+    /// <c>CronScheduler</c>). Mirrors <see cref="IsSubAgent"/> as a value-shape predicate.
+    /// </summary>
+    public bool IsCron => Value.StartsWith("cron:", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// True when this id matches the pre-Phase-4 / 1b agent-to-agent encoding
@@ -97,7 +102,7 @@ public readonly partial struct SessionId
     /// </remarks>
     public bool IsReservedInternalNamespace =>
         IsSubAgent
-        || Value.StartsWith("cron:", StringComparison.OrdinalIgnoreCase);
+        || IsCron;
 
     private static Validation Validate(string value) =>
         string.IsNullOrWhiteSpace(value)

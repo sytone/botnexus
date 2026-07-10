@@ -80,6 +80,7 @@ public static class GatewayServiceCollectionExtensions
         if (config is not null)
         {
             services.Configure<GatewayOptions>(config.GetSection("gateway"));
+            services.Configure<SessionCleanupOptions>(config.GetSection("gateway:sessionCleanup"));
             services.Configure<SessionWarmupOptions>(config.GetSection("gateway:sessionWarmup"));
             services.Configure<SubAgentOptions>(config.GetSection("gateway:subAgents"));
             services.Configure<DelayToolOptions>(config.GetSection("gateway:delayTool"));

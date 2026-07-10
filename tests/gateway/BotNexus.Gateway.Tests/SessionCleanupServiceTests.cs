@@ -288,4 +288,113 @@ public class SessionCleanupServiceTests
         var sessions = await store.ListAsync();
         sessions.ShouldAllBe(s => s.Status == SessionStatus.Expired);
     }
+
+    [Fact]
+    public async Task RunCleanupOnce_DeletesCronNoopSession_PastRetention()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("cron:job-1:20260101:abc", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddDays(-8));
+        await store.SaveAsync(session);
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(999),
+            CronNoopRetention = TimeSpan.FromDays(7)
+        };
+        var service = CreateService(store, options);
+
+        await service.RunCleanupOnceAsync();
+
+        var deleted = await store.GetAsync(SessionId.From("cron:job-1:20260101:abc"));
+        deleted.ShouldBeNull("cron noop session past retention should be deleted");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_KeepsCronNoopSession_WithinRetention()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("cron:job-2:20260101:abc", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddDays(-3));
+        await store.SaveAsync(session);
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(999),
+            CronNoopRetention = TimeSpan.FromDays(7)
+        };
+        var service = CreateService(store, options);
+
+        await service.RunCleanupOnceAsync();
+
+        var kept = await store.GetAsync(SessionId.From("cron:job-2:20260101:abc"));
+        kept.ShouldNotBeNull("cron noop session within retention should be kept");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_KeepsCronSession_WithMoreThanTwoMessages()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("cron:job-3:20260101:abc", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddDays(-365));
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "1" });
+        session.History.Add(new SessionEntry { Role = MessageRole.Assistant, Content = "2" });
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "3" });
+        await store.SaveAsync(session);
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(9999),
+            CronNoopRetention = TimeSpan.FromDays(7)
+        };
+        var service = CreateService(store, options);
+
+        await service.RunCleanupOnceAsync();
+
+        var kept = await store.GetAsync(SessionId.From("cron:job-3:20260101:abc"));
+        kept.ShouldNotBeNull("cron session with >2 messages is not a noop and must not be pruned");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_DoesNotDeleteNonCronNoopSession_ViaCronBranch()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("regular-session", "agent-1", SessionStatus.Sealed,
+            DateTimeOffset.UtcNow.AddDays(-8));
+        await store.SaveAsync(session);
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(999),
+            CronNoopRetention = TimeSpan.FromDays(7),
+            ClosedSessionRetention = null
+        };
+        var service = CreateService(store, options);
+
+        await service.RunCleanupOnceAsync();
+
+        var kept = await store.GetAsync(SessionId.From("regular-session"));
+        kept.ShouldNotBeNull("non-cron sessions must not be pruned by the cron noop branch");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_DoesNotDeleteCronNoop_WhenRetentionDisabled()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("cron:job-4:20260101:abc", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddDays(-365));
+        await store.SaveAsync(session);
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(9999),
+            CronNoopRetention = null
+        };
+        var service = CreateService(store, options);
+
+        await service.RunCleanupOnceAsync();
+
+        var kept = await store.GetAsync(SessionId.From("cron:job-4:20260101:abc"));
+        kept.ShouldNotBeNull("cron noop pruning must be disabled when retention is null");
+    }
 }
