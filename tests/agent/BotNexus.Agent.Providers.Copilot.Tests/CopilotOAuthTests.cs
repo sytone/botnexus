@@ -321,6 +321,38 @@ public class CopilotOAuthTests
         stream.BytesRead.ShouldBeGreaterThan(0);
     }
 
+    // BuildOAuthErrorMessage must never echo the peer-supplied error_description (#1884): GitHub
+    // OAuth error bodies can reflect the just-submitted refresh_token / device_code back inside
+    // error_description, so only the machine-readable error code may appear in the exception text.
+    [Fact]
+    public void BuildOAuthErrorMessage_IncludesOnlyTheErrorCode()
+    {
+        var msg = CopilotOAuth.BuildOAuthErrorMessage("invalid_grant");
+        msg.ShouldBe("GitHub OAuth error: invalid_grant");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildOAuthErrorMessage_NullOrBlankError_FallsBackToUnknown(string? error)
+    {
+        var msg = CopilotOAuth.BuildOAuthErrorMessage(error);
+        msg.ShouldBe("GitHub OAuth error: unknown_error");
+    }
+
+    [Fact]
+    public void BuildOAuthErrorMessage_NeverContainsReflectedSecret()
+    {
+        // Even if a caller somehow passed a reflected credential as the error *code* (it cannot in
+        // practice), the message shape is fixed to the code we pass and carries no description field.
+        // This test locks the contract that the description is never interpolated.
+        var secret = "gho_supersecretrefreshtoken1234567890";
+        var msg = CopilotOAuth.BuildOAuthErrorMessage("invalid_grant");
+        msg.ShouldNotContain(secret);
+        msg.ShouldNotContain("error_description");
+    }
+
     /// <summary>
     /// A read stream that returns bytes forever - stands in for a hostile endpoint streaming an
     /// unbounded body. Records how many bytes were actually pulled so a test can prove the bounded
