@@ -63,4 +63,12 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
         await SaveAsync();
         OnChanged.Invoke();
     }
+
+    /// <inheritdoc/>
+    public async Task SetArchiveConfirmAsync(bool enabled)
+    {
+        _current.ArchiveConfirmEnabled = enabled;
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
 }
