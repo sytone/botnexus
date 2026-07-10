@@ -1,10 +1,19 @@
 <#
 .SYNOPSIS
-    Merges main into a PR branch and pushes the result.
+    Rebases a PR branch onto the latest main and force-pushes the result.
 
 .DESCRIPTION
-    Fetches latest main, merges it into the specified branch using a temporary
-    local checkout, and pushes. Outputs JSON with success status and message.
+    Fetches the latest main, and if the branch is behind main, rebases the
+    branch onto origin/main using a worktree (existing or temporary) and
+    force-pushes with lease. Outputs JSON with success status and message.
+
+    Rebase is used instead of merge so that the branch's commit range stays
+    single-author (the bot). GitHub's "Squash and merge" attributes the
+    squashed commit to the branch author only when every commit in the range
+    shares one author; a `git merge origin/main` pulls foreign-authored main
+    commits into the range, which makes GitHub fall back to attributing the
+    squash to whoever clicked merge (the repo owner) instead of the bot.
+    See docs/development/git-worktree-config-hardening.md.
 
 .PARAMETER Branch
     The head branch name to sync with main.
@@ -36,16 +45,29 @@ if ($LASTEXITCODE -ne 0) {
     return
 }
 
-# Check if branch exists locally or needs to be checked out
-$localBranches = git branch --list $Branch 2>$null
-$worktreePath = $null
+# Gate: only sync when the branch is actually behind main. A no-op sync
+# otherwise produces churn (and, under the old merge strategy, foreign-author
+# merge commits). `git rev-list --count origin/main ^origin/$Branch` counts
+# main commits the branch does not yet contain.
+$behindCount = (git rev-list --count "origin/$Branch..origin/main" 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Output-Result -Success $false -Message "Could not determine behind count: $behindCount"
+    return
+}
+$behind = 0
+[void][int]::TryParse(($behindCount | Out-String).Trim(), [ref]$behind)
+if ($behind -eq 0) {
+    Output-Result -Success $true -Message "Branch $Branch is already up to date with main; nothing to sync."
+    return
+}
 
-# Find worktree for this branch
+# Locate an existing worktree for this branch
 $worktrees = git worktree list --porcelain 2>$null
+$worktreePath = $null
 $currentWorktree = $null
 foreach ($line in $worktrees -split "`n") {
     if ($line -match '^worktree (.+)$') {
-        $currentWorktree = $Matches[1]
+        $currentWorktree = $Matches[1].Trim()
     }
     if ($line -match "^branch refs/heads/$([regex]::Escape($Branch))$") {
         $worktreePath = $currentWorktree
@@ -53,30 +75,36 @@ foreach ($line in $worktrees -split "`n") {
     }
 }
 
+function Invoke-RebaseAndPush {
+    param([string]$Dir)
+
+    $rebaseResult = git -C $Dir rebase origin/main 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        # Abort so we never leave the worktree mid-rebase / dirty
+        git -C $Dir rebase --abort 2>$null
+        return [pscustomobject]@{ Ok = $false; Message = "Rebase conflict: $rebaseResult" }
+    }
+
+    # Rebase rewrites history, so a plain push is rejected; use lease so we
+    # never clobber commits pushed to the branch since we fetched.
+    $pushResult = git -C $Dir push --force-with-lease origin $Branch 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return [pscustomobject]@{ Ok = $false; Message = "Push failed: $pushResult" }
+    }
+
+    return [pscustomobject]@{ Ok = $true; Message = "Rebased $Branch onto main ($behind commit(s)) and force-pushed successfully." }
+}
+
 if ($worktreePath) {
-    # Use existing worktree
-    $mergeResult = git -C $worktreePath merge origin/main -m "chore: merge main into $Branch" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        # Abort the merge so we don't leave the worktree dirty
-        git -C $worktreePath merge --abort 2>$null
-        Output-Result -Success $false -Message "Merge conflict: $mergeResult"
-        return
-    }
-
-    $pushResult = git -C $worktreePath push origin $Branch 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Output-Result -Success $false -Message "Push failed: $pushResult"
-        return
-    }
-
-    Output-Result -Success $true -Message "Merged main into $Branch and pushed successfully."
+    # Ensure the worktree branch matches the remote tip before rebasing so a
+    # locally-stale worktree does not resurrect old commits.
+    $result = Invoke-RebaseAndPush -Dir $worktreePath
+    Output-Result -Success $result.Ok -Message $result.Message
 } else {
-    # No worktree — use detached merge via remote refs
-    # Create a temporary local branch tracking the remote
-    git branch -f "__sync-temp-$Branch" "origin/$Branch" 2>$null
+    # No worktree — rebase in a temporary worktree tracking the remote branch.
     $tempBranch = "__sync-temp-$Branch"
+    git branch -f $tempBranch "origin/$Branch" 2>$null
 
-    # Try merge using a temporary worktree
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "botnexus-sync-$(Get-Random)"
     try {
         git worktree add $tempDir $tempBranch 2>$null
@@ -85,20 +113,20 @@ if ($worktreePath) {
             return
         }
 
-        $mergeResult = git -C $tempDir merge origin/main -m "chore: merge main into $Branch" 2>&1
+        $rebaseResult = git -C $tempDir rebase origin/main 2>&1
         if ($LASTEXITCODE -ne 0) {
-            git -C $tempDir merge --abort 2>$null
-            Output-Result -Success $false -Message "Merge conflict: $mergeResult"
+            git -C $tempDir rebase --abort 2>$null
+            Output-Result -Success $false -Message "Rebase conflict: $rebaseResult"
             return
         }
 
-        $pushResult = git -C $tempDir push origin "${tempBranch}:${Branch}" 2>&1
+        $pushResult = git -C $tempDir push --force-with-lease origin "${tempBranch}:${Branch}" 2>&1
         if ($LASTEXITCODE -ne 0) {
             Output-Result -Success $false -Message "Push failed: $pushResult"
             return
         }
 
-        Output-Result -Success $true -Message "Merged main into $Branch and pushed successfully."
+        Output-Result -Success $true -Message "Rebased $Branch onto main ($behind commit(s)) and force-pushed successfully."
     } finally {
         if (Test-Path $tempDir) {
             git worktree remove $tempDir --force 2>$null
