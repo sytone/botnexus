@@ -102,7 +102,7 @@ public sealed class ConversationRoutingScenarios
         // Act — portal sends with explicit conversationId (direct routing path)
         var result = await router.ResolveInboundAsync(
             agentId, SignalR(), ChannelAddress.From("agent1"),
-            conversationId: secondaryConv.ConversationId.Value);
+            conversationId: secondaryConv.ConversationId);
 
         // Assert — routes to the correct conversation with NO new binding added
         result.Conversation.ConversationId.ShouldBe(secondaryConv.ConversationId,
@@ -305,7 +305,7 @@ public sealed class ConversationRoutingScenarios
         // but we override with conversationId=B
         var resultB = await router.ResolveInboundAsync(
             agentId, SignalR(), ChannelAddress.From("agent1"),
-            conversationId: convB.ConversationId.Value);
+            conversationId: convB.ConversationId);
 
         // Assert — routed to conversation B, not A
         resultB.Conversation.ConversationId.ShouldBe(convB.ConversationId,
