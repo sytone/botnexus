@@ -802,6 +802,29 @@ Sessions are persisted to a SQLite database by default.
 - `maxMessagesBeforeCompaction`: Trigger compaction after this many messages
 - `retainLastMessages`: Keep this many recent messages after compaction
 
+### Session Cleanup
+
+A background cleanup service expires and prunes old sessions.
+
+```json
+{
+  "gateway": {
+    "sessionCleanup": {
+      "checkInterval": "00:05:00",
+      "sessionTtl": "1.00:00:00",
+      "closedSessionRetention": "7.00:00:00",
+      "cronNoopRetention": "7.00:00:00"
+    }
+  }
+}
+```
+
+**Session Cleanup Settings:**
+- `checkInterval`: How often the cleanup service runs (default `00:05:00`).
+- `sessionTtl`: Time-to-live for active sessions before they are expired (default `1.00:00:00`, i.e. 24 hours).
+- `closedSessionRetention`: Optional; auto-delete closed (sealed) sessions after this period. Omit or set `null` to keep forever.
+- `cronNoopRetention`: Prune near-empty cron "noop wake" sessions (≤ 2 persisted messages) whose last update is older than this window. Defaults to `7.00:00:00` (7 days) and is user-configurable. Set to `null` or `0` to disable. This only prunes stale near-empty cron sessions after the fact — it does **not** change wake or persist behaviour.
+
 ---
 
 ## Security & Authentication

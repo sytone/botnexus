@@ -387,6 +387,7 @@ The `SessionCleanupService` runs as a background hosted service. It periodically
 | `CheckInterval` | 5 minutes | How often the cleanup service runs |
 | `SessionTtl` | 24 hours | Time-to-live for active sessions |
 | `ClosedSessionRetention` | `null` (keep forever) | Optional: auto-delete closed sessions after this period |
+| `CronNoopRetention` | `7.00:00:00` (7 days) | Prune near-empty cron "noop wake" sessions (≤2 messages) older than this window. User-configurable; set to `null` or `0` to disable. Does not change wake/persist behaviour. |
 
 Configure via the `gateway` section in `config.json`:
 
@@ -396,7 +397,8 @@ Configure via the `gateway` section in `config.json`:
     "sessionCleanup": {
       "checkInterval": "00:05:00",
       "sessionTtl": "1.00:00:00",
-      "closedSessionRetention": "7.00:00:00"
+      "closedSessionRetention": "7.00:00:00",
+      "cronNoopRetention": "7.00:00:00"
     }
   }
 }

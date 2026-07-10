@@ -147,6 +147,25 @@ public sealed class SessionIdTests
         SessionId.From(value).IsReservedInternalNamespace.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData("cron:job-123")]                     // cron prefix
+    [InlineData("CRON:job-123")]                     // case-insensitive
+    [InlineData("cron:job-123:20260617:abc")]        // full cron session shape
+    public void IsCron_ReturnsTrue_ForCronPrefixedSessions(string value)
+    {
+        SessionId.From(value).IsCron.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("session-1")]                         // generic client session
+    [InlineData("parent-id::subagent::child")]        // sub-agent, not cron
+    [InlineData("not-cron:something")]                // 'cron:' must be a prefix, not a substring
+    [InlineData("agent-a::soul::2026-01-15")]         // soul is not cron
+    public void IsCron_ReturnsFalse_ForNonCronSessions(string value)
+    {
+        SessionId.From(value).IsCron.ShouldBeFalse();
+    }
+
     [Fact]
     public void Json_SerializesAsBareString()
     {
