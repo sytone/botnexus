@@ -14,11 +14,59 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 public partial class Configuration : IDisposable
 {
     /// <summary>
-    /// Optional config section from the route. Retained for backwards-compatible deep links
-    /// (e.g. <c>/configuration/gateway</c>); the schema-driven form renders the whole tree, so this
-    /// is informational only and no longer selects a hand-written panel.
+    /// Config section from the route (e.g. <c>/configuration/providers</c>). Selects which root
+    /// section the sidebar highlights and which subtree <c>SchemaForm</c> renders (#1892). Null or
+    /// an unknown key falls back to the first section.
     /// </summary>
     [Parameter] public string? Section { get; set; }
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    /// <summary>
+    /// Ordered, user-editable top-level sections for the sidebar (key + label). Derived from the
+    /// root schema properties minus <see cref="NonPersistedSections"/>; label from <c>x-ui-label</c>,
+    /// ordered by <c>x-ui-order</c>.
+    /// </summary>
+    private IReadOnlyList<(string Key, string Label)> Sections
+    {
+        get
+        {
+            var props = _schema?["schema"]?["properties"]?.AsObject();
+            if (props is null)
+                return [];
+            return props
+                .Where(kv => kv.Value is JsonObject && !NonPersistedSections.Contains(kv.Key))
+                .Select(kv => (kv.Key, Node: kv.Value!.AsObject()))
+                .OrderBy(x => x.Node["x-ui-order"]?.GetValue<int>() ?? int.MaxValue)
+                .ThenBy(x => x.Key, StringComparer.Ordinal)
+                .Select(x => (x.Key, Label: x.Node["x-ui-label"]?.GetValue<string>() ?? x.Key))
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// The section currently shown: the route <see cref="Section"/> when it matches a known section,
+    /// otherwise the first section. Empty when the schema has not loaded yet.
+    /// </summary>
+    private string ActiveSection
+    {
+        get
+        {
+            var sections = Sections;
+            if (sections.Count == 0)
+                return string.Empty;
+            if (!string.IsNullOrEmpty(Section) &&
+                sections.Any(s => string.Equals(s.Key, Section, StringComparison.OrdinalIgnoreCase)))
+                return sections.First(s => string.Equals(s.Key, Section, StringComparison.OrdinalIgnoreCase)).Key;
+            return sections[0].Key;
+        }
+    }
+
+    private void SelectSection(string key)
+    {
+        Section = key;
+        Nav.NavigateTo($"/configuration/{key}");
+    }
 
     private JsonObject? _config;
     private JsonObject? _schema;

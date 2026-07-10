@@ -70,6 +70,44 @@ public class PortalPreferencesServiceTests
     }
 
     [Fact]
+    public void Current_BeforeLoad_ArchiveConfirmDefaultsTrue()
+    {
+        Assert.True(_sut.Current.ArchiveConfirmEnabled);
+    }
+
+    [Fact]
+    public async Task SetArchiveConfirmAsync_UpdatesPreferenceAndSaves()
+    {
+        await _sut.SetArchiveConfirmAsync(false);
+
+        Assert.False(_sut.Current.ArchiveConfirmEnabled);
+        await _js.Received(1).InvokeAsync<object>("portalPrefs.save", Arg.Any<object[]>());
+    }
+
+    [Fact]
+    public async Task SetArchiveConfirmAsync_RaisesOnChanged()
+    {
+        var raised = false;
+        _sut.OnChanged += () => raised = true;
+
+        await _sut.SetArchiveConfirmAsync(false);
+
+        Assert.True(raised);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithStoredArchiveConfirm_RestoresPreference()
+    {
+        var stored = JsonSerializer.Serialize(new PortalPreferences { ArchiveConfirmEnabled = false });
+        _js.InvokeAsync<string>("portalPrefs.load", Arg.Any<object[]>())
+           .Returns(new ValueTask<string>(stored));
+
+        await _sut.LoadAsync();
+
+        Assert.False(_sut.Current.ArchiveConfirmEnabled);
+    }
+
+    [Fact]
     public async Task SaveAsync_WritesToLocalStorage()
     {
         await _sut.SaveAsync();
