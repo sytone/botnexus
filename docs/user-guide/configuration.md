@@ -608,6 +608,27 @@ Uses long polling by default (no public URL required). For webhook mode, add `"w
 }
 ```
 
+**Agent 365 (Microsoft 365 Agents SDK):**
+```json
+{
+  "channels": {
+    "agent365": {
+      "clientId": "${AGENT365_CLIENT_ID}",
+      "clientSecret": "${AGENT365_CLIENT_SECRET}",
+      "tenantId": "${AGENT365_TENANT_ID}",
+      "agentId": "assistant",
+      "inboundRoute": "/agent365/messages"
+    }
+  }
+}
+```
+
+Bridges the Microsoft 365 Agents SDK `Activity` protocol to BotNexus (Register tier: message
+round-trip only). Inbound activities arrive on `inboundRoute` (default `/agent365/messages`); replies
+are sent through the SDK connector authenticated with the Entra app client credentials. BotNexus
+remains the response engine. See the extension page `docs/extensions/agent365.md` for the full config
+surface.
+
 **TUI (Terminal UI):**
 ```json
 {

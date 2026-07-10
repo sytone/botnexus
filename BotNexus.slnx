@@ -14,6 +14,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Telegram/BotNexus.Extensions.Channels.Telegram.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Agent365/BotNexus.Extensions.Channels.Agent365.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.ServiceBus/BotNexus.Extensions.Channels.ServiceBus.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Qmd/BotNexus.Extensions.Qmd.csproj" />
@@ -89,6 +90,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.Agent365.Tests/BotNexus.Extensions.Channels.Agent365.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Qmd.Tests/BotNexus.Extensions.Qmd.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.AudioTranscription.Tests/BotNexus.Extensions.AudioTranscription.Tests.csproj" />
   </Folder>

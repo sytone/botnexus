@@ -48,6 +48,18 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.3.25171.5" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.0-preview.3.25171.5" />
 
+    <!-- Microsoft 365 Agents SDK (Channels.Agent365 extension). Pinned to 1.6.150.
+         NOTE: these packages depend on the STABLE Microsoft.Extensions.* 10.0.7 line, which is
+         higher than BotNexus's centrally-pinned 10.0.0-preview.3 line. To avoid an NU1605
+         downgrade-as-error the Agent365 extension project overrides the affected
+         Microsoft.Extensions.* packages to 10.0.7 locally via VersionOverride, keeping the bump
+         isolated to that leaf extension (nothing project-references it; it is loaded dynamically
+         through the AssemblyLoadContext extension loader). See docs/extensions/agent365.md. -->
+    <PackageVersion Include="Microsoft.Agents.Builder" Version="1.6.150" />
+    <PackageVersion Include="Microsoft.Agents.Connector" Version="1.6.150" />
+    <PackageVersion Include="Microsoft.Agents.Core" Version="1.6.150" />
+    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.6.150" />
+
     <!-- ASP.NET / Blazor / SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.6" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.6" />

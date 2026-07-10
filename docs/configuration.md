@@ -604,6 +604,40 @@ The Telegram adapter binds directly from the `channels:telegram` section (it doe
 }
 ```
 
+#### Agent 365 Channel
+
+**Folder:** `extensions/channels/agent365/`
+
+The Agent 365 adapter bridges the Microsoft 365 Agents SDK `Activity` protocol to BotNexus (Register
+tier). It binds directly from the `channels:agent365` section (it does **not** use the generic
+`Channels.Instances` shape). The real option names come from `Agent365GatewayOptions`. See
+[docs/extensions/agent365.md](extensions/agent365.md) for the full surface and the Microsoft.Agents.*
+package / Microsoft.Extensions.* pin design note.
+
+```json
+{
+  "channels": {
+    "agent365": {
+      "clientId": "${AGENT365_CLIENT_ID}",
+      "clientSecret": "${AGENT365_CLIENT_SECRET}",
+      "tenantId": "${AGENT365_TENANT_ID}",
+      "channelServiceEndpoint": "https://smba.trafficmanager.net/amer/",
+      "agentId": "my-agent",
+      "inboundRoute": "/agent365/messages"
+    }
+  }
+}
+```
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `clientId` | yes | Entra application (client) ID of the registered Agent 365 app. |
+| `clientSecret` | yes | Entra app client secret (sensitive) for outbound Activity replies. |
+| `tenantId` | no | Entra tenant ID. Omit for multi-tenant apps. |
+| `channelServiceEndpoint` | no | Base URL outbound activities post to. Defaults to the inbound activity's `serviceUrl`. |
+| `agentId` | yes | BotNexus agent ID inbound messages route to. |
+| `inboundRoute` | no | HTTP route the message endpoint is hosted on. Defaults to `/agent365/messages`. |
+
 #### Discord Channel
 
 **Folder:** `extensions/channels/discord/`
