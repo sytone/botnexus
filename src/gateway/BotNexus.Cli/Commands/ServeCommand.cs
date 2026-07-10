@@ -123,6 +123,7 @@ internal sealed class ServeCommand
             psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
             psi.Environment["ASPNETCORE_URLS"] = gatewayUrl;
             psi.Environment["BOTNEXUS_HOME"] = home;
+            ApplyCrashDumpEnvironment(psi, home);
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start Gateway process.");
@@ -186,6 +187,30 @@ internal sealed class ServeCommand
         await process.WaitForExitAsync(cancellationToken);
         AnsiConsole.MarkupLine($"[dim]Probe exited (code [yellow]{process.ExitCode}[/]).[/]");
         return process.ExitCode;
+    }
+
+    /// <summary>
+    /// Applies the .NET minidump-on-crash environment variables to a child gateway process so a
+    /// hard exit (including stack overflow / <see cref="System.Environment.FailFast(string)"/>)
+    /// leaves a dump under <c>{home}/dumps</c>. The CLR only honours these variables when they are
+    /// present at process startup, so they must be set here on the launcher's
+    /// <see cref="ProcessStartInfo"/>. Best-effort: never blocks the gateway from starting.
+    /// Public so <see cref="GatewayCommand"/> can share one aligned launcher contract.
+    /// </summary>
+    public static void ApplyCrashDumpEnvironment(ProcessStartInfo psi, string home)
+    {
+        try
+        {
+            var dumpsDir = Path.Combine(home, "dumps");
+            Directory.CreateDirectory(dumpsDir);
+            BotNexus.Gateway.Diagnostics.CrashDumpEnvironment.Apply(
+                dumpsDir,
+                (key, value) => psi.Environment[key] = value);
+        }
+        catch
+        {
+            // Diagnostics wiring must never break process launch.
+        }
     }
 
     /// <summary>
