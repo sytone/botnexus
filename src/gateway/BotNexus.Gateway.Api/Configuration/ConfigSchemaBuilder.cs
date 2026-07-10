@@ -139,6 +139,12 @@ public static class ConfigSchemaBuilder
             // Only emit the secret flag when set, so renderers can key off presence-or-true.
             if (configField.Secret || configField.Widget == ConfigFieldWidget.Secret)
                 obj["x-ui-secret"] = true;
+
+            // Dynamic option-source hint (#1893): a select field that draws its choices from a live
+            // source (e.g. the provider's /api/models list) rather than a static enum. The renderer
+            // resolves it and falls back to x-ui-options when no dynamic list is available.
+            if (!string.IsNullOrWhiteSpace(configField.OptionsSource))
+                obj["x-ui-options-source"] = configField.OptionsSource;
         }
 
         // Validation bounds from [Range] (the exporter does not surface DataAnnotations itself).

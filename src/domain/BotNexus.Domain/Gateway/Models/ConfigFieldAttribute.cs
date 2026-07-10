@@ -73,4 +73,17 @@ public sealed class ConfigFieldAttribute : System.Attribute
     /// be set for clarity.
     /// </summary>
     public bool Secret { get; set; }
+
+    /// <summary>
+    /// Optional name of a <em>dynamic</em> option source that a <see cref="ConfigFieldWidget.Select"/>
+    /// field should populate its choices from at render time, rather than (or in addition to) a
+    /// static enum list (#1893, config parity #1579). Emitted to the UI schema as
+    /// <c>x-ui-options-source</c> so a renderer can resolve live options — for example the provider's
+    /// model list from <c>GET /api/models</c> — falling back to any static <c>x-ui-options</c> when no
+    /// dynamic list is available. Well-known values: <c>"models"</c> (registered model IDs, scoped to
+    /// the enclosing provider key when the field sits under the providers dictionary),
+    /// <c>"thinking"</c> (a model's supported thinking levels), <c>"contextSizes"</c> (a model's
+    /// supported context-window sizes). Null means "static options only".
+    /// </summary>
+    public string? OptionsSource { get; set; }
 }

@@ -116,22 +116,38 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
 
         var cut = _ctx.Render<Configuration>();
 
+        // The sidebar (#1892) lists the top-level sections; the fields themselves render one section
+        // at a time. Assert the nav exposes every key section so coverage is reachable.
         cut.WaitForAssertion(() =>
         {
-            // Top-level scalar (version) and the secret global apiKey.
-            cut.Find("[data-testid='field-version'] input");
-            cut.Find("[data-testid='field-apiKey'] input");
-            // Gateway nested scalars.
+            var sections = cut.FindAll(".config-sidebar-item").Select(e => e.GetAttribute("data-section")).ToList();
+            Assert.Contains("gateway", sections);
+            Assert.Contains("providers", sections);
+            Assert.Contains("channels", sections);
+            Assert.Contains("cron", sections);
+        });
+    }
+
+    [Fact]
+    public void Selecting_a_section_renders_only_that_sections_fields()
+    {
+        ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        // Click the Gateway section, then its nested scalars must be present.
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() =>
+        {
             cut.Find("[data-testid='field-gateway.listenUrl'] input");
             cut.Find("[data-testid='field-gateway.world.id'] input");
-            // Provider + channel dictionary entries (the panels' dict editors).
-            cut.Find("[data-testid='field-providers.openai.apiKey'] input");
-            cut.Find("[data-testid='field-channels.signalr.type'] input");
-            // gateway.apiKeys dictionary entry.
             cut.Find("[data-testid='field-gateway.apiKeys.k1.apiKey'] input");
-            // Cron global settings.
-            cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input");
         });
+
+        // Provider dictionary entries live under the Providers section.
+        cut.Find(".config-sidebar-item[data-section='providers']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-providers.openai.apiKey'] input"));
     }
 
     [Fact]
@@ -145,6 +161,9 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         var save = cut.Find("button.primary");
         save.HasAttribute("disabled").ShouldBeTrue();
 
+        // Navigate to the Gateway section before editing one of its fields.
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
         cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
 
         cut.WaitForAssertion(() =>
@@ -157,7 +176,15 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://gateway.test") };
         _ctx.Services.AddSingleton(new PlatformConfigService(httpClient));
+        // #1893: SchemaForm injects IModelOptionsProvider; no models needed for these page tests.
+        _ctx.Services.AddSingleton<IModelOptionsProvider>(new EmptyModelOptionsProvider());
         _ctx.JSInterop.SetupVoid("", _ => true);
+    }
+
+    private sealed class EmptyModelOptionsProvider : IModelOptionsProvider
+    {
+        public Task<IReadOnlyList<ModelOption>> GetModelsAsync(string provider)
+            => Task.FromResult<IReadOnlyList<ModelOption>>([]);
     }
 
     private static JsonObject Scalar(string type, string widget, string label) =>

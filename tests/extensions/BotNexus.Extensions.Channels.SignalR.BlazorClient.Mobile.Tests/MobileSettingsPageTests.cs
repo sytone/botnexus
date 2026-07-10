@@ -170,7 +170,15 @@ public sealed class MobileSettingsPageTests : IDisposable
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://gateway.test") };
         _ctx.Services.AddSingleton(new PlatformConfigService(httpClient));
+        // #1893: the shared SchemaForm injects IModelOptionsProvider; register an empty stub.
+        _ctx.Services.AddSingleton<IModelOptionsProvider>(new EmptyModelOptionsProvider());
         _ctx.JSInterop.SetupVoid("", _ => true);
+    }
+
+    private sealed class EmptyModelOptionsProvider : IModelOptionsProvider
+    {
+        public Task<IReadOnlyList<ModelOption>> GetModelsAsync(string provider)
+            => Task.FromResult<IReadOnlyList<ModelOption>>([]);
     }
 
     private static JsonObject Scalar(string type, string widget, string label) =>

@@ -1,5 +1,7 @@
 @using System.Text.Json.Nodes
 @using System.Globalization
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject IModelOptionsProvider ModelOptions
 
 @*
     Generic config renderer (PBI 3/6 of #1579, issue #1611). Walks the UI-schema envelope from
@@ -85,6 +87,97 @@ else
             .ThenBy(x => x.Key, StringComparer.Ordinal)
             .Select(x => (x.Key, Label: x.Node["x-ui-label"]?.GetValue<string>() ?? x.Key))
             .ToList();
+    }
+
+    // Per-provider model lists fetched for x-ui-options-source="models" fields (#1893). Keyed by the
+    // enclosing providers-dictionary key; populated on demand and re-rendered when a fetch completes.
+    private readonly Dictionary<string, IReadOnlyList<ModelOption>> _modelsByProvider = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _modelFetchInFlight = new(StringComparer.OrdinalIgnoreCase);
+
+    // Resolve the option list for a select node. A dynamic x-ui-options-source ("models", "thinking",
+    // "contextSizes") is resolved against the enclosing provider's live model list, falling back to
+    // any static x-ui-options when the dynamic list is unavailable or empty.
+    private IReadOnlyList<string> SelectOptions(JsonObject node, string path)
+    {
+        var source = node["x-ui-options-source"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(source))
+        {
+            var dynamicOptions = ResolveDynamicOptions(source, path);
+            if (dynamicOptions.Count > 0)
+                return dynamicOptions;
+        }
+        return StaticOptions(node);
+    }
+
+    private static IReadOnlyList<string> StaticOptions(JsonObject node)
+    {
+        var arr = node["x-ui-options"]?.AsArray();
+        if (arr is null)
+            return [];
+        return arr.Where(o => o is not null).Select(o => o!.GetValue<string>()).ToList();
+    }
+
+    private IReadOnlyList<string> ResolveDynamicOptions(string source, string path)
+    {
+        var provider = EnclosingProviderKey(path);
+        if (provider is null)
+            return [];
+        // Kick off the fetch lazily; return what we have (possibly empty) this pass.
+        if (!_modelsByProvider.TryGetValue(provider, out var models))
+        {
+            _ = EnsureModelsAsync(provider);
+            return [];
+        }
+        return source switch
+        {
+            "models" => models.Select(m => m.ModelId).ToList(),
+            // thinking / contextSizes derive from the model currently selected in a sibling field.
+            "thinking" => SelectedModel(models, path)?.SupportedThinkingLevels.ToList() ?? [],
+            "contextSizes" => SelectedModel(models, path)?.SupportedContextSizes
+                .Select(s => s.ToString(CultureInfo.InvariantCulture)).ToList() ?? [],
+            _ => [],
+        };
+    }
+
+    // The model selected in the sibling "defaultModel" field of the same provider entry, used to
+    // scope thinking/contextSizes option sets.
+    private ModelOption? SelectedModel(IReadOnlyList<ModelOption> models, string path)
+    {
+        var dot = path.LastIndexOf('.');
+        if (dot < 0)
+            return null;
+        var siblingModelPath = $"{path[..dot]}.defaultModel";
+        var selectedId = AsString(Resolve(siblingModelPath));
+        return selectedId is null ? null : models.FirstOrDefault(m => m.ModelId == selectedId);
+    }
+
+    // Extract the provider key when a field sits under providers.<key>.* so the dynamic source can be
+    // scoped to that provider's models. Returns null for fields outside the providers dictionary.
+    private static string? EnclosingProviderKey(string path)
+    {
+        var segs = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < segs.Length - 1; i++)
+        {
+            if (string.Equals(segs[i], "providers", StringComparison.OrdinalIgnoreCase))
+                return segs[i + 1];
+        }
+        return null;
+    }
+
+    private async Task EnsureModelsAsync(string provider)
+    {
+        if (!_modelFetchInFlight.Add(provider))
+            return;
+        try
+        {
+            var models = await ModelOptions.GetModelsAsync(provider);
+            _modelsByProvider[provider] = models;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _modelFetchInFlight.Remove(provider);
+        }
     }
 
     private IEnumerable<KeyValuePair<string, List<KeyValuePair<string, JsonObject>>>> GroupedRoot =>
@@ -202,12 +295,15 @@ else
             }
             else if (widget == "select")
             {
+                var options = SelectOptions(node, path);
                 <select value="@selectValue"
                         @onchange="e => Set(path, JsonValue.Create(e.Value?.ToString()))">
-                    @foreach (var opt in node["x-ui-options"]?.AsArray() ?? [])
+                    @* Blank sentinel so an unset/optional select can stay empty and a dynamic list
+                       that has not loaded yet still shows the current value. *@
+                    <option value=""></option>
+                    @foreach (var opt in options)
                     {
-                        var optText = opt!.GetValue<string>();
-                        <option value="@optText">@optText</option>
+                        <option value="@opt" selected="@(string.Equals(opt, selectValue, StringComparison.Ordinal))">@opt</option>
                     }
                 </select>
             }

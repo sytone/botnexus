@@ -75,7 +75,10 @@ public sealed class ConfigurationPageTests : IDisposable
         var cut = _ctx.Render<Configuration>();
         cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        // Toggle a cron field; cron exists in raw so it must be persisted.
+        // Toggle a cron field; cron exists in raw so it must be persisted. Navigate to the Cron
+        // section first (sidebar #1892 renders one section at a time).
+        cut.Find(".config-sidebar-item[data-section='cron']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-cron.enabled'] input"));
         cut.Find("[data-testid='field-cron.enabled'] input").Change(false);
 
         cut.Find("button.primary").Click();
@@ -115,7 +118,15 @@ public sealed class ConfigurationPageTests : IDisposable
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://gateway.test") };
         _ctx.Services.AddSingleton(new PlatformConfigService(httpClient));
+        // #1893: SchemaForm injects IModelOptionsProvider; these save-workflow tests need no models.
+        _ctx.Services.AddSingleton<IModelOptionsProvider>(new EmptyModelOptionsProvider());
         _ctx.JSInterop.SetupVoid("", _ => true);
+    }
+
+    private sealed class EmptyModelOptionsProvider : IModelOptionsProvider
+    {
+        public Task<IReadOnlyList<ModelOption>> GetModelsAsync(string provider)
+            => Task.FromResult<IReadOnlyList<ModelOption>>([]);
     }
 
     // Minimal schema covering the gateway + cron fields these tests edit.
