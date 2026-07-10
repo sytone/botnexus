@@ -107,6 +107,17 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationSummaryDto>> GetAllConversationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var result = await _http.GetFromJsonAsync<List<ConversationSummaryDto>>(
+            $"{_apiBaseUrl}conversations",
+            cancellationToken);
+        return result as IReadOnlyList<ConversationSummaryDto> ?? [];
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationHistoryResponseDto?> GetHistoryAsync(
         string conversationId,
         int limit = 50,
