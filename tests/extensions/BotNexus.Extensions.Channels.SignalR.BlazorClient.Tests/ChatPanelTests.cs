@@ -1047,6 +1047,10 @@ public sealed class ChatPanelTests : IDisposable
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
         _store.SetActiveConversation("agent-1", "conv-1");
         _store.SetStreaming("conv-1", true);
+        // The committed assistant message renders through the Markdown pipeline
+        // (#1475), so the JS renderer must be mocked or the message body renders empty.
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p>Hello world</p>");
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
