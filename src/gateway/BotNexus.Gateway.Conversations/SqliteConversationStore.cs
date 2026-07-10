@@ -645,16 +645,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureTodoJsonColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsurePendingAskUserJsonColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureModelOverrideColumnsAsync(connection, ct).ConfigureAwait(false);
-            await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsureWorldIdColumnAsync(connection, ct).ConfigureAwait(false);
-            await EnsurePinColumnsAsync(connection, ct).ConfigureAwait(false);
+            await EnsureConversationColumnsAsync(connection, ct).ConfigureAwait(false);
             await EnsureCanvasStateTableAsync(connection, ct).ConfigureAwait(false);
             await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
@@ -686,255 +677,76 @@ public sealed class SqliteConversationStore : IConversationStore
     private Task<IDisposable> AcquireConversationLockAsync(string conversationId, CancellationToken cancellationToken)
         => _conversationLocks.AcquireAsync(conversationId, cancellationToken);
 
-    private static async Task EnsurePurposeColumnAsync(SqliteConnection connection, CancellationToken ct)
+    // Additive column migrations for the `conversations` table. Table-driven and race-tolerant:
+    // each entry is applied with a plain ALTER TABLE ... ADD COLUMN, and the "duplicate column
+    // name" SQLite error (generic error code 1) is swallowed. This gives every column the same
+    // cross-process first-boot concurrency safety that only world_id previously had (#1885,
+    // #1383 Finding 2): _initLock only serialises within one process, so when two gateway
+    // instances open a fresh database concurrently the loser of the PRAGMA-then-ALTER race would
+    // otherwise throw. Modelled on SqliteSessionStore.MigrateAsync, which is already array-driven.
+    // Column set and DDL are identical to the prior hand-rolled Ensure*ColumnAsync methods; this
+    // is a pure refactor plus adding the race tolerance to the seven columns that lacked it.
+    private static async Task EnsureConversationColumnsAsync(SqliteConnection connection, CancellationToken ct)
     {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+        foreach (var (column, ddl) in ConversationColumnMigrations)
+            await EnsureColumnAsync(connection, column, ddl, ct).ConfigureAwait(false);
 
-        var hasPurposeColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "purpose", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasPurposeColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasPurposeColumn)
-            return;
-
-        await using var alterCommand = connection.CreateCommand();
-        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN purpose TEXT;";
-        await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
-
-    private static async Task EnsureInstructionsColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "instructions", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasColumn)
-            return;
-
-        await using var alterCommand = connection.CreateCommand();
-        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN instructions TEXT;";
-        await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
-
-    private static async Task EnsureCanvasHtmlColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand2 = connection.CreateCommand();
-        tableInfoCommand2.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasCanvasColumn = false;
-        await using (var reader2 = await tableInfoCommand2.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader2.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader2.GetString(1), "canvas_html", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasCanvasColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasCanvasColumn)
-            return;
-
-        await using var canvasAlterCommand = connection.CreateCommand();
-        canvasAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN canvas_html TEXT;";
-        await canvasAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
-
-    private static async Task EnsureTodoJsonColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasTodoColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "todo_json", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasTodoColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasTodoColumn)
-            return;
-
-        await using var todoAlterCommand = connection.CreateCommand();
-        todoAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN todo_json TEXT;";
-        await todoAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
-
-    private static async Task EnsurePendingAskUserJsonColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasPendingAskUserColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "pending_ask_user_json", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasPendingAskUserColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasPendingAskUserColumn)
-            return;
-
-        await using var pendingAskUserAlterCommand = connection.CreateCommand();
-        pendingAskUserAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN pending_ask_user_json TEXT;";
-        await pendingAskUserAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
-
-    // #1706: per-conversation model / thinking / context override columns. Additive migration that
-    // mirrors the instructions/todo_json/pending_ask_user_json pattern - probe table_info and ALTER
-    // in any column that predates this change so older databases converge without a migration script.
-    private static async Task EnsureModelOverrideColumnsAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        await using (var tableInfoCommand = connection.CreateCommand())
-        {
-            tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-            await using var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                existing.Add(reader.GetString(1));
-        }
-
-        var additions = new (string Column, string Ddl)[]
-        {
-            ("model_override", "ALTER TABLE conversations ADD COLUMN model_override TEXT;"),
-            ("thinking_override", "ALTER TABLE conversations ADD COLUMN thinking_override TEXT;"),
-            ("context_window_override", "ALTER TABLE conversations ADD COLUMN context_window_override INTEGER;")
-        };
-
-        foreach (var (column, ddl) in additions)
-        {
-            if (existing.Contains(column))
-                continue;
-            await using var alterCommand = connection.CreateCommand();
-            alterCommand.CommandText = ddl;
-            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-    }
-
-    private static async Task EnsureInitiatorColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "initiator", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hasColumn)
-        {
-            await using var alterCommand = connection.CreateCommand();
-            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN initiator TEXT;";
-            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-
-        // Always ensure the index exists (cheap when present).
+        // Indexes are cheap when already present and safe to run every boot. Kept out of the
+        // column loop because they are not ADD COLUMN statements (initiator gained an index in
+        // the pre-refactor EnsureInitiatorColumnAsync).
         await using var indexCommand = connection.CreateCommand();
         indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_conversations_initiator ON conversations(initiator);";
         await indexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    // Adds the `kind` column to existing databases for the Phase 4 / F-3 discriminator.
-    // Pre-Phase-4 rows have NULL here; the loader maps NULL to ConversationKind.HumanAgent
-    // (the historical default), so back-compat is preserved automatically.
-    private static async Task EnsureKindColumnAsync(SqliteConnection connection, CancellationToken ct)
+    // Additive `conversations` columns in application order. The `kind` column maps NULL to
+    // ConversationKind.HumanAgent on load; `world_id` is NOT NULL DEFAULT '' and lazy-backfilled
+    // on read (#613); `initiator` also gains an index (see EnsureConversationColumnsAsync).
+    private static readonly (string Column, string Ddl)[] ConversationColumnMigrations =
     {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+        ("purpose", "ALTER TABLE conversations ADD COLUMN purpose TEXT;"),
+        ("instructions", "ALTER TABLE conversations ADD COLUMN instructions TEXT;"),
+        ("canvas_html", "ALTER TABLE conversations ADD COLUMN canvas_html TEXT;"),
+        ("todo_json", "ALTER TABLE conversations ADD COLUMN todo_json TEXT;"),
+        ("pending_ask_user_json", "ALTER TABLE conversations ADD COLUMN pending_ask_user_json TEXT;"),
+        // #1706: per-conversation model / thinking / context overrides.
+        ("model_override", "ALTER TABLE conversations ADD COLUMN model_override TEXT;"),
+        ("thinking_override", "ALTER TABLE conversations ADD COLUMN thinking_override TEXT;"),
+        ("context_window_override", "ALTER TABLE conversations ADD COLUMN context_window_override INTEGER;"),
+        ("initiator", "ALTER TABLE conversations ADD COLUMN initiator TEXT;"),
+        // Phase 4 / F-3 discriminator: NULL maps to ConversationKind.HumanAgent on load.
+        ("kind", "ALTER TABLE conversations ADD COLUMN kind TEXT;"),
+        // Phase 9 / P9-A world discriminator (#613): NOT NULL DEFAULT '' so legacy INSERTs stay
+        // valid; empty values are lazy-backfilled to the current world id on read.
+        ("world_id", "ALTER TABLE conversations ADD COLUMN world_id TEXT NOT NULL DEFAULT '';"),
+        ("is_pinned", "ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;"),
+        ("pinned_at", "ALTER TABLE conversations ADD COLUMN pinned_at TEXT;")
+    };
 
-        var hasColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+    // Race-tolerant single-column migration. Probes PRAGMA table_info first (cheap, avoids a
+    // guaranteed exception on the common already-migrated path), then ALTERs. If a concurrent
+    // process wins the race between the probe and the ALTER, SQLite returns generic error code 1
+    // with "duplicate column name: <col>"; the column already exists with the schema we'd have
+    // created, so we swallow and continue. Any other SqliteException propagates.
+    private static async Task EnsureColumnAsync(
+        SqliteConnection connection,
+        string column,
+        string alterDdl,
+        CancellationToken ct)
+    {
+        await using (var tableInfoCommand = connection.CreateCommand())
         {
+            tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+            await using var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                if (string.Equals(reader.GetString(1), "kind", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasColumn = true;
-                    break;
-                }
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    return;
             }
         }
-
-        if (!hasColumn)
-        {
-            await using var alterCommand = connection.CreateCommand();
-            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN kind TEXT;";
-            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-    }
-
-    // Adds the `world_id` column to existing databases for the Phase 9 / P9-A discriminator
-    // (issue #613). Pre-Phase-9 rows have empty-string here; the loader lazy-backfills empty
-    // values to the current world id via BackfillWorldId on read, so back-compat is automatic.
-    // The NOT NULL DEFAULT '' constraint keeps the column safe to leave unbound in legacy
-    // INSERT statements that haven't yet been migrated.
-    private static async Task EnsureWorldIdColumnAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasColumn = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                if (string.Equals(reader.GetString(1), "world_id", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasColumn = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasColumn)
-            return;
 
         await using var alterCommand = connection.CreateCommand();
-        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN world_id TEXT NOT NULL DEFAULT '';";
+        alterCommand.CommandText = alterDdl;
         try
         {
             await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -942,48 +754,9 @@ public sealed class SqliteConversationStore : IConversationStore
         catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
                                          ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
         {
-            // Cross-process race: another gateway instance hit EnsureCreatedAsync between our
-            // PRAGMA-table_info read and our ALTER TABLE. _initLock only serialises within one
-            // process; the loser of the race observes the column missing, races to ALTER, and
-            // gets back SQLite generic error 1 with "duplicate column name: world_id". The
-            // column already exists with the schema we'd have created (NOT NULL DEFAULT ''),
-            // so swallow and continue. Same shape used by EnsureInitiatorColumnAsync should it
-            // ever hit the same race — kept inline (not extracted to a helper) because the
-            // duplicate-column tolerance is the only thing different from a plain ALTER.
-        }
-    }
-
-    private static async Task EnsurePinColumnsAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        await using var tableInfoCommand = connection.CreateCommand();
-        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
-
-        var hasIsPinned = false;
-        var hasPinnedAt = false;
-        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                var name = reader.GetString(1);
-                if (string.Equals(name, "is_pinned", StringComparison.OrdinalIgnoreCase))
-                    hasIsPinned = true;
-                else if (string.Equals(name, "pinned_at", StringComparison.OrdinalIgnoreCase))
-                    hasPinnedAt = true;
-            }
-        }
-
-        if (!hasIsPinned)
-        {
-            await using var alterCommand = connection.CreateCommand();
-            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0";
-            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-
-        if (!hasPinnedAt)
-        {
-            await using var alterCommand = connection.CreateCommand();
-            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN pinned_at TEXT";
-            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            // Cross-process first-boot race: another gateway instance ran EnsureCreatedAsync
+            // between our PRAGMA-table_info read and this ALTER. _initLock only serialises within
+            // one process. The column already exists with the schema we intended, so continue.
         }
     }
 
