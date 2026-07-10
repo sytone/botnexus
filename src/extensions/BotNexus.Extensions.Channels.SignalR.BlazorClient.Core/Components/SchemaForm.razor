@@ -45,9 +45,47 @@ else
     [Parameter]
     public EventCallback<JsonObject> ValueChanged { get; set; }
 
+    /// <summary>
+    /// When set, renders only the single root section with this property key (e.g. <c>"providers"</c>)
+    /// instead of the whole config tree. Drives the sidebar-sectioned layout (#1892): the page keys
+    /// a nav off the root schema properties and feeds the selected section here. Null/empty or an
+    /// unknown key falls back to rendering the full tree (backwards-compatible with callers that
+    /// don't section).
+    /// </summary>
+    [Parameter]
+    public string? SectionKey { get; set; }
+
     private const string SecretSentinel = "***";
 
-    private JsonObject? RootProperties => Schema?["schema"]?["properties"]?.AsObject();
+    private JsonObject? RootProperties
+    {
+        get
+        {
+            var props = Schema?["schema"]?["properties"]?.AsObject();
+            if (props is null || string.IsNullOrEmpty(SectionKey))
+                return props;
+            // Section view: narrow the root to just the selected property so the renderer draws a
+            // single section. Unknown key -> fall back to the full tree rather than a blank form.
+            if (props.TryGetPropertyValue(SectionKey, out var node) && node is JsonObject obj)
+                return new JsonObject { [SectionKey] = obj.DeepClone() };
+            return props;
+        }
+    }
+
+    /// <summary>Ordered root section descriptors (key + label) for a sidebar/nav. Ignores <see cref="SectionKey"/>.</summary>
+    public IReadOnlyList<(string Key, string Label)> RootSections()
+    {
+        var props = Schema?["schema"]?["properties"]?.AsObject();
+        if (props is null)
+            return [];
+        return props
+            .Where(kv => kv.Value is JsonObject)
+            .Select(kv => (kv.Key, Node: kv.Value!.AsObject()))
+            .OrderBy(x => x.Node["x-ui-order"]?.GetValue<int>() ?? int.MaxValue)
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => (x.Key, Label: x.Node["x-ui-label"]?.GetValue<string>() ?? x.Key))
+            .ToList();
+    }
 
     private IEnumerable<KeyValuePair<string, List<KeyValuePair<string, JsonObject>>>> GroupedRoot =>
         OrderAndGroup(RootProperties);

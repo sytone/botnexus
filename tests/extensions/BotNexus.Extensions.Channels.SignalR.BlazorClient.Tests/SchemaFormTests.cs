@@ -197,4 +197,85 @@ public sealed class SchemaFormTests : IDisposable
         Assert.NotNull(updated);
         Assert.True(updated["enabled"]!.GetValue<bool>());
     }
+
+    // -- 6. Section navigation (#1892) --------------------------------------
+
+    private static JsonObject TwoSectionSchema() => Envelope(new JsonObject
+    {
+        ["gateway"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["x-ui-label"] = "Gateway",
+            ["x-ui-order"] = 0,
+            ["properties"] = new JsonObject { ["listenUrl"] = Scalar("string", "text", "Listen URL") },
+        },
+        ["cron"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["x-ui-label"] = "Cron",
+            ["x-ui-order"] = 1,
+            ["properties"] = new JsonObject { ["tickIntervalSeconds"] = Scalar("integer", "number", "Tick") },
+        },
+    });
+
+    private static JsonObject TwoSectionValue() => new()
+    {
+        ["gateway"] = new JsonObject { ["listenUrl"] = "http://x" },
+        ["cron"] = new JsonObject { ["tickIntervalSeconds"] = 60 },
+    };
+
+    [Fact]
+    public void SectionKey_renders_only_the_selected_section()
+    {
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, TwoSectionSchema());
+            p.Add(c => c.Value, TwoSectionValue());
+            p.Add(c => c.SectionKey, "cron");
+        });
+
+        cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input");
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl'] input"));
+    }
+
+    [Fact]
+    public void SectionKey_null_renders_the_whole_tree()
+    {
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, TwoSectionSchema());
+            p.Add(c => c.Value, TwoSectionValue());
+        });
+
+        cut.Find("[data-testid='field-gateway.listenUrl'] input");
+        cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input");
+    }
+
+    [Fact]
+    public void SectionKey_unknown_falls_back_to_whole_tree()
+    {
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, TwoSectionSchema());
+            p.Add(c => c.Value, TwoSectionValue());
+            p.Add(c => c.SectionKey, "does-not-exist");
+        });
+
+        cut.Find("[data-testid='field-gateway.listenUrl'] input");
+        cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input");
+    }
+
+    [Fact]
+    public void RootSections_lists_sections_ordered_by_ui_order()
+    {
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, TwoSectionSchema());
+            p.Add(c => c.Value, TwoSectionValue());
+        });
+
+        var sections = cut.Instance.RootSections();
+        Assert.Equal(new[] { "gateway", "cron" }, sections.Select(s => s.Key).ToArray());
+        Assert.Equal("Gateway", sections[0].Label);
+    }
 }
