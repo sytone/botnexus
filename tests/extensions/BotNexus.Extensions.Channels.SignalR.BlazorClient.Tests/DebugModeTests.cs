@@ -81,6 +81,30 @@ public sealed class DebugModeTests : IDisposable
     }
 
     [Fact]
+    public async Task PortalSettingsPanel_contains_archive_confirm_toggle()
+    {
+        _prefs.Current.Returns(new PortalPreferences());
+        var settingsPanel = _ctx.Render<PortalSettingsPanel>();
+
+        await settingsPanel.InvokeAsync(() => settingsPanel.Instance.Open());
+
+        settingsPanel.Find("[data-testid='archive-confirm-toggle']").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task PortalSettingsPanel_archive_confirm_toggle_persists_preference()
+    {
+        _prefs.Current.Returns(new PortalPreferences());
+        var settingsPanel = _ctx.Render<PortalSettingsPanel>();
+
+        await settingsPanel.InvokeAsync(() => settingsPanel.Instance.Open());
+        var toggle = settingsPanel.Find("[data-testid='archive-confirm-toggle']");
+        await settingsPanel.InvokeAsync(() => toggle.Change(false));
+
+        await _prefs.Received(1).SetArchiveConfirmAsync(false);
+    }
+
+    [Fact]
     public void Debug_button_appears_after_DebugModeEnabled_preference_changes()
     {
         var prefs = new PortalPreferences { DebugModeEnabled = false };

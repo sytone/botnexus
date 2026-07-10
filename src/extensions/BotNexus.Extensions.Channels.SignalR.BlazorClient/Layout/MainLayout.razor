@@ -25,7 +25,7 @@
             </button>
             <span class="banner-logo">&#x1F916;</span>
             <span class="banner-title">BotNexus</span>
-            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;&#xFE0F;</button>
+            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;</button>
             @if (Prefs.Current.DebugModeEnabled)
             {
                 <button class="banner-debug-btn" @onclick="OpenDebug" title="Debug inspector" data-testid="banner-debug-btn">&#x1F50D;</button>
@@ -684,12 +684,17 @@
 
     private async Task ArchiveConversationAsync(string agentId, string conversationId, string title, bool isVirtualSession)
     {
-        var message = isVirtualSession
-            ? $"Close '{title}'? It will reopen when the next cron trigger fires."
-            : $"Archive '{title}'?";
-        var confirmed = await JS.InvokeAsync<bool>("confirm", message);
-        if (confirmed)
-            await Interaction.ArchiveConversationAsync(agentId, conversationId);
+        if (Prefs.Current.ArchiveConfirmEnabled)
+        {
+            var message = isVirtualSession
+                ? $"Close '{title}'? It will reopen when the next cron trigger fires."
+                : $"Archive '{title}'?";
+            var confirmed = await JS.InvokeAsync<bool>("confirm", message);
+            if (!confirmed)
+                return;
+        }
+
+        await Interaction.ArchiveConversationAsync(agentId, conversationId);
     }
 
     private static string FormatConversationTimestamp(DateTimeOffset ts)
