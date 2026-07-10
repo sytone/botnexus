@@ -1282,6 +1282,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public Task SteerDeferrableAsync(string message, CancellationToken cancellationToken = default)
+    {
+        // #1845: mark as defer-while-busy so the agent loop holds this side turn until it reaches
+        // a genuine idle boundary rather than consuming an in-flight continuation.
+        _agent.Steer(new AgentCoreUserMessage(message) { DeferWhileBusy = true });
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     /// <remarks>
     /// Atomically aborts the current run (if any), clears stale steering messages from the
     /// abandoned direction, and enqueues the new direction so the agent resumes with the

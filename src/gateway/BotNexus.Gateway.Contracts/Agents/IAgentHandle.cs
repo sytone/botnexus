@@ -83,6 +83,19 @@ public interface IAgentHandle : IAsyncDisposable
     Task SteerAsync(string message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Steers the running agent with a system-injected side turn (#1845) that must only be
+    /// consumed at a genuine idle turn boundary. Used by the pre-compaction memory flush so a
+    /// mid-flight flush turn cannot consume the loop's continuation and abandon the original
+    /// in-flight task. When the agent is idle at inject time, behaves exactly like
+    /// <see cref="SteerAsync(string, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="message">The steering message to inject.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the message is queued.</returns>
+    Task SteerDeferrableAsync(string message, CancellationToken cancellationToken = default)
+        => SteerAsync(message, cancellationToken);
+
+    /// <summary>
     /// Queues a follow-up message to be processed after the current agent run completes.
     /// </summary>
     /// <param name="message">The follow-up message to queue.</param>

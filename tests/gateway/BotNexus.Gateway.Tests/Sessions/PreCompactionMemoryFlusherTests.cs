@@ -100,7 +100,7 @@ public sealed class PreCompactionMemoryFlusherTests
     {
         var session = BuildInteractiveSession();
         var handleMock = new Mock<IAgentHandle>();
-        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        handleMock.Setup(h => h.SteerDeferrableAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var supervisorMock = new Mock<IAgentSupervisor>();
@@ -112,7 +112,7 @@ public sealed class PreCompactionMemoryFlusherTests
 
         await flusher.FlushAsync(TestAgent, session, options);
 
-        handleMock.Verify(h => h.SteerAsync(
+        handleMock.Verify(h => h.SteerDeferrableAsync(
             It.Is<string>(s => s.Length > 0),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -138,7 +138,7 @@ public sealed class PreCompactionMemoryFlusherTests
     {
         var session = BuildInteractiveSession();
         var handleMock = new Mock<IAgentHandle>();
-        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        handleMock.Setup(h => h.SteerDeferrableAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("agent failed"));
 
         var supervisorMock = new Mock<IAgentSupervisor>();
@@ -158,7 +158,7 @@ public sealed class PreCompactionMemoryFlusherTests
     {
         var session = BuildInteractiveSession();
         var handleMock = new Mock<IAgentHandle>();
-        handleMock.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        handleMock.Setup(h => h.SteerDeferrableAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var supervisorMock = new Mock<IAgentSupervisor>();

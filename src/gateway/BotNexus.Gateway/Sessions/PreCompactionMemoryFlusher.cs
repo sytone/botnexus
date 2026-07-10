@@ -69,7 +69,7 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
                 "Pre-compaction memory flush starting for session {SessionId}, agent {AgentId}.",
                 session.SessionId, agentId);
 
-            await handle.SteerAsync(options.MemoryFlush.PromptText, timeoutCts.Token).ConfigureAwait(false);
+            await handle.SteerDeferrableAsync(options.MemoryFlush.PromptText, timeoutCts.Token).ConfigureAwait(false);
 
             // Record that a flush has run for this compaction cycle.
             var currentCycle = session.History.Count(e => e.IsCompactionSummary) + 1;
