@@ -1009,4 +1009,89 @@ public sealed class ChatPanelTests : IDisposable
 
         await _interaction.DidNotReceive().LoadMoreHistoryAsync(Arg.Any<string>(), Arg.Any<string>());
     }
+
+    // ── #1894: unkeyed @foreach garble regression ───────────────────────────
+    // The desktop portal garbled live-streaming messages (each fragment appearing
+    // twice: once truncated at a delta boundary, once as a longer restatement) while
+    // rendering fine on reload-from-store. Root cause: the message @foreach had no
+    // @key, so Blazor diffed children positionally. When a committed message was
+    // appended mid-stream (list length grows in the same render batch that removes
+    // the streaming bubble), positional diffing retargeted retained text nodes onto
+    // the wrong logical message, duplicating streamed fragments in the DOM. The fix
+    // wraps each loop item in a @key="msg.Id" element and gives the streaming bubble
+    // a stable sentinel key so it is never diff-matched against a committed message.
+
+    [Fact]
+    public void Each_message_row_is_keyed_by_message_id()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "first", DateTimeOffset.UtcNow));
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "second", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Each loop item is emitted inside a display:contents keyed wrapper. Two
+        // messages -> at least two such wrappers (keying is structural, so the
+        // presence of the wrapper is what the renderer needs to diff by identity).
+        var wrappers = cut.FindAll("div[style*='display:contents']");
+        Assert.True(wrappers.Count >= 2,
+            $"expected a keyed display:contents wrapper per message, found {wrappers.Count}");
+    }
+
+    [Fact]
+    public void Streaming_then_commit_does_not_duplicate_content()
+    {
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetStreaming("conv-1", true);
+        // The committed assistant message renders through the Markdown pipeline
+        // (#1475), so the JS renderer must be mocked or the message body renders empty.
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p>Hello world</p>");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Stream two deltas, then commit the buffer as a final assistant message and
+        // clear the streaming flag -- exactly the length-changing terminal-flush
+        // transition that used to corrupt positional diffing.
+        cut.InvokeAsync(() =>
+        {
+            _store.AppendStreamBuffer("conv-1", "Hello ");
+            _store.AppendStreamBuffer("conv-1", "world");
+        });
+        cut.Render();
+
+        cut.InvokeAsync(() =>
+        {
+            _store.CommitStreamBuffer("conv-1");
+            _store.SetStreaming("conv-1", false);
+        });
+        cut.Render();
+
+        // The committed message must appear exactly once, and the transient streaming
+        // bubble must be gone.
+        Assert.Empty(cut.FindAll("[data-testid='streaming-message']"));
+        var committed = _store.GetMessages("conv-1");
+        Assert.Single(committed);
+        Assert.Equal("Hello world", committed[0].Content);
+
+        // No duplicated fragment: "Hello world" occurs once, not twice, in the DOM.
+        var occurrences = CountOccurrences(cut.Markup, "Hello world");
+        Assert.Equal(1, occurrences);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var idx = 0;
+        while ((idx = haystack.IndexOf(needle, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += needle.Length;
+        }
+        return count;
+    }
 }
