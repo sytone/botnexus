@@ -91,6 +91,7 @@ export default defineConfig({
           { text: 'CLI Reference', link: '/cli-reference' },
           { text: 'API Reference', link: '/api-reference' },
           { text: 'SignalR Hub Contract', link: '/signalr-hub-contract' },
+          { text: 'SignalR Mobile Keepalive', link: '/signalr-mobile-keepalive' },
         ],
       },
       {
