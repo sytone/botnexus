@@ -4,13 +4,11 @@ using './teams-to-inbound.bicep'
 param serviceBusNamespaceName = 'botnexus-sbus'
 param inboundQueueName = 'botnexus-inbound'
 
-// The Team + channel to listen to.
-param teamId = '<team-group-id>'
-param channelId = '<channel-id>'
-
-// Human-readable names -> conversationId = 'Teams - {teamName} - {channelName}'.
-param teamName = 'My Team'
-param channelName = 'General'
-
 // BotNexus agent that handles these messages.
 param agentId = 'keel'
+
+// NOTE: the "new message added to a chat or channel" webhook trigger is global
+// (any chat/channel the authorizing user can see) -- there are no team/channel
+// binding params. conversationId is derived at runtime from each message:
+//   'Teams - {team - channel}'  (channel messages)
+//   'Teams - {chat topic/id}'   (chats)
