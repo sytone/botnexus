@@ -295,6 +295,69 @@ public sealed class AskUserToolTests
         ReadText(result).ShouldContain("yes");
     }
 
+    // -- ask_user pending soft-lock (#1916): pending state must never leak on failure --
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WithNonIntegerTimeout_ThrowsWithoutRegisteringPending()
+    {
+        // A validation failure (e.g. a non-integer timeout_seconds) must abort during argument
+        // preparation and NEVER create pending-input state. A call that never validated must not
+        // leave a live prompt behind.
+        var registry = new AskUserResponseRegistry();
+        var tool = CreateTool(registry, "conversation-1");
+
+        Func<Task> act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Respond soon",
+            ["timeout_seconds"] = "not-a-number"
+        });
+
+        await act.ShouldThrowAsync<ArgumentException>();
+        registry.TryGetPendingRequestId(ConversationId.From("conversation-1"), out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenUpdateCallbackThrows_AutoCancelsPendingSoSessionUnblocks()
+    {
+        // If anything fails after the registry entry is created (e.g. the widget-emit callback
+        // throws), the pending request must be auto-cancelled so the conversation does not stay
+        // permanently in pending-input state silently swallowing user messages (#1916, criterion 4).
+        var registry = new AskUserResponseRegistry();
+        var tool = CreateTool(registry, "conversation-1");
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Which environment?"
+        });
+
+        Func<Task> act = () => tool.ExecuteAsync(
+            "call-ask-user",
+            arguments,
+            onUpdate: _ => throw new InvalidOperationException("widget emit failed"));
+
+        await act.ShouldThrowAsync<InvalidOperationException>();
+
+        // The pending registration must not survive the failure.
+        registry.TryGetPendingRequestId(ConversationId.From("conversation-1"), out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithNumericStringTimeout_CoercesAndTimesOut()
+    {
+        // A numeric-string timeout must be coerced (not rejected after pending UI is created).
+        var registry = new AskUserResponseRegistry();
+        var tool = CreateTool(registry, "conversation-1");
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Respond soon",
+            ["timeout_seconds"] = "1"
+        });
+
+        var result = await tool.ExecuteAsync("call-ask-user", arguments, onUpdate: _ => { });
+
+        var json = JsonDocument.Parse(ReadText(result));
+        json.RootElement.GetProperty("wasTimeout").GetBoolean().ShouldBeTrue();
+        registry.TryGetPendingRequestId(ConversationId.From("conversation-1"), out _).ShouldBeFalse();
+    }
     private static async Task SeedConversationAsync(InMemoryConversationStore store, string conversationId)
     {
         await store.CreateAsync(new Conversation
