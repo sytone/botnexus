@@ -63,11 +63,25 @@ internal sealed class InstallCommand
     }
 
     /// <summary>
-    /// Builds the <c>git clone</c> argument string. The repo spec is preceded by the <c>--</c>
-    /// option terminator so a value beginning with '-' cannot be reinterpreted as a git option.
+    /// Builds the <c>git clone</c> argument string.
+    /// <para>
+    /// <c>--no-local</c> forces git's normal reachable-object transport even when the
+    /// source is a local path. Without it, git's local-clone optimization copies the
+    /// entire <c>objects/</c> directory verbatim — which can be tens of GiB of
+    /// unreachable loose objects on a busy dev repo, and cannot even hardlink across a
+    /// volume boundary (e.g. cloning from <c>Q:</c> into <c>%TEMP%</c> on <c>C:</c>),
+    /// causing multi-minute clones/timeouts. Transferring only reachable objects as an
+    /// on-the-fly pack keeps a bootstrap install fast and immune to source-repo bloat.
+    /// See issue #1910. Network/URL installs are unaffected (local optimization never
+    /// applied there anyway).
+    /// </para>
+    /// <para>
+    /// The repo spec is preceded by the <c>--</c> option terminator so a value beginning
+    /// with '-' cannot be reinterpreted as a git option.
+    /// </para>
     /// </summary>
     internal static string BuildCloneArguments(string repo, string targetPath)
-        => $"clone -- \"{repo}\" \"{targetPath}\"";
+        => $"clone --no-local -- \"{repo}\" \"{targetPath}\"";
 
     internal static async Task<int> ExecuteAsync(string targetPath, string repo, bool build, bool verbose, CancellationToken cancellationToken)
     {

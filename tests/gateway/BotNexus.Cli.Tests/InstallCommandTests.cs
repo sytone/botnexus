@@ -16,8 +16,9 @@ public sealed class InstallCommandTests
         // Act
         var args = InstallCommand.BuildCloneArguments("https://github.com/sytone/botnexus.git", "/home/user/botnexus");
 
-        // Assert - the option terminator must precede the repo spec
-        args.ShouldBe("clone -- \"https://github.com/sytone/botnexus.git\" \"/home/user/botnexus\"");
+        // Assert - the option terminator must precede the repo spec, and --no-local
+        // forces reachable-object transport for local sources (see #1910)
+        args.ShouldBe("clone --no-local -- \"https://github.com/sytone/botnexus.git\" \"/home/user/botnexus\"");
     }
 
     [Fact]
