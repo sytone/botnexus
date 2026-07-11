@@ -261,4 +261,17 @@ public sealed class ConfigSchemaBuilderTests
         var node = GetPropertyNode(schema, "providers", "enabled");
         node["x-ui-group"]!.GetValue<string>().ShouldBe("provider");
     }
+
+    [Fact]
+    public void ProviderDefaultModel_carries_dynamic_options_source()
+    {
+        var schema = BuildSchema();
+
+        // ProviderConfig.DefaultModel -> [ConfigField(Widget=Select, OptionsSource="models")] (#1893):
+        // a select whose choices the renderer resolves from the provider's live /api/models list.
+        var node = GetPropertyNode(schema, "providers", "defaultModel");
+
+        node["x-ui-widget"]!.GetValue<string>().ShouldBe("select");
+        node["x-ui-options-source"]!.GetValue<string>().ShouldBe("models");
+    }
 }

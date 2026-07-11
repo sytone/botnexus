@@ -120,6 +120,13 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         if (!string.IsNullOrWhiteSpace(options.HomePath))
             psi.Environment["BOTNEXUS_HOME"] = options.HomePath;
 
+        // Enable minidump-on-crash for the spawned gateway. These DOTNET_* vars are honoured by
+        // the CLR only when present in the process environment at startup, so they MUST be set on
+        // the child's ProcessStartInfo here (the parent launcher) rather than from inside the
+        // already-running gateway. This guarantees a dump even for a stack overflow or FailFast,
+        // neither of which raises a catchable managed exception. Defensive: never break launch.
+        ConfigureCrashDumps(psi, options.HomePath);
+
         _logger.LogInformation("Starting gateway process: {FileName} {Arguments}", psi.FileName, psi.Arguments);
 
         Process process;
@@ -167,6 +174,32 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Success: false,
                 Pid: pid,
                 Message: $"Gateway started (PID {pid}) but did not become healthy within {healthTimeout.TotalSeconds}s");
+        }
+    }
+
+    /// <summary>
+    /// Applies the .NET crash-dump environment variables to the child gateway process so any hard
+    /// exit leaves a minidump under <c>{home}/dumps</c>. Best-effort: a failure here never blocks
+    /// the gateway from starting.
+    /// </summary>
+    private void ConfigureCrashDumps(ProcessStartInfo psi, string? homePath)
+    {
+        try
+        {
+            var home = string.IsNullOrWhiteSpace(homePath)
+                ? (Environment.GetEnvironmentVariable("BOTNEXUS_HOME")
+                   ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus"))
+                : homePath;
+            var dumpsDir = Path.Combine(home, "dumps");
+            Directory.CreateDirectory(dumpsDir);
+            BotNexus.Gateway.Diagnostics.CrashDumpEnvironment.Apply(
+                dumpsDir,
+                (key, value) => psi.Environment[key] = value);
+            _logger.LogInformation("Crash dumps enabled for gateway process -> {DumpsDir}", dumpsDir);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to configure crash dumps for gateway process (continuing without minidumps)");
         }
     }
 

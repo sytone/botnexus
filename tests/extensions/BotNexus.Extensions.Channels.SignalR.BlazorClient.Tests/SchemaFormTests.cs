@@ -1,6 +1,8 @@
 using System.Text.Json.Nodes;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -19,6 +21,27 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 public sealed class SchemaFormTests : IDisposable
 {
     private readonly BunitContext _ctx = new();
+
+    public SchemaFormTests()
+    {
+        // SchemaForm injects IModelOptionsProvider (#1893). Default to an empty stub; tests that
+        // exercise dynamic options register their own via ReplaceModels().
+        _ctx.Services.AddSingleton<IModelOptionsProvider>(new StubModelOptionsProvider());
+    }
+
+    private void ReplaceModels(IReadOnlyDictionary<string, IReadOnlyList<ModelOption>> byProvider)
+    {
+        _ctx.Services.AddSingleton<IModelOptionsProvider>(new StubModelOptionsProvider(byProvider));
+    }
+
+    private sealed class StubModelOptionsProvider : IModelOptionsProvider
+    {
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<ModelOption>> _byProvider;
+        public StubModelOptionsProvider(IReadOnlyDictionary<string, IReadOnlyList<ModelOption>>? byProvider = null)
+            => _byProvider = byProvider ?? new Dictionary<string, IReadOnlyList<ModelOption>>();
+        public Task<IReadOnlyList<ModelOption>> GetModelsAsync(string provider)
+            => Task.FromResult(_byProvider.TryGetValue(provider, out var m) ? m : []);
+    }
 
     public void Dispose() => _ctx.Dispose();
 
@@ -88,7 +111,9 @@ public sealed class SchemaFormTests : IDisposable
         var cut = Render(schema, new JsonObject { ["cacheRetention"] = "short" });
 
         var opts = cut.FindAll("[data-testid='field-cacheRetention'] select option");
-        Assert.Equal(3, opts.Count);
+        // 3 enum options + a leading blank sentinel.
+        Assert.Equal(4, opts.Count);
+        Assert.Contains("short", cut.Markup);
     }
 
     [Fact]
@@ -277,5 +302,74 @@ public sealed class SchemaFormTests : IDisposable
         var sections = cut.Instance.RootSections();
         Assert.Equal(new[] { "gateway", "cron" }, sections.Select(s => s.Key).ToArray());
         Assert.Equal("Gateway", sections[0].Label);
+    }
+
+    // -- 7. Dynamic option sources (#1893) ----------------------------------
+
+    // A providers dictionary whose entry value has a defaultModel select sourced from "models".
+    private static JsonObject ProvidersSchema(string optionsSource = "models")
+    {
+        var defaultModel = Scalar("string", "select", "Default model");
+        defaultModel["x-ui-options-source"] = optionsSource;
+        var valueSchema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject { ["defaultModel"] = defaultModel },
+        };
+        var providers = new JsonObject { ["type"] = "object", ["x-ui-label"] = "Providers", ["additionalProperties"] = valueSchema };
+        return Envelope(new JsonObject { ["providers"] = providers });
+    }
+
+    private static JsonObject ProvidersValue(string? selected = null) => new()
+    {
+        ["providers"] = new JsonObject { ["openai"] = new JsonObject { ["defaultModel"] = selected } },
+    };
+
+    [Fact]
+    public void Model_select_populates_from_provider_model_list()
+    {
+        ReplaceModels(new Dictionary<string, IReadOnlyList<ModelOption>>
+        {
+            ["openai"] = new[]
+            {
+                new ModelOption("gpt-4.1", "GPT-4.1", ["low", "high"], [128000]),
+                new ModelOption("gpt-4o-mini", "GPT-4o mini", [], [128000]),
+            },
+        });
+
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, ProvidersSchema());
+            p.Add(c => c.Value, ProvidersValue());
+        });
+
+        // Wait for the async model fetch + re-render to surface the dynamic options.
+        cut.WaitForAssertion(() =>
+        {
+            var opts = cut.FindAll("[data-testid='field-providers.openai.defaultModel'] option")
+                .Select(o => o.GetAttribute("value")).ToList();
+            Assert.Contains("gpt-4.1", opts);
+            Assert.Contains("gpt-4o-mini", opts);
+        });
+    }
+
+    [Fact]
+    public void Model_select_falls_back_to_static_options_when_no_dynamic_list()
+    {
+        // No models registered for the provider -> select uses static x-ui-options.
+        var schema = ProvidersSchema();
+        schema["schema"]!["properties"]!["providers"]!["additionalProperties"]!["properties"]!["defaultModel"]!["x-ui-options"]
+            = new JsonArray("static-a", "static-b");
+
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, schema);
+            p.Add(c => c.Value, ProvidersValue());
+        });
+
+        var opts = cut.FindAll("[data-testid='field-providers.openai.defaultModel'] option")
+            .Select(o => o.GetAttribute("value")).ToList();
+        Assert.Contains("static-a", opts);
+        Assert.Contains("static-b", opts);
     }
 }

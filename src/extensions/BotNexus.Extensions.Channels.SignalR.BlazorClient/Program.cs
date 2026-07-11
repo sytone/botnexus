@@ -17,6 +17,8 @@ builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
 builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 builder.Services.AddScoped<PlatformConfigService>();
+// #1893: dynamic option sources for config select widgets (e.g. provider model dropdowns).
+builder.Services.AddScoped<IModelOptionsProvider, HttpModelOptionsProvider>();
 builder.Services.AddScoped<GatewayInfoService>();
 builder.Services.AddScoped<ExtensionFeatureService>();
 builder.Services.AddScoped<IUpdateStatusService, UpdateStatusService>();

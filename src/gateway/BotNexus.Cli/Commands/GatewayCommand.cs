@@ -280,6 +280,7 @@ internal sealed class GatewayCommand
             psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
             psi.Environment["ASPNETCORE_URLS"] = gatewayUrl;
             psi.Environment["BOTNEXUS_HOME"] = home;
+            ServeCommand.ApplyCrashDumpEnvironment(psi, home);
 
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start Gateway process.");

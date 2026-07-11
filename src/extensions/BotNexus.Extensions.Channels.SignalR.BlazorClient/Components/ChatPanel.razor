@@ -180,6 +180,13 @@
 
         @foreach (var msg in Messages)
         {
+            @* Keyed wrapper: forces Blazor to diff message subtrees by identity, not list
+               position. Without this, appending a committed message mid-stream (which changes
+               the list length in the same render batch that removes the streaming bubble)
+               causes positional diffing to retarget retained text nodes onto the wrong logical
+               message, duplicating streamed fragments in the DOM (garbled live messages that
+               render fine on reload-from-store). display:contents keeps layout unchanged. *@
+            <div @key="msg.Id" style="display:contents">
             @if (msg.IsBoundary)
             {
                 <div class="session-boundary" role="separator" aria-label="Session boundary">
@@ -317,6 +324,7 @@
                 </div>
                 }
             }
+            </div>
         }
 
         @if (IsStreaming && !string.IsNullOrEmpty(ThinkingBuffer))
@@ -333,6 +341,7 @@
         @if (IsStreaming && !string.IsNullOrEmpty(CurrentStreamBuffer))
         {
             <div class="message assistant streaming"
+                 @key="@("__streaming__")"
                  data-testid="streaming-message"
                  data-message-role="Assistant">
                 <div class="message-header">

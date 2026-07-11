@@ -19,6 +19,7 @@ This directory contains detailed documentation for developers working on or exte
 - **[message-flow.md](message-flow.md)** — Channel dispatch, routing, session lifecycle
 - **[prompt-pipeline.md](prompt-pipeline.md)** — System prompt construction and caching
 - **[session-stores.md](session-stores.md)** — Session persistence implementations
+- **[gateway-crash-diagnostics.md](gateway-crash-diagnostics.md)** — Minidump-on-crash, last-chance fault breadcrumb, and unclean-shutdown detection
 - **[triggers-and-federation.md](triggers-and-federation.md)** — Cron, soul, and cross-world agent communication
 - **[webui-connection.md](webui-connection.md)** — SignalR hub, subscribe-all model, multi-session UI
 - **[workspace-and-memory.md](workspace-and-memory.md)** — Workspace isolation, memory management, context files
@@ -29,6 +30,7 @@ This directory contains detailed documentation for developers working on or exte
 
 ### Tooling & repo
 
+- **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
 - **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene
 
 ---

@@ -215,6 +215,49 @@ public sealed class ConversationCanvasControllerTests
         notifier.Changes[0].Value.ShouldBeNull();
     }
 
+    // -- Route contract (#1900) --------------------------------------------
+    // The iframe canvas bridge (CanvasPanel.HandleCanvasMessage) and the documented REST contract
+    // both target api/conversations/{id}/canvas-state/{key}. The #1732 extraction moved these
+    // endpoints onto ConversationCanvasController with [Route("api/[controller]")], which the ASP.NET
+    // token replacement expands to api/ConversationCanvas/... . That silently 404'd every iframe
+    // write (the agent tool writes to the store directly, bypassing HTTP, so it kept working and
+    // masked the break). These tests pin the composed routes to the contract so the regression
+    // cannot recur.
+
+    [Fact]
+    public void Controller_base_route_is_api_conversations_not_token_expanded()
+    {
+        var routeAttr = typeof(ConversationCanvasController)
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RouteAttribute), inherit: false)
+            .Cast<Microsoft.AspNetCore.Mvc.RouteAttribute>()
+            .Single();
+
+        // Must be the literal contract segment. "api/[controller]" expands to "api/ConversationCanvas",
+        // which breaks the iframe bridge POST (#1900).
+        routeAttr.Template.ShouldBe("api/conversations");
+        routeAttr.Template.ShouldNotContain("[controller]");
+    }
+
+    [Theory]
+    [InlineData(nameof(ConversationCanvasController.GetCanvasState), typeof(Microsoft.AspNetCore.Mvc.HttpGetAttribute), "api/conversations/{conversationId}/canvas-state")]
+    [InlineData(nameof(ConversationCanvasController.GetCanvasStateKey), typeof(Microsoft.AspNetCore.Mvc.HttpGetAttribute), "api/conversations/{conversationId}/canvas-state/{key}")]
+    [InlineData(nameof(ConversationCanvasController.SetCanvasStateKey), typeof(Microsoft.AspNetCore.Mvc.HttpPostAttribute), "api/conversations/{conversationId}/canvas-state/{key}")]
+    [InlineData(nameof(ConversationCanvasController.DeleteCanvasStateKey), typeof(Microsoft.AspNetCore.Mvc.HttpDeleteAttribute), "api/conversations/{conversationId}/canvas-state/{key}")]
+    public void Canvas_state_endpoints_compose_to_the_contract_route(string methodName, Type verbAttributeType, string expectedRoute)
+    {
+        var routeAttr = typeof(ConversationCanvasController)
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RouteAttribute), inherit: false)
+            .Cast<Microsoft.AspNetCore.Mvc.RouteAttribute>()
+            .Single();
+
+        var method = typeof(ConversationCanvasController).GetMethod(methodName)!;
+        var verbAttr = method.GetCustomAttributes(verbAttributeType, inherit: false)
+            .Cast<Microsoft.AspNetCore.Mvc.Routing.IRouteTemplateProvider>()
+            .Single();
+
+        var composed = $"{routeAttr.Template}/{verbAttr.Template}";
+        composed.ShouldBe(expectedRoute);
+    }
     private static (ConversationCanvasController, InMemoryConversationStore) CreateController(IAgentCanvasNotifier? notifier = null)
     {
         var store = new InMemoryConversationStore();

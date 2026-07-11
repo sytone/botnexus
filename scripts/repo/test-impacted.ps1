@@ -53,6 +53,23 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 $slnxPath = Join-Path $repoRoot 'BotNexus.slnx'
+$firewallHelper = Join-Path $PSScriptRoot 'Ensure-TesthostFirewallRules.ps1'
+
+# Best-effort: pre-create Windows Firewall allow-rules for the testhost.exe paths
+# of the given test projects so `dotnet test` never triggers an interactive
+# "Allow app through the firewall" popup (which blocks unattended/agent runs).
+# Windows-only and fully swallowed on failure — never fails the test run.
+function Invoke-TesthostFirewallSetup {
+    param([string[]]$Projects)
+    if (-not (Test-Path $firewallHelper)) { return }
+    if (-not $Projects -or $Projects.Count -eq 0) { return }
+    try {
+        & $firewallHelper -ProjectPath $Projects -Configuration $Configuration
+    }
+    catch {
+        Write-Warning "Testhost firewall setup skipped: $($_.Exception.Message)"
+    }
+}
 
 # Projects that always run regardless of what changed (cross-cutting safety net)
 $alwaysRunPatterns = @(
@@ -60,8 +77,22 @@ $alwaysRunPatterns = @(
     '\.Scenarios\.Tests'
 )
 
+# Enumerate every test project in the solution (used for -All and safety-net).
+function Get-AllSolutionTestProjects {
+    [xml]$slnxDoc = Get-Content $slnxPath -Raw
+    $projects = @()
+    foreach ($node in $slnxDoc.SelectNodes('//Project[@Path]')) {
+        $path = $node.Path -replace '\\', '/'
+        if ($path -match '\.Tests\.csproj$') {
+            $projects += (Join-Path $repoRoot ($path -replace '/', [IO.Path]::DirectorySeparatorChar))
+        }
+    }
+    return $projects
+}
+
 if ($All) {
     Write-Host "Running full test suite (--All specified)" -ForegroundColor Cyan
+    Invoke-TesthostFirewallSetup -Projects (Get-AllSolutionTestProjects)
     $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
     $args = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
     if ($buildFlag) { $args += $buildFlag }
@@ -96,6 +127,7 @@ if ($branchExitCode -eq 0) {
 elseif ($branchExitCode -ne 166) {
     Write-Warning "dotnet-affected failed (exit $branchExitCode) — falling back to full test suite"
     Write-Host ($affectedOutput -join "`n") -ForegroundColor DarkGray
+    Invoke-TesthostFirewallSetup -Projects (Get-AllSolutionTestProjects)
     $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
     $testArgs = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
     if ($buildFlag) { $testArgs += $buildFlag }
@@ -171,6 +203,7 @@ if ($DryRun) {
 
 # Run tests
 Write-Host ""
+Invoke-TesthostFirewallSetup -Projects $projectsToTest
 $buildFlag = if ($NoBuild) { '--no-build' } else { '--no-restore' }
 $failed = $false
 foreach ($proj in $projectsToTest) {
