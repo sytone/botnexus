@@ -122,8 +122,12 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
       actions: {
         // The chatmessagetrigger delivers only a Graph change-notification
         // (pointers: conversationId + messageId, encryptedContent null). It has
-        // NO message body and NO sender. We must fetch the full message from
-        // Graph before we can read content / author / loop-guard.
+        // NO message body and NO sender. We fetch the full message via the
+        // Teams connector's generic Graph passthrough action ('/httprequest'
+        // with headers.Uri/Method/ContentType) before reading content/author.
+        // NOTE: '/httprequest' is the proven passthrough op (verified against a
+        // working in-tenant flow); the swagger 'GetMessageDetails' op needs a
+        // designer-built dynamic body and is not code-friendly.
         Get_message_details: {
           type: 'ApiConnection'
           runAfter: {}
@@ -133,11 +137,12 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
               }
             }
-            method: 'get'
-            path: '/beta/graphhttprequest'
-            queries: {
-              method: 'GET'
-              uri: 'https://graph.microsoft.com/beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}'
+            method: 'post'
+            path: '/httprequest'
+            headers: {
+              Uri: 'beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}'
+              Method: 'GET'
+              ContentType: 'application/json'
             }
           }
         }
@@ -154,11 +159,12 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
               }
             }
-            method: 'get'
-            path: '/beta/graphhttprequest'
-            queries: {
-              method: 'GET'
-              uri: 'https://graph.microsoft.com/beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}'
+            method: 'post'
+            path: '/httprequest'
+            headers: {
+              Uri: 'beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}'
+              Method: 'GET'
+              ContentType: 'application/json'
             }
           }
         }
