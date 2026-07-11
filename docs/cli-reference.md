@@ -61,36 +61,37 @@ You should see the root command help listing all available subcommands.
 9. [agent show](#agent-show) — Show a single agent's resolved config
 10. [agent remove](#agent-remove) — Remove an agent
 11. [agent wizard](#agent-wizard) — Create an agent interactively
-12. [conversation](#conversation) — Manage conversations via the gateway REST API
-13. [config get](#config-get) — Read a config value
-14. [config set](#config-set) — Set a config value
-15. [config schema](#config-schema) — Generate JSON schema
-16. [gateway](#gateway) — Manage the gateway lifecycle
-17. [provider](#provider) — Show or set up providers
-18. [provider setup](#provider-setup) — Interactive provider setup wizard
-19. [provider list](#provider-list) — List configured providers
-20. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-21. [provider remove](#provider-remove) — Remove a provider non-interactively
-22. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-23. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-24. [prompt](#prompt) — Manage prompt templates
-25. [prompt list](#prompt-list) — List available prompt templates
-26. [prompt render](#prompt-render) — Render a prompt template
-27. [prompt run](#prompt-run) — Render and execute a prompt template
-28. [satellite](#satellite) — Manage satellite nodes
-29. [doctor](#doctor) — Diagnose configuration issues
-30. [doctor config](#doctor-config) — Guided config migration
-31. [locations](#locations) — Manage configured locations
-32. [update](#update) — Pull, build, and restart the gateway
-33. [memory](#memory) — Backfill agent memory stores
-34. [cron](#cron-command) — Manage cron jobs from the CLI
-35. [debug sessions](#debug-sessions) — Inspect session SQLite database
-36. [debug logs](#debug-logs) — Inspect log files
-37. [debug memory](#debug-memory) — Inspect agent memory directories
-38. [debug db](#debug-db) — Inspect raw databases
-39. [debug gateway](#debug-gateway) — Live gateway diagnostics
-40. [debug cron](#debug-cron) — Cron scheduler diagnostics
-41. [Examples](#examples)
+12. [agent export](#agent-export) — Export an agent as a redacted template
+13. [conversation](#conversation) — Manage conversations via the gateway REST API
+14. [config get](#config-get) — Read a config value
+15. [config set](#config-set) — Set a config value
+16. [config schema](#config-schema) — Generate JSON schema
+17. [gateway](#gateway) — Manage the gateway lifecycle
+18. [provider](#provider) — Show or set up providers
+19. [provider setup](#provider-setup) — Interactive provider setup wizard
+20. [provider list](#provider-list) — List configured providers
+21. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+22. [provider remove](#provider-remove) — Remove a provider non-interactively
+23. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+24. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+25. [prompt](#prompt) — Manage prompt templates
+26. [prompt list](#prompt-list) — List available prompt templates
+27. [prompt render](#prompt-render) — Render a prompt template
+28. [prompt run](#prompt-run) — Render and execute a prompt template
+29. [satellite](#satellite) — Manage satellite nodes
+30. [doctor](#doctor) — Diagnose configuration issues
+31. [doctor config](#doctor-config) — Guided config migration
+32. [locations](#locations) — Manage configured locations
+33. [update](#update) — Pull, build, and restart the gateway
+34. [memory](#memory) — Backfill agent memory stores
+35. [cron](#cron-command) — Manage cron jobs from the CLI
+36. [debug sessions](#debug-sessions) — Inspect session SQLite database
+37. [debug logs](#debug-logs) — Inspect log files
+38. [debug memory](#debug-memory) — Inspect agent memory directories
+39. [debug db](#debug-db) — Inspect raw databases
+40. [debug gateway](#debug-gateway) — Live gateway diagnostics
+41. [debug cron](#debug-cron) — Cron scheduler diagnostics
+42. [Examples](#examples)
 
 ---
 
@@ -620,6 +621,61 @@ botnexus agent wizard [OPTIONS]
 
 ```powershell
 botnexus agent wizard
+```
+
+---
+
+## agent export
+
+Export a configured agent as a versioned, redacted `agentTemplate/v1` JSON template that is safe to share. The template contains only descriptor fields (`displayName`, `description`, `emoji`, `modelId`, `apiProvider`, `systemPrompt`, `toolIds`, `thinking`, `contextWindow`) and **never** includes secret values such as API keys, tokens, or PEMs.
+
+Instead of secrets, the template carries a `requiredSecrets` manifest enumerating the provider credential keys the importing environment must supply (for example the provider's `apiKey`).
+
+### Usage
+
+```powershell
+botnexus agent export <ID> [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--output <PATH>` | Output file path. Defaults to `<id>.agent.json` in the current directory. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show the schema and required-secret count after export. |
+
+### Examples
+
+```powershell
+botnexus agent export assistant
+```
+
+```powershell
+botnexus agent export assistant --output ./templates/assistant.agent.json
+```
+
+### Output shape
+
+```json
+{
+  "schema": "agentTemplate/v1",
+  "agent": {
+    "displayName": "Assistant",
+    "description": "A helpful assistant.",
+    "modelId": "gpt-4.1",
+    "apiProvider": "copilot",
+    "toolIds": ["read", "write"],
+    "contextWindow": 128000
+  },
+  "requiredSecrets": [
+    {
+      "provider": "copilot",
+      "key": "apiKey",
+      "description": "API key / credential for provider 'copilot'."
+    }
+  ]
+}
 ```
 
 ---
