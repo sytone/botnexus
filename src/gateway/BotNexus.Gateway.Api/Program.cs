@@ -542,7 +542,59 @@ app.MapGet("/api/world", () => Results.Ok(worldDescriptor));
 
 LogGatewayStartup(app, builder.Environment, startupPlatformConfig, worldDescriptor, listenUrl);
 
+// Crash observability (#1901): install the last-chance fault handler, warn if the previous run
+// terminated uncleanly, and manage the clean-shutdown marker. All wiring is defensive - a
+// diagnostics failure here must never prevent the gateway from serving.
+InstallCrashObservability(app);
+
 app.Run();
+
+void InstallCrashObservability(WebApplication application)
+{
+    try
+    {
+        var dataDirectory = BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
+
+        // 1. Last-chance fault handler: flush a structured [FTL] breadcrumb the instant the
+        //    process is about to die (unhandled exception / unobserved task / abrupt exit), so
+        //    even a dump-less hard exit leaves an investigable trail.
+        var agentRegistry = application.Services.GetService<IAgentRegistry>();
+        var probes = new BotNexus.Gateway.Diagnostics.FaultContextProbes(
+            ActiveAgentCount: agentRegistry is null ? null : () => agentRegistry.GetAll().Count);
+        new BotNexus.Gateway.Diagnostics.LastChanceFaultHandler(
+            application.Logger,
+            probes).Install();
+
+        // 2. Detect how the previous run ended using the clean-shutdown marker, then clear it for
+        //    this run so any subsequent hard exit is detectable as unclean on the next boot.
+        var marker = new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
+            new System.IO.Abstractions.FileSystem(),
+            dataDirectory);
+        var previousRun = marker.DetectPreviousRun();
+        if (!previousRun.WasClean)
+        {
+            var lastKnown = previousRun.LastKnownUtc?.ToString("o") ?? "unknown";
+            application.Logger.LogWarning(
+                "previous gateway run terminated uncleanly (last-known clean-shutdown timestamp: {LastKnownTimestamp})",
+                lastKnown);
+        }
+        marker.MarkRunning();
+
+        // 3. On graceful shutdown, write the clean-shutdown marker so the next boot knows this run
+        //    ended cleanly and does NOT emit the unclean-termination warning.
+        var lifetime = application.Services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>();
+        lifetime?.ApplicationStopped.Register(() =>
+        {
+            try { marker.MarkCleanShutdown(); }
+            catch { /* best effort - a missed marker only risks a false unclean warning */ }
+        });
+    }
+    catch (Exception ex)
+    {
+        // Crash observability is strictly additive - never let it break startup.
+        application.Logger.LogWarning(ex, "Failed to install crash observability (continuing without it)");
+    }
+}
 
 static void LogGatewayStartup(
     WebApplication app,
