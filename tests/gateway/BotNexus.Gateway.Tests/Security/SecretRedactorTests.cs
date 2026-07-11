@@ -87,6 +87,26 @@ public sealed class SecretRedactorTests
         _sut.Redact(input).ShouldContain("[REDACTED]");
     }
 
+    [Theory]
+    [InlineData("123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]   // full bot token (id + 35-char secret)
+    [InlineData("987654:AbCdEfGhIjKlMnOpQrStUvWx-_012345678")]     // 35-char base64url secret incl - and _
+    public void Redact_TelegramBotToken_IsRedacted(string token)
+    {
+        // Mirrors the token embedded in TelegramBotApiClient endpoint/file URLs
+        // (https://api.telegram.org/bot{token}/...), the credential #1929 guards.
+        var input = $"https://api.telegram.org/bot{token}/getUpdates";
+        _sut.Redact(input).ShouldNotContain(token);
+        _sut.Redact(input).ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_BareTelegramBotToken_IsRedacted()
+    {
+        const string token = "123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        _sut.Redact(token).ShouldNotContain(token);
+        _sut.Redact(token).ShouldContain("[REDACTED]");
+    }
+
     [Fact]
     public void Redact_AuthorizationBearerHeader_IsRedacted()
     {
