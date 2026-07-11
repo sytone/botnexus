@@ -8,7 +8,7 @@ the [parent example](../README.md).
 | Template | Direction | What it does |
 |----------|-----------|--------------|
 | [`outbound-to-teams.bicep`](./outbound-to-teams.bicep) | BotNexus → Teams | Listens on the **outbound** queue and posts each agent reply into Teams (as the Flow bot) — a 1:1 personal chat by default, or a channel. |
-| [`teams-to-inbound.bicep`](./teams-to-inbound.bicep) | Teams → BotNexus | Uses the **"When a new message is added to a chat or channel"** webhook trigger (global — any chat/channel the authorizing user sees). Publishes each new human message onto the **inbound** queue, with `conversationId` derived at runtime as `'Teams - {Team - Channel}'` (channels) or `'Teams - {chat topic/id}'` (chats). |
+| [`teams-to-inbound.bicep`](./teams-to-inbound.bicep) | Teams → BotNexus | Uses the **"When a new chat message is added"** webhook trigger (`chatmessagetrigger`) — fires on any new chat message (1:1 + group) the authorizing user is in. **Chats only** (team channels need a channel-bound trigger). Publishes each new human message onto the **inbound** queue, with `conversationId` derived at runtime as `'Teams - {chat topic or id}'`. |
 
 ## Security model
 
@@ -34,10 +34,11 @@ is authored by an application and is skipped.
 ## Prerequisites
 
 - The parent [`service-bus`](../README.md) namespace + queues already deployed.
-- The inbound app's webhook trigger is **global** — no Team/channel ids needed.
-  It fires for any chat or channel message visible to the user who authorizes
-  the Teams connection. Scope is therefore controlled by *whose* account you
-  authorize with.
+- The inbound app's `chatmessagetrigger` webhook is **global across chats** —
+  no Team/channel ids needed. It fires for any 1:1 or group **chat** message
+  visible to the user who authorizes the Teams connection (scope is controlled
+  by *whose* account authorizes). It does **not** cover team channel posts —
+  add a separate channel-bound trigger app if you need those.
 - For the outbound app (Chat mode): the recipient UPN or AAD object id.
 
 ## Deploy
@@ -93,13 +94,13 @@ connections need no interaction — they use managed identity.
 | `inboundQueueName` | `botnexus-inbound` | Queue BotNexus listens on. |
 | `agentId` | `keel` | Target BotNexus agent. |
 
-> The webhook trigger is global (any chat/channel the authorizing user can
-> see); there are no team/channel binding params. `conversationId` is derived
-> at runtime from each message payload. The friendly team/channel/chat name
-> field paths for the `newmessagetrigger` beta payload are best-effort with
-> fallbacks to the raw conversation id — validate against the first live
-> message and tune the `Set_conversation_label` / `Set_team_label` `coalesce`
-> expressions if a name comes through blank.
+> The `chatmessagetrigger` webhook is global across chats (any 1:1 or group
+> chat the authorizing user is in); there are no team/channel binding params,
+> and team channel posts are not covered. `conversationId` is derived at
+> runtime from each chat payload as `'Teams - {topic or chat id}'`. Group
+> chats usually expose a `topic`; 1:1 chats fall back to the chat id —
+> validate against the first live message and tune the `Set_conversation_label`
+> `coalesce` expression if the label comes through as a raw id.
 
 ## See also
 

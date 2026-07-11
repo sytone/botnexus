@@ -2,16 +2,14 @@ targetScope = 'resourceGroup'
 
 // Logic App: Teams message --> BotNexus inbound queue (routed to an agent).
 //
-// Uses the Teams "When a new message is added to a chat or channel" WEBHOOK
-// trigger (ApiConnectionWebhook / newmessagetrigger), so it fires on ANY new
-// message across chats and channels the authorizing user can see -- it is NOT
-// bound to a single team/channel.
+// Uses the Teams "When a new chat message is added" WEBHOOK trigger
+// (chatmessagetrigger), so it fires on ANY new chat message (1:1 + group) the
+// authorizing user is in -- no thread binding. Chats only; team channels are
+// NOT covered by this trigger (they need a channel-bound trigger).
 //
-// Because the trigger is global, the conversationId is derived AT RUNTIME from
-// each message payload:
-//   conversationId = 'Teams - {chat topic OR team name - channel name}'
-// falling back to the raw conversation/thread id when a friendly name is not
-// present on the payload.
+// The conversationId is derived AT RUNTIME from each chat payload:
+//   conversationId = 'Teams - {chat topic OR chat id}'
+// group chats usually expose a topic; 1:1 chats fall back to the chat id.
 //
 // Loop guard: messages authored by the Flow bot / an application (no human
 // from.user.id) are skipped, so a reply posted back into a chat/channel does
@@ -103,8 +101,10 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
       }
       triggers: {
-        // "When a new message is added to a chat or channel" (any thread type).
-        When_a_new_message_is_added: {
+        // "When a new chat message is added" (chatmessagetrigger) -- fires for
+        // ALL chats (1:1 + group) the authorizing user is in. No thread
+        // binding, real-time webhook. Chats only (no team channels).
+        When_a_new_chat_message_is_added: {
           type: 'ApiConnectionWebhook'
           inputs: {
             host: {
@@ -115,30 +115,22 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             body: {
               notificationUrl: '@{listCallbackUrl()}'
             }
-            path: '/beta/subscriptions/newmessagetrigger/threadType/@{encodeURIComponent(\'\')}'
+            path: '/beta/subscriptions/chatmessagetrigger'
           }
         }
       }
       actions: {
-        // Derive a friendly conversationId from whatever the payload carries.
-        // Channel messages tend to expose channelIdentity + team/channel names;
-        // chats tend to expose a topic. Fall back to the raw conversation id.
+        // Derive a friendly conversationId from the chat payload. Group chats
+        // expose a topic; 1:1 chats often do not, so fall back to the chat id.
         Set_conversation_label: {
           type: 'Compose'
           runAfter: {}
-          inputs: '@coalesce(triggerBody()?[\'channelIdentity\']?[\'channelDisplayName\'], triggerBody()?[\'channelData\']?[\'channel\']?[\'name\'], triggerBody()?[\'topic\'], triggerBody()?[\'subject\'], triggerBody()?[\'chatId\'], triggerBody()?[\'conversationId\'], triggerBody()?[\'channelIdentity\']?[\'channelId\'], \'Unknown\')'
-        }
-        Set_team_label: {
-          type: 'Compose'
-          runAfter: {
-            Set_conversation_label: [ 'Succeeded' ]
-          }
-          inputs: '@coalesce(triggerBody()?[\'teamDisplayName\'], triggerBody()?[\'channelData\']?[\'team\']?[\'name\'], \'\')'
+          inputs: '@coalesce(triggerBody()?[\'topic\'], triggerBody()?[\'subject\'], triggerBody()?[\'chatId\'], triggerBody()?[\'conversationId\'], \'Chat\')'
         }
         Skip_if_from_bot: {
           type: 'If'
           runAfter: {
-            Set_team_label: [ 'Succeeded' ]
+            Set_conversation_label: [ 'Succeeded' ]
           }
           expression: {
             and: [
@@ -170,8 +162,8 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 method: 'post'
                 path: '/@{encodeURIComponent(encodeURIComponent(\'${inboundQueueName}\'))}/messages'
                 body: {
-                  // conversationId = 'Teams - {team - }conversationLabel'
-                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(triggerBody()?[\'body\']?[\'content\'], triggerBody()?[\'content\'], \'\')), \',"conversationId":"Teams - \', if(empty(outputs(\'Set_team_label\')), \'\', concat(outputs(\'Set_team_label\'), \' - \')), outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(triggerBody()?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
+                  // conversationId = 'Teams - {chat topic or id}'
+                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(triggerBody()?[\'body\']?[\'content\'], triggerBody()?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(triggerBody()?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
                   ContentType: 'application/json'
                 }
               }
