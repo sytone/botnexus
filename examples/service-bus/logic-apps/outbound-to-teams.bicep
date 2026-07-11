@@ -60,15 +60,17 @@ resource serviceBusConnection 'Microsoft.Web/connections@2016-06-01' = {
   kind: 'V1'
   properties: {
     displayName: '${logicAppName}-servicebus'
-    #disable-next-line BCP037
-    parameterValueType: 'Alternative' // managed-identity auth
     api: {
       id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location, 'servicebus')
     }
-    customParameterValues: {}
-    #disable-next-line BCP037
-    alternativeParameterValues: {
-      namespaceEndpoint: 'sb://${serviceBusNamespaceName}.servicebus.windows.net/'
+    #disable-next-line BCP089
+    parameterValueSet: {
+      name: 'managedIdentityAuth'
+      values: {
+        namespaceEndpoint: {
+          value: 'sb://${serviceBusNamespaceName}.servicebus.windows.net/'
+        }
+      }
     }
   }
 }
