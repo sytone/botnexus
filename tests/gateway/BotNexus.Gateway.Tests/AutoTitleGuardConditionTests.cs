@@ -325,7 +325,75 @@ public sealed class AutoTitleGuardConditionTests
         logger.Entries.ShouldNotContain(e => e.Level == LogLevel.Information);
     }
 
-    private sealed class CaptureLogger : ILogger
+    // ═══════════════════════════════════════════════════════════════════
+    // #1903 — agent-initiated (user=0, assistant>=1) fallback
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void ShouldTrigger_AgentInitiated_NoUser_ReturnsAssistantSeedWithNullUser()
+    {
+        // Agent/cron/sub-agent-initiated conversations: the first message sender is an agent, so
+        // DeriveChannelPostRole stamps it Assistant and the user count stays 0 forever. #1903 must
+        // still produce a titling candidate (userText=null -> assistant-only prompt).
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.Assistant, Content = "Starting the nightly backup job now." }
+        };
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBe("Starting the nightly backup job now.");
+    }
+
+    [Fact]
+    public void ShouldTrigger_AgentInitiated_MultipleAssistant_SeedsFromFirstNonEmpty()
+    {
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.Assistant, Content = "" },
+            new() { Role = MessageRole.Assistant, Content = "First real assistant line." },
+            new() { Role = MessageRole.Assistant, Content = "A later assistant line." }
+        };
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBe("First real assistant line.");
+    }
+
+    [Fact]
+    public void ShouldTrigger_AgentInitiated_LogsInfo_NotGuardSkip()
+    {
+        var logger = new CaptureLogger();
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.Assistant, Content = "Agent opening message." }
+        };
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history, logger);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBe("Agent opening message.");
+        // Fires the agent-initiated INFO note, not the nothing-to-title skip.
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Information && e.Message.Contains("agent-initiated"));
+    }
+
+    [Fact]
+    public void ShouldTrigger_NoAssistant_StillSkips_ZeroZero()
+    {
+        // 0 user AND 0 assistant is the only genuine nothing-to-title case.
+        var logger = new CaptureLogger();
+        var history = new List<SessionEntry>();
+
+        var (userText, assistantText) = ConversationAutoTitleService.ShouldTriggerAutoTitle(history, logger);
+
+        userText.ShouldBeNull();
+        assistantText.ShouldBeNull();
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Information && e.Message.Contains("nothing to title"));
+    }
+
+        private sealed class CaptureLogger : ILogger
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

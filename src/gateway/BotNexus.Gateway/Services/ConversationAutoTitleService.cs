@@ -56,14 +56,15 @@ public sealed class ConversationAutoTitleService
     /// </summary>
     /// <param name="conversationId">Conversation to title.</param>
     /// <param name="agentId">Agent that owns the conversation.</param>
-    /// <param name="userText">The first user message text.</param>
+    /// <param name="userText">The first user message text, or null for an agent-initiated
+    /// conversation with no user turn (assistant-only titling seed).</param>
     /// <param name="assistantText">The first assistant response text.</param>
     /// <param name="preferredModelId">Optional model ID from auxiliary.titling config.</param>
     /// <param name="timeoutSeconds">Per-call timeout in seconds from auxiliary.titling config; non-positive falls back to 30.</param>
     public void TriggerBestEffort(
         ConversationId conversationId,
         AgentId agentId,
-        string userText,
+        string? userText,
         string assistantText,
         string? preferredModelId,
         int timeoutSeconds = 30)
@@ -93,7 +94,7 @@ public sealed class ConversationAutoTitleService
     internal async Task<string?> GenerateAndSaveAsync(
         ConversationId conversationId,
         AgentId agentId,
-        string userText,
+        string? userText,
         string assistantText,
         string? preferredModelId,
         int timeoutSeconds,
@@ -228,30 +229,61 @@ public sealed class ConversationAutoTitleService
         // conversation once it reached a second user turn, leaving it stuck on the default title.
         // Re-titling stays gated on the default title in GenerateAndSaveAsync, so firing on a later
         // turn only ever re-titles a still-default-titled conversation.
-        if (userEntries.Count < 1 || assistantEntries.Count < 1)
+        // #1903: only genuinely nothing-to-title (0 user AND 0 assistant) should skip. An
+        // assistant-only conversation (agent/cron/sub-agent-initiated: first sender is an agent,
+        // so DeriveChannelPostRole stamps it Assistant and the user count stays 0 forever) must
+        // still produce a titling candidate via the assistant-only prompt.
+        if (assistantEntries.Count < 1)
         {
             // Log at INFO so the no-fire path is diagnosable: previously a count mismatch skipped
             // silently and gave no signal for conversations stuck on the default title.
             logger?.LogInformation(
-                "Auto-title guard skipped: count mismatch (user={UserCount}, assistant={AssistantCount}); first user+assistant exchange not yet present",
+                "Auto-title guard skipped: nothing to title (user={UserCount}, assistant={AssistantCount}); no assistant response present yet",
                 userEntries.Count, assistantEntries.Count);
             return (null, null);
         }
 
-        var userText = userEntries[0].Content;
         // Pick the last assistant entry with non-empty content (handles tool-call turns
         // where intermediate assistant entries have empty content).
         var assistantText = assistantEntries
             .LastOrDefault(e => !string.IsNullOrWhiteSpace(e.Content))?.Content
             ?? assistantEntries[^1].Content;
 
+        if (userEntries.Count < 1)
+        {
+            // Agent-initiated: no user turn. Seed titling from the first assistant entry's
+            // content and signal userText=null so BuildPrompt uses the assistant-only prompt.
+            var assistantSeed = assistantEntries
+                .FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.Content))?.Content
+                ?? assistantEntries[0].Content;
+            logger?.LogInformation(
+                "Auto-title: agent-initiated conversation (user=0, assistant={AssistantCount}); titling from assistant content",
+                assistantEntries.Count);
+            return (null, assistantSeed);
+        }
+
+        var userText = userEntries[0].Content;
+
         return (userText, assistantText);
     }
 
-    internal static string BuildPrompt(string userText, string assistantText)
-        => $"In 5 words or fewer, give a descriptive title for this conversation based on the " +
-           $"first user message and assistant response. Return only the title, no punctuation, " +
-           $"no quotes.\n\nUser: {userText}\n\nAssistant: {assistantText}";
+    internal static string BuildPrompt(string? userText, string assistantText)
+    {
+        // Agent-initiated conversations (cron/sub-agent/agent-first) have no user turn: the first
+        // message sender is an agent, so DeriveChannelPostRole stamps it Assistant and the user
+        // count stays 0 forever (#1903). Fall back to an assistant-only titling prompt so those
+        // conversations can still title off the assistant's opening content.
+        if (string.IsNullOrWhiteSpace(userText))
+        {
+            return "In 5 words or fewer, give a descriptive title for this conversation based on the " +
+                   "following assistant response. Return only the title, no punctuation, " +
+                   $"no quotes.\n\nAssistant: {assistantText}";
+        }
+
+        return "In 5 words or fewer, give a descriptive title for this conversation based on the " +
+               "first user message and assistant response. Return only the title, no punctuation, " +
+               $"no quotes.\n\nUser: {userText}\n\nAssistant: {assistantText}";
+    }
 
     internal static string SanitizeTitle(string raw)
     {

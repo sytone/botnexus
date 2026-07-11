@@ -756,6 +756,87 @@ public sealed class GatewayHostTests
         handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // #1903 gap #2: HandleSteeringAsync adds a User entry but historically never invoked titling,
+    // so a portal follow-up (Steer) on a still-default-titled conversation could never title. This
+    // drives the steer path end-to-end and asserts the persisted title flips off the default,
+    // proving the titling hook is now wired into the steering path.
+    [Fact]
+    public async Task DispatchAsync_WithSteerControl_DefaultTitledConversation_TriggersAutoTitle()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var agentId = BotNexus.Domain.Primitives.AgentId.From("agent-a");
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("session-steer-1");
+        var convId = BotNexus.Domain.Primitives.ConversationId.From("c_steerautotitle1");
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(agentId);
+        handle.SetupGet(h => h.SessionId).Returns(sessionId);
+        handle.SetupGet(h => h.IsRunning).Returns(true);
+        handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance(agentId, sessionId))
+            .Returns(new AgentInstance
+            {
+                InstanceId = "agent-a::session-steer-1",
+                AgentId = agentId,
+                SessionId = sessionId,
+                IsolationStrategy = "in-process"
+            });
+        supervisor.Setup(s => s.GetOrCreateAsync(agentId, sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var seeded = await sessions.GetOrCreateAsync(sessionId, agentId);
+        // Prior assistant turn already present so the steer's new user entry completes an exchange.
+        seeded.Session.ConversationId = convId;
+        seeded.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "earlier assistant answer" });
+        await sessions.SaveAsync(seeded);
+
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.SaveAsync(
+            new BotNexus.Gateway.Abstractions.Models.Conversation
+            {
+                ConversationId = convId,
+                AgentId = agentId,
+                Title = ConversationAutoTitleService.DefaultTitle,
+            },
+            CancellationToken.None);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            conversationStore: conversationStore,
+            llmClient: CreateFakeTitleLlmClient("Steered Chat Title"));
+
+        await host.DispatchAsync(CreateMessage(
+            "follow up question",
+            sessionId: sessionId.Value,
+            metadata: new Dictionary<string, object?> { ["control"] = "steer" }));
+
+        handle.Verify(h => h.SteerAsync("follow up question", It.IsAny<CancellationToken>()), Times.Once);
+
+        // TriggerBestEffort is fire-and-forget; poll for the persisted title change.
+        string? finalTitle = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
+            finalTitle = conv?.Title;
+            if (!ConversationAutoTitleService.IsDefaultTitle(finalTitle))
+                break;
+            await Task.Delay(100);
+        }
+
+        finalTitle.ShouldBe("Steered Chat Title");
+    }
+
     [Fact]
     public async Task DispatchAsync_WithSteerControl_WhenAgentNotRunning_DoesNotFallThroughToNormalProcessing()
     {

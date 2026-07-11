@@ -19,6 +19,10 @@
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.GitHubModels\BotNexus.Agent.Providers.GitHubModels.csproj" />
+    <!-- #1903 D3: real-LLM end-to-end auto-title test drives the Gateway titling service against
+         the github-models provider, so it needs the Gateway service + an in-memory conversation store. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
   </ItemGroup>
 
   <ItemGroup>
