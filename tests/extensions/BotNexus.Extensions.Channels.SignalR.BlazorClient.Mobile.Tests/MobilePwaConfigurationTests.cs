@@ -82,6 +82,30 @@ public sealed class MobilePwaConfigurationTests
     }
 
     [Fact]
+    public void IndexHtml_contains_manifest_link()
+    {
+        var path = Path.Combine(WwwrootPath, "index.html");
+        var content = File.ReadAllText(path);
+
+        Assert.Contains("rel=\"manifest\"", content);
+    }
+
+    [Fact]
+    public void IndexHtml_manifest_link_sends_credentials()
+    {
+        // Behind an auth reverse proxy the browser fetches the manifest without
+        // credentials by default, so the proxy 302s it to OAuth and the manifest
+        // is treated as invalid (no install button). crossorigin="use-credentials"
+        // forces the session cookie to be sent. Regression guard for #1918.
+        var path = Path.Combine(WwwrootPath, "index.html");
+        var content = File.ReadAllText(path);
+
+        Assert.Matches(
+            "<link[^>]*rel=\"manifest\"[^>]*crossorigin=\"use-credentials\"|<link[^>]*crossorigin=\"use-credentials\"[^>]*rel=\"manifest\"",
+            content);
+    }
+
+    [Fact]
     public void Csproj_uses_published_content_service_worker_form()
     {
         var content = File.ReadAllText(CsprojPath);
