@@ -50,6 +50,16 @@ public static class TelemetryServiceCollectionExtensions
         // Proof-of-life smoke counter (botnexus.host.starts) increments on boot.
         services.AddHostedService<HostStartupMetrics>();
 
+        // Metrics read surface (#1853): the snapshot collector subscribes a MeterListener to the
+        // canonical BotNexus scope so the read endpoint can serve current instrument values without
+        // an external collector. Registered as a singleton so accumulation spans the process
+        // lifetime, and unconditionally (like IMetrics) so the endpoint resolves regardless of the
+        // enabled flag. The endpoint contributor is discovered from DI by MapExtensionEndpoints,
+        // so the route is wired without any Program.cs edit (disjoint from PR #1920).
+        services.AddSingleton<Snapshot.MetricsSnapshotCollector>();
+        services.AddHostedService(sp => sp.GetRequiredService<Snapshot.MetricsSnapshotCollector>());
+        services.AddSingleton<BotNexus.Gateway.Abstractions.Extensions.IEndpointContributor, Snapshot.TelemetryEndpointContributor>();
+
         if (!config.Enabled)
         {
             return services;

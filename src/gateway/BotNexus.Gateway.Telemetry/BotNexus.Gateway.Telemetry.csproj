@@ -11,6 +11,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Gateway.Telemetry.Abstractions\BotNexus.Gateway.Telemetry.Abstractions.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Telemetry.Tests" />
   </ItemGroup>
 
   <ItemGroup>
