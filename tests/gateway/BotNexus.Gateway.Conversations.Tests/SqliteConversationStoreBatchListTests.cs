@@ -186,6 +186,48 @@ public sealed class SqliteConversationStoreBatchListTests
         store.ReadRoundTripCount.ShouldBe(0);
     }
 
+    [Fact]
+    public async Task Materialize_OmitsConversationDeletedBetweenSelectAndHydrate_DoesNotThrow()
+    {
+        // Reproduces the /api/conversations 500 ("Conversation '…' disappeared during enumeration"):
+        // a list select captures an id, then a concurrent deleter (e.g. the cron noop-session prune,
+        // issue #1754) removes the row before the hydrate pass runs. The vanished id must be omitted
+        // from the result, not throw and 500 the whole request.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var kept = CreateConversation(Agent("agent-a"), "kept", CreateBinding("telegram", "k-1"));
+        await store.CreateAsync(kept);
+
+        // An id that was "seen" by the select but no longer exists in the store (deleted mid-flight)
+        // and is not present in the read-through cache.
+        var vanished = ConversationId.Create().Value;
+        var orderedIds = new[] { kept.ConversationId.Value, vanished };
+
+        // Use a fresh store so nothing is pre-cached; the vanished id will miss both DB and cache.
+        var reader = fixture.CreateStore();
+        var result = await reader.MaterializeOrderedForTestAsync(orderedIds);
+
+        result.Count.ShouldBe(1);
+        result.Single().ConversationId.ShouldBe(kept.ConversationId);
+        result.Single().ChannelBindings.ShouldHaveSingleItem().ChannelAddress.Value.ShouldBe("k-1");
+    }
+
+    [Fact]
+    public async Task Materialize_AllIdsVanished_ReturnsEmpty_DoesNotThrow()
+    {
+        // Degenerate case: every captured id was deleted before hydration. The result is an empty
+        // list, never an InvalidOperationException.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var orderedIds = new[] { ConversationId.Create().Value, ConversationId.Create().Value };
+
+        var result = await store.MaterializeOrderedForTestAsync(orderedIds);
+
+        result.ShouldBeEmpty();
+    }
+
     private static AgentId Agent(string id) => AgentId.From(id);
 
     private static Conversation CreateConversation(AgentId agentId, string title, params ChannelBinding[] bindings)

@@ -56,6 +56,23 @@ public sealed class SqliteConversationStore : IConversationStore
     /// <summary>Test hook (issue #1626): resets <see cref="ReadRoundTripCount"/> to zero.</summary>
     internal void ResetReadRoundTripCount() => Interlocked.Exchange(ref _readRoundTrips, 0);
 
+    /// <summary>
+    /// Test hook: runs the shared <see cref="MaterializeOrderedAsync"/> hydrate pass against an
+    /// explicit, caller-supplied ordered id set so tests can reproduce the concurrent-delete race
+    /// deterministically — an id captured by a list select that is then deleted before hydration
+    /// (e.g. the cron noop-session prune, issue #1754) must be omitted from the result rather than
+    /// throwing a 500 (regression for the enumeration-race fix).
+    /// </summary>
+    internal async Task<IReadOnlyList<Conversation>> MaterializeOrderedForTestAsync(
+        IReadOnlyList<string> orderedIds,
+        CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return await MaterializeOrderedAsync(connection, orderedIds, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Default bound for the in-memory conversation cache (entries).</summary>
     public const int DefaultConversationCacheCapacity = 1000;
 
@@ -934,11 +951,20 @@ public sealed class SqliteConversationStore : IConversationStore
                 _cache.Set(id, CloneConversation(conversation));
         }
 
+        // An id present in the ordered set can legitimately vanish between the id-select in the
+        // caller (ListAsync / ListForCitizenAsync) and this hydrate pass: a concurrent deleter —
+        // notably the noop cron-session prune (issue #1754) or any DeleteAsync racing a live portal
+        // poller — can remove the row after we captured its id but before LoadConversationsByIdsAsync
+        // ran. That row is simply absent from the batch load and never enters the cache. Treat it as
+        // a concurrent delete and omit it from the list rather than throwing: a hard throw here turns
+        // the whole GET /api/conversations request into a 500 (issue #1642 originally introduced the
+        // throw). Omitting the deleted conversation is the correct read-side semantics for a delete
+        // that committed mid-enumeration.
         var result = new List<Conversation>(orderedIds.Count);
         foreach (var id in orderedIds)
         {
             if (!_cache.TryGet(id, out var cached))
-                throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
+                continue;
             result.Add(BackfillWorldId(CloneConversation(cached))!);
         }
 
