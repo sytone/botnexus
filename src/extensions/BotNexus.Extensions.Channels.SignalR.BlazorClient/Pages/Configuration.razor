@@ -55,7 +55,7 @@
                 @* The selected section is rendered by the generic schema-driven SchemaForm fed by
                    GET /api/config/schema (config-parity PBI 4/6 of #1579). SectionKey narrows the
                    render to a single root subtree. *@
-                <SchemaForm Schema="_schema" Value="_config" SectionKey="ActiveSection" ValueChanged="OnConfigChanged" />
+                <SchemaForm Schema="_schema" Value="_config" SectionKey="@ActiveSection" ValueChanged="OnConfigChanged" />
             </div>
         </div>
     }

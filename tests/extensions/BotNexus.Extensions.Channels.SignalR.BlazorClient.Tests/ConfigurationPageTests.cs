@@ -41,7 +41,11 @@ public sealed class ConfigurationPageTests : IDisposable
         var cut = _ctx.Render<Configuration>();
         cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        // Edit a gateway field (gateway is in raw, so it is eligible for save).
+        // Edit a gateway field (gateway is in raw, so it is eligible for save). Navigate to the
+        // Gateway section first -- the sidebar (#1892) renders one section at a time and sections
+        // sort alphabetically here (no x-ui-order), so "cron" is the default, not "gateway".
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
         cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
 
         cut.Find("button.primary").Click();
@@ -109,6 +113,9 @@ public sealed class ConfigurationPageTests : IDisposable
 
         cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
 
+        // Sections sort alphabetically (no x-ui-order); navigate to Gateway before editing its field.
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
         cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:8888");
 
         cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());

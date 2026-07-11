@@ -145,9 +145,21 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
             cut.Find("[data-testid='field-gateway.apiKeys.k1.apiKey'] input");
         });
 
+        // Regression guard for the string-literal SectionKey binding bug: SectionKey="ActiveSection"
+        // (missing @) passed the C# property NAME as a literal, so SchemaForm fell back to the whole
+        // tree and every section rendered at once. With the section active, OTHER sections' fields
+        // must be ABSENT -- not merely the wanted ones present (they are a subset of the full tree).
+        Assert.Empty(cut.FindAll("[data-testid='field-providers.openai.apiKey']"));
+        Assert.Empty(cut.FindAll("[data-testid='field-cron.enabled']"));
+        Assert.Empty(cut.FindAll("[data-testid='field-channels.signalr.type']"));
+
         // Provider dictionary entries live under the Providers section.
         cut.Find(".config-sidebar-item[data-section='providers']").Click();
         cut.WaitForAssertion(() => cut.Find("[data-testid='field-providers.openai.apiKey'] input"));
+
+        // And now the Gateway fields must be gone -- only the Providers subtree renders.
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl']"));
+        Assert.Empty(cut.FindAll("[data-testid='field-cron.enabled']"));
     }
 
     [Fact]
