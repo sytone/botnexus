@@ -140,7 +140,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             method: 'post'
             path: '/httprequest'
             headers: {
-              Uri: 'beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}'
+              Uri: 'me/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}'
               Method: 'GET'
               ContentType: 'application/json'
             }
@@ -162,7 +162,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             method: 'post'
             path: '/httprequest'
             headers: {
-              Uri: 'beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}'
+              Uri: 'me/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}'
               Method: 'GET'
               ContentType: 'application/json'
             }
