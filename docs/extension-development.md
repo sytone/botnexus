@@ -882,6 +882,8 @@ public sealed class GitHubExtensionRegistrar : IExtensionRegistrar
 
 ## Dependency Injection Patterns
 
+> **Emitting telemetry?** Extensions get the same telemetry seam the platform core uses — metrics auto-prefixed to otnexus.ext.<id>.* and durable usage isolated to your extension id in the shared store. See [Extension Telemetry](extensions/telemetry.md).
+
 ### Convention-Based Registration (Automatic)
 
 If your extension assembly contains **exactly one** type implementing `IChannel` or `ITool`, the loader will automatically register it without requiring an `IExtensionRegistrar`. (LLM providers are not currently extension-loaded — see the [Creating a Provider Extension](#creating-a-provider-extension) note.)
