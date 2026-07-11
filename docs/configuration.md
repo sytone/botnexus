@@ -1115,7 +1115,39 @@ The optional `telemetry` section controls the in-process OpenTelemetry metrics/t
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | When `true`, wires the OpenTelemetry `MeterProvider`/`TracerProvider` for the canonical `"BotNexus"` meter scope. When `false`, the `IMetrics` facade is still registered (so call sites resolve) but no OpenTelemetry providers are attached. |
 
-This PBI lands only the in-process foundation; remote exporter (OTLP) configuration is deferred to a later change, so there is no egress/endpoint surface here yet.
+When `enabled` is `true` the in-process metrics plane also exposes a **read endpoint** for local inspection and portal consumption (see below). Remote exporter (OTLP) configuration is deferred to a later change, so there is no network egress by default.
+
+#### Metrics read endpoint
+
+`GET /api/telemetry/metrics` returns a JSON snapshot of the current values of every instrument on the canonical `"BotNexus"` meter scope (the PBI3 hot-path metrics: `botnexus.turns.total`, `botnexus.turn.duration`, `botnexus.tool.calls`, `botnexus.provider.requests`, `botnexus.provider.tokens`, `botnexus.cron.runs`, `botnexus.channel.messages`, `botnexus.sessions.active`, `botnexus.host.starts`, etc.). This lets operators and the portal read metrics locally without standing up an external OpenTelemetry collector.
+
+The snapshot is produced by an in-process `MeterListener` (`MetricsSnapshotCollector`) that accumulates measurements per instrument and per bounded tag-set:
+
+- **Counters / up-down counters** report a running `value` (sum of deltas).
+- **Histograms** additionally report `count`, `sum`, `min`, and `max`.
+- **Observable gauges** (e.g. `botnexus.sessions.active`) are sampled on demand at request time and report their latest `value`.
+
+Example response:
+
+```json
+{
+  "generatedAt": "2026-07-11T02:00:00Z",
+  "scope": "BotNexus",
+  "instruments": [
+    {
+      "name": "botnexus.turns.total",
+      "kind": "counter",
+      "unit": "{turn}",
+      "description": "Total agent turns processed, tagged by agent, channel, and outcome.",
+      "measurements": [
+        { "tags": { "agent": "farnsworth", "channel": "signalr", "outcome": "success" }, "value": 12 }
+      ]
+    }
+  ]
+}
+```
+
+When `telemetry.enabled` is `false` the endpoint still resolves and returns a well-formed empty snapshot.
 
 ---
 
