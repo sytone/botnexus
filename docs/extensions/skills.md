@@ -8,7 +8,7 @@ The Skills extension provides the runtime infrastructure for loading, managing, 
 - **Injects skill context** into agent system prompts via the prompt pipeline hook system
 - **Provides the `skills` tool** with `list`, `load`, and `view_file` actions for on-demand skill activation
 - **Exposes explicit alias tools** (`skills_list`, `skill_view`) that map to the multi-action `skills` tool for better model ergonomics
-- **Tracks skill usage telemetry** (view/use/patch counts) in SQLite, readable via the skills API
+- **Tracks skill usage telemetry** (view/use/patch counts) in SQLite, readable via the skills API (see [Extension Telemetry](telemetry.md) for the sanctioned seam extensions use)
 - **Manages skill lifecycle** — loading, caching, and unloading skill content
 
 ## Enabling

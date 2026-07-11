@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Api.Extensions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
@@ -107,6 +108,15 @@ catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationE
 // facade, the botnexus.host.starts smoke counter, and the "BotNexus" meter/tracing scope.
 // AddOpenTelemetry() is idempotent, so the tracing block below augments the same builder.
 builder.Services.AddBotNexusTelemetry(builder.Configuration);
+
+// Extension telemetry seam (#1852): the shared durable usage-telemetry store plus the
+// IExtensionTelemetryFactory that mints per-extension namespaced metrics/usage handles. This
+// gives extensions the same telemetry seam the platform core uses (no privileged internal-only
+// path): metrics auto-prefixed to botnexus.ext.<id>.*, durable usage isolated to the extension
+// id namespace within one shared SQLite file (so extensions never new up their own database).
+var usageTelemetryPath = System.IO.Path.Combine(
+    BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "data", "usage-telemetry.db");
+builder.Services.AddExtensionTelemetry(usageTelemetryPath);
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>

@@ -133,6 +133,7 @@ nav:
       - Sub-Agent Spawning: features/sub-agent-spawning.md
   - Extensions:
       - Extension Development: extension-development.md
+      - Extension Telemetry: extensions/telemetry.md
       - Media Handlers: extensions/media-handlers.md
   - Observability: observability.md
   - Skills: skills.md
