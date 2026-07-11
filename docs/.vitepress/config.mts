@@ -10,6 +10,8 @@ export default defineConfig({
   ignoreDeadLinks: [
     // Source code links (referenced in dev docs but not part of docs build)
     /\/src\//,
+    // Repo scripts referenced from dev docs but outside the docs source tree
+    /\/scripts\//,
     // srcExclude'd content directories: referenced as related reading but not
     // part of the deployed docs build (kept in repo, see srcExclude below)
     /\/training\//,
