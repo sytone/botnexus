@@ -2,14 +2,20 @@ targetScope = 'resourceGroup'
 
 // Logic App: Teams message --> BotNexus inbound queue (routed to an agent).
 //
-// Listens to a Teams channel (or chat) and, for each new human message,
-// publishes a BotNexus inbound envelope onto the Service Bus INBOUND queue.
-// The conversationId is set to 'Teams - {Team Name - Channel Name}' so all
-// messages from the same channel land in one BotNexus conversation.
+// Uses the Teams "When a new message is added to a chat or channel" WEBHOOK
+// trigger (ApiConnectionWebhook / newmessagetrigger), so it fires on ANY new
+// message across chats and channels the authorizing user can see -- it is NOT
+// bound to a single team/channel.
 //
-// Loop guard: messages authored by the Flow bot / the outbound Logic App are
-// skipped, so a reply posted back into the same channel does not re-trigger
-// this workflow.
+// Because the trigger is global, the conversationId is derived AT RUNTIME from
+// each message payload:
+//   conversationId = 'Teams - {chat topic OR team name - channel name}'
+// falling back to the raw conversation/thread id when a friendly name is not
+// present on the payload.
+//
+// Loop guard: messages authored by the Flow bot / an application (no human
+// from.user.id) are skipped, so a reply posted back into a chat/channel does
+// not re-trigger this workflow.
 //
 // Auth: the Logic App's system-assigned managed identity is granted
 // Azure Service Bus Data Sender on the inbound queue (least-privilege,
@@ -29,26 +35,11 @@ param serviceBusNamespaceName string
 @description('Inbound queue name BotNexus listens on.')
 param inboundQueueName string = 'botnexus-inbound'
 
-@description('Target Team (group) id to listen to.')
-param teamId string
-
-@description('Target channel id within the Team to listen to.')
-param channelId string
-
-@description('Human-readable Team name, used to build the conversation id.')
-param teamName string
-
-@description('Human-readable channel name, used to build the conversation id.')
-param channelName string
-
 @description('Target BotNexus agent id (e.g. keel). Left blank routes to the default agent.')
 param agentId string = 'keel'
 
 // Azure Service Bus Data Sender role.
 var dataSenderRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39')
-
-// conversationId = 'Teams - {Team - Channel}'
-var conversationId = 'Teams - ${teamName} - ${channelName}'
 
 resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' existing = {
   name: serviceBusNamespaceName
@@ -110,41 +101,57 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
       }
       triggers: {
-        When_a_new_channel_message_is_added: {
-          type: 'ApiConnection'
-          recurrence: {
-            frequency: 'Minute'
-            interval: 1
-          }
+        // "When a new message is added to a chat or channel" (any thread type).
+        When_a_new_message_is_added: {
+          type: 'ApiConnectionWebhook'
           inputs: {
             host: {
               connection: {
                 name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
               }
             }
-            method: 'get'
-            path: '/beta/teams/@{encodeURIComponent(\'${teamId}\')}/channels/@{encodeURIComponent(\'${channelId}\')}/messages/delta'
+            body: {
+              notificationUrl: '@{listCallbackUrl()}'
+            }
+            path: '/beta/subscriptions/newmessagetrigger/threadType/@{encodeURIComponent(\'\')}'
           }
         }
       }
       actions: {
+        // Derive a friendly conversationId from whatever the payload carries.
+        // Channel messages tend to expose channelIdentity + team/channel names;
+        // chats tend to expose a topic. Fall back to the raw conversation id.
+        Set_conversation_label: {
+          type: 'Compose'
+          runAfter: {}
+          inputs: '@coalesce(triggerBody()?[\'channelIdentity\']?[\'channelDisplayName\'], triggerBody()?[\'channelData\']?[\'channel\']?[\'name\'], triggerBody()?[\'topic\'], triggerBody()?[\'subject\'], triggerBody()?[\'chatId\'], triggerBody()?[\'conversationId\'], triggerBody()?[\'channelIdentity\']?[\'channelId\'], \'Unknown\')'
+        }
+        Set_team_label: {
+          type: 'Compose'
+          runAfter: {
+            Set_conversation_label: [ 'Succeeded' ]
+          }
+          inputs: '@coalesce(triggerBody()?[\'teamDisplayName\'], triggerBody()?[\'channelData\']?[\'team\']?[\'name\'], \'\')'
+        }
         Skip_if_from_bot: {
           type: 'If'
-          runAfter: {}
+          runAfter: {
+            Set_team_label: [ 'Succeeded' ]
+          }
           expression: {
             and: [
-              {
-                not: {
-                  equals: [
-                    '@toLower(coalesce(triggerBody()?[\'from\']?[\'application\']?[\'displayName\'], \'\'))'
-                    'flow bot'
-                  ]
-                }
-              }
+              // Must have a human author.
               {
                 equals: [
                   '@empty(coalesce(triggerBody()?[\'from\']?[\'user\']?[\'id\'], \'\'))'
                   false
+                ]
+              }
+              // Must NOT be an application/bot author (loop guard).
+              {
+                equals: [
+                  '@empty(coalesce(triggerBody()?[\'from\']?[\'application\']?[\'id\'], \'\'))'
+                  true
                 ]
               }
             ]
@@ -161,7 +168,8 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 method: 'post'
                 path: '/@{encodeURIComponent(encodeURIComponent(\'${inboundQueueName}\'))}/messages'
                 body: {
-                  ContentData: '@{base64(json(concat(\'{"content":\', string(coalesce(triggerBody()?[\'body\']?[\'content\'], \'\')), \',"conversationId":"${conversationId}","agentId":"${agentId}","senderId":"\', coalesce(triggerBody()?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\')))}'
+                  // conversationId = 'Teams - {team - }conversationLabel'
+                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(triggerBody()?[\'body\']?[\'content\'], triggerBody()?[\'content\'], \'\')), \',"conversationId":"Teams - \', if(empty(outputs(\'Set_team_label\')), \'\', concat(outputs(\'Set_team_label\'), \' - \')), outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(triggerBody()?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
                   ContentType: 'application/json'
                 }
               }
@@ -214,6 +222,3 @@ output logicAppPrincipalId string = logicApp.identity.principalId
 
 @description('Teams API connection resource id — authorize this once in the portal.')
 output teamsConnectionId string = teamsConnection.id
-
-@description('The conversation id all messages from this channel will use.')
-output conversationId string = conversationId

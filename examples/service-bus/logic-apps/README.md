@@ -8,7 +8,7 @@ the [parent example](../README.md).
 | Template | Direction | What it does |
 |----------|-----------|--------------|
 | [`outbound-to-teams.bicep`](./outbound-to-teams.bicep) | BotNexus → Teams | Listens on the **outbound** queue and posts each agent reply into Teams (as the Flow bot) — a 1:1 personal chat by default, or a channel. |
-| [`teams-to-inbound.bicep`](./teams-to-inbound.bicep) | Teams → BotNexus | Listens to a Teams channel and publishes each new human message onto the **inbound** queue, with `conversationId = 'Teams - {Team Name - Channel Name}'`. |
+| [`teams-to-inbound.bicep`](./teams-to-inbound.bicep) | Teams → BotNexus | Uses the **"When a new message is added to a chat or channel"** webhook trigger (global — any chat/channel the authorizing user sees). Publishes each new human message onto the **inbound** queue, with `conversationId` derived at runtime as `'Teams - {Team - Channel}'` (channels) or `'Teams - {chat topic/id}'` (chats). |
 
 ## Security model
 
@@ -24,18 +24,20 @@ the [parent example](../README.md).
 
 ## Loop protection
 
-The inbound app skips messages authored by the Flow bot (and messages with no
-human `from.user.id`). Without this, a reply that the outbound app posts back
-into the same channel would re-trigger the inbound app → infinite loop. **Keep
-the outbound target and the inbound listen-scope distinct** (e.g. outbound to a
-personal chat, inbound from a channel) for a clean, loop-free topology.
+The inbound app skips messages authored by an application/bot (no human
+`from.user.id`, or a non-empty `from.application.id`). Without this, a reply that
+the outbound app posts back into a chat/channel would re-trigger the inbound app
+→ infinite loop. Because the inbound trigger is **global**, this bot-author
+filter is the primary loop protection: the Flow-bot reply from the outbound app
+is authored by an application and is skipped.
 
 ## Prerequisites
 
 - The parent [`service-bus`](../README.md) namespace + queues already deployed.
-- For the inbound app: the **Team (group) id** and **channel id** to watch.
-  - `az rest --method get --url "https://graph.microsoft.com/v1.0/me/joinedTeams" --query "value[].{name:displayName,id:id}"`
-  - `az rest --method get --url "https://graph.microsoft.com/v1.0/teams/<teamId>/channels" --query "value[].{name:displayName,id:id}"`
+- The inbound app's webhook trigger is **global** — no Team/channel ids needed.
+  It fires for any chat or channel message visible to the user who authorizes
+  the Teams connection. Scope is therefore controlled by *whose* account you
+  authorize with.
 - For the outbound app (Chat mode): the recipient UPN or AAD object id.
 
 ## Deploy
@@ -89,9 +91,15 @@ connections need no interaction — they use managed identity.
 |-------|---------|-------|
 | `serviceBusNamespaceName` | — | Namespace in this RG. |
 | `inboundQueueName` | `botnexus-inbound` | Queue BotNexus listens on. |
-| `teamId` / `channelId` | — | The Team + channel to watch. |
-| `teamName` / `channelName` | — | Build `conversationId = 'Teams - {teamName} - {channelName}'`. |
 | `agentId` | `keel` | Target BotNexus agent. |
+
+> The webhook trigger is global (any chat/channel the authorizing user can
+> see); there are no team/channel binding params. `conversationId` is derived
+> at runtime from each message payload. The friendly team/channel/chat name
+> field paths for the `newmessagetrigger` beta payload are best-effort with
+> fallbacks to the raw conversation id — validate against the first live
+> message and tune the `Set_conversation_label` / `Set_team_label` `coalesce`
+> expressions if a name comes through blank.
 
 ## See also
 
