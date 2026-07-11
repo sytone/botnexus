@@ -120,12 +120,54 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
       }
       actions: {
-        // Derive a friendly conversationId from the chat payload. Group chats
-        // expose a topic; 1:1 chats often do not, so fall back to the chat id.
+        // The chatmessagetrigger delivers only a Graph change-notification
+        // (pointers: conversationId + messageId, encryptedContent null). It has
+        // NO message body and NO sender. We must fetch the full message from
+        // Graph before we can read content / author / loop-guard.
+        Get_message_details: {
+          type: 'ApiConnection'
+          runAfter: {}
+          inputs: {
+            host: {
+              connection: {
+                name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
+              }
+            }
+            method: 'get'
+            path: '/beta/graphhttprequest'
+            queries: {
+              method: 'GET'
+              uri: 'https://graph.microsoft.com/beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}'
+            }
+          }
+        }
+        // Best-effort chat topic for the conversation label (group chats have a
+        // topic; 1:1 chats return null -> we fall back to the chat id).
+        Get_chat_details: {
+          type: 'ApiConnection'
+          runAfter: {
+            Get_message_details: [ 'Succeeded' ]
+          }
+          inputs: {
+            host: {
+              connection: {
+                name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
+              }
+            }
+            method: 'get'
+            path: '/beta/graphhttprequest'
+            queries: {
+              method: 'GET'
+              uri: 'https://graph.microsoft.com/beta/chats/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'conversationId\'])}'
+            }
+          }
+        }
         Set_conversation_label: {
           type: 'Compose'
-          runAfter: {}
-          inputs: '@coalesce(triggerBody()?[\'topic\'], triggerBody()?[\'subject\'], triggerBody()?[\'chatId\'], triggerBody()?[\'conversationId\'], \'Chat\')'
+          runAfter: {
+            Get_chat_details: [ 'Succeeded' ]
+          }
+          inputs: '@coalesce(body(\'Get_chat_details\')?[\'topic\'], triggerBody()?[\'value\'][0]?[\'conversationId\'], \'Chat\')'
         }
         Skip_if_from_bot: {
           type: 'If'
@@ -134,17 +176,17 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           }
           expression: {
             and: [
-              // Must have a human author.
+              // Must have a human author on the FETCHED message.
               {
                 equals: [
-                  '@empty(coalesce(triggerBody()?[\'from\']?[\'user\']?[\'id\'], \'\'))'
+                  '@empty(coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'id\'], \'\'))'
                   false
                 ]
               }
               // Must NOT be an application/bot author (loop guard).
               {
                 equals: [
-                  '@empty(coalesce(triggerBody()?[\'from\']?[\'application\']?[\'id\'], \'\'))'
+                  '@empty(coalesce(body(\'Get_message_details\')?[\'from\']?[\'application\']?[\'id\'], \'\'))'
                   true
                 ]
               }
@@ -163,7 +205,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 path: '/@{encodeURIComponent(encodeURIComponent(\'${inboundQueueName}\'))}/messages'
                 body: {
                   // conversationId = 'Teams - {chat topic or id}'
-                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(triggerBody()?[\'body\']?[\'content\'], triggerBody()?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(triggerBody()?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
+                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(body(\'Get_message_details\')?[\'body\']?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
                   ContentType: 'application/json'
                 }
               }
