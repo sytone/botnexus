@@ -22,6 +22,18 @@ public sealed class InstallCommandTests
     }
 
     [Fact]
+    public void BuildCloneArguments_UsesNoLocalToAvoidObjectStoreByteCopy()
+    {
+        // Act
+        var args = InstallCommand.BuildCloneArguments("/tmp/source", "/tmp/target");
+
+        // Assert - --no-local must appear before the -- terminator so git negotiates a
+        // reachable pack rather than copying the entire objects/ dir across volumes
+        args.ShouldContain("--no-local");
+        args.IndexOf("--no-local").ShouldBeLessThan(args.IndexOf(" -- "));
+    }
+
+    [Fact]
     public void ValidateRepo_RepoStartingWithDash_IsRejected()
     {
         // Act
