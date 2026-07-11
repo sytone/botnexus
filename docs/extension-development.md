@@ -882,7 +882,7 @@ public sealed class GitHubExtensionRegistrar : IExtensionRegistrar
 
 ## Dependency Injection Patterns
 
-> **Emitting telemetry?** Extensions get the same telemetry seam the platform core uses — metrics auto-prefixed to otnexus.ext.<id>.* and durable usage isolated to your extension id in the shared store. See [Extension Telemetry](extensions/telemetry.md).
+> **Emitting telemetry?** Extensions get the same telemetry seam the platform core uses — metrics auto-prefixed to `botnexus.ext.<id>.*` and durable usage isolated to your extension id in the shared store. See [Extension Telemetry](extensions/telemetry.md).
 
 ### Convention-Based Registration (Automatic)
 
