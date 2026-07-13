@@ -106,11 +106,30 @@ internal sealed class AgentCommands
             context.ExitCode = await ExecuteShowAsync(id, configPath, asJson, verbose, CancellationToken.None);
         });
 
+        var exportIdArgument = new Argument<string>("id", "Agent ID.");
+        var exportOutputOption = new Option<string?>("--output", () => null, "Output file path (defaults to <id>.agent.json in the current directory).");
+        var exportCommand = new Command("export", "Export an agent as a redacted agentTemplate/v1 JSON template (safe to share; contains no secrets).")
+        {
+            exportIdArgument,
+            exportOutputOption
+        };
+        exportCommand.SetHandler(async context =>
+        {
+            var id = context.ParseResult.GetValueForArgument(exportIdArgument);
+            var output = context.ParseResult.GetValueForOption(exportOutputOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var home = CliPaths.ResolveTarget(target);
+            var configPath = Path.Combine(home, "config.json");
+            context.ExitCode = await ExecuteExportAsync(id, configPath, output, verbose, CancellationToken.None);
+        });
+
         command.AddCommand(listCommand);
         command.AddCommand(addCommand);
         command.AddCommand(removeCommand);
         command.AddCommand(wizardCommand);
         command.AddCommand(showCommand);
+        command.AddCommand(exportCommand);
         return command;
     }
 
@@ -381,6 +400,92 @@ internal sealed class AgentCommands
             AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
 
         return 0;
+    }
+
+    public async Task<int> ExecuteExportAsync(string id, string configPath, string? outputPath, bool verbose, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Agent ID is required.");
+            return 1;
+        }
+
+        var config = await LoadConfigRequiredAsync(configPath, cancellationToken);
+        if (config is null)
+            return 1;
+
+        if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
+            return 1;
+        }
+
+        var agent = config.Agents[matchedId];
+        var provider = agent.Provider ?? string.Empty;
+
+        var template = new AgentTemplate
+        {
+            Agent = new AgentTemplateDescriptor
+            {
+                DisplayName = agent.DisplayName,
+                Description = agent.Description,
+                Emoji = agent.Emoji,
+                ModelId = agent.Model,
+                ApiProvider = provider,
+                SystemPrompt = ResolveSystemPrompt(agent, configPath),
+                ToolIds = agent.ToolIds is { Count: > 0 } ? new List<string>(agent.ToolIds) : null,
+                Thinking = agent.Thinking,
+                ContextWindow = agent.ContextWindow
+            },
+            RequiredSecrets = BuildRequiredSecrets(provider)
+        };
+
+        var json = template.ToJson();
+
+        var destination = string.IsNullOrWhiteSpace(outputPath)
+            ? Path.Combine(Directory.GetCurrentDirectory(), $"{matchedId}.agent.json")
+            : outputPath;
+
+        var destinationDir = Path.GetDirectoryName(Path.GetFullPath(destination));
+        if (!string.IsNullOrEmpty(destinationDir))
+            Directory.CreateDirectory(destinationDir);
+
+        await File.WriteAllTextAsync(destination, json, cancellationToken);
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Exported agent [green]{Markup.Escape(matchedId)}[/] to [dim]{Markup.Escape(destination)}[/].");
+        if (verbose)
+            AnsiConsole.MarkupLine($"[dim]Schema: {AgentTemplate.CurrentSchema}; requiredSecrets: {template.RequiredSecrets.Count}[/]");
+
+        return 0;
+    }
+
+    private static string? ResolveSystemPrompt(AgentDefinitionConfig agent, string configPath)
+    {
+        if (string.IsNullOrWhiteSpace(agent.SystemPromptFile))
+            return null;
+
+        var homeDir = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
+        var promptPath = Path.IsPathRooted(agent.SystemPromptFile)
+            ? agent.SystemPromptFile
+            : Path.Combine(homeDir, agent.SystemPromptFile);
+
+        return File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
+    }
+
+    private static List<RequiredSecret> BuildRequiredSecrets(string provider)
+    {
+        if (string.IsNullOrWhiteSpace(provider))
+            return [];
+
+        return
+        [
+            new RequiredSecret
+            {
+                Provider = provider,
+                Key = "apiKey",
+                Description = $"API key / credential for provider '{provider}'. Supply via providers.{provider}.apiKey or auth.json."
+            }
+        ];
     }
 
     private static async Task<PlatformConfig?> LoadConfigRequiredAsync(CancellationToken cancellationToken)
