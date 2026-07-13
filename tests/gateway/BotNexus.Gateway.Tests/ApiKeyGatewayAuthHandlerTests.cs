@@ -93,6 +93,79 @@ public sealed class ApiKeyGatewayAuthHandlerTests
         result.Identity!.CallerId.ShouldBe("gateway-api-key");
     }
 
+    [Fact]
+    public async Task AuthenticateAsync_WithSatelliteApiKey_ReturnsSatelliteIdentity()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Satellites = new Dictionary<string, SatelliteConfig>
+                {
+                    ["sat-1"] = new()
+                    {
+                        Enabled = true,
+                        ApiKey = "satellite-secret",
+                        DisplayName = "Satellite One"
+                    }
+                }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "satellite-secret" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("satellite:sat-1");
+        result.Identity.IsAdmin.ShouldBeFalse();
+        result.Identity.Permissions.ShouldContain("satellite:connect");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithMultipleKeys_ResolvesEachToCorrectIdentity()
+    {
+        var config = new PlatformConfig
+        {
+            ApiKey = "legacy-secret",
+            Gateway = new GatewaySettingsConfig
+            {
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["tenant-a"] = new() { ApiKey = "key-a", TenantId = "tenant-a", CallerId = "caller-a" },
+                    ["tenant-b"] = new() { ApiKey = "key-b", TenantId = "tenant-b", CallerId = "caller-b" }
+                }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var legacy = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "legacy-secret" }));
+        legacy.IsAuthenticated.ShouldBeTrue();
+        legacy.Identity!.CallerId.ShouldBe("gateway-api-key");
+
+        var a = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "key-a" }));
+        a.IsAuthenticated.ShouldBeTrue();
+        a.Identity!.CallerId.ShouldBe("caller-a");
+
+        var b = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "key-b" }));
+        b.IsAuthenticated.ShouldBeTrue();
+        b.Identity!.CallerId.ShouldBe("caller-b");
+
+        var bad = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "key-c" }));
+        bad.IsAuthenticated.ShouldBeFalse();
+        bad.FailureReason.ShouldBe("Invalid API key.");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithPrefixOfValidKey_ReturnsFailure()
+    {
+        var handler = new ApiKeyGatewayAuthHandler("secret", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "secr" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldBe("Invalid API key.");
+    }
+
     private static GatewayAuthContext CreateContext(IReadOnlyDictionary<string, string>? headers = null)
         => new()
         {
