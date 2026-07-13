@@ -10,6 +10,28 @@
         <span class="activity-dashboard-subtitle">Active conversations across the platform</span>
     </div>
 
+    @if (_summary is { } summary)
+    {
+        <div class="activity-summary-strip" data-testid="activity-summary-strip" role="group" aria-label="Activity summary">
+            <div class="activity-summary-stat" data-testid="activity-summary-conversations">
+                <span class="activity-summary-value">@summary.ConversationCount</span>
+                <span class="activity-summary-label">@(summary.ConversationCount == 1 ? "conversation" : "conversations")</span>
+            </div>
+            <div class="activity-summary-stat" data-testid="activity-summary-agents">
+                <span class="activity-summary-value">@summary.AgentCount</span>
+                <span class="activity-summary-label">@(summary.AgentCount == 1 ? "agent" : "agents")</span>
+            </div>
+            <div class="activity-summary-stat" data-testid="activity-summary-scheduled">
+                <span class="activity-summary-value">@summary.ScheduledCount</span>
+                <span class="activity-summary-label">scheduled</span>
+            </div>
+            <div class="activity-summary-stat activity-summary-stat--freshness" data-testid="activity-summary-freshness">
+                <span class="activity-summary-value" title="@(summary.LatestActivity?.ToString("o"))">@FreshnessLabel(summary.LatestActivity)</span>
+                <span class="activity-summary-label">latest activity</span>
+            </div>
+        </div>
+    }
+
     <div class="activity-filter-bar" role="group" aria-label="Filter activity" data-testid="activity-filter-bar">
         <button type="button"
                 class="activity-filter-btn @(_filter.IncludeCron ? "active" : "")"
@@ -119,6 +141,7 @@
 
     private ActivityDashboardFilter _filter = new();
     private IReadOnlyList<ActivityRow>? _rows;
+    private ActivitySummary? _summary;
     private bool _isLoading;
     private bool _loadError;
     private CancellationTokenSource? _pollCts;
@@ -139,6 +162,7 @@
         {
             var conversations = await Rest.GetAllConversationsAsync();
             _rows = ActivityDashboardProjection.Project(conversations, _filter, DateTimeOffset.UtcNow);
+            _summary = ActivityDashboardProjection.Summarize(_rows);
             _loadError = false;
         }
         catch
@@ -238,6 +262,10 @@
             : age.TotalHours < 24 ? $"{(int)age.TotalHours}h ago"
             : $"{(int)age.TotalDays}d ago";
     }
+
+    /// <summary>Relative label for the summary strip's freshness stat, with an em-dash when idle.</summary>
+    private static string FreshnessLabel(DateTimeOffset? ts) =>
+        ts is { } value ? FormatRelative(value) : "\u2014";
 
     public void Dispose()
     {

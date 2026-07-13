@@ -4878,6 +4878,41 @@ h3.conversation-title.editable:hover {
     font-size: 0.9rem;
 }
 
+.activity-summary-strip {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.activity-summary-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.6rem 1rem;
+    min-width: 6rem;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+    background: var(--surface-2, #2a2a2a);
+}
+
+.activity-summary-value {
+    font-size: 1.35rem;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.activity-summary-stat--freshness .activity-summary-value {
+    font-size: 1.05rem;
+}
+
+.activity-summary-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted, #888);
+}
+
 .activity-filter-bar {
     display: flex;
     gap: 0.5rem;

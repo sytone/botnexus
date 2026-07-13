@@ -86,6 +86,26 @@ public sealed record ActivityRow(
     bool IsCron);
 
 /// <summary>
+/// At-a-glance summary of the currently-projected dashboard rows: how much work is live, how many
+/// distinct agents are involved, how many rows are scheduled (cron), and how fresh the freshest
+/// activity is. Derived from the already-filtered <see cref="ActivityRow"/> set so the strip always
+/// reflects exactly what the table shows under the active filters. Kept as an immutable record so it
+/// is trivially unit-testable and cheap to hand to the component.
+/// </summary>
+/// <param name="ConversationCount">Number of conversations (rows) currently shown.</param>
+/// <param name="AgentCount">Number of distinct agents involved across the shown conversations.</param>
+/// <param name="ScheduledCount">How many of the shown conversations are cron/scheduled.</param>
+/// <param name="LatestActivity">
+/// The freshest last-activity timestamp across the shown rows, or <see langword="null"/> when there
+/// are no rows. Lets the UI answer "how recently did anything happen?" without scanning the table.
+/// </param>
+public sealed record ActivitySummary(
+    int ConversationCount,
+    int AgentCount,
+    int ScheduledCount,
+    DateTimeOffset? LatestActivity);
+
+/// <summary>
 /// Pure projection for the Home / Activity dashboard. Kept as a static, dependency-free helper so it
 /// is unit-testable without bUnit and shared by any future surface (mobile, admin) that needs the
 /// same active-conversation activity view. Mirrors the "pure ordering/filter helper" convention
@@ -176,6 +196,43 @@ public static class ActivityDashboardProjection
                 x.Dto.BindingCount,
                 x.IsCron))
             .ToList();
+    }
+
+    /// <summary>
+    /// Summarizes an already-projected set of dashboard rows into the at-a-glance stat strip. Pure and
+    /// dependency-free so it is unit-testable and can be reused by any surface that renders the same
+    /// activity view. Counts distinct involved agents across every row (so a multi-agent conversation
+    /// contributes each participant once to the fleet-wide agent count).
+    /// </summary>
+    /// <param name="rows">The rows already produced by <see cref="Project"/>.</param>
+    public static ActivitySummary Summarize(IReadOnlyList<ActivityRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+
+        if (rows.Count == 0)
+            return new ActivitySummary(0, 0, 0, null);
+
+        var distinctAgents = new HashSet<string>(StringComparer.Ordinal);
+        var scheduled = 0;
+        DateTimeOffset latest = DateTimeOffset.MinValue;
+
+        foreach (var row in rows)
+        {
+            foreach (var agentId in row.InvolvedAgents)
+                distinctAgents.Add(agentId);
+
+            if (row.IsCron)
+                scheduled++;
+
+            if (row.LastActivity > latest)
+                latest = row.LastActivity;
+        }
+
+        return new ActivitySummary(
+            rows.Count,
+            distinctAgents.Count,
+            scheduled,
+            latest == DateTimeOffset.MinValue ? null : latest);
     }
 
     private static bool MatchesStatus(string status, ActivityStatusFilter filter) => filter switch
