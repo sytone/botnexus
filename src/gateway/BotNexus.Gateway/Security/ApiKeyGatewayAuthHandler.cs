@@ -139,14 +139,26 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             return Task.FromResult(GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>."));
         }
 
-        if (!identitiesByApiKey.TryGetValue(presentedKey, out var identity))
+        // Resolve identity with a constant-time comparison. The dictionary is retained for
+        // identity storage, but acceptance is gated on a timing-safe comparison of each stored
+        // key against the presented key. We deliberately iterate ALL candidate keys and never
+        // early-return on a match so that runtime does not depend on which/whether a key matched
+        // (a data-dependent dictionary probe on the secret would otherwise leak timing).
+        GatewayCallerIdentity? matched = null;
+        foreach (var (storedKey, candidate) in identitiesByApiKey)
+        {
+            if (TimingSafe.Equals(storedKey, presentedKey))
+                matched = candidate;
+        }
+
+        if (matched is null)
         {
             EmitOutcome(success: false, actorId: presentedKey);
             return Task.FromResult(GatewayAuthResult.Failure("Invalid API key."));
         }
 
-        EmitOutcome(success: true, actorId: identity.CallerId);
-        return Task.FromResult(GatewayAuthResult.Success(identity));
+        EmitOutcome(success: true, actorId: matched.CallerId);
+        return Task.FromResult(GatewayAuthResult.Success(matched));
     }
 
     private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(
