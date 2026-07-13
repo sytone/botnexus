@@ -225,10 +225,10 @@ public sealed class ConversationGroupingTests : IDisposable
 
         var cut = RenderLayout();
 
-        var pinnedGroup = cut.Find("[data-testid='conversation-group-pinned']");
-        var pinButton = pinnedGroup.QuerySelector("[data-testid='conversation-pin-btn']");
-        Assert.NotNull(pinButton);
-        pinButton!.Click();
+        // Find the pin button fresh (not via a captured parent node, whose event-handler id can
+        // go stale after a render — bUnit throws UnknownEventHandlerIdException otherwise).
+        var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
+        pinButton.Click();
 
         _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false);
     }
