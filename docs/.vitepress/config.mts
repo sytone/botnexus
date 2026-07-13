@@ -121,6 +121,8 @@ export default defineConfig({
           { text: 'QMD (Knowledge Base)', link: '/extensions/qmd' },
           { text: 'Debug Tool', link: '/extensions/debug-tool' },
           { text: 'Media Handlers', link: '/extensions/media-handlers' },
+          { text: 'Agent 365 Channel', link: '/extensions/agent365' },
+          { text: 'Extension Telemetry', link: '/extensions/telemetry' },
         ],
       },
       {
@@ -153,6 +155,8 @@ export default defineConfig({
           { text: 'WebUI Connection', link: '/development/webui-connection' },
           { text: 'Security-Sensitive File Guard', link: '/development/security-sensitive-file-guard' },
           { text: 'Git Worktree Config Hardening', link: '/development/git-worktree-config-hardening' },
+          { text: 'Gateway Crash Diagnostics', link: '/development/gateway-crash-diagnostics' },
+          { text: 'Running Impacted Tests', link: '/development/running-tests' },
         ],
       },
       {
