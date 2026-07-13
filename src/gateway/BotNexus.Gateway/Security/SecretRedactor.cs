@@ -40,6 +40,10 @@ public sealed partial class SecretRedactor : ISecretRedactor
         // Stripe live/test secret keys (sk_live_, sk_test_)
         StripeSecretKeyRegex(),
 
+        // Telegram bot tokens (<digits>:<35-char base64url>) — must come before the generic
+        // patterns so the whole token is redacted rather than a trailing fragment.
+        TelegramBotTokenRegex(),
+
         // Authorization: Bearer <token> HTTP headers
         AuthorizationBearerRegex(),
 
@@ -140,6 +144,16 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
     [GeneratedRegex(@"sk_(live|test)_[A-Za-z0-9]{20,}", RegexOptions.Compiled)]
     private static partial Regex StripeSecretKeyRegex();
+
+    // Telegram bot tokens: a numeric bot id, a colon, then a 35-char base64url secret
+    // (e.g. "123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"). This id:secret shape is
+    // distinctive enough to match without an anchor, and matching mid-string is required
+    // because TelegramBotApiClient embeds the token directly after the literal "bot" in
+    // its endpoint/file URLs (https://api.telegram.org/bot{token}/...). Whole-string
+    // redaction (BotNexus never chunks) means the OpenClaw chunk-boundary variant does
+    // not apply here.
+    [GeneratedRegex(@"\d{6,12}:[A-Za-z0-9_\-]{35}", RegexOptions.Compiled)]
+    private static partial Regex TelegramBotTokenRegex();
 
     // Capture group 1 = prefix up to and including "Bearer "; group 2 = the token itself.
     // Replace entire match so the header name is preserved: "Authorization: Bearer [REDACTED]"
