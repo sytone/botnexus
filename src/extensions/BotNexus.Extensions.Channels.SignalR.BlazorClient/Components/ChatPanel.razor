@@ -2,9 +2,11 @@
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
+@inject ISlashCommandDispatcher CommandDispatcher
 @implements IDisposable
 @using System.Text.Json
 @using System.Text.Encodings.Web
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands
 
 <div class="chat-panel">
     <header class="chat-header">
@@ -585,17 +587,9 @@ private bool IsStreaming =>
     private ElementReference _toolModalDialog;
     private bool _toolModalFocused;
 
-    private sealed record SlashCommand(string Name, string Description);
-
-    private static readonly SlashCommand[] s_allCommands =
-    [
-        new("/new", "Reset session and start fresh"),
-        new("/compact", "Compact session to reduce tokens"),
-        new("/clear", "Clear local messages"),
-        new("/prompts", "Browse reusable prompt templates")
-    ];
-
-    private SlashCommand[] _filteredCommands = [];
+    // #1949: the slash-command surface and its execute-mapping now live in the shared
+    // BlazorClient.Core registry/dispatcher so desktop and mobile stay in lock-step.
+    private IReadOnlyList<SlashCommand> _filteredCommands = [];
     private bool _cancellingTitle;
 
     private void StartEditTitle()
@@ -884,10 +878,8 @@ private bool IsStreaming =>
         if (text.StartsWith('/') && !text.Contains(' '))
         {
             _showCommandPalette = true;
-            _filteredCommands = text == "/"
-                ? s_allCommands
-                : s_allCommands.Where(c => c.Name.StartsWith(text, StringComparison.OrdinalIgnoreCase)).ToArray();
-            _selectedCommand = _filteredCommands.Length > 0 ? _filteredCommands[0].Name : "";
+            _filteredCommands = SlashCommandRegistry.Filter(text);
+            _selectedCommand = _filteredCommands.Count > 0 ? _filteredCommands[0].Name : "";
         }
         else
         {
@@ -901,21 +893,7 @@ private bool IsStreaming =>
         _showCommandPalette = false;
         _inputText = "";
 
-        switch (cmd.Name)
-        {
-            case "/new":
-                await Interaction.ResetSessionAsync(AgentId);
-                break;
-            case "/compact":
-                await Interaction.CompactSessionAsync(AgentId);
-                break;
-            case "/clear":
-                Interaction.ClearLocalMessages(AgentId);
-                break;
-            case "/prompts":
-                await Interaction.SendMessageAsync(AgentId, "/prompts");
-                break;
-        }
+        await CommandDispatcher.ExecuteAsync(AgentId, cmd);
     }
 
     private async Task OpenConfig()
@@ -1109,7 +1087,7 @@ private bool IsStreaming =>
 
         if (e is { Key: "Enter", ShiftKey: false })
         {
-            if (_showCommandPalette && _filteredCommands.Length > 0)
+            if (_showCommandPalette && _filteredCommands.Count > 0)
             {
                 var cmd = _filteredCommands.FirstOrDefault(c => c.Name == _selectedCommand) ?? _filteredCommands[0];
                 await ExecuteCommand(cmd);
@@ -1128,7 +1106,7 @@ private bool IsStreaming =>
             else if (IsStreaming)
                 await AbortAgent();
         }
-        else if (e is { Key: "Tab" } && _showCommandPalette && _filteredCommands.Length > 0)
+        else if (e is { Key: "Tab" } && _showCommandPalette && _filteredCommands.Count > 0)
         {
             _inputText = _filteredCommands[0].Name + " ";
             _showCommandPalette = false;
