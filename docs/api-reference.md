@@ -117,12 +117,26 @@ Configure production origins in `config.json`:
 
 **Endpoint:** `GET /api/agents`
 
-**Description:** Retrieve a list of all configured agents.
+**Description:** Retrieve a list of registered agents. By default only first-class,
+user-facing agents are returned. Runtime-spawned sub-agents and built-in platform
+archetype agents (researcher, coder, planner, reviewer, writer, analyst) are excluded
+so the portal agent picker is not cluttered with infrastructure descriptors.
+
+**Query parameters:**
+- `includeSubAgents` (bool, optional, default `false`) — include runtime-spawned
+  sub-agent descriptors (e.g. `"Farnsworth (coder)"`). Useful for diagnostics.
+- `includeBuiltin` (bool, optional, default `false`) — include built-in platform
+  archetype agents that serve as `spawn_subagent` / `agent_converse` targets.
 
 **Request:**
 ```http
 GET /api/agents
 X-Api-Key: your-api-key
+```
+
+To include everything (parity with the previous unfiltered behaviour):
+```http
+GET /api/agents?includeSubAgents=true&includeBuiltin=true
 ```
 
 **Response:** 200 OK

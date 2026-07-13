@@ -48,9 +48,33 @@ public sealed class AgentsController : ControllerBase
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
-    /// <summary>Lists all registered agents.</summary>
+    /// <summary>
+    /// Lists registered agents. By default returns only first-class, user-facing agents:
+    /// runtime-spawned sub-agents (<see cref="AgentKind.SubAgent"/>) and built-in platform
+    /// archetype agents (<c>metadata.builtin == true</c>) are excluded so the portal agent
+    /// picker is not cluttered with infrastructure descriptors.
+    /// </summary>
+    /// <param name="includeSubAgents">
+    /// When <c>true</c>, include runtime-spawned sub-agent descriptors (e.g. "Farnsworth (coder)").
+    /// These are ephemeral children created via <c>spawn_subagent</c> and are hidden by default.
+    /// Useful for diagnostics / observability of what sub-agents exist.
+    /// </param>
+    /// <param name="includeBuiltin">
+    /// When <c>true</c>, include built-in platform archetype agents (researcher, coder, planner,
+    /// reviewer, writer, analyst). These are spawn/converse targets rather than top-level
+    /// user-created agents and are hidden by default.
+    /// </param>
     [HttpGet]
-    public ActionResult<IReadOnlyList<AgentDescriptor>> List() => Ok(_registry.GetAll());
+    public ActionResult<IReadOnlyList<AgentDescriptor>> List(
+        [FromQuery] bool includeSubAgents = false,
+        [FromQuery] bool includeBuiltin = false)
+    {
+        var agents = _registry.GetAll()
+            .Where(a => includeSubAgents || a.Kind != AgentKind.SubAgent)
+            .Where(a => includeBuiltin || !a.IsBuiltIn)
+            .ToList();
+        return Ok(agents);
+    }
 
     /// <summary>Gets a specific agent by ID.</summary>
     [HttpGet("{agentId}")]
