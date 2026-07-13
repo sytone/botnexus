@@ -48,6 +48,8 @@
                 {
                     <button type="button"
                             class="workspace-btn workspace-btn-edit"
+                            disabled="@IsTruncated"
+                            title="@(IsTruncated ? "File is too large to edit safely in the portal. Open it locally." : null)"
                             @onclick="() => OnEditRequested.InvokeAsync()">
                         Edit
                     </button>
@@ -76,7 +78,11 @@
 </div>
 
 @code {
-    private const int MaxPreviewCharacters = 200_000;
+    // Aligned with the server read limit (WorkspaceController.MaximumFileReadBytes = 512 KiB).
+    // The server never returns more than this many bytes, so a lower client cap would
+    // otherwise flag a spurious truncation notice (and risk saving a truncated tail)
+    // on files the portal actually loaded in full. See issue #1969.
+    private const int MaxPreviewCharacters = 512 * 1024;
 
     [Parameter]
     public bool IsLoading { get; set; }
@@ -123,6 +129,9 @@
     private bool ShowClientTruncationNotice =>
         !string.IsNullOrEmpty(FileResponse?.Content)
         && FileResponse!.Content!.Length > MaxPreviewCharacters;
+
+    // Editing a truncated file would silently drop the unseen tail on save (issue #1969).
+    private bool IsTruncated => ShowServerTruncationNotice || ShowClientTruncationNotice;
 
     private string DisplayPath => string.IsNullOrWhiteSpace(FileResponse?.Path) ? "/" : FileResponse!.Path;
 

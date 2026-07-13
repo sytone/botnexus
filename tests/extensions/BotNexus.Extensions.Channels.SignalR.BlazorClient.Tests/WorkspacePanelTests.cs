@@ -46,7 +46,7 @@ public sealed class WorkspacePanelTests : IDisposable
     }
 
     [Fact]
-    public void First_render_initializes_splitter_with_legacy_default_width_baseline()
+    public void First_render_initializes_splitter_with_widened_default_width_baseline()
     {
         _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto("directory", "", [], null, null, null, null, null)));
@@ -56,10 +56,10 @@ public sealed class WorkspacePanelTests : IDisposable
         var invocation = Assert.Single(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.splitter.init");
         Assert.Equal("workspace-panel-agent-1", Assert.IsType<string>(invocation.Arguments[0]));
         Assert.Equal("bn-workspace-tree-width-agent-1", Assert.IsType<string>(invocation.Arguments[1]));
-        Assert.Equal(384, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
-        Assert.Equal(120, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
+        Assert.Equal(560, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
+        Assert.Equal(200, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
         Assert.Equal(0.7d, Convert.ToDouble(invocation.Arguments[4], CultureInfo.InvariantCulture), 3);
-        Assert.Equal(0.33d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
+        Assert.Equal(0.5d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
     }
 
     [Fact]
@@ -305,6 +305,85 @@ public sealed class WorkspacePanelTests : IDisposable
 
         // Small delay to confirm no reload fired
         cut.WaitForAssertion(() => callCount.ShouldBe(loadCountAfterMount));
+    }
+
+    [Fact]
+    public void Mid_size_file_below_server_limit_shows_no_truncation_notice_and_stays_editable()
+    {
+        // Issue #1969: a file larger than the old 200K client cap but under the
+        // 512 KiB server read limit is returned in full — it must NOT show the
+        // truncation banner, and Edit must remain enabled (saving is lossless).
+        var content = new string('x', 300_000);
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var path = callInfo.ArgAt<string?>(1);
+                return path switch
+                {
+                    null => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        "directory", "", [new WorkspaceEntryDto("big.md", "file", 300_000)],
+                        null, null, null, null, null)),
+                    "big.md" => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        "text", "big.md", null, content, 300_000, "utf-8", IsTruncated: false, Binary: null)),
+                    _ => Task.FromResult<WorkspaceResponseDto?>(null)
+                };
+            });
+
+        var cut = _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+        cut.WaitForAssertion(() => cut.Find("button[data-path='big.md']"));
+        cut.Find("button[data-path='big.md']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.ShouldNotContain("Content was truncated for safe preview");
+            var edit = cut.Find("button.workspace-btn-edit");
+            edit.HasAttribute("disabled").ShouldBeFalse();
+        });
+    }
+
+    [Fact]
+    public void Truncated_file_shows_notice_and_disables_edit()
+    {
+        // Issue #1969: a genuinely server-truncated file must show the banner and
+        // disable Edit so saving cannot silently drop the unseen tail.
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var path = callInfo.ArgAt<string?>(1);
+                return path switch
+                {
+                    null => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        "directory", "", [new WorkspaceEntryDto("huge.md", "file", 5_000_000)],
+                        null, null, null, null, null)),
+                    "huge.md" => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        "text", "huge.md", null, "partial", 5_000_000, "utf-8", IsTruncated: true, Binary: null)),
+                    _ => Task.FromResult<WorkspaceResponseDto?>(null)
+                };
+            });
+
+        var cut = _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+        cut.WaitForAssertion(() => cut.Find("button[data-path='huge.md']"));
+        cut.Find("button[data-path='huge.md']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.ShouldContain("Content was truncated for safe preview");
+            cut.Find("button.workspace-btn-edit").HasAttribute("disabled").ShouldBeTrue();
+        });
+    }
+
+    [Fact]
+    public void App_css_contains_full_height_editor_rule()
+    {
+        // Issue #1969: the edit textarea had no CSS at all and collapsed to 2 rows.
+        var cssPath = Path.Combine(
+            FindRepositoryRoot(),
+            "src", "extensions", "BotNexus.Extensions.Channels.SignalR.BlazorClient",
+            "wwwroot", "css", "app.css");
+
+        var css = File.ReadAllText(cssPath);
+
+        css.ShouldContain(".workspace-file-editor");
     }
 
     private static string FindRepositoryRoot()
