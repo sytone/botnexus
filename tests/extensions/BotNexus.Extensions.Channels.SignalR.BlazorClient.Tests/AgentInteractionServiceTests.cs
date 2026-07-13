@@ -474,6 +474,78 @@ public sealed class AgentInteractionServiceTests
         agent.Conversations.ContainsKey("conv-normal").ShouldBeFalse();
     }
 
+    // ── Pin tests ───────────────────────────────────────
+
+    [Fact]
+    public async Task SetConversationPinnedAsync_pins_and_updates_local_state()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Pin me",
+            IsPinned = false
+        };
+        _restClient.PinConversationAsync("conv-1", true, Arg.Any<CancellationToken>()).Returns(true);
+
+        await _service.SetConversationPinnedAsync("agent-1", "conv-1", pinned: true);
+
+        await _restClient.Received(1).PinConversationAsync("conv-1", true, Arg.Any<CancellationToken>());
+        agent.Conversations["conv-1"].IsPinned.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SetConversationPinnedAsync_unpins_and_updates_local_state()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Unpin me",
+            IsPinned = true
+        };
+        _restClient.PinConversationAsync("conv-1", false, Arg.Any<CancellationToken>()).Returns(true);
+
+        await _service.SetConversationPinnedAsync("agent-1", "conv-1", pinned: false);
+
+        await _restClient.Received(1).PinConversationAsync("conv-1", false, Arg.Any<CancellationToken>());
+        agent.Conversations["conv-1"].IsPinned.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SetConversationPinnedAsync_rolls_back_when_gateway_fails()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Pin me",
+            IsPinned = false
+        };
+        _restClient.PinConversationAsync("conv-1", true, Arg.Any<CancellationToken>()).Returns(false);
+
+        await _service.SetConversationPinnedAsync("agent-1", "conv-1", pinned: true);
+
+        // Optimistic flip is reverted when the persist call reports failure.
+        agent.Conversations["conv-1"].IsPinned.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SetConversationPinnedAsync_noops_when_already_in_desired_state()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Already pinned",
+            IsPinned = true
+        };
+
+        await _service.SetConversationPinnedAsync("agent-1", "conv-1", pinned: true);
+
+        await _restClient.DidNotReceive().PinConversationAsync(Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
     // ── Steering tests ────────────────────────────────────────────────────
 
     [Fact]

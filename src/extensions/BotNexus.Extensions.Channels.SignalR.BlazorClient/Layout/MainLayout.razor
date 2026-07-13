@@ -610,6 +610,14 @@
             </a>
             @if (!conversation.IsDefault && !agent.IsReadOnly)
             {
+                <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
+                        title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
+                        aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
+                        aria-pressed="@(conversation.IsPinned ? "true" : "false")"
+                        @onclick:stopPropagation="true"
+                        @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
+                    &#x1F4CC;
+                </button>
                 <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
                         title="@(conversation.IsVirtualSession ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
                         @onclick:stopPropagation="true"
@@ -695,6 +703,11 @@
         }
 
         await Interaction.ArchiveConversationAsync(agentId, conversationId);
+    }
+
+    private async Task SetConversationPinnedAsync(string agentId, string conversationId, bool pinned)
+    {
+        await Interaction.SetConversationPinnedAsync(agentId, conversationId, pinned);
     }
 
     private static string FormatConversationTimestamp(DateTimeOffset ts)

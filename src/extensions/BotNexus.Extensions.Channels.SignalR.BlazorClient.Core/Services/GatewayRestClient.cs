@@ -212,6 +212,18 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<bool> PinConversationAsync(string conversationId, bool pinned, CancellationToken ct = default)
+    {
+        EnsureConfigured();
+        var url = $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/pin";
+        // POST pins, DELETE unpins — mirrors the ConversationsController Pin/Unpin endpoints.
+        var response = pinned
+            ? await _http.PostAsync(url, content: null, ct)
+            : await _http.DeleteAsync(url, ct);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationResponseDto?> SetConversationOverrideAsync(
         string conversationId,
         SetConversationOverrideRequestDto request,

@@ -199,6 +199,41 @@ public sealed class ConversationGroupingTests : IDisposable
     }
 
     [Fact]
+    public void PinButton_Click_InvokesSetConversationPinned()
+    {
+        // Arrange: an unpinned normal conversation exposes a pin affordance.
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Pin Target", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        var cut = RenderLayout();
+
+        var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
+        pinButton.Click();
+
+        // Clicking pins the conversation via the interaction service (pinned: true).
+        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true);
+    }
+
+    [Fact]
+    public void PinButton_Click_OnPinnedConversation_Unpins()
+    {
+        // Arrange: an already-pinned conversation's pin button toggles it back off.
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Pinned Target", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, IsPinned: true)
+        );
+
+        var cut = RenderLayout();
+
+        var pinnedGroup = cut.Find("[data-testid='conversation-group-pinned']");
+        var pinButton = pinnedGroup.QuerySelector("[data-testid='conversation-pin-btn']");
+        Assert.NotNull(pinButton);
+        pinButton!.Click();
+
+        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false);
+    }
+
+    [Fact]
     public void NormalConversations_RenderedInConversationsGroup()
     {
         // Arrange: mix of pinned, normal, and cron conversations

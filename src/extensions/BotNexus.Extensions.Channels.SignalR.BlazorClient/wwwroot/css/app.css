@@ -3881,6 +3881,37 @@ details[open] > .thinking-summary::before {
     color: var(--error, #e55);
 }
 
+.conversation-pin-btn {
+    position: absolute;
+    right: 1.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.25rem;
+    /* Dim the pushpin glyph so it reads as an inactive action until pinned. */
+    filter: grayscale(1) opacity(0.6);
+}
+
+.conversation-list-item:hover .conversation-pin-btn {
+    opacity: 1;
+}
+
+.conversation-pin-btn:hover {
+    filter: none;
+}
+
+/* A pinned conversation keeps its pushpin visible (and coloured) even without hover
+   so the pinned state is obvious at a glance. */
+.conversation-pin-btn.pinned {
+    opacity: 1;
+    filter: none;
+}
+
 /* ── Conversation Group Headers ───────────────────────────────────────────────────────── */
 
 .conversation-group {

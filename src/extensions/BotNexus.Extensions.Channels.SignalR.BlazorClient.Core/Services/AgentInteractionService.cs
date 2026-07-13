@@ -495,6 +495,37 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    public async Task SetConversationPinnedAsync(string agentId, string conversationId, bool pinned)
+    {
+        var agent = _store.GetAgent(agentId);
+        if (agent is null) return;
+        if (!agent.Conversations.TryGetValue(conversationId, out var conversation)) return;
+        if (conversation.IsPinned == pinned) return;
+
+        // Optimistically flip local state so the conversation immediately re-groups under "Pinned"
+        // (or drops back out), then persist. Roll back if the gateway call fails.
+        var previousPinned = conversation.IsPinned;
+        conversation.IsPinned = pinned;
+        _store.NotifyChanged();
+
+        try
+        {
+            var success = await _restClient.PinConversationAsync(conversationId, pinned);
+            if (!success)
+            {
+                _logger.LogWarning("Pin toggle returned failure for {ConversationId}", Sanitise(conversationId));
+                conversation.IsPinned = previousPinned;
+                _store.NotifyChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SetConversationPinned failed for {ConversationId}", Sanitise(conversationId));
+            conversation.IsPinned = previousPinned;
+            _store.NotifyChanged();
+        }
+    }
+
     public async Task RefreshAgentsAsync()
     {
         try

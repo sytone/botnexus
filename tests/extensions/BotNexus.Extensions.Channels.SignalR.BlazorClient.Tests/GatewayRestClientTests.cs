@@ -165,6 +165,46 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task PinConversationAsync_pin_posts_to_pin_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/pin", "{}");
+
+        var success = await client.PinConversationAsync("conv1", pinned: true);
+
+        success.ShouldBeTrue();
+        handler.LastRequestMethod.ShouldBe("POST");
+        handler.LastRequestUrl.ShouldContain("/api/conversations/conv1/pin");
+    }
+
+    [Fact]
+    public async Task PinConversationAsync_unpin_deletes_pin_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/pin", "{}");
+
+        var success = await client.PinConversationAsync("conv1", pinned: false);
+
+        success.ShouldBeTrue();
+        handler.LastRequestMethod.ShouldBe("DELETE");
+        handler.LastRequestUrl.ShouldContain("/api/conversations/conv1/pin");
+    }
+
+    [Fact]
+    public async Task PinConversationAsync_encodes_cron_session_colon_id()
+    {
+        var (client, handler) = CreateClient();
+        const string conversationId = "cron-session:cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+        handler.SetResponse(Uri.EscapeDataString(conversationId), "{}");
+
+        var success = await client.PinConversationAsync(conversationId, pinned: true);
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain(Uri.EscapeDataString(conversationId));
+        handler.LastRequestUrl.ShouldEndWith("/pin");
+    }
+
+    [Fact]
     public async Task GetWorkspaceAsync_calls_workspace_root_endpoint()
     {
         var (client, handler) = CreateClient();
@@ -348,6 +388,7 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
 {
     private readonly Dictionary<string, string> _responses = new();
     public string LastRequestUrl { get; private set; } = string.Empty;
+    public string LastRequestMethod { get; private set; } = string.Empty;
 
     public void SetResponse(string urlPath, string json)
         => _responses[urlPath] = json;
@@ -355,6 +396,7 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         LastRequestUrl = request.RequestUri?.ToString() ?? string.Empty;
+        LastRequestMethod = request.Method.Method;
 
         foreach (var (path, json) in _responses)
         {
