@@ -1,5 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -9,21 +11,28 @@ namespace BotNexus.Cron.Actions;
 
 
 /// <summary>
-/// Optional post-turn skill-review loop (PBI5 of epic #1827). A configurable background pass -
+/// Optional periodic skill-review loop (PBI5 of epic #1827). A configurable background pass -
 /// sibling to the memory-dreaming/self-improvement loop (<see cref="MemoryDreamingCronAction"/>) -
-/// that, after a qualifying turn, dispatches a sub-agent with a RESTRICTED toolset to patch or
-/// create skills. The reviewer may only touch the skill surface (<c>skill_manage</c> plus
+/// that, once per period, reads a lookback window of the agent's session history, derives review
+/// signals from it, and (when they qualify) dispatches a sub-agent with a RESTRICTED toolset to
+/// patch or create skills. The reviewer may only touch the skill surface (<c>skill_manage</c> plus
 /// read/inspection tools); it may not run arbitrary <c>exec</c>/<c>write</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The pass is <b>config-gated and DEFAULT-OFF</b> so it is non-breaking. Enablement and the
-/// tool-call threshold are read from <see cref="CronJob.Metadata"/> (see <see cref="SkillReviewConfig"/>).
+/// The pass is <b>config-gated and DEFAULT-OFF</b> so it is non-breaking. Enablement, the
+/// tool-call threshold, and the lookback window are read from <see cref="CronJob.Metadata"/> (see
+/// <see cref="SkillReviewConfig"/>). Metadata carries <b>configuration only</b> - never per-turn
+/// signals. The signals are <b>derived at tick time</b> from the session transcripts the gateway
+/// already persists during normal operation (<see cref="SkillReviewSignals.FromSessions"/>), exactly
+/// as memory-dreaming derives its input from the daily notes that accumulate on disk. There is no
+/// separate per-turn producer to wire up: the session store <i>is</i> the producer.
 /// </para>
 /// <para>
-/// Trigger conditions (any one, when enabled): 5+ tool calls in the turn, a skill was loaded, the
-/// user corrected/frustrated the agent, a reusable workflow was discovered, <c>skill_manage</c>
-/// failed, or a loaded skill was found stale. See <see cref="ShouldTriggerReview"/>.
+/// Trigger conditions (any one, when enabled): the aggregate tool-call count across the window met
+/// the configured threshold, a skill was loaded, or a <c>skill_manage</c> operation failed. See
+/// <see cref="ShouldTriggerReview"/>. This is a periodic consolidated pass (one dispatch per tick),
+/// so the period itself is the natural rate-limit and an idle window dispatches nothing.
 /// </para>
 /// </remarks>
 public sealed class SkillReviewCronAction : ICronAction
@@ -69,12 +78,15 @@ public sealed class SkillReviewCronAction : ICronAction
             return;
         }
 
-        var signals = SkillReviewSignals.FromMetadata(context.Job.Metadata);
+        var signals = await GatherSignalsAsync(context.Services, agentId, config, logger, cancellationToken)
+            .ConfigureAwait(false);
         if (!ShouldTriggerReview(signals, config))
         {
             logger?.LogInformation(
-                "Skill review skipped for agent '{AgentId}': no qualifying trigger (toolCalls={ToolCalls}, skillLoaded={SkillLoaded})",
-                agentId.Value, signals.ToolCallCount, signals.SkillWasLoaded);
+                "Skill review skipped for agent '{AgentId}': no qualifying trigger over {Hours}h window " +
+                "(sessions={Sessions}, toolCalls={ToolCalls}, skillLoaded={SkillLoaded}, skillManageFailed={SkillFailed})",
+                agentId.Value, config.LookbackHours, signals.SessionCount, signals.ToolCallCount,
+                signals.SkillWasLoaded, signals.SkillManageFailed);
             return;
         }
 
@@ -87,7 +99,7 @@ public sealed class SkillReviewCronAction : ICronAction
             return;
         }
 
-        var prompt = BuildReviewPrompt(agentId, signals, config.SessionSummary);
+        var prompt = BuildReviewPrompt(agentId, signals, config.LookbackHours);
 
         logger?.LogInformation(
             "Skill review for agent '{AgentId}': dispatching restricted review pass ({PromptLength} char prompt, {ToolCount} allowed tools)",
@@ -113,6 +125,53 @@ public sealed class SkillReviewCronAction : ICronAction
         context.RecordSessionId(sessionId);
         if (triggerRequest.ResolvedConversationId is { } resolvedConversationId)
             context.RecordConversationId(resolvedConversationId);
+    }
+
+    /// <summary>
+    /// Reads a lookback window of the agent's session history from the <see cref="ISessionStore"/>
+    /// and derives the aggregate review signals from it. This is the consumer half of the
+    /// producer/consumer pair: the producer is the normal turn-transcript persistence that already
+    /// writes tool-call entries to the session store during operation. When no session store is
+    /// registered (e.g. a minimal host), returns empty signals so the pass simply no-ops.
+    /// </summary>
+    private static async Task<SkillReviewSignals> GatherSignalsAsync(
+        IServiceProvider services,
+        AgentId agentId,
+        SkillReviewConfig config,
+        ILogger? logger,
+        CancellationToken cancellationToken)
+    {
+        var store = services.GetService<ISessionStore>();
+        if (store is null)
+        {
+            logger?.LogDebug("Skill review: no ISessionStore registered; nothing to review for agent '{AgentId}'", agentId.Value);
+            return new SkillReviewSignals();
+        }
+
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-config.LookbackHours);
+
+        // ListSummariesAsync is the transcript-free window read (same shape as memory-dreaming's
+        // ReadDailyNotes lookback). We take the newest MaxSessions summaries for this agent, then
+        // load only those sessions' transcripts to derive signals - bounding the work per tick.
+        var summaries = await store.ListSummariesAsync(cutoff, cancellationToken).ConfigureAwait(false);
+        var relevant = summaries
+            .Where(s => string.Equals(s.AgentId, agentId.Value, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(s => s.UpdatedAt)
+            .Take(config.MaxSessions)
+            .ToList();
+
+        if (relevant.Count == 0)
+            return new SkillReviewSignals();
+
+        var sessions = new List<GatewaySession>(relevant.Count);
+        foreach (var summary in relevant)
+        {
+            var session = await store.GetAsync(SessionId.From(summary.SessionId), cancellationToken).ConfigureAwait(false);
+            if (session is not null)
+                sessions.Add(session);
+        }
+
+        return SkillReviewSignals.FromSessions(sessions, cutoff);
     }
 
     /// <summary>
@@ -145,31 +204,23 @@ public sealed class SkillReviewCronAction : ICronAction
     /// no transient environment/setup failures encoded as durable constraints, no negative
     /// "tool X is broken" claims).
     /// </summary>
-    public static string BuildReviewPrompt(AgentId agentId, SkillReviewSignals signals, string? sessionSummary)
+    public static string BuildReviewPrompt(AgentId agentId, SkillReviewSignals signals, int lookbackHours)
     {
         ArgumentNullException.ThrowIfNull(signals);
 
         var sb = new StringBuilder();
-        sb.AppendLine("## Post-Turn Skill Review");
+        sb.AppendLine("## Periodic Skill Review");
         sb.AppendLine();
-        sb.AppendLine($"You are performing an optional post-turn skill review for agent `{agentId.Value}`.");
-        sb.AppendLine("The turn just completed qualified for review. Decide whether a durable, reusable");
-        sb.AppendLine("skill improvement is warranted - and if so, make exactly one focused change.");
+        sb.AppendLine($"You are performing an optional periodic skill review for agent `{agentId.Value}`.");
+        sb.AppendLine($"The last {lookbackHours}h of activity qualified for review. Decide whether a durable,");
+        sb.AppendLine("reusable skill improvement is warranted - and if so, make exactly one focused change.");
         sb.AppendLine();
 
-        sb.AppendLine("### Why this turn qualified");
+        sb.AppendLine("### Why this period qualified");
         sb.AppendLine();
         foreach (var reason in DescribeSignals(signals))
             sb.AppendLine($"- {reason}");
         sb.AppendLine();
-
-        if (!string.IsNullOrWhiteSpace(sessionSummary))
-        {
-            sb.AppendLine("### Turn summary");
-            sb.AppendLine();
-            sb.AppendLine(sessionSummary.Trim());
-            sb.AppendLine();
-        }
 
         sb.AppendLine("### Restricted toolset");
         sb.AppendLine();
@@ -209,10 +260,12 @@ public sealed class SkillReviewCronAction : ICronAction
 
     private static IEnumerable<string> DescribeSignals(SkillReviewSignals signals)
     {
+        if (signals.SessionCount > 0)
+            yield return $"{signals.SessionCount} session(s) were active in the window.";
         if (signals.ToolCallCount > 0)
-            yield return $"The turn made {signals.ToolCallCount} tool call(s).";
+            yield return $"The period made {signals.ToolCallCount} tool call(s) in total.";
         if (signals.SkillWasLoaded)
-            yield return "A skill was loaded during the turn.";
+            yield return "A skill was loaded during the period.";
         if (signals.UserCorrectedOrFrustrated)
             yield return "The user corrected the agent or showed frustration.";
         if (signals.DiscoveredReusableWorkflow)
