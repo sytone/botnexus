@@ -5,6 +5,416 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-07-13
+
+### ✨ Features
+
+- **telemetry:** Add config-gated OTLP export for remote collection (#1925)
+- **cli:** Add redacted agent export command (#1928)
+- **api:** Filter sub-agents and built-ins from agent list by default (#1940)
+- **#1888:** Add at-a-glance summary stat strip to Activity dashboard (#1945)
+- **cli:** Add on-demand prune of terminal sub-agent workspaces (#1947)
+- **portal:** Add pop-out modal for tool args and results (#1953)
+
+### 🐛 Bug Fixes
+
+- **docs:** Escape raw <id> breaking VitePress build (#1924)
+- **security:** Add Telegram bot-token pattern to SecretRedactor (#1930)
+- **gateway:** Stop liveness watchdog firing false FATAL alerts when idle (#1932)
+- **security:** Use timing-safe comparison for gateway api key auth (#1938)
+- **portal:** Close unclosed .agent-card-last-activity CSS rule breaking settings modal (#1944)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-11 (v0.23.0 release page + sidebar orphans + vitepress build fix) (#1926)
+
+### Build
+
+- **deps:** Bump esbuild and vite (#1939)
+
+## [0.23.0] - 2026-07-11
+
+### ✨ Features
+
+- **agent365:** Add Channels.Agent365 adapter for M365 Agents SDK (Register tier) (#1890)
+- **portal:** Add desktop Home / Activity dashboard (#1891)
+- **portal:** Add archive-confirm setting and fix settings cog rendering (#1895)
+- **config:** Add sidebar section navigation to the platform config UI (#1896)
+- **config:** Dynamic + static option sources for provider select widgets (#1898)
+- **telemetry:** Add platform hot-path metrics (#1899)
+- **gateway:** Add minidump-on-crash and last-chance fault handler (#1908)
+- **telemetry:** Add extension SDK telemetry seam (#1920)
+- **telemetry:** Add metrics read/scrape endpoint (#1923)
+
+### 🐛 Bug Fixes
+
+- **tests:** Pass typed ConversationId to ResolveInboundAsync in routing scenarios (#1874)
+- **copilot:** Omit peer OAuth error_description from exception message (#1886)
+- **portal:** Key ChatPanel message loop to stop streamed-message garble (#1897)
+- **canvas:** Pin ConversationCanvasController route to api/conversations (#1902)
+- **cli:** Discover all registered databases in debug db command (#1905)
+- **auto-title:** Title live portal/streaming and agent-initiated conversations (#1907)
+- **cli:** Use --no-local git clone for install to avoid object-store copy timeout (#1911)
+- **docs:** Ignore repo scripts/ links in vitepress dead-link check (#1912)
+- **conversations:** Tolerate concurrent delete during list enumeration (#1915)
+- **config:** Bind SectionKey as expression so config sections actually filter (#1917)
+- **portal:** Send credentials with PWA manifest fetch behind auth proxy (#1921)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-10 (v0.22.0 release page + signalr-mobile-keepalive sidebar) (#1883)
+- **channels:** Add managed-identity Service Bus deployment example (#1904)
+
+### 🔨 Refactor
+
+- **telemetry:** Split OTel-free primitives into Gateway.Telemetry.Abstractions (#1873)
+- **persistence:** Unify SqliteConversationStore column migrations into race-tolerant EnsureColumnAsync (#1887)
+
+### 🧪 Testing
+
+- **cli:** Assert --no-local precedes the -- terminator in clone args (#1913)
+
+### ⚙️ Miscellaneous
+
+- **repo:** Pre-authorize testhost.exe firewall rules before running tests (#1906)
+
+## [0.22.0] - 2026-07-10
+
+### ✨ Features
+
+- **mobile:** Add auto-retrying reconnect overlay for mobile client (#1857)
+- **telemetry:** Add metrics core and OpenTelemetry SDK wiring (#1858)
+- **providers:** Dynamic models declare thinking/context capabilities (#1859)
+- **mobile:** Full PWA lifecycle handling and manifest hardening (#1860)
+- **portal:** Expand agent editor to full AgentDefinitionConfig with clone action (#1865)
+- **cron:** Prune noop cron sessions on configurable retention window (#1754) (#1869)
+- **telemetry:** Add shared durable usage-telemetry primitive (#1871)
+
+### 🐛 Bug Fixes
+
+- **repo:** Add heartbeat output to pre-commit hook to prevent no-output starvation (#1847)
+- **scripts:** Rebase PR branches onto main instead of merging (#1856)
+- **gateway:** Keep agent loop alive across pre-compaction memory flush (#1855)
+- **cli:** Terminate git clone args with -- to prevent option injection (#1864)
+- **mobile:** Tune SignalR keepalive and reconnect for mobile hub path (#1872)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-09 (v0.21.0 release page) (#1861)
+
+### 🔨 Refactor
+
+- **gateway:** Promote exchange-completion metadata to typed AgentExchangeCompletionState (#1863)
+- **gateway:** Lift IConversationRouter.ResolveInboundAsync conversationId to typed ConversationId (#1866)
+- **signalr:** Extract InboundMessage factory in GatewayHub (#1868)
+
+### ⚙️ Miscellaneous
+
+- **tests:** Consolidate Conversation.Tests into Conversations.Tests (#1867)
+
+## [0.21.0] - 2026-07-09
+
+### ✨ Features
+
+- **sessions:** Preserve relevant files across compaction summary (#1812)
+- **sessions:** Add opt-in render-time secret redactor for transcript export (#1815)
+- **portal:** Add windows pwa deep-integration manifest members (#1818)
+- **gateway:** Add agent-level thinking and context configuration (#1819)
+- **persistence:** Add periodic WAL checkpoint hosted service (#1821)
+- **prompts:** Require loading partially-relevant skills before acting (#1834)
+- **skills:** Add create/patch quality guidance to skill_manage schema (#1835)
+- **skills:** Add linked-file progressive disclosure for loaded skills (#1837)
+- **skills:** Add explicit skill tool names for model ergonomics (#1842)
+- **gateway:** Add conversation-level model, thinking, and context override (#1820)
+- **skills:** Add skill usage telemetry with sqlite persistence (#1846)
+
+### 🐛 Bug Fixes
+
+- **portal:** Use surrogate-safe truncation in blazor preview helpers (#1813)
+- **docs:** Stop excluding docs/api from vitepress build (#1817)
+- **webtools:** Harden HtmlToText against unterminated tag tails (#1826)
+- **mobile:** Liveness-verified hub reset on app resume (#1843)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-08 (v0.19.0 + v0.20.0 release pages) (#1823)
+
+### 🔨 Refactor
+
+- **gateway:** Extract outbound fan-out delivery into IOutboundResponseDeliverer (#1814)
+- **persistence:** Extract shared SqliteConnectionFactory (#1822)
+
+## [0.20.0] - 2026-07-08
+
+### ✨ Features
+
+- **gateway:** Surface converse allow-list in agent_converse tool description (#1802)
+- **#1804:** Humanize config labels and honor Display grouping so settings UI renders sections (#1805)
+- **#1436:** Shared SqliteWalMaintenance helper with network-aware journaling (#1806)
+- **gateway:** Centralize 3-layer model/thinking/context override resolver (#1810)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-07 (v0.18.0 release page + web_fetch maxResponseBytes) (#1807)
+
+## [0.19.0] - 2026-07-07
+
+### ✨ Features
+
+- **copilot:** Honor advertised supported_endpoints in model discovery (#1798)
+
+### 🐛 Bug Fixes
+
+- **webtools:** Bound web_fetch response body reads to prevent OOM/DoS (#1796)
+
+### 📖 Documentation
+
+- **#1550:** Correct Telegram config to real channels:telegram schema (#1786)
+- **tools:** Surface PowerShell/Python point-of-use gotchas in shell and exec descriptions (#1788)
+- **webhooks:** Add python sender example for all response modes (#1789)
+- **webhooks:** Add javascript and powershell sender examples (#1790)
+- **webhooks:** Add webhook guide and API reference (#1791)
+- Document ContentDelta payload role field in SignalR hub contract (#1792)
+- **webhooks:** Add csharp sender example for all response modes (#1794)
+
+### 🔨 Refactor
+
+- **copilot:** Resolve enterprise/individual endpoint at the registration seam (#1787)
+- **copilot:** Resolve the copilot mcp endpoint at the registration seam (#1799)
+
+### 🧪 Testing
+
+- **gateway:** Deterministic poll for agent hot-reload apply to fix flake (#1801)
+
+## [0.18.0] - 2026-07-06
+
+### ✨ Features
+
+- **channels:** Render agent posts with their stamped assistant role (#1768)
+- **portal:** Cache-control headers for Blazor static assets (#1779)
+- **gateway:** Enable brotli/gzip response compression for dynamic api responses (#1784)
+- **portal:** Ship a service worker for the mobile pwa (#1785)
+
+### 🐛 Bug Fixes
+
+- **sessions:** Fence stale post-run session writes after delete/reset mid-run (#1767)
+- **copilot:** Bound OAuth token-exchange response reads (OOM-DoS hardening) (#1774)
+- **gateway:** Lock streaming-turn auto-title wiring with a regression test and observable no-fire diagnostics (#1777)
+- **portal:** Register service worker so the PWA is installable in Edge (#1778)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-05 (conversation speak_as + v0.17.0 release page) (#1771)
+
+### 🧪 Testing
+
+- **subagents:** Make retention/eviction assertions wait for the real retirement stamp (#1770)
+
+## [0.17.0] - 2026-07-05
+
+### ✨ Features
+
+- **mobile:** Add settings page consuming shared schemaform (#1747)
+- **channels:** Derive channel post role from sender kind and speak_as (#1748)
+
+### 🐛 Bug Fixes
+
+- **#1751:** Guard stored-column JSON reads in SQLite stores against corrupt rows (#1759)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-01 (SignalR conn params, sidebar orphan, v0.16.0 release page) (#1750)
+
+### 🔨 Refactor
+
+- **#1625:** Collapse gateway hub boilerplate behind an application-service facade (#1749)
+- **client:** Extract ask_user prompt parsing into AskUserPromptFactory (#1760)
+- **channels:** Extract telegram message-splitting into TelegramMessageSplitter (#1765)
+- **config:** Extract validation engine into PlatformConfigValidator (#1766)
+
+## [0.16.0] - 2026-07-01
+
+### ✨ Features
+
+- **signalr:** Distinguish mobile vs desktop clients via connection metadata (#1737)
+- **security:** Add trusted-only security-event read path (#1741)
+- **portal:** Migrate desktop config panels to schema-driven form (#1742)
+- **config:** Validate platform config via DataAnnotations with cross-field escape hatch (#1743)
+- **provider:** Add context-size selection with anthropic 1M beta header and copilot 200K cap (#1744)
+- **security:** Emit security events from sub-agent and secret-redaction boundaries (#1745)
+
+### 🐛 Bug Fixes
+
+- **tools:** Extend edit remediation diagnostics to all failure shapes (#1739)
+- **tools:** Coerce stringified JSON array/object tool arguments (#1740)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-06-30 (v0.14.0 + v0.15.0 release pages) (#1746)
+
+## [0.15.0] - 2026-06-30
+
+### ✨ Features
+
+- **gateway:** Wire titling.timeoutSeconds + add titling.enabled switch (#1724)
+- **provider:** Add ThinkingLevel.Max and capability-gated copilot mapping (#1728)
+- **security:** Emit security events from auth and authorization boundaries (#1729)
+- **skills:** Manage shared all-agent skills behind opt-in gate (#1730)
+- **chat:** Paginate history with scroll-up load-more (#1733)
+- **portal:** Add platform stats overview with live active-loop counts (#1735)
+
+### 🐛 Bug Fixes
+
+- **compaction:** Re-check ShouldCompact between agent-loop iterations (#1725)
+- **conversations:** Stop persisting agent-name bindings + dedupe by channel address (#1726)
+- **cron:** Skip persisting near-empty wake sessions (#1727)
+
+### 📖 Documentation
+
+- Backfill v0.13.0 release page (#1734)
+
+### 🔨 Refactor
+
+- **domain:** Move CitizenId composition onto value type (#1731)
+- **api:** Extract canvas cluster into dedicated controller (#1732)
+
+## [0.14.0] - 2026-06-29
+
+### ✨ Features
+
+- **config:** Add GET /api/config/schema reflection endpoint (#1680)
+- **domain:** Add optional SpeakAs role override to InboundMessage (#1686)
+- **provider:** Classify provider 401/403 as actionable ProviderAuthenticationException (#1689)
+- **security:** Emit security events from exec approval boundary (#1693)
+- **portal:** Add generic SchemaForm renderer in Core (#1714)
+- **portal:** Add no-messages and load-error empty states to message view (#1697) (#1718)
+
+### 🐛 Bug Fixes
+
+- **blazor-client:** Use O(1) id->index map in HandleToolEnd instead of O(n) FindIndex (#1679)
+- **#1681:** Degrade multi-bot Telegram outbound to allow-list routing instead of throwing (#1682)
+- **cron:** Wire StreamSetupTimeoutMs so cloud compaction stalls fail fast (#1687)
+- **#1698:** Strip leaked invoke/tool_use XML from assistant text in AssistantTextSanitizer (#1699)
+- **mobile:** Show date on older chat messages (#1700)
+- **gateway:** Wire AssistantTextSanitizer into delivery so leaked tool-call XML is stripped (#1698) (#1708)
+- **titling:** Loosen auto-title guard so it can fire on a later turn (#1711)
+- **#1602:** Add core.bare guard, versioned hooks, and config hygiene (#1712)
+- **gateway:** Fold compaction summary into system prompt on resume so context survives (#1713)
+- **agent:** Recover leaked invoke/tool_use XML into executable tool calls (#1709) (#1715)
+- **conversations:** Make active-session reset best-effort on DELETE (#1719)
+- **security:** Bound non-Copilot provider streaming reads (#1720)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-06-28 (#1684)
+
+### ⚡ Performance
+
+- **persistence:** Prepare bulk-insert command once instead of rebuilding per row (#1683)
+- **api:** List sessions via transcript-free summary read (#1716) (#1717)
+
+### 🧪 Testing
+
+- **#1602:** Fully isolate UpdateCommand git fixture from host repo (#1721)
+
+## [0.13.0] - 2026-06-28
+
+### ✨ Features
+
+- **config:** Add ConfigField attribute and annotate PlatformConfig (#1677)
+
+### 🐛 Bug Fixes
+
+- **agent:** Audit claims per-turn so multi-turn fabrication is not masked (#1662)
+- **telegram:** Deliver tool activity as standalone messages with shared cross-channel icon (#1664)
+- **cron:** Purge retention on real terminal statuses (ok/error/timed_out) (#1669)
+- **cron:** Scope cron create/update target agent to the calling agent (#1673)
+- **copilot:** Bound streaming SSE body to prevent unbounded read OOM (#1674)
+- **titling:** Apply provider API-endpoint override to auto-title model (#1675)
+- **blazor-client:** Observe reconnect fire-and-forget and synchronize shared HashSet state (#1672)
+- **agent:** Gate tool dispatch on ToolUse terminal to ignore truncated calls (#1676)
+
+### 📖 Documentation
+
+- Backfill v0.12.0 release page (#1665)
+
+### 🔨 Refactor
+
+- **prompt:** Hoist GetGatewayData, PascalCase publics, named section order (#1660)
+- **blazor-client:** Extract ToChatMessage factory, split history loader, unify user echo (#1670)
+- **subagent:** Decompose SpawnAsync into named helpers (#1671)
+- **persistence:** Extract per-store row-mappers and drop dead FieldCount probing (#1678)
+
+## [0.12.1] - 2026-06-27
+
+### 🐛 Bug Fixes
+
+- **security:** Cap rate-limit client-window dictionary to prevent unbounded growth (#1637)
+- **channels:** Make Telegram streaming-buffer flush surrogate-safe (#1643)
+- **subagent:** Make count-cap eviction deterministic with monotonic spawn sequence (#1655)
+- **security:** Bound Copilot discovery and error-body JSON reads (#1656)
+- **blazor-client:** Route failure paths through ILogger instead of Console.Error (#1658)
+
+### 📖 Documentation
+
+- Backfill v0.11.0 release page (#1644)
+
+### ⚡ Performance
+
+- **persistence:** Eliminate N+1 round-trips in conversation list endpoints (#1642)
+
+### 🔨 Refactor
+
+- **cron:** Introduce CronRunStatus constants and FinalizeRunAsync write-back (#1640)
+- **config:** Parse config JSON once and share FinishLoad pipeline with backup recovery (#1657)
+
+## [0.12.0] - 2026-06-26
+
+### ✨ Features
+
+- **sessions:** Trigger compaction on oversized single entries (#1607)
+- **agent:** Add post-turn claim auditor for anti-fabrication (#1619)
+
+### 🐛 Bug Fixes
+
+- **#1635:** Apply provider API-endpoint override to compaction summary call (#1638)
+- **channels:** Split Telegram messages on surrogate-pair boundaries (#1606)
+
+### 📖 Documentation
+
+- Backfill v0.10.1 release page (#1608)
+
+### ⚡ Performance
+
+- **blazor-client:** Coalesce streamed-delta renders and use StringBuilder buffers (#1634)
+
+## [0.11.0] - 2026-06-25
+
+### ✨ Features
+
+- **channels:** Add Telegram Rich Message API client methods (#1591) (#1592)
+- **channels:** Send Telegram outbound via Rich Markdown with MarkdownV2 fallback (#1591) (#1594)
+- **channels:** Stream Telegram replies via Rich Message drafts (#1591) (#1604)
+- **sessions:** Cap oversized tool results at write time (#1605)
+
+### 🐛 Bug Fixes
+
+- **qmd:** Kill orphaned qmd subprocess on caller cancellation (#1601)
+- **security:** Bound untrusted external JSON HTTP response reads (#1603)
+
+### 📖 Documentation
+
+- Backfill v0.9.0 release page + document cron DeleteAfterRun config (#1593)
+
+## [0.10.1] - 2026-06-24
+
+### 🐛 Bug Fixes
+
+- **gateway:** Build session summaries without loading transcripts (#1581) (#1582)
+- **channels:** Route Telegram streaming replies by agent in multi-bot mode (#1583) (#1584)
+- **portal:** Serve Blazor assets compressed and stop shipping stale generations (#1586)
+- **channels:** Treat Telegram 'message is not modified' as benign no-op (#1588)
+
 ## [0.10.0] - 2026-06-24
 
 ### ✨ Features
@@ -2613,6 +3023,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.24.0]: https://github.com/sytone/botnexus/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/sytone/botnexus/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/sytone/botnexus/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/sytone/botnexus/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/sytone/botnexus/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/sytone/botnexus/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/sytone/botnexus/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/sytone/botnexus/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/sytone/botnexus/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/sytone/botnexus/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/sytone/botnexus/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/sytone/botnexus/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/sytone/botnexus/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/sytone/botnexus/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/sytone/botnexus/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/sytone/botnexus/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/sytone/botnexus/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/sytone/botnexus/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/sytone/botnexus/compare/v0.8.0...v0.8.1
