@@ -93,6 +93,44 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_GetAgents_ExcludesSubAgentsAndBuiltins()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(value => value.GetAll()).Returns([
+            new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "gpt-4.1",
+                ApiProvider = "copilot"
+            },
+            new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth--subagent--coder--abc"),
+                DisplayName = "Farnsworth (coder)",
+                ModelId = "gpt-4.1",
+                ApiProvider = "copilot",
+                Kind = AgentKind.SubAgent
+            },
+            new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("planner"),
+                DisplayName = "Planner",
+                ModelId = "gpt-4.1",
+                ApiProvider = "copilot",
+                Metadata = new Dictionary<string, object?> { ["builtin"] = true }
+            }
+        ]);
+
+        var hub = CreateHub(registry: registry.Object, connectionId: "conn-1");
+
+        var result = await hub.GetAgents();
+
+        Assert.Single(result);
+        Assert.Equal("farnsworth", result[0].AgentId.Value);
+    }
+
+    [Fact]
     public async Task GatewayHub_SendMessage_UsesVisibleSessionForAgentChannel()
     {
         // Wave 2: conversation routing creates sessions per conversation binding.
