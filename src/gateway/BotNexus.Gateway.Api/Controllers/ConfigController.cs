@@ -405,74 +405,7 @@ public sealed class ConfigController : ControllerBase
         => JsonSerializer.SerializeToNode(config, WriteOptions)?.AsObject() ?? new JsonObject();
 
     private static void RedactSecrets(JsonObject config)
-    {
-        if (config["providers"] is JsonObject providers)
-            RedactProviderSecrets(providers);
-        if (config["apiKey"] is JsonValue)
-            config["apiKey"] = "***";
-        if (config["gateway"] is JsonObject gateway)
-            RedactGatewaySecrets(gateway);
-    }
-
-    private static void RedactGatewaySecrets(JsonObject gateway)
-    {
-        if (gateway["apiKeys"] is JsonObject apiKeys)
-            RedactGatewayApiKeys(apiKeys);
-        if (gateway["sessionStore"] is JsonObject sessionStore && sessionStore["connectionString"] is JsonValue)
-            sessionStore["connectionString"] = "***";
-        if (gateway["locations"] is JsonObject locations)
-            RedactGatewayLocations(locations);
-        if (gateway["crossWorld"] is JsonObject crossWorld)
-            RedactCrossWorldSecrets(crossWorld);
-    }
-
-    private static void RedactGatewayApiKeys(JsonObject apiKeys)
-    {
-        foreach (var (_, apiKeyNode) in apiKeys)
-        {
-            if (apiKeyNode is JsonObject apiKeyObject && apiKeyObject["apiKey"] is JsonValue)
-                apiKeyObject["apiKey"] = "***";
-        }
-    }
-
-    private static void RedactGatewayLocations(JsonObject locations)
-    {
-        foreach (var (_, locationNode) in locations)
-        {
-            if (locationNode is JsonObject location && location["connectionString"] is JsonValue)
-                location["connectionString"] = "***";
-        }
-    }
-
-    private static void RedactCrossWorldSecrets(JsonObject crossWorld)
-    {
-        if (crossWorld["peers"] is JsonObject peers)
-        {
-            foreach (var (_, peerNode) in peers)
-            {
-                if (peerNode is JsonObject peer && peer["apiKey"] is JsonValue)
-                    peer["apiKey"] = "***";
-            }
-        }
-
-        if (crossWorld["inbound"] is not JsonObject inbound || inbound["apiKeys"] is not JsonObject inboundApiKeys)
-            return;
-
-        foreach (var key in inboundApiKeys.Select(static pair => pair.Key).ToArray())
-        {
-            if (inboundApiKeys[key] is JsonValue)
-                inboundApiKeys[key] = "***";
-        }
-    }
-
-    private static void RedactProviderSecrets(JsonObject providers)
-    {
-        foreach (var (_, providerNode) in providers)
-        {
-            if (providerNode is JsonObject provider && provider.ContainsKey("apiKey"))
-                provider["apiKey"] = "***";
-        }
-    }
+        => ConfigSecretMerge.Redact(config);
 }
 
 /// <summary>

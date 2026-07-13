@@ -53,10 +53,51 @@ public sealed class PlatformConfigWriter
 
     /// <summary>
     /// Atomically updates a section of the config.
+    ///
+    /// The incoming payload comes from the config UI, which was served redacted
+    /// secrets ("***") and channel subtrees it may not fully model. A raw
+    /// <c>root[sectionName] = value</c> replace would (a) clobber real on-disk
+    /// secrets with the "***" placeholder the UI round-tripped (#1955) and
+    /// (b) drop existing keys the payload omits, e.g. telegram bots or
+    /// serviceBus queues (#1954). Instead we restore any placeholder secrets
+    /// from the existing section and deep-merge the incoming payload over the
+    /// existing section so omitted keys survive.
     /// </summary>
-    public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default)
+    /// <param name="merge">
+    /// When <see langword="true"/> (default, used by the config-UI PUT path), the
+    /// incoming payload is treated as potentially partial/redacted: secrets are
+    /// restored and the payload is deep-merged over the existing section so omitted
+    /// keys survive. When <see langword="false"/>, callers that already assemble the
+    /// full authoritative section from disk (e.g. LocationsController, which must be
+    /// able to delete entries by omission) get a straight replace.
+    /// </param>
+    public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default, bool merge = true)
         => await MutateAsync(
-            root => root[sectionName] = value,
+            root =>
+            {
+                if (!merge || value is not JsonObject incoming || root[sectionName] is not JsonObject existing)
+                {
+                    // No existing object section (or non-object payload): nothing to
+                    // merge/preserve, so fall back to a straight assignment.
+                    root[sectionName] = value;
+                    return;
+                }
+
+                // Work on a clone so we never mutate the shared root mid-flight.
+                var merged = existing.DeepClone().AsObject();
+
+                // 1) Restore secrets: wrap both under the real section name so the
+                //    symmetric restore walks the same paths RedactSecrets uses.
+                var existingWrapper = new JsonObject { [sectionName] = existing.DeepClone() };
+                var incomingWrapper = new JsonObject { [sectionName] = incoming.DeepClone() };
+                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                var restoredIncoming = incomingWrapper[sectionName] as JsonObject ?? incoming;
+
+                // 2) Deep-merge restored payload over existing so omitted subtrees survive.
+                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+
+                root[sectionName] = merged;
+            },
             $"before-{sectionName}-update",
             ct);
 
@@ -88,7 +129,26 @@ public sealed class PlatformConfigWriter
                 root[sectionName] = section;
             }
 
-            section[key] = value;
+            // Same secret-restore + deep-merge as UpdateSectionAsync, but scoped to a single keyed
+            // entry. The UI PUTs a redacted entry (e.g. providers.github-copilot) back verbatim, so
+            // a raw replace would clobber the real secret with "***" (#1955) and drop any on-disk
+            // keys the payload omits (#1954). Wrap the entry under its real section name so the
+            // secret restore walks the same paths ConfigSecretMerge.Redact uses.
+            if (value is JsonObject incoming && section[key] is JsonObject existing)
+            {
+                var existingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = existing.DeepClone() } };
+                var incomingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = incoming.DeepClone() } };
+                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                var restoredIncoming = incomingWrapper[sectionName]![key] as JsonObject ?? incoming;
+
+                var merged = existing.DeepClone().AsObject();
+                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                section[key] = merged;
+            }
+            else
+            {
+                section[key] = value;
+            }
         }, $"before-{sectionName}-update", ct);
 
     /// <summary>
