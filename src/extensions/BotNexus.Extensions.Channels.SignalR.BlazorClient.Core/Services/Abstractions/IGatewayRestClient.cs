@@ -73,6 +73,12 @@ public interface IGatewayRestClient
     /// <summary>DELETE /api/conversations/{conversationId} — soft delete (archive).</summary>
     Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default);
 
+    /// <summary>
+    /// POST (pin) or DELETE (unpin) /api/conversations/{conversationId}/pin — toggles whether the
+    /// conversation is pinned to the top of the sidebar list. Returns <c>true</c> on success.
+    /// </summary>
+    Task<bool> PinConversationAsync(string conversationId, bool pinned, CancellationToken ct = default);
+
     /// <summary>PUT /api/conversations/{conversationId}/override - set or clear the per-conversation model/thinking/context override (PBI5, #1706).</summary>
     Task<ConversationResponseDto?> SetConversationOverrideAsync(
         string conversationId,

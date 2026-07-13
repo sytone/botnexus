@@ -27,6 +27,13 @@ public interface IAgentInteractionService
     Task<int> LoadMoreHistoryAsync(string agentId, string conversationId);
     Task RenameConversationAsync(string agentId, string? conversationId, string newTitle);
     Task ArchiveConversationAsync(string agentId, string conversationId);
+
+    /// <summary>
+    /// Pins or unpins a conversation so it sorts into the "Pinned" group at the top of the sidebar.
+    /// Applies the flag optimistically to local state, then persists via the gateway; on failure the
+    /// optimistic change is rolled back.
+    /// </summary>
+    Task SetConversationPinnedAsync(string agentId, string conversationId, bool pinned);
     Task RefreshAgentsAsync();
     Task RefreshConversationsAsync(string agentId);
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
