@@ -153,4 +153,57 @@ public sealed class PortalSettingsPanelTests : IAsyncLifetime
         Assert.False(btnText == "x",
             $"Banner settings button shows bare 'x' — should be a settings icon (⚙, ⚙️, etc.). See issue #630.");
     }
+
+    [SkippableFact]
+    public async Task PortalSettingsPanel_Overlay_IsFixedAndWithinViewport()
+    {
+        // Robustness regression: an unclosed brace earlier in app.css silently
+        // nested the entire portal-settings CSS block as descendant selectors,
+        // so the overlay rendered with position:static below the fold — the
+        // element was technically "visible" (isVisible()==true) but off-screen
+        // and unusable, i.e. "I click the cog and nothing happens".
+        // Assert the overlay is genuinely fixed-position and covers the viewport.
+        Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
+        Skip.If(_browser is null, "Browser unavailable");
+
+        var (page, portal) = await PortalTestHelpers.NewPortalPageAsync(_browser!, _fix.GatewayBaseUrl);
+        await portal.BannerSettingsBtn.ClickAsync();
+
+        var overlay = page.Locator(".portal-settings-overlay");
+        await overlay.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
+
+        var position = await overlay.EvaluateAsync<string>("el => getComputedStyle(el).position");
+        Assert.Equal("fixed", position);
+
+        // The panel must be inside the viewport (not pushed below the fold).
+        var viewport = page.ViewportSize!;
+        var panelBox = await page.Locator(".portal-settings-panel").BoundingBoxAsync();
+        Assert.NotNull(panelBox);
+        Assert.True(panelBox!.Y >= 0 && panelBox.Y < viewport.Height,
+            $"Settings panel top ({panelBox.Y}) is outside the viewport (height {viewport.Height}) — " +
+            "modal CSS is not applying (see unclosed-brace regression).");
+        Assert.True(panelBox.Width > 0 && panelBox.Height > 0, "Settings panel has zero size.");
+    }
+
+    [SkippableFact]
+    public async Task BannerSettingsBtn_HasTransparentBackground()
+    {
+        // Regression: the cog fell back to the user-agent default grey button
+        // background (rgb(240,240,240)) because `.banner-settings-btn { background: none }`
+        // was swallowed by an unclosed rule. Assert the computed background is
+        // transparent (no opaque box behind the glyph).
+        Skip.If(!_fix.Succeeded, _fix.Error ?? "Fixture not ready");
+        Skip.If(_browser is null, "Browser unavailable");
+
+        var (page, portal) = await PortalTestHelpers.NewPortalPageAsync(_browser!, _fix.GatewayBaseUrl);
+
+        var bg = await portal.BannerSettingsBtn.EvaluateAsync<string>(
+            "el => getComputedStyle(el).backgroundColor");
+
+        // Transparent renders as rgba(0,0,0,0) or 'transparent'. A grey box is rgb(240,240,240).
+        Assert.True(
+            bg == "rgba(0, 0, 0, 0)" || bg == "transparent",
+            $"Settings cog has an opaque background '{bg}' — expected transparent so the glyph " +
+            "blends into the banner (see banner-settings-btn background regression).");
+    }
 }

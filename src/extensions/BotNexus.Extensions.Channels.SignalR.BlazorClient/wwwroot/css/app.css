@@ -4272,6 +4272,7 @@ h3.conversation-title.editable:hover {
 
 .agent-card-last-activity {
     margin-left: auto;
+}
 
 /* ---- Auto-expanding textarea ---- */
 .chat-input.expanding {
