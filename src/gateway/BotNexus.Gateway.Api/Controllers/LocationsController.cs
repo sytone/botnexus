@@ -436,7 +436,10 @@ public sealed class LocationsController(
         if (candidateErrors.Count > 0)
             return string.Join(Environment.NewLine, candidateErrors);
 
-        await configWriter.UpdateSectionAsync("gateway", gatewaySection.DeepClone(), cancellationToken);
+        // LocationsController assembles the full authoritative gateway section from
+        // disk (real secrets intact) and must be able to delete locations by
+        // omission, so it opts out of the config-UI merge/secret-restore path.
+        await configWriter.UpdateSectionAsync("gateway", gatewaySection.DeepClone(), cancellationToken, merge: false);
         return null;
     }
 

@@ -63,11 +63,19 @@ public sealed class PlatformConfigWriter
     /// from the existing section and deep-merge the incoming payload over the
     /// existing section so omitted keys survive.
     /// </summary>
-    public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default)
+    /// <param name="merge">
+    /// When <see langword="true"/> (default, used by the config-UI PUT path), the
+    /// incoming payload is treated as potentially partial/redacted: secrets are
+    /// restored and the payload is deep-merged over the existing section so omitted
+    /// keys survive. When <see langword="false"/>, callers that already assemble the
+    /// full authoritative section from disk (e.g. LocationsController, which must be
+    /// able to delete entries by omission) get a straight replace.
+    /// </param>
+    public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default, bool merge = true)
         => await MutateAsync(
             root =>
             {
-                if (value is not JsonObject incoming || root[sectionName] is not JsonObject existing)
+                if (!merge || value is not JsonObject incoming || root[sectionName] is not JsonObject existing)
                 {
                     // No existing object section (or non-object payload): nothing to
                     // merge/preserve, so fall back to a straight assignment.
