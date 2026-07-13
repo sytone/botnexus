@@ -610,7 +610,20 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// </summary>
     /// <returns>The get agents result.</returns>
     public Task<IReadOnlyList<AgentDescriptor>> GetAgents()
-        => Task.FromResult(_registry.GetAll());
+        => Task.FromResult(SelectableAgents());
+
+    /// <summary>
+    /// Returns the registry descriptors that are appropriate to surface to portal clients:
+    /// user-facing top-level agents only. Runtime-spawned sub-agents
+    /// (<see cref="AgentKind.SubAgent"/>) and built-in platform archetypes
+    /// (researcher/coder/planner/reviewer/writer/analyst) are excluded because they are
+    /// spawn/converse infrastructure, not selectable agents. Mirrors the default filtering in
+    /// <c>AgentsController.List</c> so the SignalR and REST surfaces agree (#1940 follow-up).
+    /// </summary>
+    private IReadOnlyList<AgentDescriptor> SelectableAgents()
+        => _registry.GetAll()
+            .Where(a => a.Kind != AgentKind.SubAgent && !a.IsBuiltIn)
+            .ToList();
 
     /// <summary>
     /// Lightweight liveness probe: a no-op server round-trip used by clients to verify the
@@ -654,7 +667,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
-            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji, a.Description)),
+            SelectableAgents().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji, a.Description)),
             typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
             new HubCapabilities(MultiSession: true)));
 
