@@ -1,5 +1,6 @@
 using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -27,6 +28,69 @@ public sealed class AgentsControllerTests
         agents.ShouldNotBeNull();
         var registeredAgents = agents ?? throw new InvalidOperationException("Expected agent list.");
         registeredAgents.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void List_ByDefault_ExcludesSubAgentsAndBuiltins()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("user-agent"));
+        registry.Register(CreateSubAgentDescriptor("parent--subagent--coder--abc"));
+        registry.Register(CreateBuiltinDescriptor("coder"));
+        var controller = CreateController(registry);
+
+        var agents = ExtractAgents(controller.List());
+
+        agents.Count.ShouldBe(1);
+        agents.ShouldContain(a => a.AgentId == "user-agent");
+        agents.ShouldNotContain(a => a.Kind == AgentKind.SubAgent);
+        agents.ShouldNotContain(a => a.IsBuiltIn);
+    }
+
+    [Fact]
+    public void List_WithIncludeSubAgents_IncludesSubAgentsButNotBuiltins()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("user-agent"));
+        registry.Register(CreateSubAgentDescriptor("parent--subagent--coder--abc"));
+        registry.Register(CreateBuiltinDescriptor("coder"));
+        var controller = CreateController(registry);
+
+        var agents = ExtractAgents(controller.List(includeSubAgents: true));
+
+        agents.Count.ShouldBe(2);
+        agents.ShouldContain(a => a.Kind == AgentKind.SubAgent);
+        agents.ShouldNotContain(a => a.IsBuiltIn);
+    }
+
+    [Fact]
+    public void List_WithIncludeBuiltin_IncludesBuiltinsButNotSubAgents()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("user-agent"));
+        registry.Register(CreateSubAgentDescriptor("parent--subagent--coder--abc"));
+        registry.Register(CreateBuiltinDescriptor("coder"));
+        var controller = CreateController(registry);
+
+        var agents = ExtractAgents(controller.List(includeBuiltin: true));
+
+        agents.Count.ShouldBe(2);
+        agents.ShouldContain(a => a.IsBuiltIn);
+        agents.ShouldNotContain(a => a.Kind == AgentKind.SubAgent);
+    }
+
+    [Fact]
+    public void List_WithBothIncludes_ReturnsEverything()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("user-agent"));
+        registry.Register(CreateSubAgentDescriptor("parent--subagent--coder--abc"));
+        registry.Register(CreateBuiltinDescriptor("coder"));
+        var controller = CreateController(registry);
+
+        var agents = ExtractAgents(controller.List(includeSubAgents: true, includeBuiltin: true));
+
+        agents.Count.ShouldBe(3);
     }
 
      [Fact]
@@ -469,6 +533,23 @@ public sealed class AgentsControllerTests
             ModelId = "test-model",
             ApiProvider = "test-provider"
         };
+
+    private static AgentDescriptor CreateSubAgentDescriptor(string agentId)
+        => CreateDescriptor(agentId) with { Kind = AgentKind.SubAgent };
+
+    private static AgentDescriptor CreateBuiltinDescriptor(string agentId)
+        => CreateDescriptor(agentId) with
+        {
+            Metadata = new Dictionary<string, object?> { ["role"] = agentId, ["builtin"] = true }
+        };
+
+    private static IReadOnlyList<AgentDescriptor> ExtractAgents(
+        ActionResult<IReadOnlyList<AgentDescriptor>> result)
+    {
+        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+        var agents = ok.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        return agents ?? throw new InvalidOperationException("Expected agent list.");
+    }
 
     private static Mock<IAgentChangeNotifier> CreateNotifier()
     {
