@@ -202,4 +202,41 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         var select = cut.Find("[data-testid='activity-filter-agent']");
         Assert.Contains("Alpha", select.InnerHtml);
     }
+
+    // ── Summary strip ────────────────────────────────────────────────────
+
+    [Fact]
+    public void Summary_strip_reflects_projected_row_counts()
+    {
+        SetupConversations(Conv("c1", title: "Alpha chat"), Conv("c2", title: "Beta chat"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+        cut.Find("[data-testid='activity-summary-strip']");
+        Assert.Contains("2", cut.Find("[data-testid='activity-summary-conversations']").TextContent);
+        cut.Find("[data-testid='activity-summary-agents']");
+        cut.Find("[data-testid='activity-summary-scheduled']");
+        cut.Find("[data-testid='activity-summary-freshness']");
+    }
+
+    [Fact]
+    public void Summary_strip_scheduled_count_tracks_cron_toggle()
+    {
+        SetupConversations(
+            Conv("c1", title: "Normal"),
+            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        // Cron hidden by default: 1 conversation, 0 scheduled.
+        Assert.Contains("1", cut.Find("[data-testid='activity-summary-conversations']").TextContent);
+        Assert.Contains("0", cut.Find("[data-testid='activity-summary-scheduled']").TextContent);
+
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+        Assert.Contains("1", cut.Find("[data-testid='activity-summary-scheduled']").TextContent);
+    }
 }

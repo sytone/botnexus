@@ -298,4 +298,77 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Throws<ArgumentNullException>(() =>
             ActivityDashboardProjection.Project(null!, new ActivityDashboardFilter(), Now));
     }
+
+    // ── Summary strip ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Summarize_empty_rows_yields_zeros_and_null_freshness()
+    {
+        var summary = ActivityDashboardProjection.Summarize(Array.Empty<ActivityRow>());
+
+        Assert.Equal(0, summary.ConversationCount);
+        Assert.Equal(0, summary.AgentCount);
+        Assert.Equal(0, summary.ScheduledCount);
+        Assert.Null(summary.LatestActivity);
+    }
+
+    [Fact]
+    public void Summarize_counts_conversations_and_latest_activity()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[]
+            {
+                Conv("a", updatedAt: Now.AddHours(-2)),
+                Conv("b", updatedAt: Now.AddHours(-1))
+            },
+            new ActivityDashboardFilter(),
+            Now);
+
+        var summary = ActivityDashboardProjection.Summarize(rows);
+
+        Assert.Equal(2, summary.ConversationCount);
+        Assert.Equal(Now.AddHours(-1), summary.LatestActivity);
+    }
+
+    [Fact]
+    public void Summarize_counts_distinct_agents_across_multi_agent_conversations()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[]
+            {
+                Conv("a", agentId: "alpha", participants: new[] { new ParticipantDto("Agent", "beta", "peer") }),
+                Conv("b", agentId: "alpha")
+            },
+            new ActivityDashboardFilter(),
+            Now);
+
+        var summary = ActivityDashboardProjection.Summarize(rows);
+
+        // alpha appears in both rows and beta in one -> 2 distinct agents.
+        Assert.Equal(2, summary.AgentCount);
+    }
+
+    [Fact]
+    public void Summarize_counts_scheduled_rows()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[]
+            {
+                Conv("a"),
+                Conv("b", activeSessionId: "cron:job-1:20260710")
+            },
+            new ActivityDashboardFilter(IncludeCron: true),
+            Now);
+
+        var summary = ActivityDashboardProjection.Summarize(rows);
+
+        Assert.Equal(2, summary.ConversationCount);
+        Assert.Equal(1, summary.ScheduledCount);
+    }
+
+    [Fact]
+    public void Summarize_throws_on_null_rows()
+    {
+        Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.Summarize(null!));
+    }
 }
