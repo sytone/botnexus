@@ -32,13 +32,21 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 {
     private const string AuthorizationHeader = "Authorization";
     private const string ApiKeyHeader = "X-Api-Key";
+    private const string OriginHeader = "Origin";
     private const string BearerPrefix = "Bearer ";
+
+    /// <summary>
+    /// Default browser origin permitted when no explicit <c>Gateway.Cors.AllowedOrigins</c>
+    /// list is configured. Mirrors the CORS fallback in Program.cs.
+    /// </summary>
+    private const string DefaultAllowedOrigin = "http://localhost:5005";
 
     /// <summary>The target reference reported on every auth handshake event.</summary>
     private const string GatewayTarget = "gateway";
 
     private readonly Lock _sync = new();
     private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
+    private readonly IReadOnlyList<string>? _staticAllowedOrigins;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
     private readonly ISecurityEventSink? _securityEvents;
@@ -66,6 +74,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
 
@@ -84,6 +93,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
@@ -102,6 +112,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _logger = logger;
         _platformConfig = platformConfig;
         _securityEvents = securityEvents;
+        _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(
             platformConfig.CurrentValue.ApiKey,
             platformConfig.CurrentValue.Gateway?.ApiKeys);
@@ -120,6 +131,20 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         if (identitiesByApiKey.Count == 0)
         {
+            // DNS-rebind / CSRF hardening (#1931): in dev/no-key mode we still grant a full
+            // admin identity, but a browser cannot be allowed to silently drive that identity
+            // from an arbitrary web origin. When a browser Origin header IS present it must be
+            // on the allow-list; a missing Origin (curl/CLI/same-origin non-browser) is allowed.
+            if (!IsOriginAllowed(context.Headers, out var rejectedOrigin))
+            {
+                _logger.LogWarning(
+                    "Gateway dev-mode auth denied: browser Origin '{Origin}' is not in the allow-list.",
+                    rejectedOrigin);
+                EmitOutcome(success: false, actorId: "development");
+                return Task.FromResult(GatewayAuthResult.Failure(
+                    $"Origin not allowed. '{rejectedOrigin}' is not in Gateway.Cors.AllowedOrigins."));
+            }
+
             _logger.LogDebug("Gateway auth is running in development mode: no API key configured.");
             EmitOutcome(success: true, actorId: "development");
             return Task.FromResult(GatewayAuthResult.Success(new GatewayCallerIdentity
@@ -244,6 +269,68 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             _identitiesByApiKey = rebuilt;
             return _identitiesByApiKey;
         }
+    }
+
+    /// <summary>
+    /// Enforces the browser-Origin allow-list used to guard the dev-mode admin grant against
+    /// DNS-rebind / CSRF attacks. Requests without an <c>Origin</c> header (non-browser clients
+    /// such as curl or the CLI) are always allowed; a present Origin must exactly match one of
+    /// the configured allow-listed origins (defaulting to <see cref="DefaultAllowedOrigin"/>).
+    /// </summary>
+    /// <param name="headers">Request headers.</param>
+    /// <param name="rejectedOrigin">The offending origin when the result is <c>false</c>.</param>
+    /// <returns><c>true</c> if the request may proceed; otherwise <c>false</c>.</returns>
+    private bool IsOriginAllowed(IReadOnlyDictionary<string, string> headers, out string rejectedOrigin)
+    {
+        rejectedOrigin = string.Empty;
+
+        if (!TryGetHeaderValue(headers, OriginHeader, out var origin) ||
+            string.IsNullOrWhiteSpace(origin))
+        {
+            // No browser Origin present: non-browser/same-origin caller, allow.
+            return true;
+        }
+
+        origin = origin.Trim();
+        foreach (var allowed in GetAllowedOrigins())
+        {
+            if (string.Equals(allowed, origin, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        rejectedOrigin = origin;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the effective browser-Origin allow-list, reading from the live options monitor
+    /// when available so runtime config edits take effect, and falling back to the snapshot
+    /// captured at construction or the built-in default.
+    /// </summary>
+    private IReadOnlyList<string> GetAllowedOrigins()
+    {
+        if (_platformConfig is not null)
+            return ResolveAllowedOrigins(_platformConfig.CurrentValue.Gateway?.Cors?.AllowedOrigins);
+
+        return _staticAllowedOrigins ?? [DefaultAllowedOrigin];
+    }
+
+    /// <summary>
+    /// Normalises a configured origin list into a non-empty allow-list, dropping blanks and
+    /// falling back to <see cref="DefaultAllowedOrigin"/> when nothing usable is configured.
+    /// </summary>
+    private static IReadOnlyList<string> ResolveAllowedOrigins(IEnumerable<string>? configured)
+    {
+        if (configured is null)
+            return [DefaultAllowedOrigin];
+
+        var origins = configured
+            .Where(static o => !string.IsNullOrWhiteSpace(o))
+            .Select(static o => o.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return origins.Length > 0 ? origins : [DefaultAllowedOrigin];
     }
 
     private static string? ExtractApiKey(IReadOnlyDictionary<string, string> headers)

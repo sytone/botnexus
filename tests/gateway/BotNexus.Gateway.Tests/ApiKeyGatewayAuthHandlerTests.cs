@@ -166,6 +166,69 @@ public sealed class ApiKeyGatewayAuthHandlerTests
         result.FailureReason.ShouldBe("Invalid API key.");
     }
 
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_WithoutOrigin_ReturnsDevelopmentIdentity()
+    {
+        // Non-browser clients (curl/CLI) send no Origin header and must still succeed.
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: null, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(CreateContext());
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_WithAllowedOrigin_ReturnsDevelopmentIdentity()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://localhost:5005" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_WithDisallowedBrowserOrigin_ReturnsFailure()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldStartWith("Origin not allowed");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_WithDisallowedOrigin_DefaultAllowList_ReturnsFailure()
+    {
+        // No Cors config -> default allow-list is http://localhost:5005 only.
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: null, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldStartWith("Origin not allowed");
+    }
+
     private static GatewayAuthContext CreateContext(IReadOnlyDictionary<string, string>? headers = null)
         => new()
         {
