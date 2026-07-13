@@ -1825,6 +1825,98 @@ html, body, #app {
     border-color: var(--error);
 }
 
+/* ── Tool pop-out ("expand") button + modal ─────────────────────────── */
+
+.tool-popout-btn {
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0.1rem 0.25rem;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.tool-section:hover .tool-popout-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tool-popout-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.tool-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 2rem;
+}
+
+.tool-modal-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: min(900px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    outline: none;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.tool-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.tool-modal-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.tool-modal-close {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+}
+
+.tool-modal-close:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}
+
+.tool-modal-content {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    background: rgba(0, 0, 0, 0.25);
+    margin: 0;
+    padding: 1rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    flex: 1 1 auto;
+}
+
 /* ── Steer / Abort buttons ──────────────────────────────────────────── */
 
 .steer-btn {

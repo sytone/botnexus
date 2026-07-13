@@ -1094,4 +1094,244 @@ public sealed class ChatPanelTests : IDisposable
         }
         return count;
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #1948 — Tool pop-out modal: decode function unit tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DecodeToolPayload_NullOrEmpty_ReturnsEmpty()
+    {
+        Assert.Equal(string.Empty, ChatPanel.DecodeToolPayload(null));
+        Assert.Equal(string.Empty, ChatPanel.DecodeToolPayload(""));
+    }
+
+    [Fact]
+    public void DecodeToolPayload_PlainText_UnescapesNewlineAndTab()
+    {
+        var raw = "line1\\nline2\\tcol";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+        Assert.Equal("line1\nline2\tcol", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_PlainText_UnescapesUnicodeEscapeToGlyph()
+    {
+        // \u2705 == ✅ (WHITE HEAVY CHECK MARK)
+        var raw = "status \\u2705 done";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+        Assert.Equal("status \u2705 done", decoded);
+        Assert.Contains("\u2705", decoded);
+        Assert.DoesNotContain("\\u2705", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_ValidJson_IsPrettyPrinted()
+    {
+        var raw = "{\"query\":\"hello\",\"count\":3}";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+
+        // Pretty-printed JSON spans multiple lines and is indented.
+        Assert.Contains("\n", decoded);
+        Assert.Contains("\"query\"", decoded);
+        Assert.Contains("  ", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_JsonWithEscapedNewlinesInStringValue_RendersRealNewlines()
+    {
+        // The JSON string value contains an escaped newline + a unicode escape.
+        var raw = "{\"result\":\"a\\nb \\u2705\"}";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+
+        // Pretty-printer decodes the string content: real newline + real glyph.
+        Assert.Contains("a\nb", decoded);
+        Assert.Contains("\u2705", decoded);
+        Assert.DoesNotContain("\\u2705", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_InvalidJson_FallsBackToUnescapedVerbatim()
+    {
+        // Looks like JSON (starts with '{') but is malformed — must not throw,
+        // should fall back to backslash-unescaping.
+        var raw = "{not valid json\\nsecond line";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+        Assert.Equal("{not valid json\nsecond line", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_UnknownEscape_KeepsBackslashVerbatim()
+    {
+        var raw = "path C:\\xtemp";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+        // \x is not a known escape — the backslash is preserved.
+        Assert.Equal("path C:\\xtemp", decoded);
+    }
+
+    [Fact]
+    public void DecodeToolPayload_DoesNotDecodeHtml_NoMarkupInjection()
+    {
+        // Ensure the decoder does not turn HTML entities into markup — it only
+        // touches backslash escapes. XSS safety comes from <pre> HTML-encoding,
+        // but the decoded text itself must remain literal.
+        var raw = "<script>alert(1)</script>\\nnext";
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+        Assert.Equal("<script>alert(1)</script>\nnext", decoded);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #1948 — Tool pop-out modal: render/interaction tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Renders_popout_buttons_in_expanded_tool_sections()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}",
+            ToolResult = "found 3 files"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Not visible before expanding
+        Assert.Empty(cut.FindAll(".tool-popout-btn"));
+
+        cut.Find(".tool-header").Click();
+
+        // Two pop-out buttons: Arguments + Result
+        Assert.Equal(2, cut.FindAll(".tool-popout-btn").Count);
+    }
+
+    [Fact]
+    public void Clicking_popout_opens_modal_with_decoded_content()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}",
+            ToolResult = "line1\\nline2 \\u2705"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        // No modal yet
+        Assert.Empty(cut.FindAll(".tool-modal-overlay"));
+
+        // Click the Result pop-out button (second one)
+        cut.FindAll(".tool-popout-btn")[1].Click();
+
+        var modal = cut.Find(".tool-modal-content");
+        // Decoded: escaped \n and \uXXXX become real newline + glyph.
+        Assert.Contains("line1\nline2", modal.TextContent);
+        Assert.Contains("\u2705", modal.TextContent);
+        Assert.DoesNotContain("\\u2705", modal.TextContent);
+    }
+
+    [Fact]
+    public void Tool_modal_closes_via_close_button()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+        cut.FindAll(".tool-popout-btn")[0].Click();
+
+        Assert.Single(cut.FindAll(".tool-modal-overlay"));
+
+        cut.Find(".tool-modal-close").Click();
+        Assert.Empty(cut.FindAll(".tool-modal-overlay"));
+    }
+
+    [Fact]
+    public void Tool_modal_closes_via_escape_key()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+        cut.FindAll(".tool-popout-btn")[0].Click();
+
+        Assert.Single(cut.FindAll(".tool-modal-overlay"));
+
+        cut.Find(".tool-modal-overlay").KeyDown(new Microsoft.AspNetCore.Components.Web.KeyboardEventArgs { Key = "Escape" });
+        Assert.Empty(cut.FindAll(".tool-modal-overlay"));
+    }
+
+    [Fact]
+    public void Tool_modal_closes_via_backdrop_click()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+        cut.FindAll(".tool-popout-btn")[0].Click();
+
+        Assert.Single(cut.FindAll(".tool-modal-overlay"));
+
+        // Clicking the overlay backdrop (not the dialog) closes.
+        cut.Find(".tool-modal-overlay").Click();
+        Assert.Empty(cut.FindAll(".tool-modal-overlay"));
+    }
+
+    [Fact]
+    public void Copy_button_still_copies_raw_payload_even_with_escapes()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolResult = "line1\\nline2 \\u2705"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        // Copy button copies the ORIGINAL raw payload (lossless — escapes intact).
+        cut.FindAll(".tool-copy-btn")[0].Click();
+
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "BotNexus.copyToClipboard" &&
+            invocation.Arguments.Count == 1 &&
+            invocation.Arguments[0] is string copiedText &&
+            copiedText == "line1\\nline2 \\u2705");
+    }
 }

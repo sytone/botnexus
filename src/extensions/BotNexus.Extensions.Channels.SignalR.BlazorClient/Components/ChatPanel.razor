@@ -3,6 +3,8 @@
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
 @implements IDisposable
+@using System.Text.Json
+@using System.Text.Encodings.Web
 
 <div class="chat-panel">
     <header class="chat-header">
@@ -124,6 +126,29 @@
         </div>
     }
 
+    @if (_toolModalOpen)
+    {
+        <div class="tool-modal-overlay" data-testid="tool-modal-overlay"
+             @onclick="CloseToolModal"
+             @onkeydown="ToolModalKeyDown"
+             tabindex="-1">
+            <div class="tool-modal-dialog" role="dialog" aria-modal="true"
+                 aria-label="@($"Tool {_toolModalTitle}")"
+                 data-testid="tool-modal"
+                 @onclick:stopPropagation="true"
+                 @ref="_toolModalDialog">
+                <div class="tool-modal-header">
+                    <span class="tool-modal-title">@_toolModalTitle</span>
+                    <button class="tool-modal-close" type="button"
+                            data-testid="tool-modal-close"
+                            title="Close" aria-label="Close"
+                            @onclick="CloseToolModal">&#x2715;</button>
+                </div>
+                <pre class="tool-modal-content" data-testid="tool-modal-content">@_toolModalDecoded</pre>
+            </div>
+        </div>
+    }
+
     @if (IsReadOnly)
     {
         <div class="read-only-banner" role="status" aria-label="Read-only sub-agent session view">
@@ -228,6 +253,14 @@
                                 <div class="tool-section">
                                     <div class="tool-section-header">
                                         <span class="tool-section-label">Arguments</span>
+                                        <button class="tool-popout-btn"
+                                                type="button"
+                                                data-testid="tool-popout-args"
+                                                title="Pop out arguments"
+                                                aria-label="Pop out arguments"
+                                                @onclick='() => OpenToolModal("Arguments", msg.ToolArgs)'>
+                                            &#x2922;
+                                        </button>
                                         <button class="tool-copy-btn @(_copiedSectionId == $"{msg.Id}-args" ? "copied" : "")"
                                                 type="button"
                                                 title="@(_copiedSectionId == $"{msg.Id}-args" ? "Copied!" : "Copy arguments")"
@@ -244,6 +277,14 @@
                                 <div class="tool-section">
                                     <div class="tool-section-header">
                                         <span class="tool-section-label">Result</span>
+                                        <button class="tool-popout-btn"
+                                                type="button"
+                                                data-testid="tool-popout-result"
+                                                title="Pop out result"
+                                                aria-label="Pop out result"
+                                                @onclick='() => OpenToolModal("Result", msg.ToolResult)'>
+                                            &#x2922;
+                                        </button>
                                         <button class="tool-copy-btn @(_copiedSectionId == $"{msg.Id}-result" ? "copied" : "")"
                                                 type="button"
                                                 title="@(_copiedSectionId == $"{msg.Id}-result" ? "Copied!" : "Copy result")"
@@ -537,6 +578,13 @@ private bool IsStreaming =>
     private const string CopySectionArgs = "args";
     private const string CopySectionResult = "result";
 
+    // ── Tool pop-out modal state ────────────────────────────────────────
+    private bool _toolModalOpen;
+    private string _toolModalTitle = "";
+    private string _toolModalDecoded = "";
+    private ElementReference _toolModalDialog;
+    private bool _toolModalFocused;
+
     private sealed record SlashCommand(string Name, string Description);
 
     private static readonly SlashCommand[] s_allCommands =
@@ -610,6 +658,181 @@ private bool IsStreaming =>
     {
         if (!_expandedTools.Remove(messageId))
             _expandedTools.Add(messageId);
+    }
+
+    // ── Tool pop-out modal ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Opens the pop-out modal, rendering a human-readable, decoded view of a
+    /// tool Arguments or Result payload. The decoded text is stored as plain text
+    /// and bound into a &lt;pre&gt; (HTML-encoded by Razor) — it is never treated as markup.
+    /// The original raw payload is untouched so the Copy path stays lossless.
+    /// </summary>
+    private void OpenToolModal(string title, string? rawPayload)
+    {
+        _toolModalTitle = title;
+        _toolModalDecoded = DecodeToolPayload(rawPayload);
+        _toolModalOpen = true;
+    }
+
+    private void CloseToolModal()
+    {
+        _toolModalOpen = false;
+        _toolModalTitle = "";
+        _toolModalDecoded = "";
+    }
+
+    private void ToolModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            CloseToolModal();
+    }
+
+    /// <summary>
+    /// Pure, side-effect-free decoder for tool Arguments/Result payloads.
+    /// Rules:
+    ///   1. If the payload is valid JSON, pretty-print it with indentation. This
+    ///      naturally turns escaped \n / \t / \uXXXX inside JSON string values into
+    ///      real newlines/tabs/glyphs in the rendered strings.
+    ///   2. Otherwise, unescape common backslash sequences (\n, \r, \t, \uXXXX, \\, \", \/)
+    ///      into their real characters and return the text verbatim (whitespace preserved).
+    ///   3. Never throws — any failure falls back to the raw input.
+    /// The returned value is PLAIN TEXT intended to be HTML-encoded by the caller
+    /// (rendered into a &lt;pre&gt;), so unicode is shown as glyphs, not re-escaped, and
+    /// no HTML injection is possible.
+    /// </summary>
+    public static string DecodeToolPayload(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+            return raw ?? string.Empty;
+
+        // 1 ─ Try JSON pretty-print first.
+        var trimmed = raw.TrimStart();
+        if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '['))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                var pretty = JsonSerializer.Serialize(doc.RootElement, s_prettyJson);
+                // System.Text.Json keeps control chars inside string values escaped
+                // (valid JSON). For DISPLAY we turn \n / \r / \t inside those values
+                // into real formatting so multi-line tool output is readable. We leave
+                // \" untouched so the JSON structure stays legible, and unicode is
+                // already emitted as real glyphs by the relaxed encoder.
+                return UnescapeWhitespaceOnly(pretty);
+            }
+            catch (JsonException)
+            {
+                // Not valid JSON — fall through to escape-unescaping.
+            }
+        }
+
+        // 2 ─ Manual unescape of common backslash sequences.
+        return UnescapeBackslashSequences(raw);
+    }
+
+    private static readonly JsonSerializerOptions s_prettyJson = new()
+    {
+        WriteIndented = true,
+        // Do not re-escape non-ASCII — we want real glyphs in the display text.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    private static string UnescapeBackslashSequences(string input)
+    {
+        // Fast path: nothing to do.
+        if (input.IndexOf('\\') < 0)
+            return input;
+
+        var sb = new System.Text.StringBuilder(input.Length);
+        for (int i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+            if (c != '\\' || i == input.Length - 1)
+            {
+                sb.Append(c);
+                continue;
+            }
+
+            var next = input[i + 1];
+            switch (next)
+            {
+                case 'n': sb.Append('\n'); i++; break;
+                case 'r': sb.Append('\r'); i++; break;
+                case 't': sb.Append('\t'); i++; break;
+                case 'b': sb.Append('\b'); i++; break;
+                case 'f': sb.Append('\f'); i++; break;
+                case '\\': sb.Append('\\'); i++; break;
+                case '"': sb.Append('"'); i++; break;
+                case '/': sb.Append('/'); i++; break;
+                case 'u':
+                    if (TryParseHex4(input, i + 2, out var code))
+                    {
+                        sb.Append((char)code);
+                        i += 5;
+                    }
+                    else
+                    {
+                        sb.Append(c); // leave the backslash verbatim
+                    }
+                    break;
+                default:
+                    sb.Append(c); // unknown escape — keep the backslash literally
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Display-only unescape of \n, \r and \t sequences. Used to make escaped
+    /// whitespace inside JSON string values render as real line breaks/tabs. Every
+    /// other backslash sequence (including \" and \uXXXX) is left verbatim so the
+    /// surrounding JSON structure stays intact and no glyphs are re-escaped.
+    /// </summary>
+    private static string UnescapeWhitespaceOnly(string input)
+    {
+        if (input.IndexOf('\\') < 0)
+            return input;
+
+        var sb = new System.Text.StringBuilder(input.Length);
+        for (int i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+            if (c != '\\' || i == input.Length - 1)
+            {
+                sb.Append(c);
+                continue;
+            }
+
+            var next = input[i + 1];
+            switch (next)
+            {
+                case 'n': sb.Append('\n'); i++; break;
+                case 'r': sb.Append('\r'); i++; break;
+                case 't': sb.Append('\t'); i++; break;
+                default: sb.Append(c); break; // keep backslash verbatim
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static bool TryParseHex4(string s, int start, out int value)
+    {
+        value = 0;
+        if (start + 4 > s.Length)
+            return false;
+        for (int k = 0; k < 4; k++)
+        {
+            var ch = s[start + k];
+            int d;
+            if (ch >= '0' && ch <= '9') d = ch - '0';
+            else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
+            else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+            else return false;
+            value = (value << 4) | d;
+        }
+        return true;
     }
 
     private static string FormatDuration(TimeSpan d) => d.TotalSeconds < 1
@@ -789,6 +1012,18 @@ private bool IsStreaming =>
     {
         try
         {
+            // Focus-trap entry: when the tool pop-out modal opens, move focus into the
+            // dialog so Esc / Tab are captured and screen readers land inside it.
+            if (_toolModalOpen && !_toolModalFocused)
+            {
+                _toolModalFocused = true;
+                try { await _toolModalDialog.FocusAsync(); } catch { }
+            }
+            else if (!_toolModalOpen && _toolModalFocused)
+            {
+                _toolModalFocused = false;
+            }
+
             // Reset enter-prevention binding when textarea is recreated (read-only → interactive)
             var hasInlinePrompt = PendingAskUserPrompt is not null;
             if ((_wasReadOnly && !IsReadOnly) || (_hadAskUserPrompt && !hasInlinePrompt))
