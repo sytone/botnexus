@@ -121,7 +121,26 @@ public sealed class PlatformConfigWriter
                 root[sectionName] = section;
             }
 
-            section[key] = value;
+            // Same secret-restore + deep-merge as UpdateSectionAsync, but scoped to a single keyed
+            // entry. The UI PUTs a redacted entry (e.g. providers.github-copilot) back verbatim, so
+            // a raw replace would clobber the real secret with "***" (#1955) and drop any on-disk
+            // keys the payload omits (#1954). Wrap the entry under its real section name so the
+            // secret restore walks the same paths ConfigSecretMerge.Redact uses.
+            if (value is JsonObject incoming && section[key] is JsonObject existing)
+            {
+                var existingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = existing.DeepClone() } };
+                var incomingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = incoming.DeepClone() } };
+                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                var restoredIncoming = incomingWrapper[sectionName]![key] as JsonObject ?? incoming;
+
+                var merged = existing.DeepClone().AsObject();
+                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                section[key] = merged;
+            }
+            else
+            {
+                section[key] = value;
+            }
         }, $"before-{sectionName}-update", ct);
 
     /// <summary>

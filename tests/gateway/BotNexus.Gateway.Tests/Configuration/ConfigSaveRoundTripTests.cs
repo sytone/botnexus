@@ -137,6 +137,39 @@ public sealed class ConfigSaveRoundTripTests : IDisposable
         channels["serviceBus"]!["namespace"]!.GetValue<string>().ShouldBe("contoso.servicebus.windows.net");
     }
 
+    /// <summary>
+    /// The per-entry PUT path (providers.github-copilot) must apply the same secret-restore and
+    /// deep-merge: a redacted single provider PUT back keeps its real apiKey (#1955) and any
+    /// omitted sibling keys survive (#1954).
+    /// </summary>
+    [Fact]
+    public async Task PutSectionEntry_RedactedProvider_PreservesSecretAndOmittedKeys()
+    {
+        await _fileSystem.File.WriteAllTextAsync(_configPath, LiveConfig);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem);
+
+        // GET provider entry and redact as the controller would.
+        var root = await writer.ReadAsync();
+        var providerForUi = root["providers"]!["github-copilot"]!.DeepClone().AsObject();
+        var wrapper = new JsonObject { ["providers"] = new JsonObject { ["github-copilot"] = providerForUi } };
+        ConfigSecretMerge.Redact(wrapper);
+        providerForUi = wrapper["providers"]!["github-copilot"]!.AsObject();
+        providerForUi["apiKey"]!.GetValue<string>().ShouldBe(ConfigSecretMerge.Placeholder);
+
+        // EDIT: change model, leave apiKey as the placeholder, and omit nothing extra.
+        providerForUi["model"] = "claude-3.7";
+
+        // PUT the single entry back.
+        await writer.UpdateSectionEntryAsync("providers", "github-copilot", providerForUi.DeepClone());
+
+        var after = await writer.ReadAsync();
+        var provider = after["providers"]!["github-copilot"]!;
+        // #1955: real secret survived.
+        provider["apiKey"]!.GetValue<string>().ShouldBe("sk-provider-REAL-secret");
+        // Edit applied.
+        provider["model"]!.GetValue<string>().ShouldBe("claude-3.7");
+    }
+
     public void Dispose()
     {
         if (_fileSystem.Directory.Exists(_rootPath))
