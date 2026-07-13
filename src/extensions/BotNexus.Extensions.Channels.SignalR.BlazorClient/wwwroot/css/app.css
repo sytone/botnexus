@@ -1087,6 +1087,30 @@ html, body, #app {
     word-break: break-word;
 }
 
+.workspace-file-editor {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0.85rem;
+    border: none;
+    resize: none;
+    box-sizing: border-box;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+}
+
+.workspace-file-editor:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 .reports-panel {
     display: flex;
     flex: 1;
