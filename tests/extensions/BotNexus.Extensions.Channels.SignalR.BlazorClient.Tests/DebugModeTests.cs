@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -29,6 +30,7 @@ public sealed class DebugModeTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IPortalLoadService>());
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
