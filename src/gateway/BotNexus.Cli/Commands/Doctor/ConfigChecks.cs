@@ -81,6 +81,82 @@ public sealed class SkillsWorldDefaultCheck : IConfigCheck
 }
 
 /// <summary>
+/// Recommends enabling the dev-mode browser-Origin guard (#1931) when the gateway runs keyless
+/// (development mode). The guard defends the auto-granted <c>gateway-dev</c> admin identity
+/// against DNS-rebind / CSRF from a malicious web origin, but ships OFF by default so it can
+/// never lock a keyless operator out of the UI on restart. This check surfaces the opt-in.
+/// <para>
+/// Only applicable when NO API key is configured (keyless dev mode) and the
+/// <c>FeatureManagement.GatewayDevOriginEnforcement</c> flag is not already enabled. Applying the
+/// fix seeds <c>gateway.cors.allowedOrigins</c> with the localhost default (only if unset, so an
+/// operator's existing origins are preserved) and turns the flag on. Operators who reach the UI
+/// over a non-localhost origin (LAN hostname, reverse proxy, netbird) must add that origin to
+/// <c>gateway.cors.allowedOrigins</c> before enabling, or they will be locked out.
+/// </para>
+/// </summary>
+public sealed class DevOriginEnforcementCheck : IConfigCheck
+{
+    /// <summary>Feature-flag name; must match ApiKeyGatewayAuthHandler.DevOriginEnforcementFeature.</summary>
+    private const string FeatureName = "GatewayDevOriginEnforcement";
+    private const string DefaultOrigin = "http://localhost:5005";
+
+    public string Id => "devmode-origin-enforcement";
+    public string Description =>
+        "Gateway runs keyless (dev mode) with the browser-Origin guard disabled - the gateway-dev admin identity is reachable from any web origin (DNS-rebind/CSRF risk).";
+    public string FixDescription =>
+        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"http://localhost:5005\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
+
+    public bool IsApplicable(JsonObject root)
+    {
+        // Only relevant in keyless dev mode - a configured API key path is unaffected by this guard.
+        if (HasAnyApiKey(root))
+            return false;
+
+        // Already enabled -> nothing to recommend.
+        return !IsFeatureEnabled(root);
+    }
+
+    public void Apply(JsonObject root)
+    {
+        // Seed a localhost allow-list only if none exists, preserving any origins the operator set.
+        var gateway = root["gateway"] as JsonObject ?? new JsonObject();
+        root["gateway"] = gateway;
+        var cors = gateway["cors"] as JsonObject ?? new JsonObject();
+        gateway["cors"] = cors;
+        if (cors["allowedOrigins"] is not JsonArray existing || existing.Count == 0)
+        {
+            cors["allowedOrigins"] = new JsonArray { DefaultOrigin };
+        }
+
+        // Turn the flag on under the FeatureManagement section (Microsoft.FeatureManagement schema).
+        var featureManagement = root["FeatureManagement"] as JsonObject ?? new JsonObject();
+        root["FeatureManagement"] = featureManagement;
+        featureManagement[FeatureName] = true;
+    }
+
+    private static bool HasAnyApiKey(JsonObject root)
+    {
+        if (root["apiKey"] is JsonValue av && av.TryGetValue<string>(out var legacy) && !string.IsNullOrWhiteSpace(legacy))
+            return true;
+
+        var apiKeys = (root["gateway"] as JsonObject)?["apiKeys"] as JsonObject;
+        return apiKeys is { Count: > 0 };
+    }
+
+    private static bool IsFeatureEnabled(JsonObject root)
+    {
+        var fm = root["FeatureManagement"] as JsonObject;
+        if (fm is null)
+            return false;
+
+        // Microsoft.FeatureManagement accepts either a bool literal or an object with an
+        // EnabledFor filter list; we only treat a literal `true` as "already enabled" for the
+        // purposes of this recommendation.
+        return fm[FeatureName] is JsonValue v && v.TryGetValue<bool>(out var enabled) && enabled;
+    }
+}
+
+/// <summary>
 /// Checks that the top-level <c>cron</c> block exists with scheduler enabled.
 /// </summary>
 public sealed class CronCheck : IConfigCheck

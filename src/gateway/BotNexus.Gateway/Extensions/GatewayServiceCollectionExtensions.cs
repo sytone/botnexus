@@ -42,6 +42,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.FeatureManagement;
 using System.Globalization;
 using System.IO.Abstractions;
 
@@ -191,11 +192,16 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
         services.TryAddSingleton<CommandRegistry>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
+        // Feature flags (#1931 rollout safety): AddFeatureManagement binds onto the same
+        // IConfiguration that config.json is loaded into, exposing flags under a
+        // "FeatureManagement" section. Registered idempotently so repeated composition is safe.
+        services.AddFeatureManagement();
         services.AddSingleton<IGatewayAuthHandler>(sp =>
             new ApiKeyGatewayAuthHandler(
                 apiKey: null,
                 sp.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
-                sp.GetService<ISecurityEventSink>()));
+                sp.GetService<ISecurityEventSink>(),
+                sp.GetService<IFeatureManager>()));
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
 
         // Hook dispatcher: register as a concrete singleton instance so that
@@ -351,7 +357,8 @@ public static class GatewayServiceCollectionExtensions
             new ApiKeyGatewayAuthHandler(
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
                 serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
-                serviceProvider.GetService<ISecurityEventSink>())));
+                serviceProvider.GetService<ISecurityEventSink>(),
+                serviceProvider.GetService<IFeatureManager>())));
 
         var defaultAgentId = config.Gateway?.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId))

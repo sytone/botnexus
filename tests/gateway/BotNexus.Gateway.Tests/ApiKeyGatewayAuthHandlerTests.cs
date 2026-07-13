@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.FeatureManagement;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -179,8 +180,11 @@ public sealed class ApiKeyGatewayAuthHandlerTests
     }
 
     [Fact]
-    public async Task AuthenticateAsync_DevMode_WithAllowedOrigin_ReturnsDevelopmentIdentity()
+    public async Task AuthenticateAsync_DevMode_FlagOff_DisallowedOrigin_StillSucceeds()
     {
+        // #1931 rollout safety: with the GatewayDevOriginEnforcement flag OFF (the default,
+        // and what a null feature manager represents), even a disallowed browser Origin must
+        // NOT be rejected - introducing the guard can never lock a keyless user out on restart.
         var config = new PlatformConfig
         {
             Gateway = new GatewaySettingsConfig
@@ -188,18 +192,24 @@ public sealed class ApiKeyGatewayAuthHandlerTests
                 Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
             }
         };
-        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new StubFeatureManager(enabled: false));
 
         var result = await handler.AuthenticateAsync(
-            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://localhost:5005" }));
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
 
         result.IsAuthenticated.ShouldBeTrue();
         result.Identity!.CallerId.ShouldBe("gateway-dev");
     }
 
     [Fact]
-    public async Task AuthenticateAsync_DevMode_WithDisallowedBrowserOrigin_ReturnsFailure()
+    public async Task AuthenticateAsync_DevMode_NullFeatureManager_DisallowedOrigin_StillSucceeds()
     {
+        // A handler constructed without a feature manager (e.g. non-DI paths) treats the guard
+        // as disabled - same fail-open default as flag-off.
         var config = new PlatformConfig
         {
             Gateway = new GatewaySettingsConfig
@@ -212,15 +222,81 @@ public sealed class ApiKeyGatewayAuthHandlerTests
         var result = await handler.AuthenticateAsync(
             CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
 
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagOn_WithoutOrigin_ReturnsDevelopmentIdentity()
+    {
+        // Even with the guard ON, non-browser clients (no Origin) must still succeed.
+        var handler = new ApiKeyGatewayAuthHandler(
+            apiKey: null,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new StubFeatureManager(enabled: true));
+
+        var result = await handler.AuthenticateAsync(CreateContext());
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagOn_WithAllowedOrigin_ReturnsDevelopmentIdentity()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new StubFeatureManager(enabled: true));
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://localhost:5005" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagOn_WithDisallowedBrowserOrigin_ReturnsFailure()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new StubFeatureManager(enabled: true));
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
         result.IsAuthenticated.ShouldBeFalse();
         result.FailureReason.ShouldStartWith("Origin not allowed");
     }
 
     [Fact]
-    public async Task AuthenticateAsync_DevMode_WithDisallowedOrigin_DefaultAllowList_ReturnsFailure()
+    public async Task AuthenticateAsync_DevMode_FlagOn_DisallowedOrigin_DefaultAllowList_ReturnsFailure()
     {
         // No Cors config -> default allow-list is http://localhost:5005 only.
-        var handler = new ApiKeyGatewayAuthHandler(apiKey: null, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var handler = new ApiKeyGatewayAuthHandler(
+            apiKey: null,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new StubFeatureManager(enabled: true));
 
         var result = await handler.AuthenticateAsync(
             CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
@@ -237,4 +313,22 @@ public sealed class ApiKeyGatewayAuthHandlerTests
             Path = "/api/messages",
             Method = "POST"
         };
+
+    /// <summary>
+    /// Minimal <see cref="IFeatureManager"/> stub returning a fixed enabled/disabled result for
+    /// every flag, so the dev-mode Origin guard can be exercised in both states without a full
+    /// configuration-backed feature manager.
+    /// </summary>
+    private sealed class StubFeatureManager(bool enabled) : IFeatureManager
+    {
+        public async IAsyncEnumerable<string> GetFeatureNamesAsync()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public Task<bool> IsEnabledAsync(string feature) => Task.FromResult(enabled);
+
+        public Task<bool> IsEnabledAsync<TContext>(string feature, TContext context) => Task.FromResult(enabled);
+    }
 }

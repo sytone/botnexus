@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.FeatureManagement;
 
 namespace BotNexus.Gateway.Security;
 
@@ -41,6 +42,16 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// </summary>
     private const string DefaultAllowedOrigin = "http://localhost:5005";
 
+    /// <summary>
+    /// Feature flag gating the dev-mode browser-Origin enforcement (#1931). When the flag is
+    /// absent or disabled the guard is inert and dev/no-key mode behaves exactly as it did
+    /// before the guard existed - this is deliberately OFF by default so introducing the guard
+    /// cannot lock a keyless user out of the UI on restart. The <c>doctor config</c> command
+    /// surfaces a recommendation to enable it, and a future release will flip the default on.
+    /// Lives under the <c>FeatureManagement</c> section of config.json.
+    /// </summary>
+    public const string DevOriginEnforcementFeature = "GatewayDevOriginEnforcement";
+
     /// <summary>The target reference reported on every auth handshake event.</summary>
     private const string GatewayTarget = "gateway";
 
@@ -48,6 +59,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
     private readonly IReadOnlyList<string>? _staticAllowedOrigins;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
+    private readonly IFeatureManager? _featureManager;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
     private readonly ISecurityEventSink? _securityEvents;
 
@@ -69,11 +81,13 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         string? apiKey,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
         _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
@@ -87,12 +101,14 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         PlatformConfig platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
         _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
@@ -106,12 +122,14 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         IOptionsMonitor<PlatformConfig> platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = platformConfig;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
         _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(
             platformConfig.CurrentValue.ApiKey,
@@ -122,7 +140,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public string Scheme => "ApiKey";
 
     /// <inheritdoc />
-    public Task<GatewayAuthResult> AuthenticateAsync(
+    public async Task<GatewayAuthResult> AuthenticateAsync(
         GatewayAuthContext context,
         CancellationToken cancellationToken = default)
     {
@@ -135,33 +153,40 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             // admin identity, but a browser cannot be allowed to silently drive that identity
             // from an arbitrary web origin. When a browser Origin header IS present it must be
             // on the allow-list; a missing Origin (curl/CLI/same-origin non-browser) is allowed.
-            if (!IsOriginAllowed(context.Headers, out var rejectedOrigin))
+            //
+            // This guard is gated behind the GatewayDevOriginEnforcement feature flag, which is
+            // OFF by default (#1931 rollout safety): introducing the guard must never lock a
+            // keyless user out of the UI on restart. Operators opt in (doctor surfaces the
+            // recommendation), and a future release flips the default on. A null feature manager
+            // (constructed without DI, e.g. in tests) is treated as disabled.
+            if (await IsDevOriginEnforcementEnabledAsync().ConfigureAwait(false) &&
+                !IsOriginAllowed(context.Headers, out var rejectedOrigin))
             {
                 _logger.LogWarning(
                     "Gateway dev-mode auth denied: browser Origin '{Origin}' is not in the allow-list.",
                     rejectedOrigin);
                 EmitOutcome(success: false, actorId: "development");
-                return Task.FromResult(GatewayAuthResult.Failure(
-                    $"Origin not allowed. '{rejectedOrigin}' is not in Gateway.Cors.AllowedOrigins."));
+                return GatewayAuthResult.Failure(
+                    $"Origin not allowed. '{rejectedOrigin}' is not in Gateway.Cors.AllowedOrigins.");
             }
 
             _logger.LogDebug("Gateway auth is running in development mode: no API key configured.");
             EmitOutcome(success: true, actorId: "development");
-            return Task.FromResult(GatewayAuthResult.Success(new GatewayCallerIdentity
+            return GatewayAuthResult.Success(new GatewayCallerIdentity
             {
                 CallerId = "gateway-dev",
                 DisplayName = "Gateway Development Caller",
                 TenantId = "development",
                 Permissions = ["*"],
                 IsAdmin = true
-            }));
+            });
         }
 
         var presentedKey = ExtractApiKey(context.Headers);
         if (presentedKey is null)
         {
             EmitOutcome(success: false, actorId: "anonymous");
-            return Task.FromResult(GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>."));
+            return GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>.");
         }
 
         // Resolve identity with a constant-time comparison. The dictionary is retained for
@@ -179,11 +204,35 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         if (matched is null)
         {
             EmitOutcome(success: false, actorId: presentedKey);
-            return Task.FromResult(GatewayAuthResult.Failure("Invalid API key."));
+            return GatewayAuthResult.Failure("Invalid API key.");
         }
 
         EmitOutcome(success: true, actorId: matched.CallerId);
-        return Task.FromResult(GatewayAuthResult.Success(matched));
+        return GatewayAuthResult.Success(matched);
+    }
+
+    /// <summary>
+    /// Returns whether the dev-mode browser-Origin guard (#1931) is currently enabled. Defaults
+    /// to <c>false</c> when no feature manager is wired (e.g. tests or non-DI construction) so
+    /// the guard is inert unless an operator explicitly opts in via the
+    /// <see cref="DevOriginEnforcementFeature"/> flag.
+    /// </summary>
+    private async Task<bool> IsDevOriginEnforcementEnabledAsync()
+    {
+        if (_featureManager is null)
+            return false;
+
+        try
+        {
+            return await _featureManager.IsEnabledAsync(DevOriginEnforcementFeature).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A feature-flag evaluation fault must fail OPEN (guard disabled) so a misconfigured
+            // flag can never lock the operator out of their own gateway. Log and treat as off.
+            _logger.LogWarning(ex, "Failed to evaluate feature flag '{Feature}'; treating dev-mode origin enforcement as disabled.", DevOriginEnforcementFeature);
+            return false;
+        }
     }
 
     private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(

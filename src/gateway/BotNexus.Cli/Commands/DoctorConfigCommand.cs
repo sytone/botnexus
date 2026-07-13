@@ -22,6 +22,7 @@ internal sealed class DoctorConfigCommand
         new MemoryAgentDefaultCheck(),
         new CompactionModelCheck(),
         new CompactionModelMissingCheck(),
+        new DevOriginEnforcementCheck(),
     ];
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
