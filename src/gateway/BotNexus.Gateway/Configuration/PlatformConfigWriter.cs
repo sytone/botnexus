@@ -53,10 +53,43 @@ public sealed class PlatformConfigWriter
 
     /// <summary>
     /// Atomically updates a section of the config.
+    ///
+    /// The incoming payload comes from the config UI, which was served redacted
+    /// secrets ("***") and channel subtrees it may not fully model. A raw
+    /// <c>root[sectionName] = value</c> replace would (a) clobber real on-disk
+    /// secrets with the "***" placeholder the UI round-tripped (#1955) and
+    /// (b) drop existing keys the payload omits, e.g. telegram bots or
+    /// serviceBus queues (#1954). Instead we restore any placeholder secrets
+    /// from the existing section and deep-merge the incoming payload over the
+    /// existing section so omitted keys survive.
     /// </summary>
     public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default)
         => await MutateAsync(
-            root => root[sectionName] = value,
+            root =>
+            {
+                if (value is not JsonObject incoming || root[sectionName] is not JsonObject existing)
+                {
+                    // No existing object section (or non-object payload): nothing to
+                    // merge/preserve, so fall back to a straight assignment.
+                    root[sectionName] = value;
+                    return;
+                }
+
+                // Work on a clone so we never mutate the shared root mid-flight.
+                var merged = existing.DeepClone().AsObject();
+
+                // 1) Restore secrets: wrap both under the real section name so the
+                //    symmetric restore walks the same paths RedactSecrets uses.
+                var existingWrapper = new JsonObject { [sectionName] = existing.DeepClone() };
+                var incomingWrapper = new JsonObject { [sectionName] = incoming.DeepClone() };
+                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                var restoredIncoming = incomingWrapper[sectionName] as JsonObject ?? incoming;
+
+                // 2) Deep-merge restored payload over existing so omitted subtrees survive.
+                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+
+                root[sectionName] = merged;
+            },
             $"before-{sectionName}-update",
             ct);
 
