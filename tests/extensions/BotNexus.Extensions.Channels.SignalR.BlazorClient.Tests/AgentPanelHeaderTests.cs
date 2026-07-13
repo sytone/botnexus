@@ -116,4 +116,40 @@ public sealed class AgentPanelHeaderTests : IDisposable
         Assert.Equal("no-desc-agent", cut.Find(".agent-panel-id").TextContent.Trim());
         Assert.Equal("no-desc-agent", cut.Find(".agent-panel-meta").GetAttribute("title"));
     }
+
+    [Fact]
+    public void Header_avatar_uses_agent_emoji_when_set()
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "emoji-agent",
+            DisplayName = "Emoji Agent",
+            Emoji = "🔬",
+            IsConnected = true
+        });
+        _store.ActiveAgentId = "emoji-agent";
+
+        var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "emoji-agent"));
+
+        var avatar = cut.Find(".agent-panel-avatar");
+        Assert.Equal("🔬", avatar.TextContent.Trim());
+    }
+
+    [Fact]
+    public void Header_avatar_falls_back_to_robot_when_emoji_missing()
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "no-emoji-agent",
+            DisplayName = "No Emoji Agent",
+            Emoji = null,
+            IsConnected = true
+        });
+        _store.ActiveAgentId = "no-emoji-agent";
+
+        var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "no-emoji-agent"));
+
+        var avatar = cut.Find(".agent-panel-avatar");
+        Assert.Equal("🤖", avatar.TextContent.Trim());
+    }
 }
