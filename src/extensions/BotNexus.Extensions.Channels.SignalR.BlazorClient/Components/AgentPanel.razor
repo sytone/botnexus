@@ -4,7 +4,7 @@
 
 <div class="agent-panel" data-testid="agent-panel">
     <header class="agent-panel-header">
-        <div class="agent-panel-avatar" aria-hidden="true">🤖</div>
+        <div class="agent-panel-avatar" aria-hidden="true">@AvatarGlyph</div>
         <div class="agent-panel-meta" title="@AgentId">
             <h2 class="agent-panel-title">@DisplayName</h2>
             @if (!string.IsNullOrWhiteSpace(Description))
@@ -85,6 +85,10 @@
 
     private AgentState? Agent => Store.GetAgent(AgentId);
     private string DisplayName => Agent?.DisplayName ?? AgentId;
+    // Prefer the agent's configured emoji; fall back to the default robot glyph
+    // when none is set. Mirrors the sidebar card (AgentDashboard.razor) so the
+    // header and list stay visually consistent.
+    private string AvatarGlyph => string.IsNullOrWhiteSpace(Agent?.Emoji) ? "\U0001F916" : Agent!.Emoji!;
     private string? Description => Agent?.Description;
     private string StatusLabel => Agent?.IsConnected != true ? "Offline" : Agent?.IsStreaming == true ? "Running" : "Idle";
     private string StatusCssClass => Agent?.IsConnected != true ? "offline" : Agent?.IsStreaming == true ? "running" : "idle";
