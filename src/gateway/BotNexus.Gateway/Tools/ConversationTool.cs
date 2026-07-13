@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -77,6 +78,11 @@ public sealed class ConversationTool(
                 "status": {
                   "type": "string",
                   "description": "Filter by conversation status for list action: 'active' or 'archived'. Omit to return all."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Optional subset of top-level keys to return for get/list actions (e.g. [\"conversationId\",\"title\"]). Case-insensitive; unknown names are ignored. Omit to return the full object."
                 }
               },
               "required": ["action"]
@@ -202,7 +208,7 @@ public sealed class ConversationTool(
     {
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
-        return TextResult(JsonSerializer.Serialize(ToToolResponse(conversation), JsonOptions));
+        return TextResult(SerializeProjected(ToToolResponse(conversation), arguments));
     }
 
     private async Task<AgentToolResult> SetTitleAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
@@ -263,7 +269,7 @@ public sealed class ConversationTool(
         }
 
         var result = filtered.Select(ToToolResponse);
-        return TextResult(JsonSerializer.Serialize(result, JsonOptions));
+        return TextResult(SerializeProjected(result, arguments));
     }
 
     private async Task<AgentToolResult> NewAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
@@ -419,6 +425,19 @@ public sealed class ConversationTool(
             return;
 
         throw new UnauthorizedAccessException($"Agent '{agentId}' does not have access to conversations for agent '{targetAgentId}'.");
+    }
+
+    /// <summary>
+    /// Serializes a tool response (a single object or a sequence of them) applying the optional
+    /// <c>fields</c> field-selection from <paramref name="arguments"/>. When no fields are
+    /// requested the full object is returned unchanged, preserving the non-breaking default.
+    /// </summary>
+    private static string SerializeProjected(object payload, IReadOnlyDictionary<string, object?> arguments)
+    {
+        var fields = JsonFieldProjection.ReadFields(arguments);
+        var node = JsonSerializer.SerializeToNode(payload, JsonOptions);
+        var projected = JsonFieldProjection.Project(node, fields);
+        return projected?.ToJsonString(JsonOptions) ?? "null";
     }
 
     private static object ToToolResponse(Conversation conversation) => new

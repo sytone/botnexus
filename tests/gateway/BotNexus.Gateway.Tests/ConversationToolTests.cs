@@ -551,7 +551,8 @@ public sealed class ConversationToolTests
         string? displayName = null,
         string? purpose = null,
         string? message = null,
-        string? speakAs = null)
+        string? speakAs = null,
+        string[]? fields = null)
     {
         var args = new Dictionary<string, object?> { ["action"] = action };
         if (agentId is not null) args["agentId"] = agentId;
@@ -560,6 +561,7 @@ public sealed class ConversationToolTests
         if (purpose is not null) args["purpose"] = purpose;
         if (message is not null) args["message"] = message;
         if (speakAs is not null) args["speak_as"] = speakAs;
+        if (fields is not null) args["fields"] = fields;
         return args;
     }
 
@@ -745,6 +747,116 @@ public sealed class ConversationToolTests
         updated.Title.ShouldBe("New");
     }
 
+
+    // --- Field-selection (sparse fieldsets) tests (#1783) ---
+
+    [Fact]
+    public async Task List_WithFields_ReturnsOnlyRequestedKeysPerConversation()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", Args("list", fields: ["conversationId", "title"]));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var element = document.RootElement.EnumerateArray().Single();
+        var names = element.EnumerateObject().Select(p => p.Name).ToArray();
+        names.ShouldBe(["conversationId", "title"], ignoreOrder: true);
+        element.GetProperty("title").GetString().ShouldBe("Release Planning");
+        element.TryGetProperty("purpose", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task List_WithoutFields_ReturnsFullObject()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", Args("list"));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var element = document.RootElement.EnumerateArray().Single();
+        element.TryGetProperty("purpose", out _).ShouldBeTrue();
+        element.TryGetProperty("agentId", out _).ShouldBeTrue();
+        element.GetProperty("displayName").GetString().ShouldBe("Release Planning");
+    }
+
+    [Fact]
+    public async Task List_WithEmptyFields_ReturnsFullObject()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", Args("list", fields: []));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var element = document.RootElement.EnumerateArray().Single();
+        element.TryGetProperty("purpose", out _).ShouldBeTrue();
+        element.GetProperty("displayName").GetString().ShouldBe("Release Planning");
+    }
+
+    [Fact]
+    public async Task List_WithUnknownField_IgnoresItLeniently()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", Args("list", fields: ["title", "doesNotExist"]));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var element = document.RootElement.EnumerateArray().Single();
+        var names = element.EnumerateObject().Select(p => p.Name).ToArray();
+        names.ShouldBe(["title"]);
+        element.TryGetProperty("doesNotExist", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task List_WithFields_IsCaseInsensitive()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"));
+
+        var result = await tool.ExecuteAsync("call-1", Args("list", fields: ["CONVERSATIONID", "TiTlE"]));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var element = document.RootElement.EnumerateArray().Single();
+        var names = element.EnumerateObject().Select(p => p.Name).ToArray();
+        names.ShouldBe(["conversationId", "title"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Get_WithFields_ReturnsOnlyRequestedKeys()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
+
+        var result = await tool.ExecuteAsync("call-1", Args("get", fields: ["conversationId", "title"]));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        var names = document.RootElement.EnumerateObject().Select(p => p.Name).ToArray();
+        names.ShouldBe(["conversationId", "title"], ignoreOrder: true);
+        document.RootElement.GetProperty("title").GetString().ShouldBe("Release Planning");
+        document.RootElement.TryGetProperty("purpose", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Get_WithUnknownFieldOnly_ReturnsEmptyObject()
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
+
+        var result = await tool.ExecuteAsync("call-1", Args("get", fields: ["nope"]));
+        using var document = JsonDocument.Parse(ReadText(result));
+
+        document.RootElement.EnumerateObject().Count().ShouldBe(0);
+    }
 
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
