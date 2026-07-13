@@ -1115,7 +1115,7 @@ The optional `telemetry` section controls the in-process OpenTelemetry metrics/t
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | When `true`, wires the OpenTelemetry `MeterProvider`/`TracerProvider` for the canonical `"BotNexus"` meter scope. When `false`, the `IMetrics` facade is still registered (so call sites resolve) but no OpenTelemetry providers are attached. |
 
-When `enabled` is `true` the in-process metrics plane also exposes a **read endpoint** for local inspection and portal consumption (see below). Remote exporter (OTLP) configuration is deferred to a later change, so there is no network egress by default.
+When `enabled` is `true` the in-process metrics plane also exposes a **read endpoint** for local inspection and portal consumption (see below). Remote exporter (OTLP) configuration is available via the off-by-default `exporter` section (see below); by default there is no network egress.
 
 #### Metrics read endpoint
 
@@ -1148,6 +1148,94 @@ Example response:
 ```
 
 When `telemetry.enabled` is `false` the endpoint still resolves and returns a well-formed empty snapshot.
+
+#### Remote export: exporter (OTLP)
+
+The optional `telemetry.exporter` section ships metrics/traces to an external OpenTelemetry collector. It is **off by default** - a fresh install produces **zero network egress** and no OTLP connection is ever attempted until an operator explicitly sets `type` to `otlp` and provides an `endpoint`. No default endpoint is shipped.
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "exporter": {
+      "type": "otlp",
+      "endpoint": "http://collector.internal:4317",
+      "protocol": "grpc",
+      "headers": {
+        "Authorization": "Bearer <collector-token>"
+      },
+      "resource": {
+        "serviceName": "botnexus",
+        "serviceInstanceId": "host-a-1",
+        "deploymentEnvironment": "production"
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `exporter.type` | string | `none` | `none` (no egress, default), `otlp` (export to collector), or `console` (debug: write to process console). |
+| `exporter.endpoint` | string | _(unset)_ | OTLP collector endpoint. Required when `type` is `otlp`. Use `http://host:4317` for grpc, `http://host:4318` for http/protobuf. No default is shipped. |
+| `exporter.protocol` | string | `grpc` | OTLP wire format: `grpc` or `http/protobuf`. |
+| `exporter.headers` | object | `{}` | OTLP request headers (e.g. a collector auth token). **Treated as secrets** - values are redacted wherever config is logged or dumped. |
+| `exporter.resource.serviceName` | string | `botnexus` | `service.name` resource attribute. |
+| `exporter.resource.serviceInstanceId` | string | _(auto)_ | `service.instance.id` resource attribute. When unset, a stable per-process id is generated so an aggregator can distinguish concurrent instances. Set it explicitly to keep ids stable across restarts. |
+| `exporter.resource.deploymentEnvironment` | string | _(unset)_ | `deployment.environment` resource attribute (e.g. `production`, `staging`). Omitted from the resource when unset. |
+
+**Secrets:** `exporter.headers` values are collector credentials. They are never emitted in logs or config dumps - the redacting describer replaces every header value with `[REDACTED]` while preserving header keys.
+
+**Serilog  OTel logs routing** (via `Serilog.Sinks.OpenTelemetry`) is intentionally **deferred** to keep this change scoped to metrics/trace export. Only the OTLP metrics/trace exporter is wired here.
+
+##### Remote-collection quickstart
+
+Point BotNexus at any OTLP-compatible collector (OpenTelemetry Collector, Grafana Alloy, a vendor gateway, etc.):
+
+1. Run a collector with an OTLP receiver. Minimal `otel-collector-config.yaml`:
+
+   ```yaml
+   receivers:
+     otlp:
+       protocols:
+         grpc:
+           endpoint: 0.0.0.0:4317
+   exporters:
+     debug:
+       verbosity: detailed
+   service:
+     pipelines:
+       metrics:
+         receivers: [otlp]
+         exporters: [debug]
+       traces:
+         receivers: [otlp]
+         exporters: [debug]
+   ```
+
+   ```shell
+   docker run --rm -p 4317:4317 -v ${PWD}/otel-collector-config.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:latest
+   ```
+
+2. Configure BotNexus to export to it (in `~/.botnexus/config.json`):
+
+   ```json
+   {
+     "telemetry": {
+       "exporter": {
+         "type": "otlp",
+         "endpoint": "http://localhost:4317",
+         "protocol": "grpc",
+         "resource": { "deploymentEnvironment": "dev" }
+       }
+     }
+   }
+   ```
+
+3. Restart the gateway. The canonical `botnexus.*` instruments now flow to the collector, tagged with the `service.name`/`service.instance.id`/`deployment.environment` resource attributes so a downstream aggregator can attribute data per instance.
+
+To disable export again, set `exporter.type` back to `none` (or remove the section) - egress stops immediately.
+
 
 ---
 

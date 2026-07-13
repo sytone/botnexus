@@ -1041,6 +1041,59 @@ A production-ready configuration with multiple agents, providers, and extensions
 
 ---
 
+## Telemetry & Remote Collection
+
+The optional `telemetry` section controls the in-process OpenTelemetry metrics/tracing plane and the optional remote OTLP exporter.
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "exporter": {
+      "type": "none"
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Wires the in-process `MeterProvider`/`TracerProvider` for the canonical `BotNexus` scope. When `false`, the metrics facade still resolves but no OpenTelemetry providers are attached. |
+| `exporter.type` | string | `none` | `none` (no egress, default), `otlp` (export to a collector), or `console` (local debug). |
+| `exporter.endpoint` | string | _(unset)_ | OTLP collector endpoint. Required for `otlp`. `http://host:4317` (grpc) or `http://host:4318` (http/protobuf). |
+| `exporter.protocol` | string | `grpc` | `grpc` or `http/protobuf`. |
+| `exporter.headers` | object | `{}` | OTLP request headers (collector auth). **Secrets** - redacted in logs/config dumps. |
+| `exporter.resource.serviceName` | string | `botnexus` | `service.name` attribute. |
+| `exporter.resource.serviceInstanceId` | string | _(auto)_ | `service.instance.id`. Auto-generated stable per-process id when unset so an aggregator can tell instances apart. |
+| `exporter.resource.deploymentEnvironment` | string | _(unset)_ | `deployment.environment` (e.g. `production`). |
+
+**Off by default:** with `exporter.type` set to `none` (the default), BotNexus produces **zero network egress** - no OTLP connection is ever attempted and no endpoint is shipped. Remote collection is strictly opt-in.
+
+**Serilog  OTel logs** routing is deferred; only metrics/trace export is wired today.
+
+### Remote-collection quickstart
+
+1. Run an OTLP collector (OpenTelemetry Collector, Grafana Alloy, or a vendor gateway) with an OTLP receiver on `:4317`.
+2. Point BotNexus at it in `~/.botnexus/config.json`:
+
+   ```json
+   {
+     "telemetry": {
+       "exporter": {
+         "type": "otlp",
+         "endpoint": "http://localhost:4317",
+         "protocol": "grpc",
+         "headers": { "Authorization": "Bearer <collector-token>" },
+         "resource": { "deploymentEnvironment": "production" }
+       }
+     }
+   }
+   ```
+
+3. Restart the gateway. The `botnexus.*` instruments flow to your collector, tagged with `service.name`/`service.instance.id`/`deployment.environment` so a downstream aggregator can attribute data per instance. Set `type` back to `none` to stop egress.
+
+For the full field reference and a sample collector config, see [Configuration Guide  Telemetry](../configuration.md#telemetry-telemetryconfig).
+
 ## Hot Reload
 
 BotNexus monitors `config.json` for changes and applies most updates without requiring a restart:
