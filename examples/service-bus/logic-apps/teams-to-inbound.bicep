@@ -182,8 +182,27 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             ]
           }
           actions: {
+            // Build the envelope as a NATIVE object so Logic Apps escapes
+            // message content (commas, quotes, colons, newlines) correctly.
+            // Hand-concatenating JSON into a string breaks json() the moment
+            // the message body contains a special char.
+            Build_envelope: {
+              type: 'Compose'
+              inputs: {
+                content: '@{coalesce(body(\'Get_message_details\')?[\'body\']?[\'plainTextContent\'], body(\'Get_message_details\')?[\'body\']?[\'content\'], \'\')}'
+                conversationId: '@{concat(\'Teams - \', outputs(\'Set_conversation_label\'))}'
+                agentId: '${agentId}'
+                senderId: '@{coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\')}'
+                role: 'user'
+              }
+            }
             Send_to_inbound_queue: {
               type: 'ApiConnection'
+              runAfter: {
+                Build_envelope: [
+                  'Succeeded'
+                ]
+              }
               inputs: {
                 host: {
                   connection: {
@@ -193,8 +212,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 method: 'post'
                 path: '/@{encodeURIComponent(encodeURIComponent(\'${inboundQueueName}\'))}/messages'
                 body: {
-                  // conversationId = 'Teams - {chat topic or id}'
-                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(body(\'Get_message_details\')?[\'body\']?[\'plainTextContent\'], body(\'Get_message_details\')?[\'body\']?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
+                  ContentData: '@{base64(string(outputs(\'Build_envelope\')))}'
                   ContentType: 'application/json'
                 }
               }
