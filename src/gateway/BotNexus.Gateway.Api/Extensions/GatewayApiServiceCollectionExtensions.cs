@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Api.Filters;
 using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api.Triggers;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,7 +37,10 @@ public static class GatewayApiServiceCollectionExtensions
         // also has a constructor fallback so the endpoint works even without this registration.
         services.TryAddSingleton<IConversationHistoryAssembler, ConversationHistoryAssembler>();
 
-        services.AddControllers()
+        // Register the sparse-fieldset projection as a global result filter so every GET endpoint
+        // honours ?fields=a,b,c without per-controller wiring (issue #1782). It is a no-op unless the
+        // query parameter is present, keeping the default full-object response non-breaking.
+        services.AddControllers(options => options.Filters.Add<SparseFieldsetResultFilter>())
             .AddApplicationPart(typeof(GatewayApiServiceCollectionExtensions).Assembly);
 
         return services;

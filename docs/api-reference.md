@@ -5,7 +5,8 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Authentication](#authentication)
+2. [Sparse Fieldsets](#sparse-fieldsets-fields)
+3. [Authentication](#authentication)
 3. [Agent Management](#agent-management)
 4. [Skills Management](#skills-management)
 5. [Channels Management](#channels-management)
@@ -26,6 +27,58 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 All endpoints follow REST conventions and return JSON responses. The default port is **5005** (configurable via `config.json`).
 
 **Authentication:** All endpoints require API key authentication (see [Authentication](#authentication) below).
+
+---
+
+## Sparse Fieldsets (`?fields=`)
+
+Any `GET` endpoint accepts an optional `?fields=` query parameter that projects each returned
+object down to only the requested **top-level** fields. This is useful for reducing payload size
+and bandwidth when a client only needs a few properties.
+
+**Default is everything.** When `?fields=` is omitted (or empty/whitespace), the response is the
+full object, byte-for-byte identical to the behaviour before this feature existed. Sparse fieldsets
+are strictly additive and never change the default response shape.
+
+### Rules
+
+- **Comma-separated:** `?fields=agentId,displayName`.
+- **Case-insensitive:** field names are matched case-insensitively against the JSON property names
+  (`?fields=agentid,DISPLAYNAME` works).
+- **Lenient / unknown fields ignored:** unknown field names are silently dropped and never produce a
+  `400`. If none of the requested names match, an empty object `{}` is returned per item.
+- **Empty parameter = full object:** `?fields=` or `?fields=%20%20` returns the full object.
+- **Applies to lists and single items:** both array responses (list endpoints) and single-object
+  responses (get-by-id endpoints) are projected. For arrays, every element is projected.
+- **Top-level only:** nested field selection (e.g. `?fields=metadata.builtin`) is **not** supported
+  in v1. Only top-level properties are projected.
+- **Errors pass through:** non-2xx responses and `ProblemDetails` error bodies are never projected.
+
+### Examples
+
+```http
+GET /api/agents?fields=agentId,displayName
+X-Api-Key: your-api-key
+```
+
+```json
+[
+  { "agentId": "farnsworth", "displayName": "Farnsworth" },
+  { "agentId": "nibbler", "displayName": "Nibbler" }
+]
+```
+
+```http
+GET /api/agents/farnsworth?fields=agentId,displayName
+X-Api-Key: your-api-key
+```
+
+```json
+{ "agentId": "farnsworth", "displayName": "Farnsworth" }
+```
+
+The same parameter works on `GET /api/conversations` and `GET /api/conversations/{id}` and, by
+virtue of being a global result filter, on all other `GET` endpoints.
 
 ---
 
