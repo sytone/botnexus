@@ -106,12 +106,16 @@
   <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Api.Tests/BotNexus.Gateway.Api.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Channels.Tests/BotNexus.Gateway.Channels.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Dispatching.Tests/BotNexus.Gateway.Dispatching.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Prompts.Tests/BotNexus.Gateway.Prompts.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Sessions.Tests/BotNexus.Gateway.Sessions.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Telemetry.Tests/BotNexus.Gateway.Telemetry.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Memory.Tests/BotNexus.Memory.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Tools.Tests/BotNexus.Tools.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Webhooks.Tests/BotNexus.Gateway.Webhooks.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Yaml.Tests/BotNexus.Yaml.Tests.csproj" />
   </Folder>

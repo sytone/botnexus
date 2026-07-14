@@ -74,14 +74,6 @@ public sealed class SrcTestsMirrorArchitectureTests
             "DTO/contract-only project (records + shapes, no behaviour); validated through consumer tests.",
         ["src/gateway/BotNexus.Gateway.Telemetry.Abstractions/BotNexus.Gateway.Telemetry.Abstractions.csproj"] =
             "Telemetry interface/marker-only project (no logic); covered by BotNexus.Gateway.Telemetry.Tests.",
-        ["src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj"] =
-            "ASP.NET Core composition/host project (endpoint wiring); exercised by E2E/integration suites, not unit-mirrored.",
-        ["src/gateway/BotNexus.Gateway.Channels/BotNexus.Gateway.Channels.csproj"] =
-            "Channel composition/glue project; behaviour covered through channel extension test suites.",
-        ["src/gateway/BotNexus.Gateway.Dispatching/BotNexus.Gateway.Dispatching.csproj"] =
-            "Dispatch wiring/composition project; exercised through gateway and integration suites.",
-        ["src/gateway/BotNexus.Tools/BotNexus.Tools.csproj"] =
-            "Tool registration/aggregation project; individual tools are tested in their own extension test projects.",
         ["src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj"] =
             "SignalR channel host/composition project; covered by the BlazorClient test projects and integration suites.",
         ["src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj"] =
