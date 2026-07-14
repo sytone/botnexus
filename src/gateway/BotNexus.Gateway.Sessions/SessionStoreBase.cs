@@ -214,6 +214,19 @@ public abstract class SessionStoreBase : ISessionStore
         CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Re-abstracts the <see cref="ISessionStore.ListAllSubAgentSessionsAsync"/> default interface
+    /// method into the class hierarchy so that callers holding the store as <see cref="ISessionStore"/>
+    /// (e.g. the observability controller) dispatch to a derived override rather than the empty DIM
+    /// default. Stores without sub-agent persistence keep the empty-list behaviour.
+    /// </remarks>
+    public virtual Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+        string? status = null,
+        int limit = 200,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);
 }

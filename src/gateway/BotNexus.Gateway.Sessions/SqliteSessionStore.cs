@@ -1393,7 +1393,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// The <c>started_at</c> ordinals map through <see cref="SessionRowMapper.MapSubAgentSession"/>,
     /// the same projection used by the parent-scoped <see cref="ListSubAgentSessionsAsync"/>.
     /// </remarks>
-    public async Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+    public override async Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
         CancellationToken cancellationToken = default)
