@@ -7,7 +7,9 @@
 @inject BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions HubTuning
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject IServiceProvider Services
 @implements IDisposable
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands
 <PageTitle>BotNexus</PageTitle>
 @if (!PortalLoad.IsReady)
 {
@@ -166,14 +168,30 @@ else
                 </div>
             }
         </div>
+        <!-- SLASH-COMMAND PALETTE -->
+        @if (_showCommandPalette)
+        {
+            <div class="command-palette" data-testid="command-palette">
+                @foreach (var cmd in _filteredCommands)
+                {
+                    <button class="command-item @(cmd.Name == _selectedCommand ? "selected" : "")"
+                            data-testid="command-item"
+                            @onclick="() => ExecuteCommand(cmd)">
+                        <span class="command-name">@cmd.Name</span>
+                        <span class="command-desc">@cmd.Description</span>
+                    </button>
+                }
+            </div>
+        }
         <!-- BOTTOM BAR -->
         <div class="bottom-bar">
             <textarea
                 class="input-textarea"
-                placeholder="Message…"
+                placeholder="/ for commands"
                 rows="1"
                 @bind="_inputText"
                 @bind:event="oninput"
+                @bind:after="UpdateCommandPalette"
                 @onkeydown="OnKeyDown"
                 disabled="@_isSending">
             </textarea>
@@ -281,6 +299,17 @@ else
 
     private string _inputText = "";
     private bool _isSending;
+
+    // #1951: slash-command palette state. The command surface and execute-mapping live in the
+    // shared BlazorClient.Core registry/dispatcher so mobile and desktop stay in lock-step.
+    private bool _showCommandPalette;
+    private string _selectedCommand = "";
+    private IReadOnlyList<SlashCommand> _filteredCommands = [];
+
+    // #1951: resolved lazily and optionally so mobile test fixtures that don't register the
+    // dispatcher keep rendering; Program.cs always registers it for the real app.
+    private ISlashCommandDispatcher? CommandDispatcher =>
+        Services.GetService(typeof(ISlashCommandDispatcher)) as ISlashCommandDispatcher;
     private bool _isRefreshing;
     private bool _menuOpen;
     private bool _showNewSessionConfirm;
@@ -590,6 +619,7 @@ else
         if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
         var content = _inputText.Trim();
         _inputText = "";
+        _showCommandPalette = false;
         _isSending = true;
         try
         {
@@ -607,8 +637,76 @@ else
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !e.ShiftKey)
+        UpdateCommandPalette();
+
+        if (e is { Key: "Enter", ShiftKey: false })
+        {
+            if (_showCommandPalette && _filteredCommands.Count > 0)
+            {
+                var cmd = _filteredCommands.FirstOrDefault(c => c.Name == _selectedCommand) ?? _filteredCommands[0];
+                await ExecuteCommand(cmd);
+                return;
+            }
+
             await SendMessage();
+        }
+        else if (e is { Key: "Escape" })
+        {
+            if (_showCommandPalette)
+            {
+                _showCommandPalette = false;
+                StateHasChanged();
+            }
+        }
+        else if (e is { Key: "Tab" } && _showCommandPalette && _filteredCommands.Count > 0)
+        {
+            _inputText = _filteredCommands[0].Name + " ";
+            _showCommandPalette = false;
+            StateHasChanged();
+        }
+    }
+
+    // #1951: recompute the palette from the current input. The palette shows only when the input
+    // starts with '/' and has no space; SlashCommandRegistry.Filter enforces that contract and
+    // returns the prefix-filtered command set (the full list for a bare '/').
+    private void UpdateCommandPalette()
+    {
+        var text = _inputText?.Trim() ?? "";
+        if (text.StartsWith('/') && !text.Contains(' '))
+        {
+            _showCommandPalette = true;
+            _filteredCommands = SlashCommandRegistry.Filter(text);
+            _selectedCommand = _filteredCommands.Count > 0 ? _filteredCommands[0].Name : "";
+        }
+        else
+        {
+            _showCommandPalette = false;
+            _filteredCommands = [];
+        }
+        StateHasChanged();
+    }
+
+    // #1951: execute a selected slash command. /new and /clear route through the mobile
+    // confirm-overlay (matching the existing New-session UX); every other command is dispatched
+    // straight through the shared Core dispatcher, which also consults the #1950 approval hook for
+    // protected commands. This keeps mobile at full parity with the desktop ChatPanel.
+    private async Task ExecuteCommand(SlashCommand cmd)
+    {
+        _showCommandPalette = false;
+        _inputText = "";
+
+        if (cmd.Kind is SlashCommandKind.ResetSession or SlashCommandKind.ClearLocalMessages)
+        {
+            _pendingConfirmCommand = cmd;
+            _showNewSessionConfirm = true;
+            StateHasChanged();
+            return;
+        }
+
+        if (Store.ActiveAgentId is null || CommandDispatcher is null)
+            return;
+
+        await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, cmd);
     }
 
     // #1691: whether the active conversation has older history to page in on scroll-up.
@@ -706,8 +804,13 @@ else
 
     private void ToggleMenu() => _menuOpen = !_menuOpen;
 
+    // #1951: when a slash command (/new or /clear) is routed through the confirm overlay this holds
+    // the command so DoNewSession dispatches it through the shared Core dispatcher on confirm.
+    private SlashCommand? _pendingConfirmCommand;
+
     private void NewSession()
     {
+        _pendingConfirmCommand = null;
         _showNewSessionConfirm = true;
         _menuOpen = false;
     }
@@ -727,16 +830,27 @@ else
     private async Task DoNewSession()
     {
         _showNewSessionConfirm = false;
-        if (Store.ActiveAgentId is not null)
-        {
+        var pending = _pendingConfirmCommand;
+        _pendingConfirmCommand = null;
+
+        if (Store.ActiveAgentId is null)
+            return;
+
+        // #1951: a slash command routed here (/new or /clear) is dispatched through the shared Core
+        // dispatcher so behaviour matches the desktop exactly; the menu's New-session button (no
+        // pending command) keeps calling ResetSessionAsync directly.
+        if (pending is not null && CommandDispatcher is not null)
+            await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, pending);
+        else
             await Interaction.ResetSessionAsync(Store.ActiveAgentId);
-            await ForceScrollToBottomAsync();
-        }
+
+        await ForceScrollToBottomAsync();
     }
 
     private void CancelNewSession()
     {
         _showNewSessionConfirm = false;
+        _pendingConfirmCommand = null;
     }
 
     /// <summary>
