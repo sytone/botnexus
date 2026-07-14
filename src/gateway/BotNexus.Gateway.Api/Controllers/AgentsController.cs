@@ -24,6 +24,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentConfigurationWriter _configurationWriter;
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
+    private readonly ISkillReviewProvisioner? _skillReviewProvisioner;
     private readonly ModelRegistry? _modelRegistry;
     private readonly ILogger<AgentsController> _logger;
 
@@ -36,6 +37,7 @@ public sealed class AgentsController : ControllerBase
         IAgentConfigurationWriter configurationWriter,
         IEnumerable<IAgentChangeNotifier>? agentChangeNotifiers = null,
         IHeartbeatProvisioner? heartbeatProvisioner = null,
+        ISkillReviewProvisioner? skillReviewProvisioner = null,
         ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null)
     {
@@ -44,6 +46,7 @@ public sealed class AgentsController : ControllerBase
         _configurationWriter = configurationWriter;
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
         _heartbeatProvisioner = heartbeatProvisioner;
+        _skillReviewProvisioner = skillReviewProvisioner;
         _modelRegistry = modelRegistry;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
@@ -109,6 +112,9 @@ public sealed class AgentsController : ControllerBase
             if (_heartbeatProvisioner is not null)
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
 
+            if (_skillReviewProvisioner is not null)
+                await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
+
             await NotifyAgentsChangedBestEffortAsync("added", descriptor.AgentId.Value, cancellationToken);
             return CreatedAtAction(nameof(Get), new { agentId = descriptor.AgentId }, descriptor);
         }
@@ -158,6 +164,9 @@ public sealed class AgentsController : ControllerBase
 
         if (_heartbeatProvisioner is not null)
             await _heartbeatProvisioner.ProvisionAsync(updatedDescriptor, cancellationToken);
+
+        if (_skillReviewProvisioner is not null)
+            await _skillReviewProvisioner.ProvisionAsync(updatedDescriptor, cancellationToken);
 
         await NotifyAgentsChangedBestEffortAsync("updated", updatedDescriptor.AgentId.Value, cancellationToken);
         return Ok(updatedDescriptor);

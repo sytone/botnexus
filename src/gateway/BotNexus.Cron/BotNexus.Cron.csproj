@@ -16,6 +16,8 @@
     <Compile Include="CronOptions.cs" />
     <Compile Include="HeartbeatCronProvisioner.cs" />
     <Compile Include="IHeartbeatProvisioner.cs" />
+    <Compile Include="SkillReviewCronProvisioner.cs" />
+    <Compile Include="ISkillReviewProvisioner.cs" />
     <Compile Include="CronScheduler.cs" />
     <Compile Include="Prompts\IPromptTemplateResolver.cs" />
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
@@ -23,6 +25,8 @@
     <Compile Include="Actions\CommandCronAction.cs" />
     <Compile Include="Actions\AgentConverseCronAction.cs" />
      <Compile Include="Actions\MemoryDreamingCronAction.cs" />
+    <Compile Include="Actions\SkillReviewCronAction.cs" />
+    <Compile Include="Actions\SkillReviewConfig.cs" />
     <Compile Include="Properties\InternalsVisibleTo.cs" />
     <Compile Include="Actions\HeartbeatAction.cs" />
     <Compile Include="Actions\TimeZoneHelper.cs" />
