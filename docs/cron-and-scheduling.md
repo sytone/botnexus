@@ -690,7 +690,49 @@ Delegates to `IAgentExchangeService.ConverseAsync` — the same pathway used by 
 
 See also: [Agent-to-Agent Communication](/features/agent-exchange)
 
-### 8.7 Missed Run Detection
+### 8.7 `skill-review`
+
+**Name:** `skill-review`  
+**Description:** Periodic, LLM-driven review of an agent's recent tool usage to surface skills worth creating, updating, or pruning — the skills analogue of `memory-dreaming`.
+
+Like `memory-dreaming`, this action carries **configuration only** in its metadata (never per-turn signals). At each tick it reads a `lookbackHours` window of the agent's live session history and derives review signals (tool-call volume, whether skills were loaded, whether a `skill_manage` call failed) directly from the transcripts the gateway already persists. If the aggregated tool-call count clears `minToolCalls`, a cron-triggered session is dispatched to review the agent's skills.
+
+A default-enabled `skill-review` job is **auto-provisioned at startup for every user-defined agent** by the skill-review provisioner (a sibling of the heartbeat provisioner), so the loop runs out of the box without hand-authoring a job. Provisioning is **non-destructive**: an existing job is never overwritten, so edits to its schedule, thresholds, or `enabled` flag survive every startup pass. Built-in archetype agents and runtime-spawned sub-agents do **not** get a job.
+
+**Configuration Properties (in Metadata):**
+- `enabled` (alias `skillReviewEnabled`): Whether the review pass runs when the job ticks (default: `true`). Set `false` to opt a specific job out without deleting it.
+- `minToolCalls` (alias `skillReviewMinToolCalls`): Minimum tool calls aggregated across the lookback window that qualifies the period for review (default: `5`, floored at 1).
+- `lookbackHours` (alias `skillReviewLookbackHours`): Hours of session history to read back at each tick (default: `24`, floored at 1).
+- `maxSessions` (alias `skillReviewMaxSessions`): Upper bound on recent sessions (newest-first) scanned per pass, so a busy agent cannot make one tick unbounded (default: `50`, floored at 1).
+
+**Configuration:**
+```json
+{
+  "Type": "maintenance",
+  "Action": "skill-review",
+  "Schedule": "0 4 * * *",
+  "Agent": "my-agent",
+  "System": true,
+  "Enabled": true,
+  "Metadata": {
+    "enabled": true,
+    "minToolCalls": 5,
+    "lookbackHours": 24,
+    "maxSessions": 50
+  }
+}
+```
+
+**Behavior:**
+- Auto-provisioned per user-defined agent at startup (job id `skill-review:<agentId>`), default schedule `0 4 * * *` (daily at 04:00, staggered after `memory-dreaming`)
+- Reads the last `lookbackHours` of the agent's session transcripts, scanning at most `maxSessions` sessions newest-first
+- Derives signals: total tool-call count, whether a skill was loaded (`skills`/`skills_list`/`skill_view`), and whether a `skill_manage` call errored
+- Runs the review pass only when `enabled` is true and the aggregated tool-call count meets `minToolCalls`
+- Non-destructive provisioning preserves user edits to schedule, thresholds, and enabled state across restarts
+
+**Use case:** Keep an agent's skill library fresh — promoting recurring successful workflows into new skills and flagging stale ones — without manual curation.
+
+### 8.8 Missed Run Detection
 
 On gateway startup, BotNexus scans all enabled cron jobs and detects runs that were missed while the service was offline. Missed runs are recorded in the cron run store with status `missed`.
 
