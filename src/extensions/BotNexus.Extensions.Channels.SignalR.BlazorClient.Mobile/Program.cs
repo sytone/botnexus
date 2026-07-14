@@ -16,6 +16,11 @@ builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
+// #1951: the mobile chat palette consumes the SAME shared Core slash-command dispatcher the
+// desktop ChatPanel uses (registry + dispatcher from #1949, approval hook from #1950), giving
+// full command parity across clients. The approval hook is optional; when no implementation is
+// registered the dispatcher fails closed for protected commands.
+builder.Services.AddScoped<BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.ISlashCommandDispatcher, BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.SlashCommandDispatcher>();
 builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 // #1615: the schema-driven mobile Settings page reads/writes platform config through this service
 // (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.

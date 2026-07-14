@@ -1073,3 +1073,52 @@ body {
     to { opacity: 1; }
 }
 
+
+
+/* == Slash-command palette (#1951) =================================================
+   Mirrors the desktop .command-palette so the mobile chat exposes the SAME shared
+   Core command surface. Sits directly above the bottom bar and scrolls when the
+   filtered list is long. Touch targets are sized for tap. */
+.command-palette {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid #1c3454;
+    background: #0d1f38;
+    max-height: 40vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.command-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    padding: 10px 16px;
+    border: none;
+    border-bottom: 1px solid #12263f;
+    background: transparent;
+    color: #d0dff0;
+    cursor: pointer;
+    text-align: left;
+    touch-action: manipulation;
+}
+
+.command-item:last-child { border-bottom: none; }
+
+.command-item:active,
+.command-item.selected {
+    background: #16304f;
+}
+
+.command-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 600;
+    color: #4a9eff;
+    white-space: nowrap;
+}
+
+.command-desc {
+    color: #8ba3bf;
+    font-size: 0.82rem;
+}
