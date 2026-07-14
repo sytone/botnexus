@@ -27,6 +27,14 @@ namespace BotNexus.Integration.ProviderTests;
 /// GitHub Models API is degraded — it never hard-fails on a missing token or an outage. When
 /// GITHUB_TOKEN IS set and the API is healthy, the test genuinely calls the model and passes.
 /// </para>
+/// <para>
+/// #1994 note: the reasoning-model empty-text extraction path (a completion with only a
+/// ThinkingContent block and no TextContent, which was the live rawLength=0 no-persist bug) is
+/// NOT reproducible here because github-models gpt-4o-mini does not emit thinking blocks. That
+/// seam is covered deterministically by ConversationAutoTitleServiceTests.ExtractTitleText_*
+/// and the ThinkingContent-only GenerateAndSaveAsync unit tests. This suite proves the real
+/// round-trip; those prove the extraction fallback.
+/// </para>
 /// </summary>
 [Trait("Category", "ProviderIntegration")]
 [Trait("Provider", "github-models")]

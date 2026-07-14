@@ -93,6 +93,53 @@ public sealed class ConversationAutoTitleServiceTests
     }
 
     // -----------------------------------------------------------------------
+    // #1994: ExtractTitleText — deterministic coverage of the text/thinking fallback seam.
+    // The real-LLM E2E suite uses github-models gpt-4o-mini, which does not emit ThinkingContent,
+    // so the reasoning-only extraction path is covered here at the unit level rather than via a
+    // real round-trip.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void ExtractTitleText_TextContentOnly_ReturnsText()
+    {
+        var completion = MakeCompletion(new TextContent("Plain Text Title"));
+        ConversationAutoTitleService.ExtractTitleText(completion).ShouldBe("Plain Text Title");
+    }
+
+    [Fact]
+    public void ExtractTitleText_ThinkingOnly_FallsBackToThinking()
+    {
+        var completion = MakeCompletion(new ThinkingContent("Thinking Block Title"));
+        ConversationAutoTitleService.ExtractTitleText(completion).ShouldBe("Thinking Block Title");
+    }
+
+    [Fact]
+    public void ExtractTitleText_TextAndThinking_PrefersText()
+    {
+        var completion = MakeCompletion(new ThinkingContent("reasoning trace"), new TextContent("Real Title"));
+        ConversationAutoTitleService.ExtractTitleText(completion).ShouldBe("Real Title");
+    }
+
+    [Fact]
+    public void ExtractTitleText_NeitherTextNorThinking_ReturnsEmpty()
+    {
+        var completion = MakeCompletion(new ToolCallContent("id", "noop", new Dictionary<string, object?>()));
+        ConversationAutoTitleService.ExtractTitleText(completion).ShouldBeNullOrEmpty();
+    }
+
+    private static AssistantMessage MakeCompletion(params ContentBlock[] content)
+        => new(
+            Content: content,
+            Api: "fake-api",
+            Provider: "fake",
+            ModelId: "fake-model",
+            Usage: new Usage(),
+            StopReason: StopReason.Stop,
+            ErrorMessage: null,
+            ResponseId: null,
+            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+    // -----------------------------------------------------------------------
     // GenerateAndSaveAsync -- integration tests with mocks
     // -----------------------------------------------------------------------
 
@@ -268,6 +315,98 @@ public sealed class ConversationAutoTitleServiceTests
         var result = await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBeNull();
+        store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // -----------------------------------------------------------------------
+    // #1994: robust title extraction. A reasoning model returns its answer in a
+    // ThinkingContent block, not a TextContent, so OfType<TextContent>() yields nothing and the
+    // title sanitises to empty (the live rawLength=0 no-persist bug). Extraction must fall back to
+    // thinking content so a reasoning model (or the first-available fallback engaging on a
+    // deployment where the preferred titling model is absent) never yields an empty title.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_ThinkingOnlyCompletion_ExtractsTitleFromThinking()
+    {
+        // RED until extraction falls back to ThinkingContent: a reasoning model returns the title
+        // in a thinking block with zero TextContent, which is the exact live rawLength=0 failure.
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateContentLlmClient([new ThinkingContent("Reasoning Model Title")]),
+            NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, 30, CancellationToken.None);
+
+        result.ShouldBe("Reasoning Model Title");
+        store.Verify(s => s.SaveAsync(It.Is<Conversation>(c => c.Title == "Reasoning Model Title"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_TextAndThinkingPresent_PrefersTextContent()
+    {
+        // When both are present, real answer text (TextContent) must win over the thinking trace.
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateContentLlmClient([
+                new ThinkingContent("Let me think about a good title"),
+                new TextContent("Actual Answer Title")
+            ]),
+            NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "q", "a", null, 30, CancellationToken.None);
+
+        result.ShouldBe("Actual Answer Title");
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_NoTextOrThinkingContent_LogsEmptyTitle()
+    {
+        // A completion with neither text nor thinking (e.g. only a tool-call block) is genuinely
+        // empty and must still hit the observable #1979 empty-title no-persist log, not throw.
+        var logger = new CapturingLogger();
+        var conv = new Conversation
+        {
+            ConversationId = ConvId,
+            AgentId = AgentId,
+            Title = ConversationAutoTitleService.DefaultTitle
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateContentLlmClient([new ToolCallContent("id-1", "noop", new Dictionary<string, object?>())]),
+            logger);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "q", "a", null, 30, CancellationToken.None);
+
+        result.ShouldBeNull();
+        logger.Messages.ShouldContain(m => m.Contains("empty title after sanitisation"));
         store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -547,6 +686,56 @@ public sealed class ConversationAutoTitleServiceTests
                     Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 stream.Push(new DoneEvent(StopReason.Stop, msg));
             });
+            return stream;
+        }
+    }
+
+    /// <summary>
+    /// #1994: creates an LlmClient whose provider returns a completion with an explicit content
+    /// block list, so extraction against reasoning-only (ThinkingContent) completions can be
+    /// exercised — the exact live rawLength=0 failure shape.
+    /// </summary>
+    private static LlmClient CreateContentLlmClient(IReadOnlyList<ContentBlock> content)
+    {
+        var modelRegistry = new ModelRegistry();
+        var fakeModel = new LlmModel(
+            Id: "fake-model",
+            Name: "fake-model",
+            Api: "fake-api",
+            Provider: "fake",
+            BaseUrl: "https://fake.example.com",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 4096,
+            MaxTokens: 512);
+        modelRegistry.Register("fake", fakeModel);
+        var providerRegistry = new ApiProviderRegistry();
+        providerRegistry.Register(new ContentApiProvider(content));
+        return new LlmClient(providerRegistry, modelRegistry);
+    }
+
+    private sealed class ContentApiProvider : IApiProvider
+    {
+        private readonly IReadOnlyList<ContentBlock> _content;
+        public ContentApiProvider(IReadOnlyList<ContentBlock> content) => _content = content;
+        public string Api => "fake-api";
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+            => throw new NotImplementedException("ContentApiProvider only supports StreamSimple/CompleteSimple");
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
+        {
+            var msg = new AssistantMessage(
+                Content: [.. _content],
+                Api: "fake-api",
+                Provider: "fake",
+                ModelId: "fake-model",
+                Usage: new Usage(),
+                StopReason: StopReason.Stop,
+                ErrorMessage: null,
+                ResponseId: null,
+                Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var stream = new LlmStream();
+            stream.Push(new DoneEvent(StopReason.Stop, msg));
             return stream;
         }
     }

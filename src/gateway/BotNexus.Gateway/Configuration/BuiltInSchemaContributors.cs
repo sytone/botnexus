@@ -49,7 +49,12 @@ public sealed class AuxiliarySchemaContributor : IConfigSchemaContributor
         titling = new
         {
             enabled = true,
-            model = (string?)null,
+            // #1994: default to a fast non-reasoning model. A null model made ResolveModel fall back
+            // to the first-registered model, which is the agent's reasoning flagship — its
+            // completion carries a ThinkingContent block and no TextContent, so titles sanitised to
+            // empty and never persisted. Because DeepMergeDefaults treats a JSON null as missing,
+            // existing configs sitting at model:null self-heal to this value on the next restart.
+            model = "gpt-5.6-luna",
             timeoutSeconds = 30
         }
     };

@@ -826,7 +826,7 @@ The gateway can auto-generate a short title for a conversation after its first u
     "auxiliary": {
       "titling": {
         "enabled": true,
-        "model": null,
+        "model": "gpt-5.6-luna",
         "timeoutSeconds": 30
       }
     }
@@ -837,7 +837,7 @@ The gateway can auto-generate a short title for a conversation after its first u
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `enabled` | bool | true | Master switch for auto-titling. When false, the gateway never schedules a title-generation call and conversations keep the default title until renamed. |
-| `model` | string? | null | Auxiliary model ID for title generation (e.g. `gpt-4o-mini`, `claude-haiku-3-5`). When null/empty the first registered model is used. |
+| `model` | string? | `gpt-5.6-luna` | Auxiliary model ID for title generation (e.g. `gpt-5.6-luna`, `gpt-4o-mini`, `claude-haiku-3-5`). Defaults to a fast non-reasoning model. When null/empty the first registered model is used, which is unsafe with a reasoning model (its completion carries a thinking block and no text, producing an empty title). A persisted `null` from an older install self-heals to the default on the next restart. |
 | `timeoutSeconds` | int | 30 | Per-call timeout for the best-effort titling request. A non-positive value falls back to 30. |
 
 The section is optional — when absent, titling is enabled with the defaults above. For backward compatibility `titling` may also be a bare string, which is treated as the model ID.

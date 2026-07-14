@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
@@ -92,6 +93,52 @@ public class ConfigHydrationServiceTests
         Assert.Equal(1, added); // model added
         Assert.Equal("gpt-4.1", target["model"]!.GetValue<string>());
         Assert.Equal(30, target["timeout"]!.GetValue<int>()); // preserved
+    }
+
+    [Fact]
+    public void Hydration_UpgradesOnDiskTitlingModelNull_ToContributorDefault()
+    {
+        // #1994 seam: an existing deployment has titling.model persisted as a JSON null (the shape
+        // the old contributor hydrated). Parse it from an actual on-disk JSON string — NOT a C#
+        // null — so this exercises the real parsed-JSON-null path, then merge the LIVE
+        // AuxiliarySchemaContributor defaults over it exactly as ConfigHydrationService does on
+        // startup. The null model must self-heal to the contributor's default model so operators
+        // don't have to hand-edit config.json.
+        var root = JsonNode.Parse(
+            """
+            { "gateway": { "auxiliary": { "titling": { "model": null, "timeoutSeconds": 30, "enabled": true } } } }
+            """)!.AsObject();
+
+        var defaults = JsonSerializer.SerializeToNode(
+            new AuxiliarySchemaContributor().GetDefaults(),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!.AsObject();
+
+        ConfigHydrationService.MergeAtPath(root, "gateway.auxiliary", defaults);
+
+        var model = root["gateway"]!["auxiliary"]!["titling"]!["model"];
+        model.ShouldNotBeNull("a persisted titling.model:null must self-heal to the default titling model on startup");
+        model!.GetValue<string>().ShouldBe("gpt-5.6-luna");
+        // Operator's other values are preserved, never clobbered.
+        root["gateway"]!["auxiliary"]!["titling"]!["timeoutSeconds"]!.GetValue<int>().ShouldBe(30);
+        root["gateway"]!["auxiliary"]!["titling"]!["enabled"]!.GetValue<bool>().ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Hydration_PreservesOperatorChosenTitlingModel_DoesNotClobber()
+    {
+        // The self-heal must only fill a missing/null model. An operator who set a real model keeps it.
+        var root = JsonNode.Parse(
+            """
+            { "gateway": { "auxiliary": { "titling": { "model": "my-cheap-model", "timeoutSeconds": 30 } } } }
+            """)!.AsObject();
+
+        var defaults = JsonSerializer.SerializeToNode(
+            new AuxiliarySchemaContributor().GetDefaults(),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!.AsObject();
+
+        ConfigHydrationService.MergeAtPath(root, "gateway.auxiliary", defaults);
+
+        root["gateway"]!["auxiliary"]!["titling"]!["model"]!.GetValue<string>().ShouldBe("my-cheap-model");
     }
 
     [Fact]

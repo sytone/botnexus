@@ -93,7 +93,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `compaction.maxMessagesBeforeCompaction` | int | `100` | Trigger compaction after this many messages |
 | `compaction.retainLastMessages` | int | `20` | Keep this many recent messages after compaction |
 | `auxiliary.titling.enabled` | bool | `true` | Enable conversation auto-titling after the first exchange; false keeps the default title until renamed |
-| `auxiliary.titling.model` | string | `null` | Auxiliary model ID for title generation; null uses the first registered model |
+| `auxiliary.titling.model` | string | `gpt-5.6-luna` | Auxiliary model ID for title generation; defaults to a fast non-reasoning model. Null uses the first registered model (unsafe with a reasoning model — it yields an empty title) |
 | `auxiliary.titling.timeoutSeconds` | int | `30` | Per-call titling timeout; non-positive falls back to 30 |
 | `cors.allowedOrigins` | array | `[]` | Allowed CORS origins for browser clients |
 | `rateLimit.requestsPerMinute` | int | `60` | Max requests per client per minute |
