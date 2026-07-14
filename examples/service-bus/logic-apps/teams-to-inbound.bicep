@@ -128,10 +128,12 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         // NOTE: '/httprequest' is the proven passthrough op (verified against a
         // working in-tenant flow); the swagger 'GetMessageDetails' op needs a
         // designer-built dynamic body and is not code-friendly.
-        // PITFALL: the passthrough Uri must use the RAW conversationId
-        // ('beta/chats/19:...@thread.v2/...') exactly as delivered. Do NOT wrap
-        // it in encodeURIComponent(): percent-encoding the ':'/'@' breaks the
-        // proxy path tokenizer -> 400 'invalid resource/object'.
+        // PITFALL 1: the Uri must be RESOURCE-first ('me'/'teams'/'users'),
+        // then object ('chats'). A leading 'beta/' or leading 'chats/' -> 400
+        // 'Allowed values: teams,me,users'. Correct form: 'me/chats/{id}/...'.
+        // PITFALL 2: use the RAW conversationId ('19:...@thread.v2') exactly as
+        // delivered. Do NOT encodeURIComponent(): percent-encoding ':'/'@'
+        // breaks the proxy path tokenizer -> 400 'invalid resource/object'.
         Get_message_details: {
           type: 'ApiConnection'
           runAfter: {}
@@ -144,7 +146,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             method: 'post'
             path: '/httprequest'
             headers: {
-              Uri: 'beta/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}/messages/@{triggerBody()?[\'value\'][0]?[\'messageId\']}'
+              Uri: 'me/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}/messages/@{triggerBody()?[\'value\'][0]?[\'messageId\']}'
               Method: 'GET'
               ContentType: 'application/json'
             }
@@ -166,7 +168,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             method: 'post'
             path: '/httprequest'
             headers: {
-              Uri: 'beta/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}'
+              Uri: 'me/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}'
               Method: 'GET'
               ContentType: 'application/json'
             }
