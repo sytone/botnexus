@@ -123,17 +123,14 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         // The chatmessagetrigger delivers only a Graph change-notification
         // (pointers: conversationId + messageId, encryptedContent null). It has
         // NO message body and NO sender. We fetch the full message via the
-        // Teams connector's generic Graph passthrough action ('/httprequest'
-        // with headers.Uri/Method/ContentType) before reading content/author.
-        // NOTE: '/httprequest' is the proven passthrough op (verified against a
-        // working in-tenant flow); the swagger 'GetMessageDetails' op needs a
-        // designer-built dynamic body and is not code-friendly.
-        // PITFALL 1: the Uri must be RESOURCE-first ('me'/'teams'/'users'),
-        // then object ('chats'). A leading 'beta/' or leading 'chats/' -> 400
-        // 'Allowed values: teams,me,users'. Correct form: 'me/chats/{id}/...'.
-        // PITFALL 2: use the RAW conversationId ('19:...@thread.v2') exactly as
-        // delivered. Do NOT encodeURIComponent(): percent-encoding ':'/'@'
-        // breaks the proxy path tokenizer -> 400 'invalid resource/object'.
+        // TYPED Teams connector op 'GetMessageDetails'.
+        // AUTHORITATIVE SHAPE (verified against a working public flow +
+        // connector docs): path = /beta/teams/messages/{messageId}/messageType/
+        // {groupchat|channel}; the thread id goes in the BODY 'recipient', NOT
+        // in the path and NOT as a Graph URL. Our trigger is chat-only, so
+        // messageType is always 'groupchat' (covers 1:1 and group chats).
+        // The generic '/httprequest' passthrough does NOT accept chat ids and
+        // returns 400 'Allowed values: teams,me,users' -- do not use it here.
         Get_message_details: {
           type: 'ApiConnection'
           runAfter: {}
@@ -144,42 +141,22 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               }
             }
             method: 'post'
-            path: '/httprequest'
-            headers: {
-              Uri: 'me/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}/messages/@{triggerBody()?[\'value\'][0]?[\'messageId\']}'
-              Method: 'GET'
-              ContentType: 'application/json'
+            path: '/beta/teams/messages/@{encodeURIComponent(triggerBody()?[\'value\'][0]?[\'messageId\'])}/messageType/@{encodeURIComponent(\'groupchat\')}'
+            body: {
+              recipient: '@{triggerBody()?[\'value\'][0]?[\'conversationId\']}'
             }
           }
         }
-        // Best-effort chat topic for the conversation label (group chats have a
-        // topic; 1:1 chats return null -> we fall back to the chat id).
-        Get_chat_details: {
-          type: 'ApiConnection'
-          runAfter: {
-            Get_message_details: [ 'Succeeded' ]
-          }
-          inputs: {
-            host: {
-              connection: {
-                name: '@parameters(\'$connections\')[\'teams\'][\'connectionId\']'
-              }
-            }
-            method: 'post'
-            path: '/httprequest'
-            headers: {
-              Uri: 'me/chats/@{triggerBody()?[\'value\'][0]?[\'conversationId\']}'
-              Method: 'GET'
-              ContentType: 'application/json'
-            }
-          }
-        }
+        // Label from the chat id. A friendly chat topic needs a separate typed
+        // lookup that isn't reliably available for all chat types; start with
+        // the conversation id and tune the human-readable name from a live
+        // GetMessageDetails payload once messages flow.
         Set_conversation_label: {
           type: 'Compose'
           runAfter: {
-            Get_chat_details: [ 'Succeeded' ]
+            Get_message_details: [ 'Succeeded' ]
           }
-          inputs: '@coalesce(body(\'Get_chat_details\')?[\'topic\'], triggerBody()?[\'value\'][0]?[\'conversationId\'], \'Chat\')'
+          inputs: '@coalesce(triggerBody()?[\'value\'][0]?[\'conversationId\'], \'Chat\')'
         }
         Skip_if_from_bot: {
           type: 'If'
@@ -217,7 +194,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 path: '/@{encodeURIComponent(encodeURIComponent(\'${inboundQueueName}\'))}/messages'
                 body: {
                   // conversationId = 'Teams - {chat topic or id}'
-                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(body(\'Get_message_details\')?[\'body\']?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
+                  ContentData: '@{base64(string(json(concat(\'{"content":\', string(coalesce(body(\'Get_message_details\')?[\'body\']?[\'plainTextContent\'], body(\'Get_message_details\')?[\'body\']?[\'content\'], \'\')), \',"conversationId":"Teams - \', outputs(\'Set_conversation_label\'), \'","agentId":"${agentId}","senderId":"\', coalesce(body(\'Get_message_details\')?[\'from\']?[\'user\']?[\'displayName\'], \'teams-user\'), \'","role":"user"}\'))))}'
                   ContentType: 'application/json'
                 }
               }
