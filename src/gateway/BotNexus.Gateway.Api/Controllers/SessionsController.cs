@@ -33,6 +33,7 @@ public sealed class SessionsController : ControllerBase
     private readonly ISecurityEventSink? _securityEvents;
     private readonly ILogger<SessionsController>? _logger;
     private readonly TranscriptExportOptions _transcriptExport;
+    private readonly IAgentSupervisor? _supervisor;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
@@ -42,18 +43,21 @@ public sealed class SessionsController : ControllerBase
     /// <param name="securityEvents">Trusted security-event sink for authorization denials, or null to disable emission.</param>
     /// <param name="logger">Optional logger for swallowed sink faults.</param>
     /// <param name="transcriptExport">Transcript export options controlling render-time secret redaction; when null, redaction defaults off.</param>
+    /// <param name="supervisor">Agent supervisor used to read the live rendered system prompt off an active handle for the debug inspector; optional so tests without a running gateway still resolve the controller.</param>
     public SessionsController(
         ISessionStore sessions,
         ISubAgentManager? subAgentManager = null,
         ISecurityEventSink? securityEvents = null,
         ILogger<SessionsController>? logger = null,
-        IOptions<TranscriptExportOptions>? transcriptExport = null)
+        IOptions<TranscriptExportOptions>? transcriptExport = null,
+        IAgentSupervisor? supervisor = null)
     {
         _transcriptExport = transcriptExport?.Value ?? new TranscriptExportOptions();
         _sessions = sessions;
         _subAgentManager = subAgentManager ?? NoOpSubAgentManager.Instance;
         _securityEvents = securityEvents;
         _logger = logger;
+        _supervisor = supervisor;
     }
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
@@ -321,13 +325,27 @@ public sealed class SessionsController : ControllerBase
         var totalCount = session.History.Count;
         var entries = session.GetHistorySnapshot(boundedOffset, boundedLimit);
 
-        // LastRenderedSystemPrompt is stamped by InProcessAgentHandle after BuildSystemPromptAsync
-        // (PR #901 / issue #766). Returns null until that PR merges and the handle has been initialised.
-        // Use reflection-safe property access so this compiles before #901 lands.
-        var promptType = session.GetType().GetProperty("LastRenderedSystemPrompt");
-        var capturedAtType = session.GetType().GetProperty("LastRenderedSystemPromptAt");
-        var systemPrompt = promptType?.GetValue(session) as string;
-        var systemPromptCapturedAt = capturedAtType?.GetValue(session) as DateTimeOffset?;
+        // Resolve the system prompt with the live handle as the source of truth. An active
+        // InProcessAgentHandle re-renders the prompt every turn and exposes it via
+        // GetContextDiagnostics().SystemPrompt, so reading it here reflects exactly what the
+        // model sees right now — and survives the fact that the stamped field is in-memory only.
+        // Fall back to GatewaySession.LastRenderedSystemPrompt (stamped at handle creation) for
+        // cold/inactive sessions whose handle is no longer resident (e.g. after an idle eviction).
+        string? systemPrompt = null;
+        DateTimeOffset? systemPromptCapturedAt = null;
+
+        var handle = _supervisor?.GetHandle(session.AgentId, session.SessionId);
+        if (handle is IAgentHandleInspector inspector
+            && inspector.GetContextDiagnostics() is { SystemPrompt: { Length: > 0 } livePrompt })
+        {
+            systemPrompt = livePrompt;
+            systemPromptCapturedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            systemPrompt = session.LastRenderedSystemPrompt;
+            systemPromptCapturedAt = session.LastRenderedSystemPromptAt;
+        }
 
         var result = new
         {
