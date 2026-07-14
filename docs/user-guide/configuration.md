@@ -1071,6 +1071,33 @@ The optional `telemetry` section controls the in-process OpenTelemetry metrics/t
 
 **Serilog  OTel logs** routing is deferred; only metrics/trace export is wired today.
 
+### Agent 365 observability export
+
+The optional `telemetry.agent365` section routes BotNexus spans (turn / tool-call / provider-invocation, plus sub-agent spawn child spans) directly to the [Microsoft Agent 365 observability](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability) endpoint over raw **OTLP/HTTP**. It is a **direct OTLP** integration (no `Microsoft.Agents.A365.Observability` SDK dependency) and is attached as an **additional** target alongside the generic `exporter`. **Off by default.**
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "agent365": {
+      "enabled": true,
+      "endpoint": "https://agent365.svc.cloud.microsoft/observabilityService/tenants/<tenantId>/otlp/agents/<agentId>/traces?api-version=1",
+      "authHeaderValue": "Bearer <access-token>"
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agent365.enabled` | bool | `false` | Ship spans to Agent 365 over OTLP/HTTP when `true` and an `endpoint` is set. Zero egress until enabled. |
+| `agent365.endpoint` | string | _(unset)_ | Agent 365 OTLP/HTTP traces endpoint (`.../otlp/agents/{agentId}/traces?api-version=1`). Required when enabled. |
+| `agent365.authHeaderValue` | string | _(unset)_ | Convenience for the `Authorization` header (`Bearer <token>`). **Secret** - redacted in logs. Acquire via MSAL out of band. |
+| `agent365.headers` | object | `{}` | Additional OTLP headers. **Secrets** - redacted in logs. |
+| `agent365.resource.*` | object | see above | `serviceName` / `serviceInstanceId` / `deploymentEnvironment` resource attributes reported to Agent 365. |
+
+Agent 365 ingestion requires a licensed tenant, tenant consent, and the `Agent365.Observability.OtelWrite` app role/scope on your agent app. See the [direct OTel integration guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/direct-open-telemetry-integration). Sub-agent spawns surface as child spans of the parent turn for full delegation visibility.
+
 ### Remote-collection quickstart
 
 1. Run an OTLP collector (OpenTelemetry Collector, Grafana Alloy, or a vendor gateway) with an OTLP receiver on `:4317`.

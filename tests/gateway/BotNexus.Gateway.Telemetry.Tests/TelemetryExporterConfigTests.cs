@@ -194,4 +194,130 @@ public sealed class TelemetryExporterConfigTests
         var described = new ExporterConfig().DescribeForLogging();
         described.ShouldContain("Headers=[(none)]");
     }
+
+    // --- Agent 365 observability export (#1877) ---
+
+    [Fact]
+    public void Agent365_DefaultsToDisabled()
+    {
+        // Off-by-default safety contract: no A365 egress until an operator opts in.
+        var config = new TelemetryConfig();
+        config.Agent365.Enabled.ShouldBeFalse();
+        config.Agent365.Endpoint.ShouldBeNull();
+    }
+
+    [Fact]
+    public void BindsAgent365Section_FromConfiguration()
+    {
+        var config = BuildConfig(
+            ("telemetry:Agent365:Enabled", "true"),
+            ("telemetry:Agent365:Endpoint", "https://agent365.svc.cloud.microsoft/observabilityService/tenants/t/otlp/agents/a/traces?api-version=1"),
+            ("telemetry:Agent365:AuthHeaderValue", "Bearer secret-a365-token"),
+            ("telemetry:Agent365:Headers:x-custom", "custom-value"),
+            ("telemetry:Agent365:Resource:ServiceName", "myagent"));
+
+        var bound = config.GetSection(TelemetryConfig.SectionName).Get<TelemetryConfig>();
+
+        bound.ShouldNotBeNull();
+        bound!.Agent365.Enabled.ShouldBeTrue();
+        bound.Agent365.Endpoint.ShouldNotBeNull();
+        bound.Agent365.Endpoint!.ShouldContain("/traces?api-version=1");
+        bound.Agent365.AuthHeaderValue.ShouldBe("Bearer secret-a365-token");
+        bound.Agent365.Headers["x-custom"].ShouldBe("custom-value");
+        bound.Agent365.Resource.ServiceName.ShouldBe("myagent");
+    }
+
+    [Fact]
+    public void Agent365_ResolveHeaders_FoldsAuthHeaderValue()
+    {
+        var a365 = new Agent365ObservabilityConfig { AuthHeaderValue = "Bearer token-1" };
+        a365.Headers["x-extra"] = "e";
+
+        var headers = a365.ResolveHeaders();
+
+        headers["Authorization"].ShouldBe("Bearer token-1");
+        headers["x-extra"].ShouldBe("e");
+    }
+
+    [Fact]
+    public void Agent365_ResolveHeaders_ExplicitAuthorizationWins()
+    {
+        var a365 = new Agent365ObservabilityConfig { AuthHeaderValue = "Bearer convenience" };
+        a365.Headers["Authorization"] = "Bearer explicit";
+
+        a365.ResolveHeaders()["Authorization"].ShouldBe("Bearer explicit");
+    }
+
+    [Fact]
+    public void Agent365_DescribeForLogging_RedactsSecrets()
+    {
+        var a365 = new Agent365ObservabilityConfig
+        {
+            Enabled = true,
+            Endpoint = "https://agent365.svc.cloud.microsoft/x/traces?api-version=1",
+            AuthHeaderValue = "Bearer super-secret-a365",
+        };
+        a365.Headers["x-api-key"] = "another-secret";
+
+        var described = a365.DescribeForLogging();
+
+        described.ShouldNotContain("super-secret-a365");
+        described.ShouldNotContain("another-secret");
+        described.ShouldContain("[REDACTED]");
+        described.ShouldContain("Authorization");
+        described.ShouldContain("x-api-key");
+    }
+
+    [Fact]
+    public void Agent365_Enabled_WithEndpoint_BuildsTracerProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddBotNexusTelemetry(BuildConfig(
+            ("telemetry:Agent365:Enabled", "true"),
+            ("telemetry:Agent365:Endpoint", "https://agent365.svc.cloud.microsoft/observabilityService/tenants/t/otlp/agents/a/traces?api-version=1"),
+            ("telemetry:Agent365:AuthHeaderValue", "Bearer token")));
+
+        using var provider = services.BuildServiceProvider();
+
+        // Provider builds with the Agent 365 OTLP exporter wired. We never flush/export,
+        // so no live network call is made.
+        provider.GetService<TracerProvider>().ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Agent365_Disabled_DoesNotBlockTracerProvider()
+    {
+        // Default (disabled) A365 must not prevent the standard TracerProvider from wiring.
+        var services = new ServiceCollection();
+        services.AddBotNexusTelemetry(BuildConfig());
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetService<TracerProvider>().ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Agent365_EnabledWithoutEndpoint_StillBuildsProvider_NoEgress()
+    {
+        // Enabled but no endpoint => nothing wired for A365, no throw, no egress.
+        var services = new ServiceCollection();
+        services.AddBotNexusTelemetry(BuildConfig(
+            ("telemetry:Agent365:Enabled", "true")));
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetService<TracerProvider>().ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Agent365_Disabled_WhenTelemetryDisabled_NoProvider()
+    {
+        // Disabling telemetry wins even with A365 configured: no provider, no egress.
+        var services = new ServiceCollection();
+        services.AddBotNexusTelemetry(BuildConfig(
+            ("telemetry:Enabled", "false"),
+            ("telemetry:Agent365:Enabled", "true"),
+            ("telemetry:Agent365:Endpoint", "https://agent365.svc.cloud.microsoft/x/traces?api-version=1")));
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetService<TracerProvider>().ShouldBeNull();
+    }
 }

@@ -33,6 +33,103 @@ public sealed class TelemetryConfig
     /// outbound OTLP connection until an operator explicitly opts in with an endpoint.
     /// </summary>
     public ExporterConfig Exporter { get; set; } = new();
+
+    /// <summary>
+    /// Agent 365 observability export configuration. Defaults to disabled (the off-by-default
+    /// safety contract): a fresh install never routes telemetry to Agent 365 until an operator
+    /// explicitly opts in with an endpoint and auth header. When enabled, the canonical
+    /// BotNexus turn/tool-call/provider-invocation spans are shipped to the Agent 365
+    /// observability ingestion endpoint over raw OTLP/HTTP alongside (not instead of) the
+    /// generic <see cref="Exporter"/> target.
+    /// </summary>
+    public Agent365ObservabilityConfig Agent365 { get; set; } = new();
+}
+
+/// <summary>
+/// Configures direct OTLP/HTTP export of BotNexus telemetry spans to the Microsoft
+/// Agent 365 observability ingestion endpoint. This is a raw OTLP target: it takes no
+/// dependency on any <c>Microsoft.Agents.A365.Observability</c> SDK. Auth is config-driven
+/// (a bearer token supplied via <see cref="AuthHeaderValue"/>, typically minted by an
+/// operator's MSAL/token-acquisition process out of band).
+/// </summary>
+/// <remarks>
+/// The Agent 365 traces route is documented at
+/// https://learn.microsoft.com/en-us/microsoft-agent-365/developer/direct-open-telemetry-integration.
+/// The typical S2S endpoint shape is
+/// <c>https://agent365.svc.cloud.microsoft/observabilityService/tenants/{tenantId}/otlp/agents/{agentId}/traces?api-version=1</c>
+/// and callers set an <c>Authorization: Bearer &lt;token&gt;</c> header. This type keeps the
+/// full endpoint operator-supplied so BotNexus does not hard-code the (evolving) route shape.
+/// </remarks>
+public sealed class Agent365ObservabilityConfig
+{
+    /// <summary>
+    /// Whether Agent 365 observability export is active. Defaults to <see langword="false"/>
+    /// (the off-by-default safety contract): no telemetry is ever routed to Agent 365 until an
+    /// operator explicitly enables it and supplies an <see cref="Endpoint"/>.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The Agent 365 observability OTLP/HTTP traces endpoint (the fully-qualified
+    /// <c>.../otlp/agents/{agentId}/traces?api-version=1</c> URL). Required when
+    /// <see cref="Enabled"/> is <see langword="true"/>; ignored otherwise. Deliberately has no
+    /// default value so no endpoint is ever shipped.
+    /// </summary>
+    public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// The value of the <c>Authorization</c> header sent on every OTLP request (for example
+    /// <c>Bearer eyJ...</c>). Treated as a secret: redacted wherever config is logged. Optional
+    /// so operators can also supply auth via <see cref="Headers"/> or an upstream proxy.
+    /// </summary>
+    public string? AuthHeaderValue { get; set; }
+
+    /// <summary>
+    /// Additional OTLP request headers (beyond <c>Authorization</c>). Header values are treated
+    /// as secrets and redacted wherever config is logged.
+    /// </summary>
+    public IDictionary<string, string> Headers { get; set; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Resource attributes that identify this agent to Agent 365.</summary>
+    public ResourceAttributesConfig Resource { get; set; } = new();
+
+    /// <summary>
+    /// Returns the effective set of OTLP headers, folding <see cref="AuthHeaderValue"/> into an
+    /// <c>Authorization</c> entry when present. Explicit <see cref="Headers"/> win over the
+    /// convenience <see cref="AuthHeaderValue"/> if both set <c>Authorization</c>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ResolveHeaders()
+    {
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(AuthHeaderValue))
+        {
+            merged["Authorization"] = AuthHeaderValue!;
+        }
+
+        foreach (var kvp in Headers)
+        {
+            merged[kvp.Key] = kvp.Value;
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Returns a human-readable, secret-safe description of this config suitable for logging or
+    /// a config dump. The auth token and all header <em>values</em> are replaced with
+    /// <c>[REDACTED]</c> (keys are preserved so operators can confirm which headers are set).
+    /// </summary>
+    public string DescribeForLogging()
+    {
+        var headerKeys = ResolveHeaders().Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+        var headers = headerKeys.Count == 0
+            ? "(none)"
+            : string.Join(", ", headerKeys.Select(k => $"{k}=[REDACTED]"));
+
+        return $"Enabled={Enabled}, Endpoint={Endpoint ?? "(unset)"}, " +
+               $"Headers=[{headers}], Resource=({Resource.DescribeForLogging()})";
+    }
 }
 
 /// <summary>
