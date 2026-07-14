@@ -2,7 +2,7 @@ using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
-namespace BotNexus.Gateway.Tests;
+namespace BotNexus.Integration.ConfigSave.Tests;
 
 /// <summary>
 /// Real GET -> edit -> PUT round-trip tests that exercise the actual

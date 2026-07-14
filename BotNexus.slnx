@@ -96,6 +96,7 @@
   </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />
+    <Project Path="tests/integration/BotNexus.Integration.ConfigSave.Tests/BotNexus.Integration.ConfigSave.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.ProviderTests/BotNexus.Integration.ProviderTests.csproj" />
   </Folder>
