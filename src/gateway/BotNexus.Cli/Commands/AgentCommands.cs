@@ -124,12 +124,40 @@ internal sealed class AgentCommands
             context.ExitCode = await ExecuteExportAsync(id, configPath, output, verbose, CancellationToken.None);
         });
 
+        var importFileArgument = new Argument<string>("file", "Path to an agentTemplate/v1 JSON file to import.");
+        var importIdOption = new Option<string?>("--id", () => null, "Target agent ID (defaults to the --set id override, then the template file name).");
+        var importSetOption = new Option<string[]>("--set", () => [], "Override a descriptor field before materializing (key=value). Repeatable. Keys: id, displayName, description, emoji, model, provider, thinking, contextWindow.")
+        {
+            AllowMultipleArgumentsPerToken = false
+        };
+        var importOverwriteOption = new Option<bool>("--overwrite", () => false, "Replace an existing agent with the same ID. Without this flag an ID collision is refused.");
+        var importCommand = new Command("import", "Import an agent from a redacted agentTemplate/v1 JSON template, with optional --set overrides.")
+        {
+            importFileArgument,
+            importIdOption,
+            importSetOption,
+            importOverwriteOption
+        };
+        importCommand.SetHandler(async context =>
+        {
+            var file = context.ParseResult.GetValueForArgument(importFileArgument);
+            var idOverride = context.ParseResult.GetValueForOption(importIdOption);
+            var sets = context.ParseResult.GetValueForOption(importSetOption) ?? [];
+            var overwrite = context.ParseResult.GetValueForOption(importOverwriteOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var home = CliPaths.ResolveTarget(target);
+            var configPath = Path.Combine(home, "config.json");
+            context.ExitCode = await ExecuteImportAsync(file, configPath, idOverride, sets, overwrite, verbose, CancellationToken.None);
+        });
+
         command.AddCommand(listCommand);
         command.AddCommand(addCommand);
         command.AddCommand(removeCommand);
         command.AddCommand(wizardCommand);
         command.AddCommand(showCommand);
         command.AddCommand(exportCommand);
+        command.AddCommand(importCommand);
         return command;
     }
 
@@ -486,6 +514,264 @@ internal sealed class AgentCommands
                 Description = $"API key / credential for provider '{provider}'. Supply via providers.{provider}.apiKey or auth.json."
             }
         ];
+    }
+
+    /// <summary>
+    /// Import an agent from a redacted <c>agentTemplate/v1</c> template, applying any
+    /// <c>--set key=value</c> overrides before the agent is materialized into config.json.
+    /// This is the symmetric inverse of <see cref="ExecuteExportAsync"/>: it reconstructs
+    /// exactly the descriptor fields export bundles (identity, model/provider, system
+    /// prompt, tools, thinking, context window) and never silently reuses the exporter's id
+    /// or overwrites an existing agent unless <paramref name="overwrite"/> is set.
+    /// </summary>
+    /// <param name="filePath">Path to the template JSON file.</param>
+    /// <param name="configPath">Target config.json to write the reconstructed agent into.</param>
+    /// <param name="idOverride">Explicit target agent id from <c>--id</c>; falls back to the
+    /// <c>id</c> <c>--set</c> override, then the template file name.</param>
+    /// <param name="sets">Repeatable <c>key=value</c> overrides that supersede template values.</param>
+    /// <param name="overwrite">When true, replace an existing agent with the resolved id.</param>
+    public async Task<int> ExecuteImportAsync(
+        string filePath,
+        string configPath,
+        string? idOverride,
+        IReadOnlyList<string> sets,
+        bool overwrite,
+        bool verbose,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Template file path is required.");
+            return 1;
+        }
+
+        if (!File.Exists(filePath))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Template file not found at [dim]{Markup.Escape(filePath)}[/].");
+            return 1;
+        }
+
+        AgentTemplate? template;
+        try
+        {
+            var json = await File.ReadAllTextAsync(filePath, cancellationToken);
+            template = AgentTemplate.FromJson(json);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Template is not valid JSON: {Markup.Escape(ex.Message)}");
+            return 1;
+        }
+
+        if (template is null)
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Template could not be parsed.");
+            return 1;
+        }
+
+        // Parse and apply --set overrides onto the descriptor before validation so a
+        // template missing a field can still be completed at import time.
+        if (!TryParseSets(sets, out var overrides, out var setError))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(setError)}");
+            return 1;
+        }
+
+        if (!TryApplyOverrides(template.Agent, overrides, out var applyError))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(applyError)}");
+            return 1;
+        }
+
+        var schemaErrors = template.Validate();
+        if (schemaErrors.Count > 0)
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Template failed schema validation:");
+            foreach (var error in schemaErrors)
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
+            return 1;
+        }
+
+        // Resolve the target id: --id, then --set id, then the template file name stem.
+        var targetId = idOverride;
+        if (string.IsNullOrWhiteSpace(targetId) && overrides.TryGetValue("id", out var idFromSet))
+            targetId = idFromSet;
+        if (string.IsNullOrWhiteSpace(targetId))
+            targetId = DeriveIdFromFileName(filePath);
+
+        if (string.IsNullOrWhiteSpace(targetId))
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Could not resolve a target agent id. Pass --id or --set id=<value>.");
+            return 1;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(targetId, @"^[a-z0-9][a-z0-9\-_]*$"))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Invalid agent id [green]{Markup.Escape(targetId)}[/]. Use lowercase letters, digits, hyphens, or underscores.");
+            return 1;
+        }
+
+        var config = await LoadConfigRequiredAsync(configPath, cancellationToken);
+        if (config is null)
+            return 1;
+
+        config.Agents ??= new Dictionary<string, AgentDefinitionConfig>(StringComparer.OrdinalIgnoreCase);
+
+        var exists = TryFindDictionaryKey(config.Agents, targetId, out var existingKey);
+        if (exists && !overwrite)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(targetId)}[/] already exists. Pass [green]--overwrite[/] to replace it, or choose another id with [green]--id[/] / [green]--set id=<value>[/].");
+            return 1;
+        }
+
+        // Materialize the reconstructed agent definition from the descriptor.
+        var descriptor = template.Agent;
+        var agent = new AgentDefinitionConfig
+        {
+            DisplayName = string.IsNullOrWhiteSpace(descriptor.DisplayName) ? null : descriptor.DisplayName,
+            Description = string.IsNullOrWhiteSpace(descriptor.Description) ? null : descriptor.Description,
+            Emoji = string.IsNullOrWhiteSpace(descriptor.Emoji) ? null : descriptor.Emoji,
+            Provider = descriptor.ApiProvider,
+            Model = descriptor.ModelId,
+            ToolIds = descriptor.ToolIds is { Count: > 0 } ? new List<string>(descriptor.ToolIds) : null,
+            Thinking = descriptor.Thinking,
+            ContextWindow = descriptor.ContextWindow,
+            Enabled = true,
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                Enabled = true,
+                IntervalMinutes = 30,
+                QuietHours = new QuietHoursConfig { Enabled = true, Start = "23:00", End = "07:00" }
+            }
+        };
+
+        var homeDir = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? BotNexusHome.ResolveHomePath();
+
+        // Restore the system prompt into the agent workspace and reference it by relative
+        // path so the reconstructed agent is self-contained and portable.
+        if (!string.IsNullOrWhiteSpace(descriptor.SystemPrompt))
+        {
+            var botNexusHome = new BotNexusHome(homeDir);
+            var agentDir = botNexusHome.GetAgentDirectory(targetId);
+            var promptPath = Path.Combine(agentDir, "IMPORTED_SYSTEM_PROMPT.md");
+            await File.WriteAllTextAsync(promptPath, descriptor.SystemPrompt, cancellationToken);
+            agent.SystemPromptFile = Path.GetRelativePath(homeDir, promptPath).Replace('\\', '/');
+        }
+
+        if (exists)
+            config.Agents.Remove(existingKey);
+        config.Agents[targetId] = agent;
+
+        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        if (saveCode != 0)
+            return saveCode;
+
+        // Ensure the workspace directory exists even when there is no system prompt to write.
+        new BotNexusHome(homeDir).GetAgentDirectory(targetId);
+
+        var verb = exists ? "Replaced" : "Imported";
+        AnsiConsole.MarkupLine($"[green]\u2713[/] {verb} agent [green]{Markup.Escape(targetId)}[/] from template [dim]{Markup.Escape(Path.GetFileName(filePath))}[/].");
+        if (template.RequiredSecrets is { Count: > 0 })
+        {
+            AnsiConsole.MarkupLine("[yellow]Required secrets to re-provide before this agent can run:[/]");
+            foreach (var secret in template.RequiredSecrets)
+                AnsiConsole.MarkupLine($"  [yellow]\u2022[/] {Markup.Escape(secret.Provider)}.{Markup.Escape(secret.Key)}");
+        }
+        if (verbose)
+            AnsiConsole.MarkupLine($"[dim]Schema: {AgentTemplate.CurrentSchema}; overrides applied: {overrides.Count}[/]");
+
+        return 0;
+    }
+
+    private static string DeriveIdFromFileName(string filePath)
+    {
+        var name = Path.GetFileName(filePath);
+        // Strip the conventional ".agent.json" (and a bare ".json") suffix.
+        foreach (var suffix in new[] { ".agent.json", ".json" })
+        {
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name[..^suffix.Length];
+                break;
+            }
+        }
+        return name.ToLowerInvariant();
+    }
+
+    private static bool TryParseSets(IReadOnlyList<string> sets, out Dictionary<string, string> overrides, out string error)
+    {
+        overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        error = string.Empty;
+        foreach (var raw in sets)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            var idx = raw.IndexOf('=');
+            if (idx <= 0)
+            {
+                error = $"Invalid --set '{raw}'. Expected key=value.";
+                return false;
+            }
+            var key = raw[..idx].Trim();
+            var value = raw[(idx + 1)..];
+            overrides[key] = value;
+        }
+        return true;
+    }
+
+    // Applies parsed overrides to the descriptor. 'id' is handled by the caller for target
+    // resolution, not on the descriptor itself.
+    private static bool TryApplyOverrides(AgentTemplateDescriptor descriptor, Dictionary<string, string> overrides, out string error)
+    {
+        error = string.Empty;
+        foreach (var (key, value) in overrides)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "id":
+                    break; // resolved by caller
+                case "displayname":
+                    descriptor.DisplayName = value;
+                    break;
+                case "description":
+                    descriptor.Description = value;
+                    break;
+                case "emoji":
+                    descriptor.Emoji = value;
+                    break;
+                case "model":
+                case "modelid":
+                    descriptor.ModelId = value;
+                    break;
+                case "provider":
+                case "apiprovider":
+                    descriptor.ApiProvider = value;
+                    break;
+                case "systemprompt":
+                    descriptor.SystemPrompt = value;
+                    break;
+                case "contextwindow":
+                    if (!int.TryParse(value, out var ctx))
+                    {
+                        error = $"--set contextWindow='{value}' is not an integer.";
+                        return false;
+                    }
+                    descriptor.ContextWindow = ctx;
+                    break;
+                case "thinking":
+                    if (!Enum.TryParse<BotNexus.Agent.Providers.Core.Models.ThinkingLevel>(value, ignoreCase: true, out var thinking))
+                    {
+                        error = $"--set thinking='{value}' is not a valid thinking level.";
+                        return false;
+                    }
+                    descriptor.Thinking = thinking;
+                    break;
+                default:
+                    error = $"Unknown --set key '{key}'. Supported: id, displayName, description, emoji, model, provider, systemPrompt, thinking, contextWindow.";
+                    return false;
+            }
+        }
+        return true;
     }
 
     private static async Task<PlatformConfig?> LoadConfigRequiredAsync(CancellationToken cancellationToken)
