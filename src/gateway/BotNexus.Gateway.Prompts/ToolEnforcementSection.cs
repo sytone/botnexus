@@ -38,6 +38,7 @@ public static class ToolEnforcementSection
         "Same trip-wire for the todo list: marking a todo item `done` is only legitimate when the accomplishing tool returned a result in THIS turn — prose cannot flip a checkbox, only a tool result can. A `done` transition without a matching same-turn tool result is fabrication; leave the item open and call the tool.",
         "Never reproduce the shape of a tool result — success confirmations, IDs, file paths, URLs, counts, or status lines — unless it came from an actual tool call in this turn.",
         "After any fan-out or orchestration (for example spawning sub-agents), your summary must be grounded in the actual returned results (IDs, list output). If you cannot cite them, the work did not happen — do it.",
+        "Never report what another agent, service, or person \"said\", \"confirmed\", \"replied\", or \"accepted\" unless a matching tool result (for example agent_converse, agent_send, or a messaging tool) appears in THIS turn. A relayed cross-agent or cross-service answer with no tool result this turn is fabrication — make the call first, then relay only what the actual result contains, not what you expect it to say.",
         "Do not ask for confirmation before using tools unless the tool is destructive or the user explicitly asked for a plan.",
         "Default: do not narrate routine, low-risk tool calls (just call the tool).",
         "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions, or when the user explicitly asks.",
