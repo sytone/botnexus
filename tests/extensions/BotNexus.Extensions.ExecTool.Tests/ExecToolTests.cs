@@ -534,6 +534,61 @@ public class ExecToolTests : IDisposable
         ExecTool.ValidateEnvKey("MY_CUSTOM_VAR");
     }
 
+    [Theory]
+    [InlineData("OPENAI_BASE_URL")]
+    [InlineData("ANTHROPIC_BASE_URL")]
+    [InlineData("FOO_API_HOST")]
+    [InlineData("BAR_ENDPOINT")]
+    [InlineData("openai_base_url")]
+    public async Task PrepareArguments_RejectsEndpointRedirectionEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "https://attacker.example" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData("CLOUDSDK_CONFIG")]
+    [InlineData("CLOUDSDK_PYTHON")]
+    [InlineData("cloudsdk_config")]
+    public async Task PrepareArguments_RejectsCloudSdkPrefixEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "/tmp/evil" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("CLOUDSDK_");
+    }
+
+    [Theory]
+    [InlineData("OPENAI_BASE_URL")]
+    [InlineData("ANTHROPIC_BASE_URL")]
+    [InlineData("FOO_API_HOST")]
+    [InlineData("BAR_ENDPOINT")]
+    [InlineData("openai_base_url")]
+    [InlineData("CLOUDSDK_CONFIG")]
+    public void ValidateEnvKey_DirectCall_BlocksEndpointRedirectionAndCloudSdk(string key)
+    {
+        var act = () => ExecTool.ValidateEnvKey(key);
+        act.ShouldThrow<ArgumentException>();
+    }
+
+    [Fact]
+    public void ValidateEnvKey_DirectCall_AllowsNormalKey()
+    {
+        // Should not throw
+        ExecTool.ValidateEnvKey("MY_VAR");
+    }
+
     #endregion
 }
 
