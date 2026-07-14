@@ -23,7 +23,7 @@ date: "2026-07-13"
 
 ### 🐛 Bug Fixes
 
-- **docs:** Escape raw <id> breaking VitePress build (#1924)
+- **docs:** Escape raw `<id>` breaking VitePress build (#1924)
 - **security:** Add Telegram bot-token pattern to SecretRedactor (#1930)
 - **gateway:** Stop liveness watchdog firing false FATAL alerts when idle (#1932)
 - **security:** Use timing-safe comparison for gateway api key auth (#1938)
