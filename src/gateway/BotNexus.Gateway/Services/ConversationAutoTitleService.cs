@@ -158,12 +158,7 @@ public sealed class ConversationAutoTitleService
             return null;
         }
 
-        var rawTitle = string.Join(
-            " ",
-            completion.Content
-                .OfType<TextContent>()
-                .Select(t => t.Text)
-                .Where(t => !string.IsNullOrWhiteSpace(t)));
+        var rawTitle = ExtractTitleText(completion);
 
         var title = SanitizeTitle(rawTitle);
         if (string.IsNullOrWhiteSpace(title))
@@ -314,6 +309,33 @@ public sealed class ConversationAutoTitleService
         return "In 5 words or fewer, give a descriptive title for this conversation based on the " +
                "first user message and assistant response. Return only the title, no punctuation, " +
                $"no quotes.\n\nUser: {userText}\n\nAssistant: {assistantText}";
+    }
+
+    /// <summary>
+    /// #1994: extracts titling text from a completion. Prefers real answer text (TextContent) and
+    /// falls back to reasoning/thinking content (ThinkingContent) when no text block is present.
+    /// A reasoning model returns its answer in a thinking block with zero TextContent, which
+    /// otherwise sanitised to an empty title and never persisted (the live rawLength=0 bug).
+    /// </summary>
+    internal static string ExtractTitleText(AssistantMessage completion)
+    {
+        var text = string.Join(
+            " ",
+            completion.Content
+                .OfType<TextContent>()
+                .Select(t => t.Text)
+                .Where(t => !string.IsNullOrWhiteSpace(t)));
+
+        if (!string.IsNullOrWhiteSpace(text))
+            return text;
+
+        // No usable text block — fall back to thinking content so a reasoning model still titles.
+        return string.Join(
+            " ",
+            completion.Content
+                .OfType<ThinkingContent>()
+                .Select(t => t.Thinking)
+                .Where(t => !string.IsNullOrWhiteSpace(t)));
     }
 
     internal static string SanitizeTitle(string raw)

@@ -72,7 +72,10 @@ public class SchemaContributorBindingTests
 
         var config = BindToPlatformConfig(root);
 
-        config.Gateway!.Auxiliary!.Titling!.Model.ShouldBeNull();
+        // #1994: the titling model now defaults to a fast non-reasoning model instead of null, so a
+        // fresh install titles off a sane model rather than falling back to the first-registered
+        // (reasoning) model that returns no TextContent.
+        config.Gateway!.Auxiliary!.Titling!.Model.ShouldBe("gpt-5.6-luna");
         config.Gateway!.Auxiliary!.Titling!.TimeoutSeconds.ShouldBe(30);
     }
 
