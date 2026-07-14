@@ -1236,6 +1236,48 @@ Point BotNexus at any OTLP-compatible collector (OpenTelemetry Collector, Grafan
 
 To disable export again, set `exporter.type` back to `none` (or remove the section) - egress stops immediately.
 
+#### Agent 365 observability export: agent365
+
+The optional `telemetry.agent365` section routes BotNexus OpenTelemetry **spans** (turn / tool-call / provider-invocation, plus their child spans such as sub-agent spawns) directly to the [Microsoft Agent 365 observability](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability) ingestion endpoint over raw **OTLP/HTTP**. It is **off by default** - a fresh install never routes any telemetry to Agent 365 until an operator explicitly sets `enabled` to `true` and provides an `endpoint`.
+
+This is a **direct OTLP** integration: BotNexus takes **no dependency** on any `Microsoft.Agents.A365.Observability` SDK. The exporter is attached as an **additional** target alongside (not instead of) the generic `exporter` above, so you can fan telemetry out to both a private collector and Agent 365 at once. The A365 exporter is always sent over `http/protobuf` because the Agent 365 traces route is HTTP-only.
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "agent365": {
+      "enabled": true,
+      "endpoint": "https://agent365.svc.cloud.microsoft/observabilityService/tenants/<tenantId>/otlp/agents/<agentId>/traces?api-version=1",
+      "authHeaderValue": "Bearer <access-token>",
+      "headers": {
+        "x-custom-header": "value"
+      },
+      "resource": {
+        "serviceName": "my-agent",
+        "deploymentEnvironment": "production"
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agent365.enabled` | bool | `false` | When `true` (and an `endpoint` is set), spans are shipped to Agent 365 over OTLP/HTTP. Off by default: zero egress to Agent 365 until enabled. |
+| `agent365.endpoint` | string | _(unset)_ | The Agent 365 observability OTLP/HTTP **traces** endpoint - the fully-qualified `.../otlp/agents/{agentId}/traces?api-version=1` URL. Required when `enabled` is `true`. No default is shipped. Use the S2S route (`/observabilityService/...`) for app-only tokens or the delegated route (`/observability/...`) for user-delegated tokens. |
+| `agent365.authHeaderValue` | string | _(unset)_ | Convenience for the `Authorization` request header, e.g. `Bearer <token>`. **Treated as a secret** - redacted wherever config is logged. Acquire the token via MSAL/`Microsoft.Identity.Web` out of band (scope `9b975845-388f-4429-889e-eab1ef63949c/.default` for S2S). |
+| `agent365.headers` | object | `{}` | Additional OTLP request headers beyond `Authorization`. **Treated as secrets** - values are redacted wherever config is logged. An explicit `Authorization` key here wins over `authHeaderValue`. |
+| `agent365.resource.serviceName` | string | `botnexus` | `service.name` resource attribute reported to Agent 365. |
+| `agent365.resource.serviceInstanceId` | string | _(auto)_ | `service.instance.id` resource attribute. Auto-generated per process when unset. |
+| `agent365.resource.deploymentEnvironment` | string | _(unset)_ | `deployment.environment` resource attribute. Omitted when unset. |
+
+**Prerequisites (tenant-side):** Agent 365 ingestion requires a licensed tenant, an assigned Microsoft 365 E7 / Microsoft Agent 365 license, tenant consent, and the `Agent365.Observability.OtelWrite` app role/scope granted to your agent app. Without these, ingestion returns `200 OK` but silently drops the data. See the [direct OTel integration guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/direct-open-telemetry-integration) for the full auth recipes and verification steps.
+
+**Delegation visibility:** sub-agent spawns surface as **child spans** of the parent turn (standard OTel parent linkage via the ambient `Activity.Current`), so a full agent-to-agent delegation run appears as a single trace tree in Agent 365.
+
+To disable Agent 365 export again, set `agent365.enabled` back to `false` (or remove the section) - egress to Agent 365 stops immediately.
+
 
 ---
 
