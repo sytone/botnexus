@@ -55,8 +55,8 @@
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
   </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
+  <Folder Name="/tests/examples/">
+    <Project Path="tests/examples/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/agent/">
     <Project Path="tests/agent/BotNexus.Agent.Core.Tests/BotNexus.Agent.Core.Tests.csproj" />
@@ -67,6 +67,7 @@
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAICompat.Tests/BotNexus.Agent.Providers.OpenAICompat.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.GitHubModels.Tests/BotNexus.Agent.Providers.GitHubModels.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.IntegrationMock.Tests/BotNexus.Agent.Providers.IntegrationMock.Tests.csproj" />
+    <Project Path="tests/agent/BotNexus.Providers.Conformance.Tests/BotNexus.Providers.Conformance.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/architecture/">
     <Project Path="tests/architecture/BotNexus.Architecture.Tests/BotNexus.Architecture.Tests.csproj" />
@@ -77,6 +78,7 @@
   <Folder Name="/tests/scenarios/">
     <Project Path="tests/scenarios/BotNexus.Scenarios.Harness/BotNexus.Scenarios.Harness.csproj" />
     <Project Path="tests/scenarios/BotNexus.Scenarios.Tests/BotNexus.Scenarios.Tests.csproj" />
+    <Project Path="tests/scenarios/BotNexus.Integration.Tests/BotNexus.Integration.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/extensions/">
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
@@ -99,6 +101,7 @@
     <Project Path="tests/integration/BotNexus.Integration.ConfigSave.Tests/BotNexus.Integration.ConfigSave.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.ProviderTests/BotNexus.Integration.ProviderTests.csproj" />
+    <Project Path="tests/integration/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />

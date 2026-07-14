@@ -13,10 +13,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\examples\BotNexus.CodingAgent\BotNexus.CodingAgent.csproj" />
+    <ProjectReference Include="..\..\..\examples\BotNexus.CodingAgent\BotNexus.CodingAgent.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
+

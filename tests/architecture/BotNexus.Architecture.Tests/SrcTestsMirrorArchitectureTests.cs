@@ -53,6 +53,7 @@ public sealed class SrcTestsMirrorArchitectureTests
         "integration",
         "e2e",
         "scenarios",
+        "examples",
     };
 
     /// <summary>
@@ -100,16 +101,9 @@ public sealed class SrcTestsMirrorArchitectureTests
     /// </summary>
     private static readonly Dictionary<string, string> RootLevelTestExemptions = new(System.StringComparer.OrdinalIgnoreCase)
     {
-        ["tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj"] =
-            "Pre-existing root-level project; relocation under a category folder is tracked by #1960.",
-        ["tests/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj"] =
-            "Pre-existing root-level project; relocation under a category folder is tracked by #1960.",
-        ["tests/BotNexus.E2E.Tests/BotNexus.E2E.Tests.csproj"] =
-            "Pre-existing root-level project; relocation under tests/e2e is tracked by #1960.",
-        ["tests/BotNexus.Integration.Tests/BotNexus.Integration.Tests.csproj"] =
-            "Pre-existing root-level project; relocation under tests/integration is tracked by #1960.",
-        ["tests/BotNexus.Providers.Conformance.Tests/BotNexus.Providers.Conformance.Tests.csproj"] =
-            "Pre-existing root-level project; relocation under a category folder is tracked by #1960.",
+        // All previously grandfathered root-level test projects were relocated under
+        // category folders by #1960. This allow-list is intentionally empty and closed:
+        // new root-level test projects are not permitted.
     };
 
     [Fact]
