@@ -211,7 +211,7 @@ public sealed class ConversationGroupingTests : IDisposable
         var cut = RenderLayout();
 
         var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
-        pinButton.Click();
+        cut.InvokeAsync(() => pinButton.Click());
 
         // Clicking pins the conversation via the interaction service (pinned: true).
         _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true);
@@ -228,9 +228,11 @@ public sealed class ConversationGroupingTests : IDisposable
         var cut = RenderLayout();
 
         // Find the pin button fresh (not via a captured parent node, whose event-handler id can
-        // go stale after a render — bUnit throws UnknownEventHandlerIdException otherwise).
+        // go stale after a render — bUnit throws UnknownEventHandlerIdException otherwise). Dispatch
+        // the click through the renderer (InvokeAsync) so it can't race a concurrent re-render under
+        // parallel CI load, which is what surfaced the stale-handler exception across multiple PRs.
         var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
-        pinButton.Click();
+        cut.InvokeAsync(() => pinButton.Click());
 
         _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false);
     }
