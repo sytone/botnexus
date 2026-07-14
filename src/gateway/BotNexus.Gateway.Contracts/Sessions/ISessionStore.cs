@@ -220,6 +220,22 @@ public interface ISessionStore
         => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
 
     /// <summary>
+    /// Returns persisted sub-agent session rows across <em>all</em> parent sessions, ordered by
+    /// <c>started_at</c> descending (newest first) for a platform-wide observability feed (#1941).
+    /// This is the parent-agnostic counterpart to <see cref="ListSubAgentSessionsAsync"/>; it reads
+    /// the existing <c>sub_agent_sessions</c> store read-only and adds no new persistence.
+    /// Implementations that do not support sub-agent persistence return an empty list.
+    /// </summary>
+    /// <param name="status">Optional case-insensitive status filter (e.g. Completed, Failed, Killed, TimedOut, Active). When null or whitespace, all statuses are returned.</param>
+    /// <param name="limit">Maximum number of rows to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+        string? status = null,
+        int limit = 200,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+
+    /// <summary>
     /// Gets aggregate session statistics. Default implementation returns null (not supported).
     /// </summary>
     Task<SessionStats?> GetStatsAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
