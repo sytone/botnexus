@@ -31,4 +31,11 @@ public enum SlashCommandKind
 /// <param name="Name">The command token including the leading slash, e.g. <c>/compact</c>.</param>
 /// <param name="Description">Human-readable one-line description shown in the palette.</param>
 /// <param name="Kind">How the dispatcher executes this command.</param>
-public sealed record SlashCommand(string Name, string Description, SlashCommandKind Kind);
+/// <param name="RequiresApproval">
+/// Opt-in protection flag (issue #1950, part of #1580). When <see langword="true"/> the dispatcher
+/// consults the injected <see cref="ISlashCommandApprovalHook"/> before executing the command; a
+/// denial prevents execution. Unprotected commands (the default) bypass the hook entirely so the
+/// hot path for ordinary commands is unchanged. Set per command at registration time by the user
+/// or extension owner.
+/// </param>
+public sealed record SlashCommand(string Name, string Description, SlashCommandKind Kind, bool RequiresApproval = false);
