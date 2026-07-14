@@ -1385,6 +1385,48 @@ public sealed class SqliteSessionStore : SessionStoreBase
         return results;
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// #1941: platform-wide observability read. Opens the existing <c>sub_agent_sessions</c> table
+    /// read-only (no schema change, no write path) and returns rows across all parent sessions,
+    /// newest-started first, with an optional case-insensitive status filter and a bounded row cap.
+    /// The <c>started_at</c> ordinals map through <see cref="SessionRowMapper.MapSubAgentSession"/>,
+    /// the same projection used by the parent-scoped <see cref="ListSubAgentSessionsAsync"/>.
+    /// </remarks>
+    public override async Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+        string? status = null,
+        int limit = 200,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+
+        var hasStatus = !string.IsNullOrWhiteSpace(status);
+        command.CommandText =
+            $"""
+            SELECT id, parent_session_id, parent_agent_id, child_agent_id,
+                   archetype, started_at, ended_at, status
+            FROM sub_agent_sessions
+            {(hasStatus ? "WHERE lower(status) = lower($status)" : string.Empty)}
+            ORDER BY started_at DESC
+            LIMIT $limit
+            """;
+        if (hasStatus)
+            command.Parameters.AddWithValue("$status", status!);
+        command.Parameters.AddWithValue("$limit", limit);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var results = new List<SubAgentSessionSummary>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // #1627: the sub_agent_sessions ordinals live in SessionRowMapper.MapSubAgentSession.
+            results.Add(SessionRowMapper.MapSubAgentSession(reader));
+        }
+        return results;
+    }
+
     /// <inheritdoc/>
     /// <remarks>
     /// #1379 Finding 3: this is a diagnostics/counting endpoint, so it must NOT pay the
