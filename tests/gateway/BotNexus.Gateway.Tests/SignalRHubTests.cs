@@ -1081,7 +1081,8 @@ public sealed class SignalRHubTests
         string? userIdentifier = "user",
         string? clientQueryValue = null,
         string? clientVersionQueryValue = null,
-        ILogger<GatewayHub>? logger = null)
+        ILogger<GatewayHub>? logger = null,
+        string[]? userScopes = null)
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
         var convStore = conversationStore ?? new InMemoryConversationStore();
@@ -1125,7 +1126,7 @@ public sealed class SignalRHubTests
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
-            Context = new TestHubCallerContext(connectionId, userIdentifier, clientQueryValue, clientVersionQueryValue)
+            Context = new TestHubCallerContext(connectionId, userIdentifier, clientQueryValue, clientVersionQueryValue, userScopes)
         };
 
         return hub;
@@ -1135,10 +1136,25 @@ public sealed class SignalRHubTests
     {
         private readonly Dictionary<object, object?> _items = [];
 
-        public TestHubCallerContext(string connectionId, string? userIdentifier = "user", string? clientQueryValue = null, string? clientVersionQueryValue = null)
+        public TestHubCallerContext(string connectionId, string? userIdentifier = "user", string? clientQueryValue = null, string? clientVersionQueryValue = null, string[]? userScopes = null)
         {
             ConnectionId = connectionId;
             UserIdentifier = userIdentifier;
+
+            // When explicit scopes are supplied, present them as an authenticated principal
+            // carrying a single space-delimited OAuth "scope" claim so the per-method
+            // least-privilege guard (#1524) can read the caller's granted scopes. When null,
+            // the principal carries no scope claim -> guard treats it as legacy full-trust.
+            if (userScopes is not null)
+            {
+                var identity = new ClaimsIdentity(authenticationType: "TestAuth");
+                identity.AddClaim(new Claim("scope", string.Join(' ', userScopes)));
+                User = new ClaimsPrincipal(identity);
+            }
+            else
+            {
+                User = new ClaimsPrincipal();
+            }
 
             var features = new FeatureCollection();
             // Mirror the production transport: the hub reads the connect-time query string
@@ -1165,7 +1181,7 @@ public sealed class SignalRHubTests
 
         public override string ConnectionId { get; }
         public override string? UserIdentifier { get; }
-        public override ClaimsPrincipal? User { get; } = new();
+        public override ClaimsPrincipal? User { get; }
         public override IDictionary<object, object?> Items => _items;
         public override IFeatureCollection Features { get; }
         public override CancellationToken ConnectionAborted { get; } = CancellationToken.None;
@@ -1270,4 +1286,134 @@ public sealed class SignalRHubTests
         attributes.ShouldNotBeEmpty("GatewayHub must have [Authorize] to enforce authentication when configured");
         attributes.Single().Policy.ShouldBe(SignalRAuthPolicy.PolicyName);
     }
+
+    // --- Per-method least-privilege scope guard (#1524) ---
+    // Mirrors OpenClaw's isApprovalMethod guard: a connection scoped to read-only must not be
+    // able to invoke a write-capable control method. Backward compat: a connection carrying no
+    // recognised scope claim (legacy full-trust) may invoke any method.
+
+    private const string ReadScope = HubScopeGuard.ReadScopeValue;
+    private const string ControlScope = HubScopeGuard.ControlScopeValue;
+
+    [Fact]
+    public async Task Steer_ControlScopedConnection_IsAllowed()
+    {
+        // Happy path: a control-scoped connection passes the guard and reaches the handle.
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(handle.Object);
+
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1", userScopes: [ControlScope]);
+
+        var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", null);
+
+        result.SessionId.ShouldBe("sess-1");
+        handle.Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Steer_ReadOnlyScopedConnection_IsRejected()
+    {
+        // Sad path: a read-only connection must be rejected BEFORE any supervisor interaction.
+        var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1", userScopes: [ReadScope]);
+
+        Func<Task> act = () => hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", null);
+
+        (await act.ShouldThrowAsync<HubException>())
+            .Message.ShouldContain("not authorized to invoke 'Steer'");
+        supervisor.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SendMessage_ReadOnlyScopedConnection_IsRejected()
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1", userScopes: [ReadScope]);
+
+        Func<Task> act = () => hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
+
+        (await act.ShouldThrowAsync<HubException>())
+            .Message.ShouldContain("not authorized to invoke 'SendMessage'");
+        // The message never reached the dispatch pipeline.
+        orchestrator.Captured.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Abort_ReadOnlyScopedConnection_IsRejected()
+    {
+        var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1", userScopes: [ReadScope]);
+
+        Func<Task> act = () => hub.Abort(AgentId.From("agent-a"), SessionId.From("sess-1"));
+
+        (await act.ShouldThrowAsync<HubException>())
+            .Message.ShouldContain("not authorized to invoke 'Abort'");
+        supervisor.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CompactSession_ReadOnlyScopedConnection_IsRejected()
+    {
+        var sessions = new Mock<ISessionStore>(MockBehavior.Strict);
+        var hub = CreateHub(sessions: sessions.Object, connectionId: "conn-1", userScopes: [ReadScope]);
+
+        Func<Task> act = () => hub.CompactSession(AgentId.From("agent-a"), SessionId.From("sess-1"));
+
+        (await act.ShouldThrowAsync<HubException>())
+            .Message.ShouldContain("not authorized to invoke 'CompactSession'");
+        // The guard runs before any session-store lookup.
+        sessions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void GetAgentStatus_ReadOnlyScopedConnection_IsAllowed()
+    {
+        // Read-only inspection is permitted for a read-scoped connection.
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns((AgentInstance?)null);
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1", userScopes: [ReadScope]);
+
+        var result = hub.GetAgentStatus(AgentId.From("agent-a"), SessionId.From("sess-1"));
+
+        result.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Steer_NoScopeClaims_LegacyFullTrust_IsAllowed()
+    {
+        // Back-compat: a connection with NO recognised scope claim is treated as full-trust
+        // (existing authenticated clients that are not yet scope-tagged keep working).
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(It.IsAny<AgentId>(), It.IsAny<SessionId>()))
+            .Returns(handle.Object);
+
+        // userScopes: null -> no scope claim on the principal.
+        var hub = CreateHub(supervisor: supervisor.Object, connectionId: "conn-1");
+
+        var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", null);
+
+        result.SessionId.ShouldBe("sess-1");
+        handle.Verify(h => h.SteerAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void HubScopeGuard_ControlScope_SatisfiesReadRequirement()
+    {
+        HubScopeGuard.IsSatisfied([ControlScope], HubScope.Read).ShouldBeTrue();
+        HubScopeGuard.IsSatisfied([ControlScope], HubScope.Control).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void HubScopeGuard_ReadScope_DoesNotSatisfyControlRequirement()
+    {
+        HubScopeGuard.IsSatisfied([ReadScope], HubScope.Read).ShouldBeTrue();
+        HubScopeGuard.IsSatisfied([ReadScope], HubScope.Control).ShouldBeFalse();
+    }
+
 }

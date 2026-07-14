@@ -130,7 +130,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="conversationId">Optional explicit conversation ID. When set, routes directly to that conversation.</param>
     /// <returns>The send message result.</returns>
     public Task<SendMessageResult> SendMessage(AgentId agentId, ChannelKey channelType, string content, string? conversationId = null)
-        => SendMessageCore(agentId, channelType, content, conversationId);
+    {
+        EnsureControlScope(nameof(SendMessage));
+        return SendMessageCore(agentId, channelType, content, conversationId);
+    }
 
     private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId)
     {
@@ -178,6 +181,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         string[]? selectedValues,
         bool cancelled)
     {
+        EnsureControlScope(nameof(RespondToAskUser));
+
         if (_askUserResponseRegistry is null || _conversationStore is null)
             throw new HubException("ask_user response handling is not available.");
 
@@ -227,6 +232,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         string content,
         IReadOnlyList<MediaContentPartDto> contentParts)
     {
+        EnsureControlScope(nameof(SendMessageWithMedia));
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
@@ -351,6 +357,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The steer result.</returns>
     public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content, string? conversationId)
     {
+        EnsureControlScope(nameof(Steer));
         var ctx = ResolveCallContext(agentId, sessionId);
         var typedChannelType = ChannelKey.From("signalr");
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
@@ -462,6 +469,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns><c>true</c> if a running handle was found and interrupted; <c>false</c> if no active handle exists.</returns>
     public async Task<bool> InterruptAndSteer(AgentId agentId, SessionId sessionId, string message)
     {
+        EnsureControlScope(nameof(InterruptAndSteer));
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         var ctx = ResolveCallContext(agentId, sessionId);
 
@@ -482,6 +490,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The follow up result.</returns>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
+        EnsureControlScope(nameof(FollowUp));
         var ctx = ResolveCallContext(agentId, sessionId);
         var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
@@ -507,6 +516,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The abort result.</returns>
     public async Task Abort(AgentId agentId, SessionId sessionId)
     {
+        EnsureControlScope(nameof(Abort));
         var ctx = ResolveCallContext(agentId, sessionId);
         var instance = _supervisor.GetInstance(ctx.AgentId, ctx.SessionId);
         if (instance is null)
@@ -533,6 +543,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>A task that completes when the caller has been notified.</returns>
     public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
+        EnsureControlScope(nameof(ResetSession));
         var ctx = ResolveCallContext(agentId, sessionId);
 
         var gatewaySession = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
@@ -581,6 +592,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The compact session result.</returns>
     public async Task<CompactSessionResult> CompactSession(AgentId agentId, SessionId sessionId)
     {
+        EnsureControlScope(nameof(CompactSession));
         var ctx = ResolveCallContext(agentId, sessionId);
         var session = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
         if (session is null)
@@ -643,6 +655,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The get agent status result.</returns>
     public AgentInstance? GetAgentStatus(AgentId agentId, SessionId sessionId)
     {
+        EnsureReadScope(nameof(GetAgentStatus));
         var ctx = ResolveCallContext(agentId, sessionId);
         return _supervisor.GetInstance(ctx.AgentId, ctx.SessionId);
     }
@@ -727,6 +740,22 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// id-normalisation and reserved-namespace guard once, rather than repeating the
     /// <see cref="NormalizeAgentId"/> / <see cref="NormalizeClientSessionId"/> pair inline.
     /// </summary>
+    /// <summary>
+    /// Enforces that the calling connection carries the write/control scope before a
+    /// mutation method runs. Delegates to <see cref="HubScopeGuard"/>, which no-ops for
+    /// legacy connections that present no scope claims (backward compatible) and throws a
+    /// <see cref="HubException"/> for a scope-restricted connection (e.g. read-only).
+    /// </summary>
+    private void EnsureControlScope(string methodName)
+        => HubScopeGuard.EnsureScope(Context.User, HubScope.Control, methodName);
+
+    /// <summary>
+    /// Enforces that the calling connection carries at least read scope before a passive
+    /// inspection method runs. Control scope satisfies this too.
+    /// </summary>
+    private void EnsureReadScope(string methodName)
+        => HubScopeGuard.EnsureScope(Context.User, HubScope.Read, methodName);
+
     private static HubCallContext ResolveCallContext(AgentId agentId, SessionId sessionId)
         => new(NormalizeAgentId(agentId), NormalizeClientSessionId(sessionId));
 
