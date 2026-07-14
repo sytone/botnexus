@@ -23,10 +23,11 @@ public sealed class SkillReviewCronActionTests
     }
 
     [Fact]
-    public void SkillReviewConfig_DefaultsToDisabled()
+    public void SkillReviewConfig_DefaultsToEnabled()
     {
-        // Non-breaking default: review must be off unless explicitly enabled.
-        new SkillReviewConfig().Enabled.ShouldBeFalse();
+        // Once a skill-review job exists it is active out of the box; a user opts a
+        // specific job out via enabled=false in its metadata.
+        new SkillReviewConfig().Enabled.ShouldBeTrue();
     }
 
     [Fact]
@@ -55,6 +56,20 @@ public sealed class SkillReviewCronActionTests
         config.MinToolCalls.ShouldBe(3);
         config.LookbackHours.ShouldBe(12);
         config.MaxSessions.ShouldBe(10);
+    }
+
+    [Fact]
+    public void FromMetadata_DefaultsToEnabledWhenKeyAbsent()
+    {
+        SkillReviewConfig.FromMetadata(null).Enabled.ShouldBeTrue();
+        SkillReviewConfig.FromMetadata(new Dictionary<string, object?>()).Enabled.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void FromMetadata_HonoursExplicitDisable()
+    {
+        var metadata = new Dictionary<string, object?> { ["enabled"] = false };
+        SkillReviewConfig.FromMetadata(metadata).Enabled.ShouldBeFalse();
     }
 
     [Fact]

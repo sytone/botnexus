@@ -23,10 +23,13 @@ namespace BotNexus.Cron.Actions;
 public sealed record SkillReviewConfig
 {
     /// <summary>
-    /// Whether the skill-review pass runs at all. Defaults to <c>false</c> (off) so existing jobs
-    /// are unaffected until an operator explicitly enables the loop.
+    /// Whether the skill-review pass runs when a skill-review job ticks. Defaults to <c>true</c> so
+    /// that once a skill-review job exists it is active out of the box; a user can opt a specific
+    /// job out by setting <c>enabled = false</c> in its metadata. Note this gates the <i>pass</i>,
+    /// not the <i>existence</i> of a job - user-defined agents get a job auto-provisioned by
+    /// <see cref="SkillReviewCronProvisioner"/>; sub-agents and built-in agents do not.
     /// </summary>
-    public bool Enabled { get; init; }
+    public bool Enabled { get; init; } = true;
 
     /// <summary>
     /// Minimum number of tool calls <b>aggregated across the lookback window</b> that qualifies the
@@ -53,11 +56,11 @@ public sealed record SkillReviewConfig
     /// <c>skillReviewEnabled</c>/<c>enabled</c>, <c>skillReviewMinToolCalls</c>/<c>minToolCalls</c>,
     /// <c>skillReviewLookbackHours</c>/<c>lookbackHours</c>, and
     /// <c>skillReviewMaxSessions</c>/<c>maxSessions</c>. Missing keys fall back to the
-    /// default-off configuration.
+    /// default configuration (enabled, threshold 5, 24h window, 50 sessions).
     /// </summary>
     public static SkillReviewConfig FromMetadata(IReadOnlyDictionary<string, object?>? metadata)
     {
-        var enabled = MetadataReader.GetBool(metadata, "skillReviewEnabled", "enabled", defaultValue: false);
+        var enabled = MetadataReader.GetBool(metadata, "skillReviewEnabled", "enabled", defaultValue: true);
         var minToolCalls = MetadataReader.GetInt(metadata, "skillReviewMinToolCalls", "minToolCalls", defaultValue: 5);
         var lookbackHours = MetadataReader.GetInt(metadata, "skillReviewLookbackHours", "lookbackHours", defaultValue: 24);
         var maxSessions = MetadataReader.GetInt(metadata, "skillReviewMaxSessions", "maxSessions", defaultValue: 50);

@@ -16,6 +16,8 @@
     <Compile Include="CronOptions.cs" />
     <Compile Include="HeartbeatCronProvisioner.cs" />
     <Compile Include="IHeartbeatProvisioner.cs" />
+    <Compile Include="SkillReviewCronProvisioner.cs" />
+    <Compile Include="ISkillReviewProvisioner.cs" />
     <Compile Include="CronScheduler.cs" />
     <Compile Include="Prompts\IPromptTemplateResolver.cs" />
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
