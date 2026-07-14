@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -33,6 +34,7 @@ public sealed class ConversationGroupingTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_interaction);
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
@@ -269,6 +271,7 @@ public sealed class ConversationGroupingTests : IDisposable
         var store = new ClientStateStore();
         ctx.Services.AddSingleton<IClientStateStore>(store);
         ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         var portalLoad = Substitute.For<IPortalLoadService>();
         portalLoad.IsReady.Returns(false);
         portalLoad.IsLoading.Returns(true);

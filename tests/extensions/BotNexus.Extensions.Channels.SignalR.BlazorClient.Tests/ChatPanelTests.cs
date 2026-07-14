@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -20,9 +21,11 @@ public sealed class ChatPanelTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_interaction);
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(new SlashCommandDispatcher(_interaction));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -647,6 +650,7 @@ public sealed class ChatPanelTests : IDisposable
         store.SeedAgents([new AgentSummary("a", "Agent A")]);
         _ctx.Services.AddSingleton<IClientStateStore>(store);
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IPortalLoadService>());
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "a"));
@@ -667,6 +671,7 @@ public sealed class ChatPanelTests : IDisposable
         store.SeedAgents([new AgentSummary("a", "Agent A")]);
         _ctx.Services.AddSingleton<IClientStateStore>(store);
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IPortalLoadService>());
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "a"));
@@ -1333,5 +1338,35 @@ public sealed class ChatPanelTests : IDisposable
             invocation.Arguments.Count == 1 &&
             invocation.Arguments[0] is string copiedText &&
             copiedText == "line1\\nline2 \\u2705");
+    }
+
+    [Fact]
+    public void Command_palette_renders_full_shared_registry_surface()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var input = cut.Find(".chat-input");
+        input.Input("/");
+
+        var items = cut.FindAll(".command-palette .command-item");
+        Assert.Equal(SlashCommandRegistry.All.Count, items.Count);
+        Assert.Contains("/prompts", cut.Markup);
+        Assert.Contains("/reasoning", cut.Markup);
+        Assert.Contains("/help", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Executing_new_command_from_palette_resets_session_via_dispatcher()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var input = cut.Find(".chat-input");
+        input.Input("/new");
+
+        await cut.Find(".command-palette .command-item").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        await _interaction.Received(1).ResetSessionAsync("agent-1");
     }
 }

@@ -1,4 +1,5 @@
-﻿using Bunit;
+using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,7 @@ public sealed class HomePageTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(_interaction);
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -117,6 +119,7 @@ public sealed class HomePageTests : IDisposable
 
         // Register additional services needed by ChatPanel
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
@@ -140,6 +143,7 @@ public sealed class HomePageTests : IDisposable
         _store.GetAgent("agent-1").Returns(agents["agent-1"]);
 
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
@@ -353,4 +357,3 @@ public sealed class HomePageTests : IDisposable
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }
-

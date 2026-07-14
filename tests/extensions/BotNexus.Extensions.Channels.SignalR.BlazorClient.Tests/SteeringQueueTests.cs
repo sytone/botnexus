@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -19,6 +20,7 @@ public sealed class SteeringQueueTests : IDisposable
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_interaction);
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());

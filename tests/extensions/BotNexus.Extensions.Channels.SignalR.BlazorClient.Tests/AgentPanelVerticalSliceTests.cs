@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
@@ -38,6 +39,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient { BaseAddress = new Uri("http://localhost/") });
