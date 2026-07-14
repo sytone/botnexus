@@ -32,6 +32,17 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
+    public void ToolEnforcementSection_IncludesCrossAgentFabricationTripwire()
+    {
+        var prompt = BuildFullPrompt();
+
+        // Guards the cross-agent relay trip-wire: relaying what another agent "said"/"confirmed"
+        // with no matching tool result in-turn is the fabrication failure mode this line prevents.
+        prompt.ShouldContain("Never report what another agent, service, or person");
+        prompt.ShouldContain("agent_converse");
+    }
+
+    [Fact]
     public void ShellEfficiencySection_AppearsInFullPrompt()
     {
         var prompt = BuildFullPrompt();
