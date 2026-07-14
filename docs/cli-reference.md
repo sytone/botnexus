@@ -62,6 +62,7 @@ You should see the root command help listing all available subcommands.
 10. [agent remove](#agent-remove) — Remove an agent
 11. [agent wizard](#agent-wizard) — Create an agent interactively
 12. [agent export](#agent-export) — Export an agent as a redacted template
+13. [agent import](#agent-import) — Import an agent from a redacted template
 13. [conversation](#conversation) — Manage conversations via the gateway REST API
 14. [config get](#config-get) — Read a config value
 15. [config set](#config-set) — Set a config value
@@ -677,6 +678,54 @@ botnexus agent export assistant --output ./templates/assistant.agent.json
   ]
 }
 ```
+
+---
+
+## agent import
+
+Import an agent from a redacted `agentTemplate/v1` template, reconstructing the agent definition into the target `config.json` and restoring its system prompt into the agent workspace. This is the symmetric inverse of `agent export`.
+
+Because a template is portable across environments, import never silently reuses the exporter's id or overwrites an existing agent. You supply the target id (via `--id`, `--set id=`, or the template file name) and any per-environment overrides via repeatable `--set key=value` flags.
+
+### Usage
+
+```powershell
+botnexus agent import <FILE> [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--id <ID>` | Target agent id. Defaults to the `--set id=` override, then the template file name (`<id>.agent.json` -> `<id>`). |
+| `--set <KEY=VALUE>` | Override a descriptor field before the agent is materialized. Repeatable. Supported keys: `id`, `displayName`, `description`, `emoji`, `model`, `provider`, `systemPrompt`, `thinking`, `contextWindow`. |
+| `--overwrite` | Replace an existing agent with the resolved id. Without this flag an id collision is refused (no silent overwrite). |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+| `--verbose` | Show the schema and applied-override count after import. |
+
+### Examples
+
+Import a template as-is (id derived from the file name):
+
+```powershell
+botnexus agent import ./templates/assistant.agent.json
+```
+
+Import as a differently-named copy with per-environment overrides:
+
+```powershell
+botnexus agent import ./templates/assistant.agent.json --set id=copybot --set displayName="Copy Bot" --set model=gpt-5
+```
+
+Replace an existing agent from an updated template:
+
+```powershell
+botnexus agent import ./templates/assistant.agent.json --id assistant --overwrite
+```
+
+### Required secrets
+
+Because the template is redacted, imported agents cannot run until you re-provide the credentials named in the template's `requiredSecrets` manifest (for example `providers.<provider>.apiKey`). Import prints the required-secret list on completion.
 
 ---
 
