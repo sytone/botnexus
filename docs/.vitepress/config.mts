@@ -170,6 +170,7 @@ export default defineConfig({
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
+          { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],
