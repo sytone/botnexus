@@ -103,7 +103,19 @@ public sealed class ConversationAutoTitleService
         // Load conversation and check that it still has the default title.
         var conversation = await _store.GetAsync(conversationId, ct).ConfigureAwait(false);
         if (conversation is null || !IsDefaultTitle(conversation.Title))
+        {
+            // #1979: previously a silent return. When auto-title fires (the hook logs
+            // "titling from assistant content") but no title is ever persisted, this guard
+            // was the invisible dead-end. Log which arm tripped and the observed title so a
+            // background-task null store-read is distinguishable from a title-comparison miss.
+            _logger.LogInformation(
+                "Auto-title: not persisting for conversation '{ConversationId}' at initial guard " +
+                "(conversationLoaded={ConversationLoaded}, title='{Title}'); already non-default or not found",
+                conversationId,
+                conversation is not null,
+                conversation?.Title);
             return null;
+        }
 
         // Resolve model (preferred titling model, then any registered fallback).
         LlmModel? model;
@@ -155,12 +167,31 @@ public sealed class ConversationAutoTitleService
 
         var title = SanitizeTitle(rawTitle);
         if (string.IsNullOrWhiteSpace(title))
+        {
+            // #1979: the model returned an empty/whitespace title after sanitisation. Surface it
+            // so a persistent "never titles" symptom is not silently attributed to the guards.
+            _logger.LogInformation(
+                "Auto-title: not persisting for conversation '{ConversationId}'; model produced an " +
+                "empty title after sanitisation (rawLength={RawLength})",
+                conversationId,
+                rawTitle?.Length ?? 0);
             return null;
+        }
 
         // Re-read and guard again in case another path already set a custom title.
         conversation = await _store.GetAsync(conversationId, ct).ConfigureAwait(false);
         if (conversation is null || !IsDefaultTitle(conversation.Title))
+        {
+            // #1979: a concurrent path set a custom title (or the row vanished) between the first
+            // guard and here. Log it so the re-read race is observable rather than a silent no-op.
+            _logger.LogInformation(
+                "Auto-title: not persisting for conversation '{ConversationId}' at re-read guard " +
+                "(conversationLoaded={ConversationLoaded}, title='{Title}'); title changed concurrently or row removed",
+                conversationId,
+                conversation is not null,
+                conversation?.Title);
             return null;
+        }
 
         conversation.Title = title;
         await _store.SaveAsync(conversation, ct).ConfigureAwait(false);

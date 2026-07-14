@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -268,6 +269,90 @@ public sealed class ConversationAutoTitleServiceTests
 
         result.ShouldBeNull();
         store.Verify(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // -----------------------------------------------------------------------
+    // #1979: the two silent no-persist guards must emit an observable INFO log so a
+    // "fires but never titles" symptom is diagnosable (null store-read vs title-comparison miss).
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_NullConversation_LogsInitialGuard()
+    {
+        var logger = new CapturingLogger();
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync((Conversation?)null);
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Generated Title"),
+            logger);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
+
+        result.ShouldBeNull();
+        logger.Messages.ShouldContain(m =>
+            m.Contains("not persisting") && m.Contains("initial guard") && m.Contains("conversationLoaded=False"));
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_NonDefaultTitle_LogsInitialGuardWithObservedTitle()
+    {
+        var logger = new CapturingLogger();
+        var conv = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = "My Custom Title" };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Generated Title"),
+            logger);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
+
+        result.ShouldBeNull();
+        // The observed non-default title must be surfaced so a comparison miss is visible.
+        logger.Messages.ShouldContain(m =>
+            m.Contains("not persisting") && m.Contains("initial guard") &&
+            m.Contains("conversationLoaded=True") && m.Contains("My Custom Title"));
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_TitleChangedBeforeSecondRead_LogsReReadGuard()
+    {
+        var logger = new CapturingLogger();
+        var conv1 = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = ConversationAutoTitleService.DefaultTitle };
+        var conv2 = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = "Already Set" };
+        var call = 0;
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++call == 1 ? conv1 : conv2);
+        var svc = new ConversationAutoTitleService(
+            store.Object,
+            CreateFakeLlmClient("Race Condition Title"),
+            logger);
+
+        var result = await svc.GenerateAndSaveAsync(ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
+
+        result.ShouldBeNull();
+        logger.Messages.ShouldContain(m =>
+            m.Contains("not persisting") && m.Contains("re-read guard") && m.Contains("Already Set"));
+    }
+
+    /// <summary>
+    /// Minimal <see cref="ILogger"/> that records formatted log messages for assertion. The
+    /// Gateway.Tests project has no shared capturing logger, so this lives with the tests that
+    /// need to assert #1979's diagnostic output.
+    /// </summary>
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 
     // -----------------------------------------------------------------------
