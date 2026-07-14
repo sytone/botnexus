@@ -47,6 +47,12 @@
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.0-preview.3.25171.5" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.3.25171.5" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.0-preview.3.25171.5" />
+    <!-- Feature flags. Gates staged rollout of security defaults (e.g. #1931 dev-mode
+         origin enforcement) so a new guard can ship OFF, be surfaced by doctor, and be
+         flipped on in a later release. Binds onto the same IConfiguration that config.json
+         is loaded into (Program.cs AddJsonFile), so flags live under a "FeatureManagement"
+         section with no bespoke plumbing. -->
+    <PackageVersion Include="Microsoft.FeatureManagement" Version="4.6.0" />
 
     <!-- Microsoft 365 Agents SDK (Channels.Agent365 extension). Pinned to 1.6.150.
          NOTE: these packages depend on the STABLE Microsoft.Extensions.* 10.0.7 line, which is

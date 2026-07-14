@@ -163,4 +163,66 @@ public sealed class ConfigChecksTests
         memory["enabled"]!.GetValue<bool>().ShouldBeTrue();
         memory["indexing"]!.GetValue<string>().ShouldBe("auto");
     }
+
+    // ── DevOriginEnforcementCheck ─────────────────────────────────────────────
+
+    [Fact]
+    public void DevOriginEnforcementCheck_ApplicableWhenKeylessAndFlagAbsent()
+    {
+        // Empty config == keyless dev mode, no flag -> recommend enabling.
+        var root = new JsonObject();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_NotApplicableWhenLegacyApiKeySet()
+    {
+        var root = JsonNode.Parse("{\"apiKey\":\"secret\"}") !.AsObject();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_NotApplicableWhenGatewayApiKeysSet()
+    {
+        var root = JsonNode.Parse("{\"gateway\":{\"apiKeys\":{\"k1\":{\"apiKey\":\"x\"}}}}") !.AsObject();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_NotApplicableWhenFlagAlreadyEnabled()
+    {
+        var root = JsonNode.Parse("{\"FeatureManagement\":{\"GatewayDevOriginEnforcement\":true}}") !.AsObject();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_ApplicableWhenFlagExplicitlyDisabled()
+    {
+        var root = JsonNode.Parse("{\"FeatureManagement\":{\"GatewayDevOriginEnforcement\":false}}") !.AsObject();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_Apply_EnablesFlagAndSeedsLocalhostOrigin()
+    {
+        var root = new JsonObject();
+        new DevOriginEnforcementCheck().Apply(root);
+
+        root["FeatureManagement"]!["GatewayDevOriginEnforcement"]!.GetValue<bool>().ShouldBeTrue();
+        var origins = root["gateway"]!["cors"]!["allowedOrigins"]!.AsArray();
+        origins.Count.ShouldBe(1);
+        origins[0]!.GetValue<string>().ShouldBe("http://localhost:5005");
+    }
+
+    [Fact]
+    public void DevOriginEnforcementCheck_Apply_PreservesExistingAllowedOrigins()
+    {
+        var root = JsonNode.Parse("{\"gateway\":{\"cors\":{\"allowedOrigins\":[\"https://portal.example.com\"]}}}") !.AsObject();
+        new DevOriginEnforcementCheck().Apply(root);
+
+        var origins = root["gateway"]!["cors"]!["allowedOrigins"]!.AsArray();
+        origins.Count.ShouldBe(1);
+        origins[0]!.GetValue<string>().ShouldBe("https://portal.example.com");
+        root["FeatureManagement"]!["GatewayDevOriginEnforcement"]!.GetValue<bool>().ShouldBeTrue();
+    }
 }

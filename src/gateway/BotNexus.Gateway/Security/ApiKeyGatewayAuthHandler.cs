@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.FeatureManagement;
 
 namespace BotNexus.Gateway.Security;
 
@@ -32,14 +33,33 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 {
     private const string AuthorizationHeader = "Authorization";
     private const string ApiKeyHeader = "X-Api-Key";
+    private const string OriginHeader = "Origin";
     private const string BearerPrefix = "Bearer ";
+
+    /// <summary>
+    /// Default browser origin permitted when no explicit <c>Gateway.Cors.AllowedOrigins</c>
+    /// list is configured. Mirrors the CORS fallback in Program.cs.
+    /// </summary>
+    private const string DefaultAllowedOrigin = "http://localhost:5005";
+
+    /// <summary>
+    /// Feature flag gating the dev-mode browser-Origin enforcement (#1931). When the flag is
+    /// absent or disabled the guard is inert and dev/no-key mode behaves exactly as it did
+    /// before the guard existed - this is deliberately OFF by default so introducing the guard
+    /// cannot lock a keyless user out of the UI on restart. The <c>doctor config</c> command
+    /// surfaces a recommendation to enable it, and a future release will flip the default on.
+    /// Lives under the <c>FeatureManagement</c> section of config.json.
+    /// </summary>
+    public const string DevOriginEnforcementFeature = "GatewayDevOriginEnforcement";
 
     /// <summary>The target reference reported on every auth handshake event.</summary>
     private const string GatewayTarget = "gateway";
 
     private readonly Lock _sync = new();
     private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
+    private readonly IReadOnlyList<string>? _staticAllowedOrigins;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
+    private readonly IFeatureManager? _featureManager;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
     private readonly ISecurityEventSink? _securityEvents;
 
@@ -61,11 +81,14 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         string? apiKey,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
+        _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
 
@@ -78,12 +101,15 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         PlatformConfig platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
+        _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
@@ -96,12 +122,15 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(
         IOptionsMonitor<PlatformConfig> platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IFeatureManager? featureManager = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = platformConfig;
         _securityEvents = securityEvents;
+        _featureManager = featureManager;
+        _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(
             platformConfig.CurrentValue.ApiKey,
             platformConfig.CurrentValue.Gateway?.ApiKeys);
@@ -111,7 +140,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public string Scheme => "ApiKey";
 
     /// <inheritdoc />
-    public Task<GatewayAuthResult> AuthenticateAsync(
+    public async Task<GatewayAuthResult> AuthenticateAsync(
         GatewayAuthContext context,
         CancellationToken cancellationToken = default)
     {
@@ -120,23 +149,44 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         if (identitiesByApiKey.Count == 0)
         {
+            // DNS-rebind / CSRF hardening (#1931): in dev/no-key mode we still grant a full
+            // admin identity, but a browser cannot be allowed to silently drive that identity
+            // from an arbitrary web origin. When a browser Origin header IS present it must be
+            // on the allow-list; a missing Origin (curl/CLI/same-origin non-browser) is allowed.
+            //
+            // This guard is gated behind the GatewayDevOriginEnforcement feature flag, which is
+            // OFF by default (#1931 rollout safety): introducing the guard must never lock a
+            // keyless user out of the UI on restart. Operators opt in (doctor surfaces the
+            // recommendation), and a future release flips the default on. A null feature manager
+            // (constructed without DI, e.g. in tests) is treated as disabled.
+            if (await IsDevOriginEnforcementEnabledAsync().ConfigureAwait(false) &&
+                !IsOriginAllowed(context.Headers, out var rejectedOrigin))
+            {
+                _logger.LogWarning(
+                    "Gateway dev-mode auth denied: browser Origin '{Origin}' is not in the allow-list.",
+                    rejectedOrigin);
+                EmitOutcome(success: false, actorId: "development");
+                return GatewayAuthResult.Failure(
+                    $"Origin not allowed. '{rejectedOrigin}' is not in Gateway.Cors.AllowedOrigins.");
+            }
+
             _logger.LogDebug("Gateway auth is running in development mode: no API key configured.");
             EmitOutcome(success: true, actorId: "development");
-            return Task.FromResult(GatewayAuthResult.Success(new GatewayCallerIdentity
+            return GatewayAuthResult.Success(new GatewayCallerIdentity
             {
                 CallerId = "gateway-dev",
                 DisplayName = "Gateway Development Caller",
                 TenantId = "development",
                 Permissions = ["*"],
                 IsAdmin = true
-            }));
+            });
         }
 
         var presentedKey = ExtractApiKey(context.Headers);
         if (presentedKey is null)
         {
             EmitOutcome(success: false, actorId: "anonymous");
-            return Task.FromResult(GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>."));
+            return GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>.");
         }
 
         // Resolve identity with a constant-time comparison. The dictionary is retained for
@@ -154,11 +204,35 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         if (matched is null)
         {
             EmitOutcome(success: false, actorId: presentedKey);
-            return Task.FromResult(GatewayAuthResult.Failure("Invalid API key."));
+            return GatewayAuthResult.Failure("Invalid API key.");
         }
 
         EmitOutcome(success: true, actorId: matched.CallerId);
-        return Task.FromResult(GatewayAuthResult.Success(matched));
+        return GatewayAuthResult.Success(matched);
+    }
+
+    /// <summary>
+    /// Returns whether the dev-mode browser-Origin guard (#1931) is currently enabled. Defaults
+    /// to <c>false</c> when no feature manager is wired (e.g. tests or non-DI construction) so
+    /// the guard is inert unless an operator explicitly opts in via the
+    /// <see cref="DevOriginEnforcementFeature"/> flag.
+    /// </summary>
+    private async Task<bool> IsDevOriginEnforcementEnabledAsync()
+    {
+        if (_featureManager is null)
+            return false;
+
+        try
+        {
+            return await _featureManager.IsEnabledAsync(DevOriginEnforcementFeature).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A feature-flag evaluation fault must fail OPEN (guard disabled) so a misconfigured
+            // flag can never lock the operator out of their own gateway. Log and treat as off.
+            _logger.LogWarning(ex, "Failed to evaluate feature flag '{Feature}'; treating dev-mode origin enforcement as disabled.", DevOriginEnforcementFeature);
+            return false;
+        }
     }
 
     private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(
@@ -244,6 +318,68 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             _identitiesByApiKey = rebuilt;
             return _identitiesByApiKey;
         }
+    }
+
+    /// <summary>
+    /// Enforces the browser-Origin allow-list used to guard the dev-mode admin grant against
+    /// DNS-rebind / CSRF attacks. Requests without an <c>Origin</c> header (non-browser clients
+    /// such as curl or the CLI) are always allowed; a present Origin must exactly match one of
+    /// the configured allow-listed origins (defaulting to <see cref="DefaultAllowedOrigin"/>).
+    /// </summary>
+    /// <param name="headers">Request headers.</param>
+    /// <param name="rejectedOrigin">The offending origin when the result is <c>false</c>.</param>
+    /// <returns><c>true</c> if the request may proceed; otherwise <c>false</c>.</returns>
+    private bool IsOriginAllowed(IReadOnlyDictionary<string, string> headers, out string rejectedOrigin)
+    {
+        rejectedOrigin = string.Empty;
+
+        if (!TryGetHeaderValue(headers, OriginHeader, out var origin) ||
+            string.IsNullOrWhiteSpace(origin))
+        {
+            // No browser Origin present: non-browser/same-origin caller, allow.
+            return true;
+        }
+
+        origin = origin.Trim();
+        foreach (var allowed in GetAllowedOrigins())
+        {
+            if (string.Equals(allowed, origin, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        rejectedOrigin = origin;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the effective browser-Origin allow-list, reading from the live options monitor
+    /// when available so runtime config edits take effect, and falling back to the snapshot
+    /// captured at construction or the built-in default.
+    /// </summary>
+    private IReadOnlyList<string> GetAllowedOrigins()
+    {
+        if (_platformConfig is not null)
+            return ResolveAllowedOrigins(_platformConfig.CurrentValue.Gateway?.Cors?.AllowedOrigins);
+
+        return _staticAllowedOrigins ?? [DefaultAllowedOrigin];
+    }
+
+    /// <summary>
+    /// Normalises a configured origin list into a non-empty allow-list, dropping blanks and
+    /// falling back to <see cref="DefaultAllowedOrigin"/> when nothing usable is configured.
+    /// </summary>
+    private static IReadOnlyList<string> ResolveAllowedOrigins(IEnumerable<string>? configured)
+    {
+        if (configured is null)
+            return [DefaultAllowedOrigin];
+
+        var origins = configured
+            .Where(static o => !string.IsNullOrWhiteSpace(o))
+            .Select(static o => o.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return origins.Length > 0 ? origins : [DefaultAllowedOrigin];
     }
 
     private static string? ExtractApiKey(IReadOnlyDictionary<string, string> headers)
