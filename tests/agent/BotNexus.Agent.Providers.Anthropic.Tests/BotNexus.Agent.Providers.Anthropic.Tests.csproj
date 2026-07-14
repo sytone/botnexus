@@ -12,7 +12,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\BotNexus.Providers.Conformance.Tests\BotNexus.Providers.Conformance.Tests.csproj" />
+    <ProjectReference Include="..\BotNexus.Providers.Conformance.Tests\BotNexus.Providers.Conformance.Tests.csproj" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
   </ItemGroup>

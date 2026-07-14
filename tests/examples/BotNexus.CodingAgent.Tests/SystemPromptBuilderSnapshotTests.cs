@@ -50,7 +50,7 @@ public sealed class SystemPromptBuilderSnapshotTests
 
     private static void AssertMatchesSnapshot(string fileName, string actual)
     {
-        var expectedPath = Path.Combine(FindRepositoryRoot(), "tests", "BotNexus.CodingAgent.Tests", "Snapshots", fileName);
+        var expectedPath = Path.Combine(FindRepositoryRoot(), "tests", "examples", "BotNexus.CodingAgent.Tests", "Snapshots", fileName);
         var normalized = Normalize(actual);
 
         if (string.Equals(Environment.GetEnvironmentVariable("UPDATE_PROMPT_SNAPSHOTS"), "1", StringComparison.Ordinal))
