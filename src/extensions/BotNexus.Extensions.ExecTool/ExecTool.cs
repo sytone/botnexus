@@ -627,14 +627,17 @@ public sealed class ExecTool : IAgentTool
     /// <list type="bullet">
     /// <item><c>LD_*</c> — Linux dynamic-linker control (e.g. <c>LD_PRELOAD</c>, <c>LD_LIBRARY_PATH</c>)</item>
     /// <item><c>DYLD_*</c> — macOS dynamic-linker control</item>
+    /// <item><c>CLOUDSDK_*</c> — gcloud launcher runtime/interpreter controls (e.g. <c>CLOUDSDK_PYTHON</c>) that can hijack execution</item>
     /// <item><c>PATH</c> — executable search path; an agent override would redirect which binaries run</item>
     /// <item><c>PATHEXT</c> — Windows list of executable extensions; override could make .txt executable</item>
     /// <item><c>COMSPEC</c> — Windows path to cmd.exe; override redirects all cmd invocations</item>
     /// <item><c>SystemRoot</c> — Windows system directory; override can redirect DLL loading</item>
+    /// <item><c>*_BASE_URL</c>, <c>*_API_HOST</c>, <c>*_ENDPOINT</c> — endpoint-redirection variables that can point a subprocess's API calls at an attacker-controlled host (credential exfiltration)</item>
     /// </list>
     /// </summary>
-    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_"];
+    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_"];
     public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT"];
+    public static readonly string[] BlockedEnvSuffixes = ["_BASE_URL", "_API_HOST", "_ENDPOINT"];
 
     /// <summary>
     /// Throws <see cref="ArgumentException"/> when <paramref name="key"/> is a blocked
@@ -659,7 +662,17 @@ public sealed class ExecTool : IAgentTool
             {
                 throw new ArgumentException(
                     $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
-                    $"{prefix}* variables control the dynamic linker and may be used for code injection.");
+                    $"{prefix}* variables control the dynamic linker or launcher runtime and may be used for code injection.");
+            }
+        }
+
+        foreach (var suffix in BlockedEnvSuffixes)
+        {
+            if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
+                    $"*{suffix} variables can redirect a subprocess's API endpoint to an attacker-controlled host (credential exfiltration).");
             }
         }
     }
