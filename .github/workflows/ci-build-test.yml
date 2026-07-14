@@ -103,3 +103,39 @@ jobs:
         if: always()
         with:
           fail_ci_if_error: false
+
+  # e2e portal Playwright suites (issue #1962).
+  #
+  # The existing Playwright tests never ran in CI: the full-tests job excludes the
+  # BotNexus.Integration. filter and installs no browser. This job installs chromium
+  # and runs the new tests/e2e/ portal suites so that coverage stops being decorative.
+  #
+  # NON-BLOCKING BY DESIGN: continue-on-error is true so a failure here can NEVER break
+  # the required checks for other PRs. Without a live portal (E2E_PORTAL_*_URL unset)
+  # the SkippableFact tests skip cleanly rather than fail. Promote to a required check
+  # only once a portal harness is stood up here and the suite is proven stable.
+  e2e-portal-playwright:
+    name: e2e portal (Playwright, non-blocking)
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore
+      - name: Build e2e portal projects
+        run: |
+          dotnet build tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-restore
+          dotnet build tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-restore
+      - name: Install Playwright browsers (chromium)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ps1 = Get-ChildItem -Recurse -Filter playwright.ps1 -Path tests/e2e | Select-Object -First 1
+          if ($null -eq $ps1) { throw 'playwright.ps1 not found after build' }
+          & $ps1.FullName install --with-deps chromium
+      - name: Run e2e portal Playwright suites
+        run: dotnet test --no-build --filter "FullyQualifiedName~BotNexus.E2E.PortalDesktop.Tests|FullyQualifiedName~BotNexus.E2E.PortalMobile.Tests"
