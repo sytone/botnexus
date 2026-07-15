@@ -13,6 +13,9 @@ using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using BotNexus.Domain.World;
+using BotNexus.Domain;
+using BotNexus.Gateway.Abstractions.Citizens;
+using BotNexus.Gateway.Abstractions.Configuration;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -52,6 +55,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IGatewayHubApplicationService _app;
     private readonly ILogger<GatewayHub> _logger;
+    // Phase 2 (#568): optional so existing test hubs and any host that has not yet wired the
+    // citizen registry keep working. When present, the connection lifecycle upserts the caller's
+    // claims-derived User and attaches/detaches a (signalr, connectionId) ChannelIdentity so the
+    // same UserId survives reconnects and conversation history stays keyed to a stable identity.
+    private readonly IUserRegistry? _userRegistry;
+    private readonly IWorldContext? _worldContext;
 
     public GatewayHub(
         IAgentSupervisor supervisor,
@@ -62,7 +71,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IGatewayHubApplicationService app,
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null)
+        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IUserRegistry? userRegistry = null,
+        IWorldContext? worldContext = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -73,6 +84,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
+        _userRegistry = userRegistry;
+        _worldContext = worldContext;
     }
 
     /// <summary>
@@ -694,6 +707,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             },
             Context.ConnectionAborted);
 
+        // Phase 2 (#568): bind the resolved claims-based identity into the user registry so the
+        // same UserId is reused across reconnects (conversation history stays keyed to it) and a
+        // (signalr, connectionId) ChannelIdentity is attached for this live connection.
+        AttachChannelIdentity();
+
         await base.OnConnectedAsync();
     }
 
@@ -727,6 +745,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             _logger.LogWarning(ex, "Hub OnDisconnected: failed to mute bindings for connection {ConnectionId}", Context.ConnectionId);
         }
+
+        // Phase 2 (#568): detach the (signalr, connectionId) ChannelIdentity for this connection.
+        // The User record itself is retained in the registry so its stable UserId (and the
+        // conversation history keyed to it) survives the disconnect/reconnect cycle.
+        DetachChannelIdentity();
 
         await base.OnDisconnectedAsync(exception);
     }
@@ -805,6 +828,120 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private string GetAuthenticatedUserId()
         => Context.UserIdentifier ?? Context.ConnectionId;
 
+    // The channel key for SignalR-originated identities. Matches the ChannelKey stamped on
+    // inbound messages and channel bindings so the User's ChannelIdentities line up with routing.
+    private static readonly ChannelKey SignalRChannel = ChannelKey.From("signalr");
+
+    /// <summary>
+    /// Registers or upserts the caller's <see cref="User"/> from the resolved claims identity and
+    /// attaches a <see cref="ChannelIdentity"/> of <c>(signalr, connectionId)</c> to it (#568).
+    /// Idempotent: a reconnect re-registers the same <see cref="UserId"/> (so conversation history
+    /// keyed to that id is preserved) and simply refreshes the connection's channel identity. No-op
+    /// when the citizen registry / world context are not wired (legacy hosts and unit-test hubs).
+    /// </summary>
+    private void AttachChannelIdentity()
+    {
+        if (_userRegistry is null || _worldContext is null)
+            return;
+
+        // The claims-derived user id is the stable identity that must survive reconnects. When no
+        // authenticated identity is present it falls back to the connection id (transition period),
+        // which is not stable across reconnects but keeps the lifecycle coherent.
+        UserId userId;
+        try
+        {
+            userId = UserId.From(GetAuthenticatedUserId());
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        {
+            _logger.LogWarning(ex, "Hub OnConnected: could not resolve a valid user id for connection {ConnectionId}; skipping channel-identity attach", Context.ConnectionId);
+            return;
+        }
+
+        var connectionIdentity = new ChannelIdentity(SignalRChannel, ChannelAddress.From(Context.ConnectionId));
+
+        try
+        {
+            var existing = _userRegistry.Get(userId);
+            if (existing is null)
+            {
+                var user = new User
+                {
+                    Id = userId,
+                    DisplayName = userId.Value,
+                    World = _worldContext.Current,
+                    ChannelIdentities = [connectionIdentity]
+                };
+                _userRegistry.Register(user);
+            }
+            else
+            {
+                // Reconnect (or a second connection): keep the same UserId and merge the new
+                // connection's identity in. De-dupe on the exact (channel, address) pair.
+                if (!existing.ChannelIdentities.Contains(connectionIdentity))
+                {
+                    var merged = new User
+                    {
+                        Id = existing.Id,
+                        DisplayName = existing.DisplayName,
+                        World = existing.World,
+                        ChannelIdentities = [.. existing.ChannelIdentities, connectionIdentity]
+                    };
+                    _userRegistry.Update(existing.Id, merged);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Identity binding is best-effort: a registry hiccup must not fail the connection.
+            _logger.LogWarning(ex, "Hub OnConnected: failed to attach channel identity for connection {ConnectionId}", Context.ConnectionId);
+        }
+    }
+
+    /// <summary>
+    /// Detaches the <c>(signalr, connectionId)</c> <see cref="ChannelIdentity"/> for this connection
+    /// on disconnect (#568). The <see cref="User"/> record and its stable <see cref="UserId"/> are
+    /// retained so conversation history and identity survive the reconnect. No-op when the registry
+    /// is not wired.
+    /// </summary>
+    private void DetachChannelIdentity()
+    {
+        if (_userRegistry is null)
+            return;
+
+        UserId userId;
+        try
+        {
+            userId = UserId.From(GetAuthenticatedUserId());
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        {
+            return;
+        }
+
+        var connectionIdentity = new ChannelIdentity(SignalRChannel, ChannelAddress.From(Context.ConnectionId));
+
+        try
+        {
+            var existing = _userRegistry.Get(userId);
+            if (existing is null || !existing.ChannelIdentities.Contains(connectionIdentity))
+                return;
+
+            var remaining = existing.ChannelIdentities.Where(ci => ci != connectionIdentity).ToArray();
+            var updated = new User
+            {
+                Id = existing.Id,
+                DisplayName = existing.DisplayName,
+                World = existing.World,
+                ChannelIdentities = remaining
+            };
+            _userRegistry.Update(existing.Id, updated);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Hub OnDisconnected: failed to detach channel identity for connection {ConnectionId}", Context.ConnectionId);
+        }
+    }
     /// <summary>
     /// Resolves the connecting client kind ("mobile" vs "desktop") for this connection (#1209).
     /// Reads the value cached in <see cref="HubCallerContext.Items"/> by
