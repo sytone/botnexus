@@ -130,12 +130,26 @@ jobs:
         run: |
           dotnet build tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-restore
           dotnet build tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-restore
+      # Install browser system libraries explicitly. Playwright's `--with-deps`
+      # apt list still references `libasound2`, which on Ubuntu 24.04 (noble) is a
+      # virtual package renamed to `libasound2t64` by the 64-bit time_t transition,
+      # so `--with-deps` fails with "Package 'libasound2' has no installation
+      # candidate" (exit 100). We install the deps ourselves against the renamed
+      # package and then install the chromium binary without `--with-deps`.
+      - name: Install Playwright system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+            libcups2t64 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 libatspi2.0-0t64
       - name: Install Playwright browsers (chromium)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $ps1 = Get-ChildItem -Recurse -Filter playwright.ps1 -Path tests/e2e | Select-Object -First 1
           if ($null -eq $ps1) { throw 'playwright.ps1 not found after build' }
-          & $ps1.FullName install --with-deps chromium
+          & $ps1.FullName install chromium
       - name: Run e2e portal Playwright suites
         run: dotnet test --no-build --filter "FullyQualifiedName~BotNexus.E2E.PortalDesktop.Tests|FullyQualifiedName~BotNexus.E2E.PortalMobile.Tests"
