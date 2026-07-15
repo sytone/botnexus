@@ -97,6 +97,6 @@ which headers are set.
 
 ## Related
 
-- [`docs/configuration.md`](configuration.md) — full `telemetry` section reference.
-- [`docs/observability.md`](observability.md) — the platform observability architecture.
-- [`docs/extensions/telemetry.md`](extensions/telemetry.md) — the extension telemetry seam.
+- [`docs/configuration.md`](../configuration.md) — full `telemetry` section reference.
+- [`docs/observability.md`](../observability.md) — the platform observability architecture.
+- [`docs/extensions/telemetry.md`](../extensions/telemetry.md) — the extension telemetry seam.
