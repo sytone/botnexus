@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
@@ -376,12 +377,41 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
 
     private IServiceBusAdapterClientFactory CreateDefaultFactory()
     {
-        if (!string.IsNullOrWhiteSpace(_options.ConnectionString))
-            return new DefaultServiceBusAdapterClientFactory(new ServiceBusClient(_options.ConnectionString));
+        switch (ResolveAuthMode(_options))
+        {
+            case ServiceBusAuthMode.ConnectionString:
+                // Connection string takes precedence when present (simple / local-auth deployments).
+                return new DefaultServiceBusAdapterClientFactory(new ServiceBusClient(_options.ConnectionString));
 
-        throw new InvalidOperationException(
-            $"{nameof(ServiceBusChannelOptions.ConnectionString)} must be set in '{nameof(ServiceBusChannelOptions)}'. " +
-            $"For managed-identity authentication, inject a custom {nameof(IServiceBusAdapterClientFactory)} via DI.");
+            case ServiceBusAuthMode.ManagedIdentity:
+                // Managed-identity auth against the fully-qualified namespace.
+                // This is the keyless path required by namespaces with disableLocalAuth = true.
+                return new DefaultServiceBusAdapterClientFactory(
+                    new ServiceBusClient(_options.FullyQualifiedNamespace, new DefaultAzureCredential()));
+
+            default:
+                throw new InvalidOperationException(
+                    $"Either '{nameof(ServiceBusChannelOptions.ConnectionString)}' or " +
+                    $"'{nameof(ServiceBusChannelOptions.FullyQualifiedNamespace)}' must be set in " +
+                    $"'{nameof(ServiceBusChannelOptions)}'. Set a connection string for local-auth, or a " +
+                    $"fully-qualified namespace for managed-identity authentication.");
+        }
+    }
+
+    /// <summary>
+    /// Selects the authentication mode from the options. Connection string wins when present;
+    /// otherwise a fully-qualified namespace enables managed identity. Exposed as <c>internal</c>
+    /// so the selection logic can be unit-tested without constructing a real Azure client.
+    /// </summary>
+    internal static ServiceBusAuthMode ResolveAuthMode(ServiceBusChannelOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.ConnectionString))
+            return ServiceBusAuthMode.ConnectionString;
+
+        if (!string.IsNullOrWhiteSpace(options.FullyQualifiedNamespace))
+            return ServiceBusAuthMode.ManagedIdentity;
+
+        return ServiceBusAuthMode.None;
     }
 
     /// <summary>

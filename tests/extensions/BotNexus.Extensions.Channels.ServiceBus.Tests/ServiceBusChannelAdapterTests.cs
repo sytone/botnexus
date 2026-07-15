@@ -503,4 +503,51 @@ public sealed class ServiceBusChannelAdapterTests
         factory.Senders["reply-queue-B"].SentMessages.ShouldHaveSingleItem();
         factory.Senders["reply-queue-B"].SentMessages[0].CorrelationId.ShouldBe("corr-B");
     }
+
+    // ── Auth-mode resolution (issue #2002) ─────────────────────────────────────
+
+    [Fact]
+    public void ResolveAuthMode_prefers_connection_string_when_both_set()
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            ConnectionString = "Endpoint=sb://fake/;SharedAccessKeyName=x;SharedAccessKey=y=",
+            FullyQualifiedNamespace = "ns.servicebus.windows.net",
+        };
+
+        ServiceBusChannelAdapter.ResolveAuthMode(options).ShouldBe(ServiceBusAuthMode.ConnectionString);
+    }
+
+    [Fact]
+    public void ResolveAuthMode_uses_managed_identity_when_only_namespace_set()
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            FullyQualifiedNamespace = "ns.servicebus.windows.net",
+        };
+
+        ServiceBusChannelAdapter.ResolveAuthMode(options).ShouldBe(ServiceBusAuthMode.ManagedIdentity);
+    }
+
+    [Fact]
+    public void ResolveAuthMode_returns_none_when_neither_set()
+    {
+        var options = new ServiceBusChannelOptions();
+
+        ServiceBusChannelAdapter.ResolveAuthMode(options).ShouldBe(ServiceBusAuthMode.None);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveAuthMode_treats_blank_connection_string_as_managed_identity(string blank)
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            ConnectionString = blank,
+            FullyQualifiedNamespace = "ns.servicebus.windows.net",
+        };
+
+        ServiceBusChannelAdapter.ResolveAuthMode(options).ShouldBe(ServiceBusAuthMode.ManagedIdentity);
+    }
 }
