@@ -127,7 +127,7 @@ public sealed class AgentsMdPromptHookHandlerTests
     // ── HandleAsync tests ──────────────────────────────────────────────────
 
     [Fact]
-    public async Task HandleAsync_NoRepo_ReturnsNull()
+    public async Task HandleAsync_AlwaysReturnsNudge_ReferencingTool()
     {
         var fs = new MockFileSystem();
         fs.AddDirectory("/workspace");
@@ -135,22 +135,27 @@ public sealed class AgentsMdPromptHookHandlerTests
         var handler = new AgentsMdPromptHookHandler(MakeManager("/workspace"), fs);
         var result = await handler.HandleAsync(MakeEvent(), CancellationToken.None);
 
-        result.ShouldBeNull();
+        result.ShouldNotBeNull();
+        result!.AppendSystemContext.ShouldNotBeNullOrWhiteSpace();
+        // Pull-based model: the hook advertises the tool, it does not embed file contents.
+        result.AppendSystemContext!.ShouldContain("get_agent_files");
+        result.AppendSystemContext!.ShouldContain("AGENTS.md");
     }
 
     [Fact]
-    public async Task HandleAsync_WithAgentsMd_AppendsToSystemContext()
+    public async Task HandleAsync_DoesNotEmbedAgentsMdContent()
     {
         var fs = new MockFileSystem();
         fs.AddDirectory("/repo/.git");
-        fs.AddFile("/repo/AGENTS.md", new MockFileData("# Global Rules"));
+        fs.AddFile("/repo/AGENTS.md", new MockFileData("# Global Rules from a discoverable file"));
         fs.AddDirectory("/repo/workspace");
 
         var handler = new AgentsMdPromptHookHandler(MakeManager("/repo/workspace"), fs);
         var result = await handler.HandleAsync(MakeEvent(), CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result!.AppendSystemContext.ShouldNotBeNullOrWhiteSpace();
-        result.AppendSystemContext!.ShouldContain("# Global Rules");
+        // The nudge must NOT slurp file contents - that is what blows the context window.
+        result!.AppendSystemContext!.ShouldNotContain("# Global Rules from a discoverable file");
+        result.AppendSystemContext!.ShouldContain("get_agent_files");
     }
 }

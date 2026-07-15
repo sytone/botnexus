@@ -257,6 +257,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var fileWatcherToolOptions = _serviceProvider.GetService<IOptions<FileWatcherToolOptions>>() ?? Options.Create(new FileWatcherToolOptions());
         tools.Add(new FileWatcherTool(fileWatcherToolOptions, pathValidator));
+        // Pull-based AGENTS.md discovery: the agent calls get_agent_files with a path to load
+        // the conventions that apply there, instead of always-on injection that could exhaust context.
+        tools.Add(new AgentFilesTool(pathValidator, _serviceProvider.GetService<System.IO.Abstractions.IFileSystem>()));
 
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
