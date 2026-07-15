@@ -72,6 +72,18 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             return null;
         }
 
+        // #2006: the resolved endpoint originates from the peer-controlled endpoints.api advertised
+        // during token exchange. Re-validate it against the https-only host allowlist here - where a
+        // logger is available - before it is used to fetch models or stamped onto LlmModel.BaseUrl.
+        // On mismatch, warn and fall back to the default individual host rather than routing the
+        // bearer token to an attacker-chosen host.
+        if (!CopilotEndpointAllowlist.IsAllowedApiEndpoint(endpoint))
+        {
+            _logger.LogWarning(
+                "Copilot advertised API endpoint failed host allowlist validation; falling back to the default individual host.");
+            endpoint = DefaultCopilotBaseUrl;
+        }
+
         var response = await _discoveryClient.GetModelsAsync(endpoint, sessionToken, cancellationToken).ConfigureAwait(false);
 
         if (response.Data is null || response.Data.Count == 0)
@@ -116,7 +128,11 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
         if (string.IsNullOrWhiteSpace(info.Id))
             return null;
 
-        var resolvedBaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? DefaultCopilotBaseUrl : baseUrl;
+        // #2006: defense-in-depth - even though the discovery path validates the endpoint, the
+        // baseUrl parameter is peer-derived, so gate it here too. An endpoint that fails the
+        // https-only host allowlist falls back to the default individual host rather than being
+        // stamped onto LlmModel.BaseUrl where it would carry the bearer token.
+        var resolvedBaseUrl = CopilotEndpointAllowlist.SanitiseApiEndpoint(baseUrl) ?? DefaultCopilotBaseUrl;
 
         var id = info.Id;
         var name = info.Name ?? info.Id;

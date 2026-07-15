@@ -192,7 +192,11 @@ public static class CopilotOAuth
         if (json.TryGetProperty("endpoints", out var endpoints) &&
             endpoints.TryGetProperty("api", out var apiEl))
         {
-            apiEndpoint = apiEl.GetString();
+            // #2006: the advertised endpoints.api host is peer-controlled. Gate it through the
+            // https-only host allowlist before it is allowed to flow onto LlmModel.BaseUrl and
+            // carry the bearer token. A rejected value drops to null so the caller falls back to
+            // the default individual host rather than routing the token to an attacker-chosen host.
+            apiEndpoint = CopilotEndpointAllowlist.SanitiseApiEndpoint(apiEl.GetString());
         }
 
         long expiresAt;
