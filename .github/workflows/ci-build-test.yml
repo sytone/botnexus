@@ -152,4 +152,10 @@ jobs:
           if ($null -eq $ps1) { throw 'playwright.ps1 not found after build' }
           & $ps1.FullName install chromium
       - name: Run e2e portal Playwright suites
-        run: dotnet test --no-build --filter "FullyQualifiedName~BotNexus.E2E.PortalDesktop.Tests|FullyQualifiedName~BotNexus.E2E.PortalMobile.Tests"
+        # Target the two e2e project files explicitly. A bare `dotnet test --filter`
+        # resolves the whole solution and attempts to run every test DLL in the repo;
+        # the non-e2e assemblies reject the filter with "argument ... is invalid" and
+        # the aggregate run exits 1 even though the e2e suites themselves skip cleanly.
+        run: |
+          dotnet test tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-build
+          dotnet test tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-build
