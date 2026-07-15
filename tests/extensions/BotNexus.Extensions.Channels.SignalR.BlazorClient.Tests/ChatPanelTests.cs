@@ -363,6 +363,49 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Does_not_render_streaming_bubble_when_run_active_but_no_message_streaming()
+    {
+        // Streaming-flash regression: after send, RunStarted flips IsRunActive true (so IsTurnActive
+        // is true) BEFORE the first MessageStart. If the live bubble keyed off the broad turn-active
+        // signal it would paint any residual buffer as RAW text in that pre-token window. The bubble
+        // must instead key off the narrow per-message IsStreaming flag, so nothing renders until real
+        // content is arriving.
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        conv.StreamState.IsRunActive = true;      // RunStarted seen
+        conv.StreamState.IsStreaming = false;     // MessageStart NOT yet seen
+        conv.StreamState.Buffer = "# residual **markdown**";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll("[data-testid='streaming-message']"));
+        Assert.DoesNotContain("residual", cut.Markup);
+    }
+
+    [Fact]
+    public void Renders_streaming_bubble_once_message_streaming_flag_is_set()
+    {
+        // Complement to the flash guard: once MessageStart asserts the per-message IsStreaming flag,
+        // the live bubble renders the accumulating buffer as expected.
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        conv.StreamState.IsRunActive = true;
+        conv.StreamState.IsStreaming = true;      // MessageStart seen
+        conv.StreamState.Buffer = "live tokens";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        cut.Find("[data-testid='streaming-message']");
+        Assert.Contains("live tokens", cut.Markup);
+    }
+
+    [Fact]
     public void Does_not_render_copy_button_for_streaming_assistant_message()
     {
         CreateAndSeedAgent("agent-1", isStreaming: true);

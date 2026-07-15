@@ -370,7 +370,7 @@
             </div>
         }
 
-        @if (IsStreaming && !string.IsNullOrEmpty(ThinkingBuffer))
+        @if (IsMessageStreaming && !string.IsNullOrEmpty(ThinkingBuffer))
         {
             <div class="thinking-block live @(!ShowThinking ? "visibility-hidden" : "")"
                  style="@(!ShowThinking ? "display:none" : "")">
@@ -381,7 +381,7 @@
             </div>
         }
 
-        @if (IsStreaming && !string.IsNullOrEmpty(CurrentStreamBuffer))
+        @if (IsMessageStreaming && !string.IsNullOrEmpty(CurrentStreamBuffer))
         {
             <div class="message assistant streaming"
                  @key="@("__streaming__")"
@@ -528,6 +528,15 @@ private bool IsStreaming =>
     private bool IsLoadingMore => _isLoadingMore;
     private AskUserPromptState? PendingAskUserPrompt =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
+    // The broad IsStreaming (= IsTurnActive) keeps steer/stop controls visible across the whole
+    // run loop, but it also flips true on RunStarted BEFORE the first token. Gating the live
+    // streaming/thinking bubbles on that would paint a (now-cleared, but historically stale)
+    // buffer as raw text in the pre-token window — the reported "prior reply flashes as raw
+    // markdown after send". The bubbles must key off the narrow per-message streaming flag,
+    // which MessageStart asserts only once real content is arriving (mirrors the mobile Chat.razor
+    // guard). ClearBuffers on RunStarted is the belt; this guard is the braces.
+    private bool IsMessageStreaming =>
+        ActiveConversationId is string convId && Store.GetStreamState(convId).IsStreaming;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
     private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
