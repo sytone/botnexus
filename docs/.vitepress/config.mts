@@ -171,6 +171,7 @@ export default defineConfig({
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
+          { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],

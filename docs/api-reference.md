@@ -1229,6 +1229,45 @@ X-Api-Key: your-api-key
 
 ---
 
+### List Sub-Agent Runs
+
+**Endpoint:** `GET /api/subagents`
+
+**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session.
+
+**Query Parameters:**
+- `status` (string, optional) — Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`). When omitted, runs of every status are returned.
+- `limit` (int, optional, default `200`) — Maximum number of rows to return. Bounded to `1`–`500`; values above `500` are clamped.
+
+**Request:**
+```http
+GET /api/subagents?status=Completed&limit=50
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "subAgentId": "sub-abc123",
+    "parentSessionId": "session-xyz789",
+    "parentAgentId": "farnsworth",
+    "childAgentId": "farnsworth",
+    "archetype": "coder",
+    "startedAt": "2026-07-15T10:30:00Z",
+    "endedAt": "2026-07-15T10:42:00Z",
+    "status": "Completed"
+  }
+]
+```
+
+Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), behavioral `archetype` (or `null` if unset), lifecycle `status`, and start/end timestamps (`endedAt` is `null` while a run is still active).
+
+**Error Responses:**
+- `400 Bad Request` — `limit` is not greater than zero
+
+---
+
 ## System & Status
 
 ### Health Check
