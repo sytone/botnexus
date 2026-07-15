@@ -145,6 +145,44 @@ public sealed class ConfigFieldAnnotationTests
         defaultValue!.Value.ShouldBe("iso8601");
     }
 
+    // -- 5b. Extended coverage (#2013): secret-bearing and common-case fields across the
+    //         broader config POCO tree now carry [ConfigField]. These lock the coverage in. --
+    [Theory]
+    [InlineData(typeof(SatelliteConfig), nameof(SatelliteConfig.ApiKey))]
+    [InlineData(typeof(BotNexus.Extensions.Channels.Telegram.TelegramBotConfig), nameof(BotNexus.Extensions.Channels.Telegram.TelegramBotConfig.BotToken))]
+    [InlineData(typeof(BotNexus.Extensions.Channels.Telegram.TelegramBotConfig), nameof(BotNexus.Extensions.Channels.Telegram.TelegramBotConfig.WebhookSecretToken))]
+    [InlineData(typeof(BotNexus.Extensions.Channels.Telegram.TelegramGatewayOptions), nameof(BotNexus.Extensions.Channels.Telegram.TelegramGatewayOptions.BotToken))]
+    [InlineData(typeof(BotNexus.Extensions.Channels.Telegram.TelegramGatewayOptions), nameof(BotNexus.Extensions.Channels.Telegram.TelegramGatewayOptions.WebhookSecretToken))]
+    public void ConfigField_OnSecretBearingProperty_IsMarkedSecret(Type type, string propertyName)
+    {
+        var prop = GetProp(type, propertyName);
+        var field = prop.GetCustomAttribute<ConfigFieldAttribute>();
+        field.ShouldNotBeNull($"{type.Name}.{propertyName} should carry a [ConfigField] annotation.");
+        field!.Secret.ShouldBeTrue($"{type.Name}.{propertyName} is secret-bearing and must be marked Secret.");
+        field.Widget.ShouldBe(ConfigFieldWidget.Secret);
+    }
+
+    [Theory]
+    [InlineData(typeof(SubAgentOptions), nameof(SubAgentOptions.MaxConcurrentPerSession))]
+    [InlineData(typeof(GatewayOptions), nameof(GatewayOptions.MaxCallChainDepth))]
+    [InlineData(typeof(SessionWarmupOptions), nameof(SessionWarmupOptions.Enabled))]
+    [InlineData(typeof(SessionCleanupOptions), nameof(SessionCleanupOptions.SessionTtl))]
+    [InlineData(typeof(ConversationRetentionOptions), nameof(ConversationRetentionOptions.AutoArchiveEnabled))]
+    [InlineData(typeof(CanvasToolOptions), nameof(CanvasToolOptions.MaxKeyLength))]
+    [InlineData(typeof(DelayToolOptions), nameof(DelayToolOptions.MaxDelaySeconds))]
+    [InlineData(typeof(FileWatcherToolOptions), nameof(FileWatcherToolOptions.MaxTimeoutSeconds))]
+    [InlineData(typeof(AgentExchangeOptions), nameof(AgentExchangeOptions.AccessPolicy))]
+    [InlineData(typeof(SatelliteConfig), nameof(SatelliteConfig.Enabled))]
+    public void ConfigField_OnUserFacingProperty_IsPresent(Type type, string propertyName)
+    {
+        var prop = GetProp(type, propertyName);
+        var field = prop.GetCustomAttribute<ConfigFieldAttribute>();
+        field.ShouldNotBeNull($"{type.Name}.{propertyName} should carry a [ConfigField] annotation (#2013 coverage).");
+        var display = prop.GetCustomAttribute<DisplayAttribute>();
+        display.ShouldNotBeNull($"{type.Name}.{propertyName} should carry a [Display] annotation.");
+        display!.GetName().ShouldNotBeNullOrWhiteSpace();
+    }
+
     // -- 6. Behaviour-unchanged guard: a representative config still validates clean --
 
     [Fact]
