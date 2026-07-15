@@ -114,6 +114,15 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (conv is null) return;
 
         conv.StreamState.IsRunActive = true;
+        // #1897/streaming-flash: RunStarted fires BEFORE the first MessageStart (which is what
+        // normally calls ClearBuffers). Any residual Buffer/ThinkingBuffer left over from the
+        // previous turn would otherwise be painted by ChatPanel's live streaming bubble the
+        // instant IsTurnActive flips true — as RAW text (the live bubble does not run the
+        // Markdown pipeline), producing the reported "previous assistant message flashes as raw
+        // markdown right after I send, then vanishes when the real reply streams in". Clearing
+        // the buffers when the run opens closes that window; MessageStart still clears again per
+        // message, so this is purely defensive and cannot drop in-flight content.
+        conv.StreamState.ClearBuffers();
         agent.IsStreaming = true;
         if (string.IsNullOrEmpty(agent.ProcessingStage))
             agent.ProcessingStage = "\U0001F916 Agent is working\u2026";

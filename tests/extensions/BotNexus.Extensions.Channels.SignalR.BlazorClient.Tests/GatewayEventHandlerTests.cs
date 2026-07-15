@@ -278,6 +278,26 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
+    public void HandleRunStarted_clears_residual_buffers_from_previous_turn()
+    {
+        // Streaming-flash regression: RunStarted fires before the first MessageStart. If a prior
+        // turn left content in the buffers, ChatPanel's live streaming bubble would paint it as
+        // RAW text (no Markdown pipeline) in the pre-token window -- the reported "previous reply
+        // flashes as raw markdown right after I send". RunStarted must clear the buffers so a new
+        // run never inherits stale content.
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        conv.StreamState.Buffer = "# leftover **markdown** from the last turn";
+        conv.StreamState.ThinkingBuffer = "stale thinking";
+        conv.StreamState.PendingRole = "assistant";
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Equal(string.Empty, conv.StreamState.Buffer);
+        Assert.Equal(string.Empty, conv.StreamState.ThinkingBuffer);
+        Assert.Null(conv.StreamState.PendingRole);
+    }
+
+    [Fact]
     public void IsTurnActive_stays_true_across_message_end_to_tool_start_gap_while_run_active()
     {
         // The gap the inference signal could not bridge: MessageEnd fires (IsStreaming=false) but
