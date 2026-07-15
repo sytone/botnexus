@@ -189,16 +189,37 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var command = connection.CreateCommand();
         // Union semantics (P9-F, issue #657): rows whose initiator matches, plus (only for
         // Agent species) rows whose owning agent matches, plus rows where the citizen is in
-        // the conversation_participants set. The DISTINCT collapses duplicates when a citizen
-        // matches under more than one criterion (e.g. an agent that owns + participates).
+        // the conversation_participants set.
+        //
+        // This is authored as a SQL UNION of three single-table (sargable) branches rather than
+        // the earlier `LEFT JOIN ... WHERE a OR b OR c` shape. SQLite cannot use an index for a
+        // WHERE disjunction whose terms span both joined tables, so the OR form forced a full
+        // `SCAN conversations` + a per-row participant join + a TEMP B-TREE for DISTINCT — an
+        // O(conversations x participants) plan that degraded super-linearly as the store grew and
+        // produced multi-second GET /api/conversations latencies under load (the same call site
+        // observed taking ~145s before its cancellation token fired). Splitting into a UNION lets
+        // each branch seek its own index — idx_conversations_initiator, idx_conversations_agent_id,
+        // and idx_conversation_participants_citizen respectively — and UNION supplies the same
+        // duplicate collapse the DISTINCT did. Verified via EXPLAIN QUERY PLAN: full SCAN -> three
+        // index SEARCHes. The agent-match branch is only meaningful for Agent-kind citizens; the
+        // $isAgent = 0 constant makes its WHERE unsatisfiable so it contributes no rows for
+        // non-agent citizens (no wasted scan). Ordering is applied once on the unioned result.
         command.CommandText = """
-            SELECT DISTINCT c.id
-            FROM conversations c
-            LEFT JOIN conversation_participants p ON p.conversation_id = c.id
-            WHERE c.initiator = $initiator
-               OR ($isAgent = 1 AND c.agent_id = $agentMatch)
-               OR (p.citizen_kind = $citizenKind AND p.citizen_id = $citizenIdValue)
-            ORDER BY c.updated_at DESC
+            SELECT id FROM (
+                SELECT c.id AS id, c.updated_at AS updated_at
+                FROM conversations c
+                WHERE c.initiator = $initiator
+              UNION
+                SELECT c.id AS id, c.updated_at AS updated_at
+                FROM conversations c
+                WHERE $isAgent = 1 AND c.agent_id = $agentMatch
+              UNION
+                SELECT c.id AS id, c.updated_at AS updated_at
+                FROM conversations c
+                INNER JOIN conversation_participants p ON p.conversation_id = c.id
+                WHERE p.citizen_kind = $citizenKind AND p.citizen_id = $citizenIdValue
+            )
+            ORDER BY updated_at DESC
             """;
         command.Parameters.AddWithValue("$initiator", citizen.ToString());
         command.Parameters.AddWithValue("$isAgent", citizen.Kind == CitizenKind.Agent ? 1 : 0);

@@ -228,6 +228,62 @@ public sealed class SqliteConversationStoreBatchListTests
         result.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task ListForCitizenAsync_UnionsOwnerInitiatorAndParticipant_WithoutDuplicates()
+    {
+        // Guards the OR->UNION rewrite (GET /api/conversations perf fix): a citizen that matches
+        // under MORE THAN ONE criterion (here: owns the conversation AND is a listed participant)
+        // must appear exactly once. The old query used SELECT DISTINCT to collapse the OR overlap;
+        // the UNION form must preserve that de-duplication.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var self = AgentId.From("agent-self");
+        var citizen = CitizenId.Of(self);
+
+        // (1) owned by agent-self
+        var owned = CreateConversation(self, "owned", CreateBinding("telegram", "o-1"));
+        // (2) owned by someone else but agent-self participates
+        var guested = CreateConversation(AgentId.From("agent-other"), "guested", CreateBinding("telegram", "g-1"));
+        // (3) owned by agent-self AND agent-self participates => overlap, must not duplicate
+        var both = CreateConversation(self, "both", CreateBinding("telegram", "b-1"));
+        await store.CreateAsync(owned);
+        await store.CreateAsync(guested);
+        await store.CreateAsync(both);
+        await store.AddParticipantsAsync(guested.ConversationId,
+            [new SessionParticipant { CitizenId = citizen, Role = "guest" }]);
+        await store.AddParticipantsAsync(both.ConversationId,
+            [new SessionParticipant { CitizenId = citizen, Role = "owner-and-participant" }]);
+
+        var list = await fixture.CreateStore().ListForCitizenAsync(citizen);
+
+        list.Select(c => c.ConversationId).ShouldBe(
+        [
+            owned.ConversationId,
+            guested.ConversationId,
+            both.ConversationId
+        ], ignoreOrder: true);
+        // The overlap conversation appears exactly once despite matching two branches.
+        list.Count(c => c.ConversationId == both.ConversationId).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_MatchesByInitiator_EvenWhenNotOwnerOrParticipant()
+    {
+        // The initiator branch of the UNION: a citizen that started a conversation it neither owns
+        // nor is a listed participant of must still surface.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var starter = CitizenId.Of(UserId.From("user-starter"));
+
+        var started = CreateConversation(AgentId.From("agent-host"), "started", CreateBinding("telegram", "s-1"));
+        started.Initiator = starter;
+        await store.CreateAsync(started);
+
+        var list = await fixture.CreateStore().ListForCitizenAsync(starter);
+
+        list.ShouldHaveSingleItem().ConversationId.ShouldBe(started.ConversationId);
+    }
+
     private static AgentId Agent(string id) => AgentId.From(id);
 
     private static Conversation CreateConversation(AgentId agentId, string title, params ChannelBinding[] bindings)
