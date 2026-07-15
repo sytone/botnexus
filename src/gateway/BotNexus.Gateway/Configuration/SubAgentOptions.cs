@@ -1,3 +1,7 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using BotNexus.Gateway.Abstractions.Models;
+
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
@@ -8,11 +12,27 @@ public sealed class SubAgentOptions
     /// <summary>
     /// Gets or sets the maximum number of concurrent sub-agents allowed per parent session.
     /// </summary>
+    [Display(
+        Name = "Max concurrent per session",
+        Description = "Maximum number of concurrent sub-agents allowed per parent session.",
+        GroupName = "Sub-agents",
+        Order = 0)]
+    [DefaultValue(5)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 0)]
     public int MaxConcurrentPerSession { get; set; } = 5;
 
     /// <summary>
     /// Gets or sets the default maximum turn budget applied to sub-agent runs.
     /// </summary>
+    [Display(
+        Name = "Default max turns",
+        Description = "Default maximum turn budget applied to sub-agent runs when a spawn request does not specify one.",
+        GroupName = "Sub-agents",
+        Order = 1)]
+    [DefaultValue(30)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 1)]
     public int DefaultMaxTurns { get; set; } = 30;
 
     /// <summary>
@@ -23,11 +43,26 @@ public sealed class SubAgentOptions
     /// without a turn ceiling a single <c>spawn_subagent</c> call could request an unbounded budget.
     /// A value of zero or less disables the ceiling.
     /// </summary>
+    [Display(
+        Name = "Max turns ceiling",
+        Description = "Hard upper bound for an agent-supplied maxTurns on a spawn request. A value of zero or less disables the ceiling.",
+        GroupName = "Sub-agents",
+        Order = 2)]
+    [DefaultValue(30)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 2)]
     public int MaxTurnsCeiling { get; set; } = 30;
 
     /// <summary>
     /// Gets or sets the default timeout, in seconds, applied to sub-agent runs.
     /// </summary>
+    [Display(
+        Name = "Default timeout (seconds)",
+        Description = "Default timeout, in seconds, applied to sub-agent runs when a spawn request does not specify one.",
+        GroupName = "Sub-agents",
+        Order = 3)]
+    [DefaultValue(600)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 3)]
     public int DefaultTimeoutSeconds { get; set; } = 600;
 
     /// <summary>
@@ -37,17 +72,38 @@ public sealed class SubAgentOptions
     /// run effectively forever. A caller may request a shorter timeout, but anything above this
     /// maximum is clamped down to it. A value of zero or less disables the ceiling.
     /// </summary>
+    [Display(
+        Name = "Max timeout (seconds)",
+        Description = "Hard upper bound, in seconds, for an agent-supplied timeoutSeconds on a spawn request. A value of zero or less disables the ceiling.",
+        GroupName = "Sub-agents",
+        Order = 4)]
+    [DefaultValue(1800)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 4)]
     public int MaxTimeoutSeconds { get; set; } = 1800;
 
     /// <summary>
     /// Gets or sets the maximum allowed nested sub-agent depth.
     /// </summary>
+    [Display(
+        Name = "Max depth",
+        Description = "Maximum allowed nested sub-agent depth.",
+        GroupName = "Sub-agents",
+        Order = 5)]
+    [DefaultValue(1)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 5)]
     public int MaxDepth { get; set; } = 1;
 
     /// <summary>
     /// Gets or sets the default model for sub-agent runs.
     /// Empty uses the parent model.
     /// </summary>
+    [Display(
+        Name = "Default model",
+        Description = "Default model for sub-agent runs. Empty uses the parent agent's model.",
+        GroupName = "Sub-agents",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "sub-agents", Order = 6, OptionsSource = "models")]
     public string DefaultModel { get; set; } = "";
 
     /// <summary>
@@ -59,15 +115,29 @@ public sealed class SubAgentOptions
     /// less disables time-based eviction (the count cap below still applies). Running records are
     /// never evicted.
     /// </summary>
+    [Display(
+        Name = "Completed record retention (minutes)",
+        Description = "How long, in minutes, a finished sub-agent record is retained in memory for status queries. A value of zero or less disables time-based eviction.",
+        GroupName = "Sub-agents",
+        Order = 7)]
+    [DefaultValue(15)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 7)]
     public int CompletedRecordRetentionMinutes { get; set; } = 15;
 
     /// <summary>
     /// Gets or sets the maximum number of <em>completed</em> sub-agent records to retain regardless
     /// of age. When the count of completed records exceeds this cap, the oldest completed records are
-    /// evicted first (and their timeout source disposed) — a burst-spawn backstop so the registry
+    /// evicted first (and their timeout source disposed) - a burst-spawn backstop so the registry
     /// stays bounded even within the retention window. A value of zero or less disables the cap.
     /// Running records do not count against this cap and are never evicted.
     /// </summary>
+    [Display(
+        Name = "Max retained completed records",
+        Description = "Maximum number of completed sub-agent records to retain regardless of age. A value of zero or less disables the cap.",
+        GroupName = "Sub-agents",
+        Order = 8)]
+    [DefaultValue(200)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 8)]
     public int MaxRetainedCompletedRecords { get; set; } = 200;
 
     /// <summary>

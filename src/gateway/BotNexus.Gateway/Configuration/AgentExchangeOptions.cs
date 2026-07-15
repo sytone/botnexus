@@ -1,3 +1,7 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using BotNexus.Gateway.Abstractions.Models;
+
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
@@ -14,6 +18,13 @@ public sealed class AgentExchangeOptions
     /// or have a matching <c>SubAgentRoles</c> grant.</item>
     /// </list>
     /// </summary>
+    [Display(
+        Name = "Access policy",
+        Description = "Which agents may initiate conversations with others: 'open' (any agent) or 'whitelist' (initiator must have the target granted).",
+        GroupName = "Agent exchange",
+        Order = 0)]
+    [DefaultValue("open")]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent-exchange", Order = 0)]
     public string AccessPolicy { get; set; } = "open";
 
     /// <summary>
@@ -29,6 +40,13 @@ public sealed class AgentExchangeOptions
     /// per agent pair, not the turns within an exchange). Mirrors
     /// <c>SubAgentOptions.DefaultMaxTurns</c>. Values below 1 are treated as 1.
     /// </summary>
+    [Display(
+        Name = "Max turns ceiling",
+        Description = "Upper bound on the maxTurns of a single agent_converse call. Values below 1 are treated as 1.",
+        GroupName = "Agent exchange",
+        Order = 1)]
+    [DefaultValue(30)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent-exchange", Order = 1)]
     public int MaxTurnsCeiling { get; set; } = 30;
 
     /// <summary>

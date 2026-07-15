@@ -1,5 +1,6 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using BotNexus.Gateway.Abstractions.Models;
-
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
@@ -14,6 +15,12 @@ public sealed class AgentDefaultsConfig
     /// <summary>
     /// Default per-tool timeout (seconds) inherited by agents that do not explicitly set their own timeout.
     /// </summary>
+    [Display(
+        Name = "Tool timeout (seconds)",
+        Description = "Default per-tool timeout, in seconds, inherited by agents that do not set their own.",
+        GroupName = "Agent defaults",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent-defaults", Order = 0)]
     public int? ToolTimeoutSeconds { get; set; }
 
     /// <summary>Default memory configuration inherited by agents.</summary>
