@@ -94,7 +94,7 @@ auth. In `~/.botnexus/config.json`:
 ```json
 {
   "channels": {
-    "serviceBusChannel": {
+    "servicebus": {
       "fullyQualifiedNamespace": "<namespace>.servicebus.windows.net",
       "inboundQueueName": "botnexus-inbound",
       "defaultReplyQueueName": "botnexus-outbound",
@@ -120,3 +120,4 @@ Notes:
 - [Service Bus channel configuration](../../docs/user-guide/channels/service-bus.md) — full options reference and capability flags.
 - [Service Bus envelope reference](../../docs/user-guide/channels/service-bus-envelope.md) — JSON message schema for clients.
 - [Azure Service Bus authentication with Entra ID](https://learn.microsoft.com/azure/service-bus-messaging/service-bus-authentication-and-authorization).
+

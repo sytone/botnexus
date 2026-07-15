@@ -7,6 +7,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -83,6 +84,14 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Configuration section this adapter binds its options from when it is loaded as a
+    /// dynamic extension after the initial DI options pass. Follows the
+    /// <c>channels:&lt;channelType&gt;</c> convention shared by the Telegram and Agent 365
+    /// channel extensions.
+    /// </summary>
+    internal const string ConfigSection = "channels:servicebus";
+
+    /// <summary>
     /// Initialises the adapter. Pass a <paramref name="clientFactory"/> in tests to avoid
     /// real Azure connections; leave it <c>null</c> in production (a factory is created from
     /// <see cref="ServiceBusChannelOptions.ConnectionString"/> on first start).
@@ -90,13 +99,39 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     public ServiceBusChannelAdapter(
         ILogger<ServiceBusChannelAdapter> logger,
         IOptions<ServiceBusChannelOptions> optionsAccessor,
-        IServiceBusAdapterClientFactory? clientFactory = null)
+        IServiceBusAdapterClientFactory? clientFactory = null,
+        IConfiguration? configuration = null)
         : base(logger)
     {
         _logger = logger;
-        _options = optionsAccessor.Value;
+        _options = ResolveOptions(optionsAccessor, configuration);
         _injectedFactory = clientFactory;
         AllowList = [.. _options.AllowedSenderIds];
+    }
+
+    /// <summary>
+    /// Resolves the effective options. This channel extension is loaded dynamically, after the
+    /// host has already run its <see cref="IOptions{T}"/> binding pass, so
+    /// <paramref name="optionsAccessor"/> comes back empty in the live gateway. When that
+    /// happens we bind directly from <see cref="IConfiguration"/> under <see cref="ConfigSection"/>,
+    /// mirroring the Telegram and Agent 365 adapters. Tests that inject options via DI keep
+    /// working because the bound value is only used when no auth material is present.
+    /// </summary>
+    internal static ServiceBusChannelOptions ResolveOptions(
+        IOptions<ServiceBusChannelOptions> optionsAccessor,
+        IConfiguration? configuration)
+    {
+        var opts = optionsAccessor.Value;
+        var hasAuth =
+            !string.IsNullOrWhiteSpace(opts.ConnectionString) ||
+            !string.IsNullOrWhiteSpace(opts.FullyQualifiedNamespace);
+        if (!hasAuth && configuration is not null)
+        {
+            var bound = new ServiceBusChannelOptions();
+            configuration.GetSection(ConfigSection).Bind(bound);
+            return bound;
+        }
+        return opts;
     }
 
     /// <inheritdoc/>

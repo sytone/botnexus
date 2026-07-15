@@ -4,6 +4,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.ServiceBus.Tests.Fakes;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -549,5 +550,67 @@ public sealed class ServiceBusChannelAdapterTests
         };
 
         ServiceBusChannelAdapter.ResolveAuthMode(options).ShouldBe(ServiceBusAuthMode.ManagedIdentity);
+    }
+
+    // ── Late-load config binding (issue #2010 / servicebus options-binding fix) ─
+
+    [Fact]
+    public void ResolveOptions_binds_from_configuration_when_options_empty()
+    {
+        // Simulates the live gateway: the extension is loaded after the IOptions binding
+        // pass, so IOptions<T> is empty and the adapter must self-bind from IConfiguration
+        // under "channels:servicebus".
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["channels:servicebus:fullyQualifiedNamespace"] = "botnexus-sbus.servicebus.windows.net",
+                ["channels:servicebus:inboundQueueName"] = "botnexus-inbound",
+                ["channels:servicebus:defaultReplyQueueName"] = "botnexus-outbound",
+            })
+            .Build();
+
+        var resolved = ServiceBusChannelAdapter.ResolveOptions(
+            new OptionsWrapper<ServiceBusChannelOptions>(new ServiceBusChannelOptions()),
+            config);
+
+        resolved.FullyQualifiedNamespace.ShouldBe("botnexus-sbus.servicebus.windows.net");
+        resolved.InboundQueueName.ShouldBe("botnexus-inbound");
+        resolved.DefaultReplyQueueName.ShouldBe("botnexus-outbound");
+        ServiceBusChannelAdapter.ResolveAuthMode(resolved).ShouldBe(ServiceBusAuthMode.ManagedIdentity);
+    }
+
+    [Fact]
+    public void ResolveOptions_prefers_injected_options_when_auth_present()
+    {
+        // When IOptions already carries auth material (e.g. tests, or an early-bound host),
+        // the injected options win and configuration is ignored.
+        var injected = new ServiceBusChannelOptions
+        {
+            ConnectionString = "Endpoint=sb://fake/;SharedAccessKeyName=x;SharedAccessKey=y=",
+            InboundQueueName = "injected-inbound",
+        };
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["channels:servicebus:fullyQualifiedNamespace"] = "should-be-ignored.servicebus.windows.net",
+            })
+            .Build();
+
+        var resolved = ServiceBusChannelAdapter.ResolveOptions(
+            new OptionsWrapper<ServiceBusChannelOptions>(injected), config);
+
+        resolved.InboundQueueName.ShouldBe("injected-inbound");
+        resolved.FullyQualifiedNamespace.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveOptions_returns_injected_options_when_configuration_null()
+    {
+        var injected = new ServiceBusChannelOptions();
+
+        var resolved = ServiceBusChannelAdapter.ResolveOptions(
+            new OptionsWrapper<ServiceBusChannelOptions>(injected), configuration: null);
+
+        resolved.ShouldBeSameAs(injected);
     }
 }
