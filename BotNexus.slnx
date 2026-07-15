@@ -103,7 +103,12 @@
     <Project Path="tests/integration/BotNexus.Integration.ProviderTests/BotNexus.Integration.ProviderTests.csproj" />
     <Project Path="tests/integration/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj" />
   </Folder>
-  <Folder Name="/tests/gateway/">
+  <Folder Name="/tests/e2e/">
+    <Project Path="tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj" />
+    <Project Path="tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj" />
+    <Project Path="tests/e2e/BotNexus.E2E.ServiceBus.Tests/BotNexus.E2E.ServiceBus.Tests.csproj" />
+    <Project Path="tests/e2e/BotNexus.E2E.Telegram.Tests/BotNexus.E2E.Telegram.Tests.csproj" />
+  </Folder>  <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Api.Tests/BotNexus.Gateway.Api.Tests.csproj" />
