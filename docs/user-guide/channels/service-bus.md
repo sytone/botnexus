@@ -1,4 +1,4 @@
-﻿# Azure Service Bus Channel
+# Azure Service Bus Channel
 
 The Azure Service Bus channel adapter lets BotNexus receive messages from — and send replies to — Azure Service Bus queues. It is designed for server-to-server and system-integration scenarios where a human or automated process needs to interact with a BotNexus agent over a durable, reliable message queue rather than a real-time channel such as SignalR or Telegram.
 
@@ -33,7 +33,7 @@ The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by 
 ```json
 {
   "channels": {
-    "serviceBusChannel": {
+    "servicebus": {
       "connectionString": "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>",
       "inboundQueueName": "botnexus-inbound",
       "defaultReplyQueueName": "botnexus-outbound",
@@ -46,16 +46,16 @@ The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by 
 
 ### Secure configuration: Environment variables
 
-To keep secrets out of `config.json`, set the `BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING` environment variable instead. BotNexus will use this value and override any connection string in your config file.
+To keep secrets out of `config.json`, set the `BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING` environment variable instead. BotNexus will use this value and override any connection string in your config file.
 
 On Linux / macOS:
 ```bash
-export BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING="Endpoint=sb://..."
+export BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING="Endpoint=sb://..."
 ```
 
 On Windows (PowerShell):
 ```powershell
-$env:BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING = "Endpoint=sb://..."
+$env:BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING = "Endpoint=sb://..."
 ```
 
 Alternatively, for Azure deployments, use **managed identity** with `DefaultAzureCredential` (see [Managed identity / Azure Key Vault](#managed-identity--azure-key-vault) below).
@@ -64,7 +64,7 @@ Alternatively, for Azure deployments, use **managed identity** with `DefaultAzur
 
 ## Configuration reference
 
-All options are configured via `~/.botnexus/config.json` under the `channels.serviceBusChannel` section. Options can also be overridden via environment variables with the prefix `BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__`.
+All options are configured via `~/.botnexus/config.json` under the `channels.servicebus` section. Options can also be overridden via environment variables with the prefix `BOTNEXUS_CHANNELS__SERVICEBUS__`.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -88,7 +88,7 @@ To use a managed identity:
 ```json
 {
   "channels": {
-    "serviceBusChannel": {
+    "servicebus": {
       "inboundQueueName": "botnexus-inbound",
       "defaultReplyQueueName": "botnexus-outbound",
       "fullyQualifiedNamespace": "myns.servicebus.windows.net"
@@ -120,3 +120,4 @@ The Service Bus channel is an **asynchronous request/reply** channel. The follow
 - [Service Bus envelope reference](./service-bus-envelope.md) — JSON schema, field reference, and integration examples for developers building clients.
 - [Service Bus deployment example](https://github.com/Sytone/botnexus/tree/main/examples/service-bus) — generic Bicep template that provisions a namespace, queues, and managed-identity RBAC for this channel.
 - [Azure Service Bus documentation](https://learn.microsoft.com/azure/service-bus-messaging/service-bus-messaging-overview)
+
