@@ -1,4 +1,9 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -16,6 +21,14 @@ namespace BotNexus.Gateway.Configuration;
 /// The deep-merge keeps existing keys that the incoming payload omits so that a
 /// partial/typed save never drops channel subtrees such as telegram bots or
 /// serviceBus queues (#1954).
+///
+/// The set of secret field paths is <b>discovered by reflection</b> over the typed
+/// <see cref="PlatformConfig"/> graph (#2012): every property annotated with
+/// <c>[ConfigField(Secret = true)]</c> (or <c>Widget == ConfigFieldWidget.Secret</c>)
+/// contributes a path, including nested POCOs and dictionary-valued sections
+/// (providers, gateway.apiKeys, gateway.locations, gateway.satellites,
+/// gateway.crossWorld.peers/inbound). Adding a new <c>[ConfigField(Secret = true)]</c>
+/// anywhere in the graph makes it redacted+restored with no change to this class.
 /// </summary>
 public static class ConfigSecretMerge
 {
@@ -23,18 +36,48 @@ public static class ConfigSecretMerge
     public const string Placeholder = "***";
 
     /// <summary>
-    /// Redacts every secret-bearing field in the whole-config document in place.
-    /// Keyed off the top-level section names (apiKey, gateway, providers).
+    /// The kind of node a discovered secret path terminates at, which decides how the
+    /// value is masked and restored.
+    /// </summary>
+    internal enum SecretTerminal
+    {
+        /// <summary>A single scalar string value (e.g. <c>apiKey</c>) is the secret.</summary>
+        Scalar,
+
+        /// <summary>
+        /// The terminal node is a <c>Dictionary&lt;string, string&gt;</c> whose <em>values</em>
+        /// are each a secret (e.g. <c>gateway.crossWorld.inbound.apiKeys</c>).
+        /// </summary>
+        DictionaryValues,
+    }
+
+    /// <summary>
+    /// A JSON path to a secret-bearing node. <see cref="Segments"/> is the ordered list of
+    /// camelCase JSON property names to walk; a <c>"*"</c> segment matches every key of a
+    /// dictionary-valued section (providers, apiKeys, locations, peers, satellites, ...).
+    /// </summary>
+    internal sealed record SecretPath(string[] Segments, SecretTerminal Terminal);
+
+    // Cache of resolved string-keyed dictionary value types. Declared before PlatformSecretPaths so
+    // it is initialised before the discovery walk below runs in the static initializer.
+    private static readonly ConcurrentDictionary<Type, Type?> DictionaryValueTypeCache = new();
+
+    // The discovered secret-path set is stable for the lifetime of the process (it depends only
+    // on the compiled PlatformConfig type graph), so compute it once and cache it.
+    private static readonly IReadOnlyList<SecretPath> PlatformSecretPaths =
+        DiscoverSecretPaths(typeof(PlatformConfig));
+
+    /// <summary>
+    /// Redacts every secret-bearing field in the whole-config document in place, replacing each
+    /// with <see cref="Placeholder"/>. The field set is the reflection-discovered secret paths
+    /// over the <see cref="PlatformConfig"/> graph, so a newly <c>[ConfigField(Secret = true)]</c>
+    /// annotated field is masked automatically.
     /// </summary>
     public static void Redact(JsonObject config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        if (config["providers"] is JsonObject providers)
-            RedactProviderSecrets(providers);
-        if (config["apiKey"] is JsonValue)
-            config["apiKey"] = Placeholder;
-        if (config["gateway"] is JsonObject gateway)
-            RedactGatewaySecrets(gateway);
+        foreach (var path in PlatformSecretPaths)
+            ApplyRedact(config, path, 0, path.Terminal);
     }
 
     /// <summary>
@@ -64,153 +107,240 @@ public static class ConfigSecretMerge
     /// Restores real secrets on the whole-config document. Anywhere
     /// <paramref name="target"/> still holds the <see cref="Placeholder"/>, the
     /// corresponding value from <paramref name="existing"/> is copied back. Walks
-    /// exactly the same field paths as <see cref="Redact"/> so the two stay symmetric.
+    /// exactly the same reflection-discovered field paths as <see cref="Redact"/> so the
+    /// two stay symmetric.
     /// </summary>
     public static void RestoreSecrets(JsonObject existing, JsonObject target)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(target);
-
-        RestoreScalar(existing, target, "apiKey");
-
-        if (target["providers"] is JsonObject targetProviders &&
-            existing["providers"] is JsonObject existingProviders)
-        {
-            foreach (var (name, providerNode) in targetProviders)
-            {
-                if (providerNode is JsonObject provider &&
-                    existingProviders[name] is JsonObject existingProvider)
-                    RestoreScalar(existingProvider, provider, "apiKey");
-            }
-        }
-
-        if (target["gateway"] is JsonObject targetGateway &&
-            existing["gateway"] is JsonObject existingGateway)
-            RestoreGatewaySecrets(existingGateway, targetGateway);
+        foreach (var path in PlatformSecretPaths)
+            ApplyRestore(existing, target, path, 0, path.Terminal);
     }
 
-    private static void RestoreGatewaySecrets(JsonObject existingGateway, JsonObject targetGateway)
+    /// <summary>
+    /// Applies redaction for an explicit secret-path set. Used by the public <see cref="Redact"/>
+    /// (with the cached <see cref="PlatformConfig"/> set) and exposed internally so tests can drive
+    /// the same engine over a synthetic graph.
+    /// </summary>
+    internal static void RedactPaths(JsonObject config, IReadOnlyList<SecretPath> paths)
     {
-        if (targetGateway["apiKeys"] is JsonObject targetApiKeys &&
-            existingGateway["apiKeys"] is JsonObject existingApiKeys)
-        {
-            foreach (var (name, apiKeyNode) in targetApiKeys)
-            {
-                if (apiKeyNode is JsonObject apiKeyObject &&
-                    existingApiKeys[name] is JsonObject existingApiKey)
-                    RestoreScalar(existingApiKey, apiKeyObject, "apiKey");
-            }
-        }
-
-        if (targetGateway["sessionStore"] is JsonObject targetSessionStore &&
-            existingGateway["sessionStore"] is JsonObject existingSessionStore)
-            RestoreScalar(existingSessionStore, targetSessionStore, "connectionString");
-
-        if (targetGateway["locations"] is JsonObject targetLocations &&
-            existingGateway["locations"] is JsonObject existingLocations)
-        {
-            foreach (var (name, locationNode) in targetLocations)
-            {
-                if (locationNode is JsonObject location &&
-                    existingLocations[name] is JsonObject existingLocation)
-                    RestoreScalar(existingLocation, location, "connectionString");
-            }
-        }
-
-        if (targetGateway["crossWorld"] is JsonObject targetCrossWorld &&
-            existingGateway["crossWorld"] is JsonObject existingCrossWorld)
-            RestoreCrossWorldSecrets(existingCrossWorld, targetCrossWorld);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(paths);
+        foreach (var path in paths)
+            ApplyRedact(config, path, 0, path.Terminal);
     }
 
-    private static void RestoreCrossWorldSecrets(JsonObject existingCrossWorld, JsonObject targetCrossWorld)
+    /// <summary>
+    /// Applies secret restoration for an explicit secret-path set. Companion to
+    /// <see cref="RedactPaths"/>.
+    /// </summary>
+    internal static void RestorePaths(JsonObject existing, JsonObject target, IReadOnlyList<SecretPath> paths)
     {
-        if (targetCrossWorld["peers"] is JsonObject targetPeers &&
-            existingCrossWorld["peers"] is JsonObject existingPeers)
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(paths);
+        foreach (var path in paths)
+            ApplyRestore(existing, target, path, 0, path.Terminal);
+    }
+
+    // ── Path application ──────────────────────────────────────────────────────
+
+    private static void ApplyRedact(JsonObject? target, SecretPath path, int index, SecretTerminal terminal)
+    {
+        if (target is null)
+            return;
+
+        var segment = path.Segments[index];
+        var isLast = index == path.Segments.Length - 1;
+
+        if (segment == "*")
         {
-            foreach (var (name, peerNode) in targetPeers)
-            {
-                if (peerNode is JsonObject peer &&
-                    existingPeers[name] is JsonObject existingPeer)
-                    RestoreScalar(existingPeer, peer, "apiKey");
-            }
+            // Dictionary section: recurse into every object-valued entry.
+            foreach (var (_, child) in target)
+                ApplyRedact(child as JsonObject, path, index + 1, terminal);
+            return;
         }
 
-        if (targetCrossWorld["inbound"] is JsonObject targetInbound &&
-            targetInbound["apiKeys"] is JsonObject targetInboundKeys &&
-            existingCrossWorld["inbound"] is JsonObject existingInbound &&
-            existingInbound["apiKeys"] is JsonObject existingInboundKeys)
+        if (!isLast)
         {
-            foreach (var key in targetInboundKeys.Select(static pair => pair.Key).ToArray())
+            ApplyRedact(target[segment] as JsonObject, path, index + 1, terminal);
+            return;
+        }
+
+        // Terminal segment.
+        if (terminal == SecretTerminal.Scalar)
+        {
+            if (target[segment] is JsonValue)
+                target[segment] = Placeholder;
+        }
+        else if (target[segment] is JsonObject dictionary)
+        {
+            foreach (var key in dictionary.Select(static pair => pair.Key).ToArray())
             {
-                if (IsPlaceholder(targetInboundKeys[key]) && existingInboundKeys[key] is JsonNode existingValue)
-                    targetInboundKeys[key] = existingValue.DeepClone();
+                if (dictionary[key] is JsonValue)
+                    dictionary[key] = Placeholder;
             }
         }
     }
 
-    private static void RestoreScalar(JsonObject existing, JsonObject target, string field)
+    private static void ApplyRestore(JsonObject? existing, JsonObject? target, SecretPath path, int index, SecretTerminal terminal)
     {
-        if (IsPlaceholder(target[field]) && existing[field] is JsonNode existingValue)
-            target[field] = existingValue.DeepClone();
+        if (target is null)
+            return;
+
+        var segment = path.Segments[index];
+        var isLast = index == path.Segments.Length - 1;
+
+        if (segment == "*")
+        {
+            foreach (var (key, child) in target)
+                ApplyRestore((existing?[key]) as JsonObject, child as JsonObject, path, index + 1, terminal);
+            return;
+        }
+
+        if (!isLast)
+        {
+            ApplyRestore(existing?[segment] as JsonObject, target[segment] as JsonObject, path, index + 1, terminal);
+            return;
+        }
+
+        // Terminal segment.
+        if (terminal == SecretTerminal.Scalar)
+        {
+            if (IsPlaceholder(target[segment]) && existing?[segment] is JsonNode existingValue)
+                target[segment] = existingValue.DeepClone();
+        }
+        else if (target[segment] is JsonObject targetDict)
+        {
+            var existingDict = existing?[segment] as JsonObject;
+            foreach (var key in targetDict.Select(static pair => pair.Key).ToArray())
+            {
+                if (IsPlaceholder(targetDict[key]) && existingDict?[key] is JsonNode existingValue)
+                    targetDict[key] = existingValue.DeepClone();
+            }
+        }
     }
 
     private static bool IsPlaceholder(JsonNode? node)
         => node is JsonValue value && value.TryGetValue<string>(out var s) && s == Placeholder;
 
-    private static void RedactGatewaySecrets(JsonObject gateway)
+    // ── Reflection discovery ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Enumerates every secret JSON path over the typed config graph rooted at
+    /// <paramref name="root"/>. A property annotated with <c>[ConfigField(Secret = true)]</c>
+    /// (or <c>Widget == ConfigFieldWidget.Secret</c>) contributes a path: a scalar string secret
+    /// terminates as <see cref="SecretTerminal.Scalar"/>; a <c>Dictionary&lt;string, string&gt;</c>
+    /// secret terminates as <see cref="SecretTerminal.DictionaryValues"/>. Dictionary-valued POCO
+    /// sections contribute a <c>"*"</c> wildcard segment and are recursed into; nested POCOs are
+    /// recursed into directly. Exposed internally so tests can assert the discovered set.
+    /// </summary>
+    internal static IReadOnlyList<SecretPath> DiscoverSecretPaths(Type root)
     {
-        if (gateway["apiKeys"] is JsonObject apiKeys)
-        {
-            foreach (var (_, apiKeyNode) in apiKeys)
-            {
-                if (apiKeyNode is JsonObject apiKeyObject && apiKeyObject["apiKey"] is JsonValue)
-                    apiKeyObject["apiKey"] = Placeholder;
-            }
-        }
-
-        if (gateway["sessionStore"] is JsonObject sessionStore && sessionStore["connectionString"] is JsonValue)
-            sessionStore["connectionString"] = Placeholder;
-
-        if (gateway["locations"] is JsonObject locations)
-        {
-            foreach (var (_, locationNode) in locations)
-            {
-                if (locationNode is JsonObject location && location["connectionString"] is JsonValue)
-                    location["connectionString"] = Placeholder;
-            }
-        }
-
-        if (gateway["crossWorld"] is JsonObject crossWorld)
-            RedactCrossWorldSecrets(crossWorld);
+        var paths = new List<SecretPath>();
+        Walk(root, [], [], paths);
+        return paths;
     }
 
-    private static void RedactCrossWorldSecrets(JsonObject crossWorld)
+    private static void Walk(Type type, string[] prefix, IReadOnlyCollection<Type> ancestry, List<SecretPath> sink)
     {
-        if (crossWorld["peers"] is JsonObject peers)
-        {
-            foreach (var (_, peerNode) in peers)
-            {
-                if (peerNode is JsonObject peer && peer["apiKey"] is JsonValue)
-                    peer["apiKey"] = Placeholder;
-            }
-        }
-
-        if (crossWorld["inbound"] is not JsonObject inbound || inbound["apiKeys"] is not JsonObject inboundApiKeys)
+        // Guard against cycles in the type graph (the config graph is a tree today, but a future
+        // self-referential POCO must not spin here).
+        if (ancestry.Contains(type))
             return;
 
-        foreach (var key in inboundApiKeys.Select(static pair => pair.Key).ToArray())
+        var nextAncestry = new HashSet<Type>(ancestry) { type };
+
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (inboundApiKeys[key] is JsonValue)
-                inboundApiKeys[key] = Placeholder;
+            if (property.GetIndexParameters().Length > 0)
+                continue;
+
+            var jsonName = ResolveJsonName(property);
+            var segment = Append(prefix, jsonName);
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+            var configField = property.GetCustomAttribute<ConfigFieldAttribute>();
+            var isSecret = configField is not null &&
+                (configField.Secret || configField.Widget == ConfigFieldWidget.Secret);
+
+            if (isSecret)
+            {
+                // A string secret is a scalar; a string-valued dictionary marked secret has secret
+                // values. Any other shape marked secret is treated as a scalar (best effort).
+                var terminal = IsStringValuedDictionary(propertyType)
+                    ? SecretTerminal.DictionaryValues
+                    : SecretTerminal.Scalar;
+                sink.Add(new SecretPath(segment, terminal));
+            }
+
+            // Recurse into nested config POCOs and dictionaries of POCOs to find deeper secrets.
+            if (TryGetDictionaryValueType(propertyType, out var valueType) && IsConfigPoco(valueType))
+            {
+                Walk(valueType, Append(segment, "*"), nextAncestry, sink);
+            }
+            else if (IsConfigPoco(propertyType))
+            {
+                Walk(propertyType, segment, nextAncestry, sink);
+            }
         }
     }
 
-    private static void RedactProviderSecrets(JsonObject providers)
+    private static string[] Append(string[] prefix, string segment)
     {
-        foreach (var (_, providerNode) in providers)
+        var result = new string[prefix.Length + 1];
+        Array.Copy(prefix, result, prefix.Length);
+        result[prefix.Length] = segment;
+        return result;
+    }
+
+    private static string ResolveJsonName(PropertyInfo property)
+    {
+        var attribute = property.GetCustomAttribute<JsonPropertyNameAttribute>();
+        return attribute is not null
+            ? attribute.Name
+            : JsonNamingPolicy.CamelCase.ConvertName(property.Name);
+    }
+
+    // Only recurse into our own config POCOs; skip framework/primitive/JSON element types so the
+    // walk stays bounded and does not chase into things like JsonElement or string[].
+    private static bool IsConfigPoco(Type type)
+        => type is { IsClass: true } &&
+           type != typeof(string) &&
+           type.Namespace is { } ns &&
+           ns.StartsWith("BotNexus", StringComparison.Ordinal);
+
+    private static bool IsStringValuedDictionary(Type type)
+        => TryGetDictionaryValueType(type, out var valueType) && valueType == typeof(string);
+
+    // Returns the value type of a string-keyed dictionary (Dictionary<string, V> / IDictionary<string, V>).
+    private static bool TryGetDictionaryValueType(Type type, out Type valueType)
+    {
+        var resolved = DictionaryValueTypeCache.GetOrAdd(type, static t =>
         {
-            if (providerNode is JsonObject provider && provider.ContainsKey("apiKey"))
-                provider["apiKey"] = Placeholder;
-        }
+            foreach (var candidate in EnumerateSelfAndInterfaces(t))
+            {
+                if (candidate.IsGenericType &&
+                    candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) &&
+                    candidate.GetGenericArguments()[0] == typeof(string))
+                {
+                    return candidate.GetGenericArguments()[1];
+                }
+            }
+
+            return null;
+        });
+
+        valueType = resolved ?? typeof(object);
+        return resolved is not null;
+    }
+
+    private static IEnumerable<Type> EnumerateSelfAndInterfaces(Type type)
+    {
+        if (type.IsInterface)
+            yield return type;
+        foreach (var iface in type.GetInterfaces())
+            yield return iface;
     }
 }
