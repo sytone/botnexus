@@ -57,6 +57,62 @@ public sealed class ServeCommandTests : IDisposable
         File.ReadAllText(deployedDll).ShouldBe("debug-fresh");
     }
 
+    [Fact]
+    public void DeployExtensionsSilent_PrunesStaleFiles_WhenNoLongerInSource()
+    {
+        var repoRoot = Path.Combine(_rootPath, "repo");
+        var home = Path.Combine(_rootPath, "home");
+        var extensionDir = CreateExtensionProject(repoRoot, "sample-prune", "Sample.Prune");
+        var debugDir = Path.Combine(extensionDir, "bin", "Debug", "net10.0");
+        Directory.CreateDirectory(debugDir);
+        File.WriteAllText(Path.Combine(debugDir, "Sample.Prune.dll"), "gen1");
+        File.WriteAllText(Path.Combine(debugDir, "CoreLib.oldhash.wasm"), "stale");
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        var staleDest = Path.Combine(home, "extensions", "sample-prune", "CoreLib.oldhash.wasm");
+        File.Exists(staleDest).ShouldBeTrue();
+        // Second generation: the stale hashed file is gone from source.
+        File.Delete(Path.Combine(debugDir, "CoreLib.oldhash.wasm"));
+        File.WriteAllText(Path.Combine(debugDir, "CoreLib.newhash.wasm"), "fresh");
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        File.Exists(staleDest).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DeployExtensionsSilent_KeepsCurrentGenerationFiles()
+    {
+        var repoRoot = Path.Combine(_rootPath, "repo");
+        var home = Path.Combine(_rootPath, "home");
+        var extensionDir = CreateExtensionProject(repoRoot, "sample-keep", "Sample.Keep");
+        var debugDir = Path.Combine(extensionDir, "bin", "Debug", "net10.0");
+        Directory.CreateDirectory(debugDir);
+        File.WriteAllText(Path.Combine(debugDir, "Sample.Keep.dll"), "main");
+        File.WriteAllText(Path.Combine(debugDir, "CoreLib.newhash.wasm"), "fresh");
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        var extDest = Path.Combine(home, "extensions", "sample-keep");
+        File.Exists(Path.Combine(extDest, "Sample.Keep.dll")).ShouldBeTrue();
+        File.Exists(Path.Combine(extDest, "CoreLib.newhash.wasm")).ShouldBeTrue();
+        File.Exists(Path.Combine(extDest, "botnexus-extension.json")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DeployExtensionsSilent_DoesNotThrow_WhenStaleFileIsLocked()
+    {
+        var repoRoot = Path.Combine(_rootPath, "repo");
+        var home = Path.Combine(_rootPath, "home");
+        var extensionDir = CreateExtensionProject(repoRoot, "sample-locked", "Sample.Locked");
+        var debugDir = Path.Combine(extensionDir, "bin", "Debug", "net10.0");
+        Directory.CreateDirectory(debugDir);
+        File.WriteAllText(Path.Combine(debugDir, "Sample.Locked.dll"), "main");
+        File.WriteAllText(Path.Combine(debugDir, "CoreLib.oldhash.wasm"), "stale");
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        // Remove stale from source, then hold an exclusive lock on the deployed copy.
+        File.Delete(Path.Combine(debugDir, "CoreLib.oldhash.wasm"));
+        var lockedDest = Path.Combine(home, "extensions", "sample-locked", "CoreLib.oldhash.wasm");
+        using var handle = new FileStream(lockedDest, FileMode.Open, FileAccess.Read, FileShare.None);
+        Should.NotThrow(() => ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false));
+    }
+
     private static string CreateExtensionProject(string repoRoot, string extensionId, string projectName)
     {
         var projectDir = Path.Combine(repoRoot, "src", "extensions", projectName);
