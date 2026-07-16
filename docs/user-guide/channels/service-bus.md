@@ -68,7 +68,8 @@ All options are configured via `~/.botnexus/config.json` under the `channels.ser
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `ConnectionString` | `string` | *(required unless using custom factory)* | Azure Service Bus connection string using a Shared Access Policy with Listen and Send rights. Not required when a custom `IServiceBusAdapterClientFactory` is registered. |
+| `ConnectionString` | `string` | *(required unless using custom factory)* | Azure Service Bus connection string using a Shared Access Policy with Listen and Send rights. Takes precedence over `FullyQualifiedNamespace` when both are set. Not required when a custom `IServiceBusAdapterClientFactory` is registered. |
+| `FullyQualifiedNamespace` | `string` | *(none)* | Fully-qualified Service Bus namespace (e.g. `myns.servicebus.windows.net`) to authenticate against with managed identity via `DefaultAzureCredential`. The recommended keyless setup; required for namespaces created with `disableLocalAuth: true`. Used only when `ConnectionString` is empty. |
 | `InboundQueueName` | `string` | `botnexus-inbound` | Name of the queue BotNexus **listens on** for incoming messages. |
 | `DefaultReplyQueueName` | `string` | `botnexus-outbound` | Name of the queue BotNexus **sends replies to** by default. Individual messages can override this via the `replyTo` envelope field or application property. |
 | `MaxConcurrentCalls` | `int` | `1` | Maximum number of messages processed in parallel. Increase for higher throughput; keep at `1` if strict ordering within the inbound queue is required. |
