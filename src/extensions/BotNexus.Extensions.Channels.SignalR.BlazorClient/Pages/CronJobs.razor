@@ -1,0 +1,349 @@
+@page "/cron"
+@inject CronApiClient CronApi
+@implements IDisposable
+
+<PageTitle>BotNexus - Cron Jobs</PageTitle>
+
+<div class="agents-page" data-testid="cron-jobs-page">
+    <header class="agents-toolbar">
+        <h2>&#x23F0; Cron Jobs</h2>
+        <div class="agents-toolbar-actions">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
+            }
+            <button class="toolbar-btn" @onclick="LoadJobsAsync" disabled="@_loading" title="Refresh cron job list">&#x21BB; Reload</button>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="config-loading" aria-live="polite">
+            <div class="loading-spinner small"></div>
+            <span>Loading cron jobs.</span>
+        </div>
+    }
+    else if (_error is not null)
+    {
+        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
+    }
+    else
+    {
+        @* Delete confirmation dialog *@
+        @if (_confirmDeleteId is not null)
+        {
+            <div class="agents-confirm-overlay" @onclick="CancelDelete">
+                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+                     aria-labelledby="cron-delete-confirm-title">
+                    <h4 id="cron-delete-confirm-title">Delete Cron Job</h4>
+                    <p>Are you sure you want to delete cron job <strong>@_confirmDeleteName</strong>? This cannot be undone.</p>
+                    <div class="agents-confirm-actions">
+                        <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">
+                            @(_busy ? "Deleting." : "Delete")
+                        </button>
+                        <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_busy">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* Edit dialog *@
+        @if (_editJob is not null)
+        {
+            <div class="agents-confirm-overlay" @onclick="CancelEdit">
+                <div class="agents-confirm-dialog cron-edit-dialog" @onclick:stopPropagation="true" role="dialog"
+                     aria-labelledby="cron-edit-title" data-testid="cron-edit-dialog">
+                    <h4 id="cron-edit-title">Edit Cron Job</h4>
+                    <div class="cron-edit-field">
+                        <label for="cron-edit-name">Name</label>
+                        <input id="cron-edit-name" type="text" @bind="_editJob.Name" />
+                    </div>
+                    <div class="cron-edit-field">
+                        <label for="cron-edit-schedule">Schedule (cron expression)</label>
+                        <input id="cron-edit-schedule" type="text" @bind="_editJob.Schedule" placeholder="0 * * * *" />
+                    </div>
+                    <div class="cron-edit-field">
+                        <label for="cron-edit-timezone">Time Zone</label>
+                        <input id="cron-edit-timezone" type="text" @bind="_editJob.TimeZone" placeholder="UTC" />
+                    </div>
+                    @if (string.Equals(_editJob.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-message">Message</label>
+                            <textarea id="cron-edit-message" rows="3" @bind="_editJob.Message"></textarea>
+                        </div>
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-model">Model (optional)</label>
+                            <input id="cron-edit-model" type="text" @bind="_editJob.Model" />
+                        </div>
+                    }
+                    else if (string.Equals(_editJob.ActionType, "command", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-shell">Shell Command</label>
+                            <textarea id="cron-edit-shell" rows="3" @bind="_editJob.ShellCommand"></textarea>
+                        </div>
+                    }
+                    else if (string.Equals(_editJob.ActionType, "webhook", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-webhook">Webhook URL</label>
+                            <input id="cron-edit-webhook" type="text" @bind="_editJob.WebhookUrl" />
+                        </div>
+                    }
+                    <div class="cron-edit-field cron-edit-field-inline">
+                        <label for="cron-edit-enabled">
+                            <input id="cron-edit-enabled" type="checkbox" @bind="_editJob.Enabled" />
+                            Enabled
+                        </label>
+                    </div>
+                    <div class="agents-confirm-actions">
+                        <button class="toolbar-btn primary" @onclick="SaveEditAsync" disabled="@_busy">
+                            @(_busy ? "Saving." : "Save")
+                        </button>
+                        <button class="toolbar-btn" @onclick="CancelEdit" disabled="@_busy">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_jobs.Count == 0)
+        {
+            <div class="agents-empty">
+                <p>No cron jobs configured.</p>
+            </div>
+        }
+        else
+        {
+            <table class="agents-table" aria-label="Cron job list" data-testid="cron-jobs-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Schedule</th>
+                        <th>Type</th>
+                        <th>Agent</th>
+                        <th>Status</th>
+                        <th>Next Run</th>
+                        <th>Last Run</th>
+                        <th><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in _jobs)
+                    {
+                        <tr data-testid="cron-job-row" data-job-id="@job.Id">
+                            <td>@job.Name</td>
+                            <td class="agents-id">@job.Schedule</td>
+                            <td>@job.ActionType</td>
+                            <td>@(string.IsNullOrEmpty(job.AgentId) ? "—" : job.AgentId)</td>
+                            <td>
+                                @if (job.Enabled)
+                                {
+                                    <span class="badge badge-enabled">Enabled</span>
+                                }
+                                else
+                                {
+                                    <span class="badge badge-disabled">Disabled</span>
+                                }
+                            </td>
+                            <td class="agents-id">@FormatTimestamp(job.NextRunAt)</td>
+                            <td class="agents-id">
+                                @FormatTimestamp(job.LastRunAt)
+                                @if (!string.IsNullOrEmpty(job.LastRunStatus))
+                                {
+                                    <span> (@job.LastRunStatus)</span>
+                                }
+                            </td>
+                            <td class="agents-actions">
+                                <button class="agents-btn-clone" @onclick="() => RunNowAsync(job)" disabled="@_busy" title="Run now" aria-label="Run @job.Name now">&#x25B6;&#xFE0F;</button>
+                                <button class="agents-btn-edit" @onclick="() => EditJob(job)" title="Edit @job.Name" aria-label="Edit @job.Name">&#x270F;&#xFE0F;</button>
+                                <button class="agents-btn-delete" @onclick="() => RequestDelete(job)" title="Delete @job.Name" aria-label="Delete @job.Name">&#x1F5D1;&#xFE0F;</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    private List<CronJobDto> _jobs = [];
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private string? _statusMessage;
+    private string _statusClass = "";
+
+    private string? _confirmDeleteId;
+    private string? _confirmDeleteName;
+
+    private CronJobDto? _editJob;
+
+    private CancellationTokenSource? _statusDismissCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadJobsAsync();
+    }
+
+    public void Dispose()
+    {
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+    }
+
+    private async Task LoadJobsAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        var (jobs, error) = await CronApi.ListAsync();
+        if (error is not null)
+        {
+            _error = $"Failed to load cron jobs: {error}";
+        }
+        else
+        {
+            _jobs = jobs
+                .OrderBy(j => j.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        _loading = false;
+        StateHasChanged();
+    }
+
+    // ── Run now ────────────────────────────────────────────────────────────
+    private async Task RunNowAsync(CronJobDto job)
+    {
+        _busy = true;
+        var (success, error) = await CronApi.RunNowAsync(job.Id);
+        _busy = false;
+        if (success)
+            SetStatus($"Triggered '{job.Name}'.", "success");
+        else
+            SetStatus($"Run failed: {error}", "error");
+    }
+
+    // ── Edit ───────────────────────────────────────────────────────────────
+    private void EditJob(CronJobDto job)
+    {
+        // Clone so cancel discards edits.
+        _editJob = new CronJobDto
+        {
+            Id = job.Id,
+            Name = job.Name,
+            Schedule = job.Schedule,
+            ActionType = job.ActionType,
+            AgentId = job.AgentId,
+            Message = job.Message,
+            TemplateName = job.TemplateName,
+            Model = job.Model,
+            WebhookUrl = job.WebhookUrl,
+            ShellCommand = job.ShellCommand,
+            Enabled = job.Enabled,
+            System = job.System,
+            TimeZone = job.TimeZone,
+            CreatedBy = job.CreatedBy,
+            CreatedAt = job.CreatedAt,
+            LastRunAt = job.LastRunAt,
+            NextRunAt = job.NextRunAt,
+            LastRunStatus = job.LastRunStatus,
+            LastRunError = job.LastRunError,
+            ConversationId = job.ConversationId,
+        };
+    }
+
+    private void CancelEdit() => _editJob = null;
+
+    private async Task SaveEditAsync()
+    {
+        if (_editJob is null)
+            return;
+
+        _busy = true;
+        var (_, error) = await CronApi.UpdateAsync(_editJob.Id, _editJob);
+        _busy = false;
+
+        if (error is not null)
+        {
+            SetStatus($"Save failed: {error}", "error");
+            return;
+        }
+
+        SetStatus($"Cron job '{_editJob.Name}' saved.", "success");
+        _editJob = null;
+        await LoadJobsAsync();
+    }
+
+    // ── Delete with confirmation ─────────────────────────────────────────────
+    private void RequestDelete(CronJobDto job)
+    {
+        _confirmDeleteId = job.Id;
+        _confirmDeleteName = job.Name;
+    }
+
+    private void CancelDelete()
+    {
+        _confirmDeleteId = null;
+        _confirmDeleteName = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_confirmDeleteId is null)
+            return;
+
+        _busy = true;
+        var name = _confirmDeleteName;
+        var (success, error) = await CronApi.DeleteAsync(_confirmDeleteId);
+        _busy = false;
+
+        if (!success)
+        {
+            SetStatus($"Delete failed: {error}", "error");
+            return;
+        }
+
+        SetStatus($"Cron job '{name}' removed.", "success");
+        _confirmDeleteId = null;
+        _confirmDeleteName = null;
+        await LoadJobsAsync();
+    }
+
+    private static string FormatTimestamp(DateTimeOffset? ts)
+    {
+        if (ts is null || ts.Value == default)
+            return "—";
+        return ts.Value.ToLocalTime().ToString("MMM d, h:mm tt");
+    }
+
+    private void SetStatus(string msg, string cssClass)
+    {
+        _statusMessage = msg;
+        _statusClass = cssClass;
+
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+        _statusDismissCts = new CancellationTokenSource();
+        var token = _statusDismissCts.Token;
+        _ = DismissStatusAfterDelay(token);
+    }
+
+    private async Task DismissStatusAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            _statusClass = "";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Dismissed or replaced - ignore
+        }
+    }
+}
