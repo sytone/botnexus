@@ -24,6 +24,37 @@ the [parent example](../README.md).
 
 ## Loop protection
 
+### Mention targeting (who gets forwarded)
+
+During initial validation the inbound app only forwards messages that
+**@-mention the operator**, so busy existing chats don't flood the agent. There
+are two matching modes, tried in order:
+
+1. **`operatorAadObjectId` (primary, robust).** Matches the operator's **AAD
+   object id** inside the message's `mentions` array. This is stable no matter
+   how the mention *renders* — Teams shows the mention as whatever display text
+   the sender's client chose (`Jon`, `Jon Bullen`, a nickname), but the
+   underlying `mentions[].mentioned.user.id` is always the same GUID. Get it
+   with:
+   ```bash
+   az ad user show --id jobullen@microsoft.com --query id -o tsv
+   ```
+2. **`requiredMention` (fallback, text substring).** Used only when a message
+   has no `mentions` array. Matches the literal string against the rendered
+   plaintext and raw HTML.
+
+> **Why the object id matters:** an early test message that mentioned `@Jon`
+> (rendered as just `Jon`, not `@Jon Bullen`) was correctly *dropped* by the
+> old text-only filter — the display text didn't contain the literal
+> `@Jon Bullen`. The `mentions` array still carried the right object id, so the
+> object-id match forwards it regardless of display text. Prefer object-id
+> targeting; keep the text fallback for clients that omit `mentions`.
+
+Set **both** `operatorAadObjectId` and `requiredMention` to `''` to disable the
+filter and forward every message (once proper per-channel handling is designed).
+
+### Bot/app author skip
+
 The inbound app skips messages authored by an application/bot (no human
 `from.user.id`, or a non-empty `from.application.id`). Without this, a reply that
 the outbound app posts back into a chat/channel would re-trigger the inbound app
