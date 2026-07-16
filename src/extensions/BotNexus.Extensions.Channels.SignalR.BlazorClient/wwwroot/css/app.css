@@ -5092,6 +5092,27 @@ h3.conversation-title.editable:hover {
     font-size: 1.05rem;
 }
 
+.activity-summary-stat--action {
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.activity-summary-stat--action:hover {
+    border-color: var(--accent, #3a6ea5);
+}
+
+.activity-summary-stat--action.active {
+    background: var(--accent, #3a6ea5);
+    border-color: var(--accent, #3a6ea5);
+    color: #fff;
+}
+
+.activity-summary-stat--action.active .activity-summary-label {
+    color: rgba(255, 255, 255, 0.85);
+}
+
 .activity-summary-label {
     font-size: 0.75rem;
     text-transform: uppercase;
