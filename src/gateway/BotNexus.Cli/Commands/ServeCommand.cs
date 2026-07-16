@@ -254,14 +254,25 @@ internal sealed class ServeCommand
 
             var extDest = Path.Combine(destRoot, extId);
             Directory.CreateDirectory(extDest);
+            var freshFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in Directory.GetFiles(tfmDir, "*", SearchOption.AllDirectories))
             {
                 var relativePath = Path.GetRelativePath(tfmDir, file);
                 var destFile = Path.Combine(extDest, relativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
                 File.Copy(file, destFile, overwrite: true);
+                freshFiles.Add(Path.GetFullPath(destFile));
             }
-            File.Copy(manifestPath, Path.Combine(extDest, "botnexus-extension.json"), overwrite: true);
+            var manifestDest = Path.Combine(extDest, "botnexus-extension.json");
+            File.Copy(manifestPath, manifestDest, overwrite: true);
+            freshFiles.Add(Path.GetFullPath(manifestDest));
+
+            // Prune stale files left over from earlier generations. Blazor content-hashes
+            // assets, so each rebuild emits new filenames while overwrite:true only refreshes
+            // matching names — old generations would otherwise accumulate unbounded. Best-effort:
+            // the running gateway may hold handles on some files, so mirror the stale-dir
+            // cleanup's locked-file tolerance and skip anything we cannot delete.
+            PruneStaleFiles(extDest, freshFiles);
             count++;
         }
 
@@ -343,15 +354,22 @@ internal sealed class ServeCommand
             var extDest = Path.Combine(destRoot, extId);
             Directory.CreateDirectory(extDest);
 
+            var freshFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in Directory.GetFiles(tfmDir, "*", SearchOption.AllDirectories))
             {
                 var relativePath = Path.GetRelativePath(tfmDir, file);
                 var destFile = Path.Combine(extDest, relativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
                 File.Copy(file, destFile, overwrite: true);
+                freshFiles.Add(Path.GetFullPath(destFile));
             }
 
-            File.Copy(manifestPath, Path.Combine(extDest, "botnexus-extension.json"), overwrite: true);
+            var manifestDest = Path.Combine(extDest, "botnexus-extension.json");
+            File.Copy(manifestPath, manifestDest, overwrite: true);
+            freshFiles.Add(Path.GetFullPath(manifestDest));
+
+            // Prune stale files from earlier generations (see DeployExtensionsSilent for rationale).
+            PruneStaleFiles(extDest, freshFiles);
             AnsiConsole.MarkupLine($"[blue][[deploy]][/] Deployed [green]{Markup.Escape(extId)}[/]");
             deployed++;
         }
@@ -378,6 +396,25 @@ internal sealed class ServeCommand
         }
 
         AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
+    }
+
+    /// <summary>
+    /// Deletes files under <paramref name="extDest"/> that are not part of the freshly
+    /// deployed set. Content-hashed Blazor assets change filenames every rebuild, so
+    /// overwrite-only copying leaves stale generations behind. Best-effort: files the
+    /// running gateway still holds open are skipped rather than throwing, matching the
+    /// locked-file tolerance of the stale-directory cleanup.
+    /// </summary>
+    private static void PruneStaleFiles(string extDest, HashSet<string> freshFiles)
+    {
+        foreach (var existing in Directory.GetFiles(extDest, "*", SearchOption.AllDirectories))
+        {
+            if (freshFiles.Contains(Path.GetFullPath(existing)))
+                continue;
+
+            try { File.Delete(existing); }
+            catch { /* locked or in use - leave it */ }
+        }
     }
 
     private static string? ResolveExtensionOutputDirectory(string projectDir)
