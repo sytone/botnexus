@@ -47,6 +47,7 @@ public sealed class PlatformConfig : IValidatableObject
     public Dictionary<string, ChannelConfig>? Channels { get; set; }
 
     /// <summary>API key for Gateway authentication (null = dev mode, no auth).</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "general", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
 
     /// <summary>Cron scheduler settings and optional seed jobs.</summary>
@@ -433,6 +434,7 @@ public sealed class LocationConfig
     public string? Endpoint { get; set; }
 
     /// <summary>Connection string for database locations.</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "location", Order = 3, Secret = true)]
     public string? ConnectionString { get; set; }
 
     /// <summary>Human-readable description.</summary>
@@ -481,6 +483,7 @@ public sealed class CrossWorldPeerConfig
     public string? Endpoint { get; set; }
 
     /// <summary>Shared API key used for gateway-to-gateway relay authentication.</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "cross-world-peer", Order = 2, Secret = true)]
     public string? ApiKey { get; set; }
 
     /// <summary>Whether this peer is enabled for outbound calls.</summary>
@@ -497,6 +500,7 @@ public sealed class CrossWorldInboundConfig
     public List<string>? AllowedWorlds { get; set; }
 
     /// <summary>Shared API keys keyed by source world ID.</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "cross-world-inbound", Order = 2, Secret = true)]
     public Dictionary<string, string>? ApiKeys { get; set; }
 }
 
@@ -923,6 +927,7 @@ public sealed class SessionStoreConfig
     /// <summary>Path used by file-based session store implementation.</summary>
     public string? FilePath { get; set; }
     /// <summary>Connection string used by SQLite session store implementation.</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "session-store", Order = 2, Secret = true)]
     public string? ConnectionString { get; set; }
 }
 
