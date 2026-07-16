@@ -214,7 +214,11 @@ public sealed class ConversationGroupingTests : IDisposable
         cut.InvokeAsync(() => pinButton.Click());
 
         // Clicking pins the conversation via the interaction service (pinned: true).
-        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true);
+        // InvokeAsync dispatches the click but returns a Task we don't await, so the async click
+        // handler may not have completed when we verify the mock. WaitForAssertion retries the
+        // Received(1) check until the async handler settles (or times out), eliminating the
+        // received-call race that flaked this test under parallel CI load.
+        cut.WaitForAssertion(() => _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true));
     }
 
     [Fact]
@@ -234,7 +238,11 @@ public sealed class ConversationGroupingTests : IDisposable
         var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
         cut.InvokeAsync(() => pinButton.Click());
 
-        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false);
+        // InvokeAsync dispatches the click but returns a Task we don't await, so the async click
+        // handler may not have completed when we verify the mock. WaitForAssertion retries the
+        // Received(1) check until the async handler settles (or times out), eliminating the
+        // received-call race that flaked this test under parallel CI load.
+        cut.WaitForAssertion(() => _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false));
     }
 
     [Fact]
