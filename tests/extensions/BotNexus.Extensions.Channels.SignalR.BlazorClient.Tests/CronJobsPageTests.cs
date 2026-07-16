@@ -8,9 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
 /// <summary>
-/// Tests for the Cron Jobs management page (nav section under Agents).
-/// Verifies the list renders, empty state shows, and view/edit/delete controls
-/// are present and wired to the <see cref="CronApiClient"/>.
+/// Tests the single-page cron management experience: a rich job selector drives
+/// an inline editor and execution history without opening detail/edit modals.
 /// </summary>
 public sealed class CronJobsPageTests : IDisposable
 {
@@ -39,9 +38,96 @@ public sealed class CronJobsPageTests : IDisposable
     }
 
     [Fact]
-    public void Displays_jobs_in_table_with_action_buttons()
+    public void Rich_selector_lists_name_schedule_type_and_owner()
     {
-        var jobs = JsonSerializer.Serialize(new[]
+        SetupJob();
+
+        var cut = _ctx.Render<CronJobs>();
+        cut.WaitForState(() => cut.Markup.Contains("Select a cron job"));
+        cut.Find("[data-testid='cron-job-selector-toggle']").Click();
+
+        var option = cut.Find("[data-testid='cron-job-option']");
+        Assert.Contains("Nightly Report", option.TextContent);
+        Assert.Contains("0 2 * * *", option.TextContent);
+        Assert.Contains("agent-prompt", option.TextContent);
+        Assert.Contains("farnsworth", option.TextContent);
+    }
+
+    [Fact]
+    public void Selecting_job_shows_inline_editor_and_execution_history()
+    {
+        SetupJob();
+        _handler.SetupResponse("GET", "/api/cron/job-1/runs", JsonSerializer.Serialize(new[]
+        {
+            new { id = "run-1", jobId = "job-1", startedAt = "2026-07-16T02:00:00Z", completedAt = "2026-07-16T02:00:05Z", status = "ok", sessionId = "cron:job-1" }
+        }));
+        _handler.SetupResponse("GET", "/api/providers", "[]");
+
+        var cut = _ctx.Render<CronJobs>();
+        cut.WaitForState(() => cut.Markup.Contains("Select a cron job"));
+        cut.Find("[data-testid='cron-job-selector-toggle']").Click();
+        cut.Find("[data-testid='cron-job-option']").Click();
+
+        cut.WaitForState(() => cut.Markup.Contains("cron-job-editor"));
+        Assert.Contains("cron-job-editor", cut.Markup);
+        Assert.Contains("Edit Cron Job", cut.Markup);
+        Assert.DoesNotContain("cron-edit-dialog", cut.Markup);
+        Assert.DoesNotContain("cron-detail-modal", cut.Markup);
+        cut.WaitForState(() => cut.Markup.Contains("cron-runs-table"));
+        Assert.Contains("Execution History", cut.Markup);
+        Assert.Contains("cron-runs-table", cut.Markup);
+    }
+
+    [Fact]
+    public void Inline_editor_shows_provider_and_model_selectors_for_agent_prompt()
+    {
+        SetupJob();
+        _handler.SetupResponse("GET", "/api/cron/job-1/runs", "[]");
+        _handler.SetupResponse("GET", "/api/providers", "[]");
+
+        var cut = _ctx.Render<CronJobs>();
+        SelectOnlyJob(cut);
+        cut.WaitForState(() => cut.Markup.Contains("cron-job-editor"));
+
+        Assert.Contains("cron-edit-provider", cut.Markup);
+        Assert.Contains("cron-edit-model", cut.Markup);
+    }
+
+    [Fact]
+    public void Selected_job_exposes_run_save_and_delete_actions()
+    {
+        SetupJob();
+        _handler.SetupResponse("GET", "/api/cron/job-1/runs", "[]");
+        _handler.SetupResponse("GET", "/api/providers", "[]");
+
+        var cut = _ctx.Render<CronJobs>();
+        SelectOnlyJob(cut);
+        cut.WaitForState(() => cut.Markup.Contains("cron-job-editor"));
+
+        Assert.NotNull(cut.Find("[aria-label='Run Nightly Report now']"));
+        Assert.NotNull(cut.Find("[aria-label='Save Nightly Report']"));
+        Assert.NotNull(cut.Find("[aria-label='Delete Nightly Report']"));
+    }
+
+    [Fact]
+    public void Opens_delete_confirmation_from_inline_editor()
+    {
+        SetupJob();
+        _handler.SetupResponse("GET", "/api/cron/job-1/runs", "[]");
+        _handler.SetupResponse("GET", "/api/providers", "[]");
+
+        var cut = _ctx.Render<CronJobs>();
+        SelectOnlyJob(cut);
+        cut.WaitForState(() => cut.Markup.Contains("cron-job-editor"));
+        cut.Find("[aria-label='Delete Nightly Report']").Click();
+
+        Assert.Contains("Delete Cron Job", cut.Markup);
+        Assert.Contains("This cannot be undone", cut.Markup);
+    }
+
+    private void SetupJob()
+    {
+        _handler.SetupResponse("GET", "/api/cron", JsonSerializer.Serialize(new[]
         {
             new
             {
@@ -50,105 +136,18 @@ public sealed class CronJobsPageTests : IDisposable
                 schedule = "0 2 * * *",
                 actionType = "agent-prompt",
                 agentId = "farnsworth",
+                message = "Create the report",
                 enabled = true,
+                conversationId = "conversation-1"
             }
-        });
-        _handler.SetupResponse("GET", "/api/cron", jobs);
-
-        var cut = _ctx.Render<CronJobs>();
-        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
-
-        Assert.Contains("Nightly Report", cut.Markup);
-        Assert.Contains("0 2 * * *", cut.Markup);
-        Assert.Contains("farnsworth", cut.Markup);
-        // View (run now) + edit + delete controls are present.
-        Assert.Contains("Run Nightly Report now", cut.Markup);
-        Assert.Contains("Edit Nightly Report", cut.Markup);
-        Assert.Contains("Delete Nightly Report", cut.Markup);
+        }));
     }
 
-    [Fact]
-    public void Opens_edit_dialog_when_edit_clicked()
+    private static void SelectOnlyJob(IRenderedComponent<CronJobs> cut)
     {
-        var jobs = JsonSerializer.Serialize(new[]
-        {
-            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
-        });
-        _handler.SetupResponse("GET", "/api/cron", jobs);
-
-        var cut = _ctx.Render<CronJobs>();
-        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
-
-        cut.Find("[aria-label='Edit Nightly Report']").Click();
-
-        Assert.Contains("cron-edit-dialog", cut.Markup);
-        Assert.Contains("Edit Cron Job", cut.Markup);
-    }
-
-    [Fact]
-    public void Opens_delete_confirmation_when_delete_clicked()
-    {
-        var jobs = JsonSerializer.Serialize(new[]
-        {
-            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
-        });
-        _handler.SetupResponse("GET", "/api/cron", jobs);
-
-        var cut = _ctx.Render<CronJobs>();
-        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
-
-        cut.Find("[aria-label='Delete Nightly Report']").Click();
-
-        Assert.Contains("Delete Cron Job", cut.Markup);
-        Assert.Contains("This cannot be undone", cut.Markup);
-    }
-
-    [Fact]
-    public void Opens_detail_modal_with_execution_history_when_view_clicked()
-    {
-        var jobs = JsonSerializer.Serialize(new[]
-        {
-            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
-        });
-        _handler.SetupResponse("GET", "/api/cron", jobs);
-        var runs = JsonSerializer.Serialize(new[]
-        {
-            new { id = "run-1", jobId = "job-1", startedAt = "2026-07-16T02:00:00Z", completedAt = "2026-07-16T02:00:05Z", status = "ok", sessionId = "cron:job-1" }
-        });
-        _handler.SetupResponse("GET", "/api/cron/job-1/runs", runs);
-
-        var cut = _ctx.Render<CronJobs>();
-        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
-
-        cut.Find("[aria-label='View Nightly Report details']").Click();
-        cut.WaitForState(() => cut.Markup.Contains("cron-detail-modal"));
-
-        Assert.Contains("cron-detail-modal", cut.Markup);
-        Assert.Contains("Execution History", cut.Markup);
-        // Run row renders from the /runs endpoint.
-        cut.WaitForState(() => cut.Markup.Contains("cron-runs-table"));
-        Assert.Contains("cron-runs-table", cut.Markup);
-    }
-
-    [Fact]
-    public void Edit_dialog_shows_provider_and_model_dropdowns_for_agent_prompt()
-    {
-        var jobs = JsonSerializer.Serialize(new[]
-        {
-            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
-        });
-        _handler.SetupResponse("GET", "/api/cron", jobs);
-        _handler.SetupResponse("GET", "/api/providers", "[]");
-
-        var cut = _ctx.Render<CronJobs>();
-        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
-
-        cut.Find("[aria-label='Edit Nightly Report']").Click();
-        cut.WaitForState(() => cut.Markup.Contains("cron-edit-dialog"));
-
-        // Provider + model selectors are present for agent-prompt jobs.
-        Assert.Contains("cron-edit-provider", cut.Markup);
-        Assert.Contains("cron-edit-model", cut.Markup);
+        cut.WaitForState(() => cut.Markup.Contains("Select a cron job"));
+        cut.Find("[data-testid='cron-job-selector-toggle']").Click();
+        cut.Find("[data-testid='cron-job-option']").Click();
     }
 
     private sealed class CronJobsMockHandler : HttpMessageHandler
@@ -168,8 +167,6 @@ public sealed class CronJobsPageTests : IDisposable
             var path = request.RequestUri?.PathAndQuery ?? "";
             var methodKey = $"{request.Method.Method}:{path}";
 
-            // Match the most specific (longest) configured key first so that, e.g.,
-            // "/api/cron/job-1/runs" is not shadowed by the "/api/cron" list stub.
             foreach (var (key, response) in _responses.OrderByDescending(kv => kv.Key.Length))
             {
                 if (methodKey.Contains(key, StringComparison.OrdinalIgnoreCase))
