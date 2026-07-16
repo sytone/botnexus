@@ -109,6 +109,25 @@ public sealed class CronApiClient
         }
     }
 
+    /// <summary>
+    /// Returns the most recent execution runs for a job (newest first), so the detail
+    /// view can render the activity timeline. <paramref name="limit"/> bounds the number
+    /// of run records requested from the gateway.
+    /// </summary>
+    public async Task<(IReadOnlyList<CronRunDto> Runs, string? Error)> RunsAsync(string jobId, int limit = 20)
+    {
+        try
+        {
+            var result = await _http.GetFromJsonAsync<List<CronRunDto>>(
+                $"/api/cron/{Uri.EscapeDataString(jobId)}/runs?limit={limit}", JsonOptions);
+            return (result as IReadOnlyList<CronRunDto> ?? [], null);
+        }
+        catch (Exception ex)
+        {
+            return ([], ex.Message);
+        }
+    }
+
     private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
     {
         try
@@ -154,4 +173,20 @@ public sealed class CronJobDto
     public string? LastRunStatus { get; set; }
     public string? LastRunError { get; set; }
     public string? ConversationId { get; set; }
+}
+
+/// <summary>
+/// A single recorded execution of a cron job — mirrors the gateway's CronRun record.
+/// Drives the execution-history timeline on the cron job detail view. <see cref="SessionId"/>
+/// links the run to the agent session (and therefore conversation) it produced, when one exists.
+/// </summary>
+public sealed class CronRunDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string JobId { get; set; } = string.Empty;
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string? Error { get; set; }
+    public string? SessionId { get; set; }
 }

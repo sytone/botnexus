@@ -103,6 +103,54 @@ public sealed class CronJobsPageTests : IDisposable
         Assert.Contains("This cannot be undone", cut.Markup);
     }
 
+    [Fact]
+    public void Opens_detail_modal_with_execution_history_when_view_clicked()
+    {
+        var jobs = JsonSerializer.Serialize(new[]
+        {
+            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
+        });
+        _handler.SetupResponse("GET", "/api/cron", jobs);
+        var runs = JsonSerializer.Serialize(new[]
+        {
+            new { id = "run-1", jobId = "job-1", startedAt = "2026-07-16T02:00:00Z", completedAt = "2026-07-16T02:00:05Z", status = "ok", sessionId = "cron:job-1" }
+        });
+        _handler.SetupResponse("GET", "/api/cron/job-1/runs", runs);
+
+        var cut = _ctx.Render<CronJobs>();
+        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
+
+        cut.Find("[aria-label='View Nightly Report details']").Click();
+        cut.WaitForState(() => cut.Markup.Contains("cron-detail-modal"));
+
+        Assert.Contains("cron-detail-modal", cut.Markup);
+        Assert.Contains("Execution History", cut.Markup);
+        // Run row renders from the /runs endpoint.
+        cut.WaitForState(() => cut.Markup.Contains("cron-runs-table"));
+        Assert.Contains("cron-runs-table", cut.Markup);
+    }
+
+    [Fact]
+    public void Edit_dialog_shows_provider_and_model_dropdowns_for_agent_prompt()
+    {
+        var jobs = JsonSerializer.Serialize(new[]
+        {
+            new { id = "job-1", name = "Nightly Report", schedule = "0 2 * * *", actionType = "agent-prompt", agentId = "farnsworth", enabled = true }
+        });
+        _handler.SetupResponse("GET", "/api/cron", jobs);
+        _handler.SetupResponse("GET", "/api/providers", "[]");
+
+        var cut = _ctx.Render<CronJobs>();
+        cut.WaitForState(() => cut.Markup.Contains("Nightly Report"));
+
+        cut.Find("[aria-label='Edit Nightly Report']").Click();
+        cut.WaitForState(() => cut.Markup.Contains("cron-edit-dialog"));
+
+        // Provider + model selectors are present for agent-prompt jobs.
+        Assert.Contains("cron-edit-provider", cut.Markup);
+        Assert.Contains("cron-edit-model", cut.Markup);
+    }
+
     private sealed class CronJobsMockHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new(StringComparer.OrdinalIgnoreCase);
@@ -120,7 +168,9 @@ public sealed class CronJobsPageTests : IDisposable
             var path = request.RequestUri?.PathAndQuery ?? "";
             var methodKey = $"{request.Method.Method}:{path}";
 
-            foreach (var (key, response) in _responses)
+            // Match the most specific (longest) configured key first so that, e.g.,
+            // "/api/cron/job-1/runs" is not shadowed by the "/api/cron" list stub.
+            foreach (var (key, response) in _responses.OrderByDescending(kv => kv.Key.Length))
             {
                 if (methodKey.Contains(key, StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(response);

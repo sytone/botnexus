@@ -935,17 +935,26 @@ Delete a cron job.
 
 ### Portal UI — Cron Jobs Page
 
-The web portal exposes a **Cron Jobs** page under the **Agents** section of the left
-navigation (route `/cron`). It is backed by the same `/api/cron` endpoints described
+The web portal exposes a **Cron Jobs** page as a top-level entry in the left
+navigation (route `/cron`), a peer of **Agents**, **Skills**, and **Configuration**.
+It is backed by the same `/api/cron` endpoints described
 above and shows the merged view of SQLite-persisted (runtime-created) and
 config-file jobs. From this page an operator can:
 
 - **View** every job with its schedule, action type, target agent, enabled state, and
   next/last run timestamps.
+- **Open a detail view** — click a job row (or the &#x1F441; view button) to open a large
+  modal showing all job properties, an **execution-history timeline** (backed by
+  `GET /api/cron/{jobId}/runs`) with each run's start time, duration, status, and
+  linked session, plus a shortcut to the **related conversation** the job posts into
+  (when the job owns a pinned conversation).
 - **Run now** — trigger an immediate out-of-schedule execution (`POST /api/cron/{jobId}/run`).
-- **Edit** — change the name, schedule, time zone, action payload (message/model,
-  shell command, or webhook URL depending on action type), and enabled flag
-  (`PUT /api/cron/{jobId}`).
+  Triggering from the detail view refreshes the run history in place.
+- **Edit** — change the name, schedule, time zone, action payload, and enabled flag
+  (`PUT /api/cron/{jobId}`) in an enlarged modal. For `agent-prompt` jobs the model is
+  chosen via **provider and model drop-downs** (populated from `/api/providers` and
+  `/api/models`) rather than free text, so only available provider/model combinations
+  can be selected; command and webhook jobs edit their shell command / webhook URL.
 - **Delete** — remove a job after a confirmation prompt (`DELETE /api/cron/{jobId}`);
   the job's pinned conversation is archived alongside the record.
 
