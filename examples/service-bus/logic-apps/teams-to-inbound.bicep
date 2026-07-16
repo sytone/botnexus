@@ -255,7 +255,20 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             }
           }
           else: {
-            actions: {}
+            // Nothing was forwarded (bot/app author, no human author, or the
+            // operator mention was absent). Terminate as 'Cancelled' so the run
+            // history clearly distinguishes filtered-out messages (Cancelled)
+            // from messages that were actually pushed to the queue (Succeeded).
+            // Convention: whenever a conditional is the LAST step in the flow
+            // and the false branch sends nothing, terminate it 'Cancelled'.
+            actions: {
+              Terminate: {
+                type: 'Terminate'
+                inputs: {
+                  runStatus: 'Cancelled'
+                }
+              }
+            }
           }
         }
       }

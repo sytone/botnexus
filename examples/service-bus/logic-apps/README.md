@@ -31,6 +31,22 @@ the outbound app posts back into a chat/channel would re-trigger the inbound app
 filter is the primary loop protection: the Flow-bot reply from the outbound app
 is authored by an application and is skipped.
 
+### Run history: `Cancelled` vs `Succeeded`
+
+The inbound app's forwarding is gated by a single `If` conditional (human
+author + not a bot + operator mention present). When that condition is **false**
+— nothing is pushed to the queue — the flow ends with a `Terminate` action set
+to `runStatus: Cancelled`. This makes the run history self-documenting:
+
+- **Succeeded** = a message was forwarded to the inbound queue.
+- **Cancelled** = the message was filtered out (bot/app author, no human author,
+  or the operator mention was absent) and nothing was sent.
+
+> **Convention:** whenever a conditional is the *last* step in a Logic App and
+> its false branch sends nothing, terminate that branch as `Cancelled` rather
+> than letting the run report `Succeeded` with no effect. It keeps the run
+> history an accurate ledger of which flows actually delivered.
+
 ## Prerequisites
 
 - The parent [`service-bus`](../README.md) namespace + queues already deployed.
