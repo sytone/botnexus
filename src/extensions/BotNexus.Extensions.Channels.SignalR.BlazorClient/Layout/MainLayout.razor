@@ -233,8 +233,8 @@
 
                 <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">&#x1F916; Agents</a>
 
-                @* Agents sub-nav -- only shown when on the agents (or cron) page *@
-                @if (IsOnPage("agents") || IsOnPage("cron"))
+                @* Agents sub-nav -- only shown when on the agents page *@
+                @if (IsOnPage("agents"))
                 {
                     <div class="sidebar-subnav">
                         @foreach (var agent in _sidebarAgents)
@@ -242,9 +242,10 @@
                             <a href="agents/@agent.AgentId" class="sidebar-subnav-item @(IsAgentActive(agent.AgentId) ? "active" : "")" @onclick="CloseSidebar">@agent.DisplayLabel</a>
                         }
                         <a href="agents/new" class="sidebar-subnav-item sidebar-subnav-add" @onclick="CloseSidebar">+ Add Agent</a>
-                        <a href="cron" class="sidebar-subnav-item @NavClass("cron")" data-testid="nav-cron-jobs" @onclick="OnNavClick">&#x23F0; Cron Jobs</a>
                     </div>
                 }
+
+                <a href="cron" class="sidebar-nav-item @NavClass("cron")" data-testid="nav-cron-jobs" @onclick="OnNavClick">&#x23F0; Cron Jobs</a>
             </nav>
 
             @* Build info at bottom *@
