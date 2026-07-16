@@ -30,26 +30,50 @@ public static class EnvironmentApiKeys
     /// Executes get api key.
     /// </summary>
     /// <param name="provider">The provider.</param>
-    /// <returns>The get api key result.</returns>
+    /// <returns>
+    /// The resolved API key, or <c>null</c> when no non-blank value is configured.
+    /// A set-but-blank environment variable (e.g. <c>OPENAI_API_KEY=""</c>) is treated
+    /// as unconfigured so callers' <c>?? GetApiKey(...) ?? ""</c> fallbacks are not masked
+    /// and multi-var priority chains are not short-circuited by an empty leading candidate.
+    /// </returns>
     public static string? GetApiKey(string provider)
     {
-        // GitHub Copilot: try multiple env vars in priority order
+        // GitHub Copilot: try multiple env vars in priority order, skipping blank values.
         if (string.Equals(provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
         {
-            return Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN")
-                   ?? Environment.GetEnvironmentVariable("GH_TOKEN")
-                   ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+            return FirstNonBlank(
+                Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN"),
+                Environment.GetEnvironmentVariable("GH_TOKEN"),
+                Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
         }
 
-        // Anthropic: OAuth token takes precedence over API key
+        // Anthropic: OAuth token takes precedence over API key, skipping blank values.
         if (string.Equals(provider, "anthropic", StringComparison.OrdinalIgnoreCase))
         {
-            return Environment.GetEnvironmentVariable("ANTHROPIC_OAUTH_TOKEN")
-                   ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            return FirstNonBlank(
+                Environment.GetEnvironmentVariable("ANTHROPIC_OAUTH_TOKEN"),
+                Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"));
         }
 
         if (EnvMap.TryGetValue(provider, out var envVar))
-            return Environment.GetEnvironmentVariable(envVar);
+        {
+            var v = Environment.GetEnvironmentVariable(envVar);
+            return string.IsNullOrWhiteSpace(v) ? null : v;
+        }
+
+        return null;
+    }
+
+    // Returns the first value that is not null/whitespace, else null. Used to coalesce
+    // provider env-var priority chains over genuinely-configured (non-blank) values so a
+    // set-but-empty leading variable falls through to the next candidate.
+    private static string? FirstNonBlank(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        }
 
         return null;
     }
