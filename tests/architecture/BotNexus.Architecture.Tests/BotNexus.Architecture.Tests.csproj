@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
