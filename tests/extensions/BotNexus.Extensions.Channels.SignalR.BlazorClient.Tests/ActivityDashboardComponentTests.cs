@@ -239,4 +239,26 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
         Assert.Contains("1", cut.Find("[data-testid='activity-summary-scheduled']").TextContent);
     }
+
+    [Fact]
+    public void Clicking_scheduled_stat_card_toggles_cron_visibility()
+    {
+        SetupConversations(
+            Conv("c1", title: "Normal"),
+            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        // Clicking the scheduled stat card reveals the cron rows (acts as the cron toggle).
+        cut.Find("[data-testid='activity-summary-scheduled']").Click();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+        Assert.Contains("Scheduled", cut.Markup);
+        Assert.Contains("active", cut.Find("[data-testid='activity-summary-scheduled']").GetAttribute("class"));
+
+        // Clicking again hides them.
+        cut.Find("[data-testid='activity-summary-scheduled']").Click();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+    }
 }

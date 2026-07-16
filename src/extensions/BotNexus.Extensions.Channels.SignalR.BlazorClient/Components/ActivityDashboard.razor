@@ -21,10 +21,15 @@
                 <span class="activity-summary-value">@summary.AgentCount</span>
                 <span class="activity-summary-label">@(summary.AgentCount == 1 ? "agent" : "agents")</span>
             </div>
-            <div class="activity-summary-stat" data-testid="activity-summary-scheduled">
+            <button type="button"
+                    class="activity-summary-stat activity-summary-stat--action @(_filter.IncludeCron ? "active" : "")"
+                    data-testid="activity-summary-scheduled"
+                    aria-pressed="@_filter.IncludeCron"
+                    title="@(_filter.IncludeCron ? "Hide scheduled (cron) conversations" : "Show scheduled (cron) conversations")"
+                    @onclick="ToggleCron">
                 <span class="activity-summary-value">@summary.ScheduledCount</span>
                 <span class="activity-summary-label">scheduled</span>
-            </div>
+            </button>
             <div class="activity-summary-stat activity-summary-stat--freshness" data-testid="activity-summary-freshness">
                 <span class="activity-summary-value" title="@(summary.LatestActivity?.ToString("o"))">@FreshnessLabel(summary.LatestActivity)</span>
                 <span class="activity-summary-label">latest activity</span>
