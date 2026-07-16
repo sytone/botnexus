@@ -25,7 +25,7 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests;
 
-public sealed class GatewayHostTests
+public sealed partial class GatewayHostTests
 {
     [Fact]
     public async Task DispatchAsync_RoutesMessageToResolvedAgent()
@@ -1807,7 +1807,8 @@ public sealed class GatewayHostTests
         PendingAskUserInterceptor? pendingAskUserInterceptor = null,
         IConversationStore? conversationStore = null,
         IOptions<PlatformConfig>? platformConfig = null,
-        LlmClient? llmClient = null)
+        LlmClient? llmClient = null,
+        ISessionTurnTracker? turnTracker = null)
         => new(
             supervisor,
             router,
@@ -1823,7 +1824,8 @@ public sealed class GatewayHostTests
             pendingAskUserInterceptor: pendingAskUserInterceptor,
             conversationStore: conversationStore,
             platformConfig: platformConfig,
-            llmClient: llmClient);
+            llmClient: llmClient,
+            turnTracker: turnTracker);
 
     private static InboundMessage CreateMessage(
         string content,

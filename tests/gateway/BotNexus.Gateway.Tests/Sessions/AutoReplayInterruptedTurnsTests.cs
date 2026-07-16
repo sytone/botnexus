@@ -129,7 +129,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
 
         var service = CreateService(store.Object, CreateRegistry("agent-a"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m =>
             m.Content == "hello agent" &&
@@ -146,7 +146,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = false };
 
         var service = CreateService(store.Object, CreateRegistry("agent-b"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
     }
@@ -162,7 +162,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
 
         var service = CreateService(store.Object, CreateRegistry("agent-c"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         // Should NOT replay (at max)
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
@@ -182,7 +182,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
 
         var service = CreateService(store.Object, CreateRegistry("agent-d"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         // Cron session is not interactive — replay must not fire
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
@@ -198,7 +198,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 3 };
 
         var service = CreateService(store.Object, CreateRegistry("agent-e"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         session.Metadata[InterruptedTurnNotificationService.MetadataKeyReplayCount].ShouldBe(1);
     }
@@ -214,7 +214,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
 
         var service = CreateService(store.Object, CreateRegistry("agent-f"), options, orchestrator.Object);
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
     }
