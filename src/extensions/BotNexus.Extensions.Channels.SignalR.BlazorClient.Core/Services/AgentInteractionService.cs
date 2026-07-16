@@ -298,56 +298,59 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
 
-        // Fetch canvas from REST if not already loaded (Phase 3, #413)
+        // Best-effort REST hydration of per-conversation artifacts that arrive out of band from the
+        // live SignalR stream (canvas #413, todo #1464, pending ask_user #1488). A reloaded tab, a
+        // newly-opened window, or a mobile client that missed the live event would otherwise show
+        // stale/empty panels; hydrating on select makes the persisted state reappear. Each call
+        // shares the same fetch/apply/swallow envelope (HydrateBestEffortAsync) so a failing REST
+        // call still silently degrades and a null result is a no-op.
         if (conv is not null && conv.CanvasHtml is null)
         {
-            try
-            {
-                var canvasHtml = await _restClient.GetConversationCanvasAsync(agentId, conversationId);
-                if (canvasHtml is not null)
+            await HydrateBestEffortAsync(
+                conversationId,
+                () => _restClient.GetConversationCanvasAsync(agentId, conversationId),
+                canvasHtml =>
                 {
                     conv.CanvasHtml = canvasHtml;
                     conv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
-                    _store.NotifyChanged();
-                }
-            }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", Sanitise(conversationId)); }
+                    return true;
+                },
+                "canvas");
         }
 
-        // Fetch todo state from REST if not already loaded (#1464 step 5). Mirrors canvas hydration
-        // so the Todo panel shows the persisted plan immediately when the conversation is opened.
         if (conv is not null && conv.TodoJson is null)
         {
-            try
-            {
-                var todoJson = await _restClient.GetConversationTodoAsync(agentId, conversationId);
-                if (todoJson is not null)
+            await HydrateBestEffortAsync(
+                conversationId,
+                () => _restClient.GetConversationTodoAsync(agentId, conversationId),
+                todoJson =>
                 {
                     conv.TodoJson = todoJson;
                     conv.TodoUpdatedAt = DateTimeOffset.UtcNow;
-                    _store.NotifyChanged();
-                }
-            }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort todo hydration failed for {ConversationId}", Sanitise(conversationId)); }
+                    return true;
+                },
+                "todo");
         }
 
-        // Hydrate a pending ask_user prompt from REST (#1488). A reloaded tab, a newly-opened window,
-        // or a mobile client that missed the live UserInputRequired event would otherwise show no
-        // prompt; mirror the canvas/todo hydration so the inline prompt reappears when the conversation
-        // is opened. Only hydrate when nothing is already pending locally so a live prompt is never
-        // clobbered by a slower REST round-trip.
+        // Only hydrate the pending ask_user prompt when nothing is already pending locally so a live
+        // prompt is never clobbered by a slower REST round-trip. The factory guard remains: a fetched
+        // payload only produces a change (and NotifyChanged) when it builds a valid prompt.
         if (_store.GetPendingAskUser(conversationId) is null)
         {
-            try
-            {
-                var pendingJson = await _restClient.GetConversationPendingAskUserAsync(agentId, conversationId);
-                if (AskUserPromptFactory.TryBuildFromPersistedJson(pendingJson, conversationId, out var pendingPrompt))
+            await HydrateBestEffortAsync(
+                conversationId,
+                () => _restClient.GetConversationPendingAskUserAsync(agentId, conversationId),
+                pendingJson =>
                 {
-                    _store.SetPendingAskUser(pendingPrompt);
-                    _store.NotifyChanged();
-                }
-            }
-            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort pending ask_user hydration failed for {ConversationId}", Sanitise(conversationId)); }
+                    if (AskUserPromptFactory.TryBuildFromPersistedJson(pendingJson, conversationId, out var pendingPrompt))
+                    {
+                        _store.SetPendingAskUser(pendingPrompt);
+                        return true;
+                    }
+
+                    return false;
+                },
+                "pending ask_user");
         }
 
         // Fix #789: if the conversation was streaming when the user navigated away, a
@@ -363,6 +366,40 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // Load history if not already loaded
         if (conv is not null && !conv.HistoryLoaded && !conv.IsLoadingHistory)
             await LoadConversationHistoryAsync(agentId, conversationId);
+    }
+
+    /// <summary>
+    /// Best-effort REST hydration envelope shared by the per-conversation artifact hydration paths
+    /// (canvas, todo, pending ask_user) in <see cref="SelectConversationAsync"/>. Captures the
+    /// invariant "fetch a value, apply it if present, notify the store, and swallow any transport
+    /// failure as a debug log" so each artifact only supplies its fetch delegate and apply logic.
+    /// This keeps <see cref="SelectConversationAsync"/> focused on selection orchestration and gives
+    /// the swallow-and-degrade behaviour a single tested seam rather than three copy-pasted blocks.
+    /// </summary>
+    /// <param name="conversationId">Conversation being hydrated (used only for diagnostic logging).</param>
+    /// <param name="fetch">Best-effort REST getter; may return <c>null</c> when nothing is persisted.</param>
+    /// <param name="apply">
+    /// Applies the fetched value to local state and returns <c>true</c> when it produced an observable
+    /// change (so the store is notified only when something actually changed). Never invoked for a
+    /// <c>null</c> fetch result.
+    /// </param>
+    /// <param name="label">Human-readable artifact name for the failure log message.</param>
+    private async Task HydrateBestEffortAsync(
+        string conversationId,
+        Func<Task<string?>> fetch,
+        Func<string, bool> apply,
+        string label)
+    {
+        try
+        {
+            var value = await fetch();
+            if (value is not null && apply(value))
+                _store.NotifyChanged();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Best-effort {Label} hydration failed for {ConversationId}", label, Sanitise(conversationId));
+        }
     }
 
     /// <inheritdoc />
