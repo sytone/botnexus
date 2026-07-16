@@ -933,6 +933,24 @@ Delete a cron job.
 { "jobName": "morning-briefing", "enabled": false }
 ```
 
+### Portal UI — Cron Jobs Page
+
+The web portal exposes a **Cron Jobs** page under the **Agents** section of the left
+navigation (route `/cron`). It is backed by the same `/api/cron` endpoints described
+above and shows the merged view of SQLite-persisted (runtime-created) and
+config-file jobs. From this page an operator can:
+
+- **View** every job with its schedule, action type, target agent, enabled state, and
+  next/last run timestamps.
+- **Run now** — trigger an immediate out-of-schedule execution (`POST /api/cron/{jobId}/run`).
+- **Edit** — change the name, schedule, time zone, action payload (message/model,
+  shell command, or webhook URL depending on action type), and enabled flag
+  (`PUT /api/cron/{jobId}`).
+- **Delete** — remove a job after a confirmation prompt (`DELETE /api/cron/{jobId}`);
+  the job's pinned conversation is archived alongside the record.
+
+System jobs are excluded from the list by default, matching the API behaviour.
+
 ---
 
 ## 11. Migration from HeartbeatService

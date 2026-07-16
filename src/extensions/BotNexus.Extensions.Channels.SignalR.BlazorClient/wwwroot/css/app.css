@@ -3489,6 +3489,45 @@ details[open] > .thinking-summary::before {
 .agents-btn-clone:hover  { background: rgba(255,255,255,0.08); }
 .agents-btn-delete:hover { background: rgba(255, 90, 90, 0.15); }
 
+/* Cron job edit dialog (Cron Jobs page) */
+.cron-edit-dialog {
+    text-align: left;
+    min-width: 22rem;
+    max-width: 34rem;
+}
+.cron-edit-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: 0.85rem;
+}
+.cron-edit-field > label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.cron-edit-field input[type="text"],
+.cron-edit-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-tertiary, #1e2027);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    padding: 0.45rem 0.6rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+.cron-edit-field textarea { resize: vertical; }
+.cron-edit-field-inline > label {
+    flex-direction: row;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: normal;
+    color: var(--text-primary);
+}
+
 /* Allowed-models checkbox list (issue #290 agent editor) */
 .agent-checkbox-list {
     display: flex;
