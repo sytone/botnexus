@@ -210,11 +210,17 @@ public sealed class ConversationGroupingTests : IDisposable
 
         var cut = RenderLayout();
 
-        var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
-        cut.InvokeAsync(() => pinButton.Click());
+        // Wrap BOTH the Find and the Click inside a single InvokeAsync so no re-render can slip
+        // between locating the button and dispatching its click — that gap is what invalidated the
+        // event-handler id (bUnit UnknownEventHandlerIdException) and flaked this suite across PRs.
+        cut.InvokeAsync(() => cut.Find("[data-testid='conversation-pin-btn']").Click());
 
         // Clicking pins the conversation via the interaction service (pinned: true).
-        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true);
+        // InvokeAsync dispatches the click but returns a Task we don't await, so the async click
+        // handler may not have completed when we verify the mock. WaitForAssertion retries the
+        // Received(1) check until the async handler settles (or times out), eliminating the
+        // received-call race that flaked this test under parallel CI load.
+        cut.WaitForAssertion(() => _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", true));
     }
 
     [Fact]
@@ -227,14 +233,17 @@ public sealed class ConversationGroupingTests : IDisposable
 
         var cut = RenderLayout();
 
-        // Find the pin button fresh (not via a captured parent node, whose event-handler id can
-        // go stale after a render — bUnit throws UnknownEventHandlerIdException otherwise). Dispatch
-        // the click through the renderer (InvokeAsync) so it can't race a concurrent re-render under
-        // parallel CI load, which is what surfaced the stale-handler exception across multiple PRs.
-        var pinButton = cut.Find("[data-testid='conversation-pin-btn']");
-        cut.InvokeAsync(() => pinButton.Click());
+        // Wrap BOTH the Find and the Click inside a single InvokeAsync so no re-render can slip
+        // between locating the button and dispatching its click — the captured handler id would
+        // otherwise go stale after an optimistic re-render (bUnit UnknownEventHandlerIdException),
+        // which surfaced the stale-handler exception across multiple PRs under parallel CI load.
+        cut.InvokeAsync(() => cut.Find("[data-testid='conversation-pin-btn']").Click());
 
-        _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false);
+        // InvokeAsync dispatches the click but returns a Task we don't await, so the async click
+        // handler may not have completed when we verify the mock. WaitForAssertion retries the
+        // Received(1) check until the async handler settles (or times out), eliminating the
+        // received-call race that flaked this test under parallel CI load.
+        cut.WaitForAssertion(() => _interaction.Received(1).SetConversationPinnedAsync("a-1", "c-1", false));
     }
 
     [Fact]
