@@ -808,4 +808,121 @@ public sealed class AgentInteractionServiceTests
         message.ToolResult.ShouldBe("ok");
         message.ToolName.ShouldBe("read");
     }
+
+    // ── Best-effort REST hydration on SelectConversationAsync (#2022) ──────
+    // These lock in that collapsing the canvas/todo/ask_user blocks into one
+    // HydrateBestEffortAsync helper preserves behaviour: each artifact still
+    // hydrates on select, timestamps are set, and a failing REST call is
+    // swallowed (silent degrade) rather than surfacing.
+
+    [Fact]
+    public async Task SelectConversationAsync_HydratesCanvasTodoAndAskUser()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-h"] = new ConversationState
+        {
+            ConversationId = "conv-h",
+            Title = "Hydrate",
+            HistoryLoaded = true
+        };
+
+        _restClient.GetConversationCanvasAsync("agent-1", "conv-h").Returns("<div>canvas</div>");
+        _restClient.GetConversationTodoAsync("agent-1", "conv-h").Returns("[{\"text\":\"do it\"}]");
+        _restClient.GetConversationPendingAskUserAsync("agent-1", "conv-h")
+            .Returns("{\"requestId\":\"req-1\",\"prompt\":\"Proceed?\",\"inputType\":\"free_form\"}");
+
+        await _service.SelectConversationAsync("agent-1", "conv-h");
+
+        var conv = agent.Conversations["conv-h"];
+        conv.CanvasHtml.ShouldBe("<div>canvas</div>");
+        conv.CanvasUpdatedAt.ShouldNotBeNull();
+        conv.TodoJson.ShouldBe("[{\"text\":\"do it\"}]");
+        conv.TodoUpdatedAt.ShouldNotBeNull();
+
+        var pending = _store.GetPendingAskUser("conv-h");
+        pending.ShouldNotBeNull();
+        pending!.RequestId.ShouldBe("req-1");
+        pending.Prompt.ShouldBe("Proceed?");
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenHydrationFetchThrows_SwallowsAndLeavesFieldsUnset()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-fail"] = new ConversationState
+        {
+            ConversationId = "conv-fail",
+            Title = "Fail",
+            HistoryLoaded = true
+        };
+
+        _restClient.GetConversationCanvasAsync("agent-1", "conv-fail")
+            .Returns<string?>(_ => throw new HttpRequestException("boom"));
+        _restClient.GetConversationTodoAsync("agent-1", "conv-fail")
+            .Returns<string?>(_ => throw new HttpRequestException("boom"));
+        _restClient.GetConversationPendingAskUserAsync("agent-1", "conv-fail")
+            .Returns<string?>(_ => throw new HttpRequestException("boom"));
+
+        // Must not throw — best-effort hydration silently degrades.
+        await _service.SelectConversationAsync("agent-1", "conv-fail");
+
+        var conv = agent.Conversations["conv-fail"];
+        conv.CanvasHtml.ShouldBeNull();
+        conv.TodoJson.ShouldBeNull();
+        _store.GetPendingAskUser("conv-fail").ShouldBeNull();
+        agent.ActiveConversationId.ShouldBe("conv-fail");
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenHydrationReturnsNull_NoOpsWithoutNotifying()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-null"] = new ConversationState
+        {
+            ConversationId = "conv-null",
+            Title = "Null",
+            HistoryLoaded = true
+        };
+
+        _restClient.GetConversationCanvasAsync("agent-1", "conv-null").Returns((string?)null);
+        _restClient.GetConversationTodoAsync("agent-1", "conv-null").Returns((string?)null);
+        _restClient.GetConversationPendingAskUserAsync("agent-1", "conv-null").Returns((string?)null);
+
+        await _service.SelectConversationAsync("agent-1", "conv-null");
+
+        var conv = agent.Conversations["conv-null"];
+        conv.CanvasHtml.ShouldBeNull();
+        conv.CanvasUpdatedAt.ShouldBeNull();
+        conv.TodoJson.ShouldBeNull();
+        conv.TodoUpdatedAt.ShouldBeNull();
+        _store.GetPendingAskUser("conv-null").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_DoesNotClobberExistingPendingAskUser()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-live"] = new ConversationState
+        {
+            ConversationId = "conv-live",
+            Title = "Live",
+            HistoryLoaded = true
+        };
+
+        _store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "live-req",
+            ConversationId = "conv-live",
+            Prompt = "Live prompt",
+            InputType = "free_form"
+        });
+
+        await _service.SelectConversationAsync("agent-1", "conv-live");
+
+        // A live prompt already pending must never be replaced by a slower REST round-trip,
+        // and the REST getter must not even be consulted.
+        await _restClient.DidNotReceive().GetConversationPendingAskUserAsync("agent-1", "conv-live");
+        _store.GetPendingAskUser("conv-live")!.RequestId.ShouldBe("live-req");
+    }
 }
+
