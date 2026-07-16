@@ -5,10 +5,13 @@ using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -558,6 +561,88 @@ public sealed class ConversationAutoTitleServiceTests
         modelSeenByProvider.ShouldNotBeNull();
         modelSeenByProvider!.BaseUrl.ShouldBe(IndividualEndpoint); // unchanged - no override applied
     }
+
+    // -----------------------------------------------------------------------
+    // #2025: auto-title must resolve credentials through the SAME seam every other
+    // LLM call uses (GatewayAuthManager), not roll its own. Before this fix the
+    // service discarded the injected auth manager (`_ = authManager;`) and called
+    // the provider with no options, so OAuth providers (github-copilot) fell to the
+    // env-key fallback and threw "No API key for github-copilot".
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_ResolvesApiKey_ThroughGatewayAuthManager_ThreadsIntoOptions()
+    {
+        SimpleStreamOptions? optionsSeenByProvider = null;
+        var llmClient = CreateCapturingLlmClient(
+            "Chat About Cats", EnterpriseModel, _ => { }, o => optionsSeenByProvider = o);
+        var conv = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = ConversationAutoTitleService.DefaultTitle };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // A real GatewayAuthManager backed by an auth.json OAuth entry for github-copilot.
+        var authManager = CreateAuthManagerWithCopilotToken("copilot-oauth-access-token");
+        var svc = new ConversationAutoTitleService(store.Object, llmClient, NullLogger.Instance, notifier: null, authManager: authManager);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "What do cats eat?", "Cats eat...", null, 30, CancellationToken.None);
+
+        result.ShouldBe("Chat About Cats");
+        optionsSeenByProvider.ShouldNotBeNull();
+        // The resolved OAuth token must be threaded into the provider options, exactly as the
+        // foreground agent loop and the compactor do.
+        optionsSeenByProvider!.ApiKey.ShouldBe("copilot-oauth-access-token");
+    }
+
+    [Fact]
+    public async Task GenerateAndSaveAsync_NullAuthManager_DegradesGracefully_NullApiKey()
+    {
+        // Behaviour-preserving: with no auth manager, a null ApiKey is threaded and the provider
+        // falls back to environment keys (exactly as passing null options did before #2025).
+        SimpleStreamOptions? optionsSeenByProvider = null;
+        var llmClient = CreateCapturingLlmClient(
+            "Some Title", EnterpriseModel, _ => { }, o => optionsSeenByProvider = o);
+        var conv = new Conversation { ConversationId = ConvId, AgentId = AgentId, Title = ConversationAutoTitleService.DefaultTitle };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(ConvId, It.IsAny<CancellationToken>())).ReturnsAsync(conv);
+        store.Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var svc = new ConversationAutoTitleService(store.Object, llmClient, NullLogger.Instance);
+
+        var result = await svc.GenerateAndSaveAsync(
+            ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
+
+        result.ShouldBe("Some Title");
+        // With no auth manager, titling passes null options through (exactly as before #2025), so
+        // the provider applies its own environment-key fallback. Null options = behaviour-preserving.
+        optionsSeenByProvider.ShouldBeNull();
+    }
+
+    // Builds a real GatewayAuthManager whose auth.json carries a github-copilot OAuth entry, so
+    // the credential-resolution seam under test is exercised for real (never mocked).
+    private static GatewayAuthManager CreateAuthManagerWithCopilotToken(string accessToken)
+    {
+        var fileSystem = new MockFileSystem();
+        var configDir = PlatformConfigLoader.GetDefaultConfigDirectory(fileSystem);
+        fileSystem.Directory.CreateDirectory(configDir);
+        var authFilePath = Path.Combine(configDir, "auth.json");
+        fileSystem.File.WriteAllText(authFilePath, $$"""
+            {
+              "github-copilot": {
+                "type": "oauth",
+                "refresh": "unused",
+                "access": "{{accessToken}}",
+                "expires": 4102444800000,
+                "endpoint": "https://api.enterprise.githubcopilot.com"
+              }
+            }
+            """);
+
+        var monitor = new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig());
+        return new GatewayAuthManager(monitor, NullLogger<GatewayAuthManager>.Instance, fileSystem);
+    }
+
     // -----------------------------------------------------------------------
     // Timeout wiring (#auto-title config): timeoutSeconds is now honoured
     // -----------------------------------------------------------------------
@@ -803,12 +888,19 @@ public sealed class ConversationAutoTitleServiceTests
     /// the endpoint-override (#1636) can be asserted against the model that hit the wire.
     /// </summary>
     private static LlmClient CreateCapturingLlmClient(string responseText, LlmModel registeredModel, Action<LlmModel> captureModel)
+        => CreateCapturingLlmClient(responseText, registeredModel, captureModel, null);
+
+    private static LlmClient CreateCapturingLlmClient(
+        string responseText,
+        LlmModel registeredModel,
+        Action<LlmModel> captureModel,
+        Action<SimpleStreamOptions?>? captureOptions)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register(registeredModel.Provider, registeredModel);
 
         var providerRegistry = new ApiProviderRegistry();
-        providerRegistry.Register(new CapturingApiProvider(responseText, captureModel));
+        providerRegistry.Register(new CapturingApiProvider(responseText, captureModel, captureOptions));
 
         return new LlmClient(providerRegistry, modelRegistry);
     }
@@ -817,11 +909,16 @@ public sealed class ConversationAutoTitleServiceTests
     {
         private readonly string _responseText;
         private readonly Action<LlmModel> _captureModel;
+        private readonly Action<SimpleStreamOptions?>? _captureOptions;
 
-        public CapturingApiProvider(string responseText, Action<LlmModel> captureModel)
+        public CapturingApiProvider(
+            string responseText,
+            Action<LlmModel> captureModel,
+            Action<SimpleStreamOptions?>? captureOptions = null)
         {
             _responseText = responseText;
             _captureModel = captureModel;
+            _captureOptions = captureOptions;
         }
 
         public string Api => "capture-api";
@@ -834,6 +931,7 @@ public sealed class ConversationAutoTitleServiceTests
         public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
         {
             _captureModel(model);
+            _captureOptions?.Invoke(options);
             var msg = new AssistantMessage(
                 Content: [new TextContent(_responseText)],
                 Api: "capture-api",
@@ -849,4 +947,13 @@ public sealed class ConversationAutoTitleServiceTests
             return stream;
         }
     }
+}
+
+// File-scoped options monitor so the #2025 auth-seam tests can build a real GatewayAuthManager
+// without colliding with the file-scoped StaticOptionsMonitor definitions in sibling test files.
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue { get; } = value;
+    public T Get(string? name) => CurrentValue;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

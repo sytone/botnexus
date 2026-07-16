@@ -26,6 +26,7 @@ public sealed class ConversationAutoTitleService
     private readonly IConversationChangeNotifier? _notifier;
     private readonly LlmClient _llmClient;
     private readonly ILogger _logger;
+    private readonly GatewayAuthManager? _authManager;
 
     /// <summary>
     /// Creates the auto-title service. Since #1639 the resolved titling model already carries the
@@ -45,9 +46,12 @@ public sealed class ConversationAutoTitleService
         _notifier = notifier;
         // #1639: the titling model is resolved from the registry, which already carries the correct
         // per-provider endpoint (enterprise vs individual GitHub Copilot resolved at registration),
-        // so no endpoint override is threaded through here anymore. authManager is retained for
-        // API-compatibility with existing callers.
-        _ = authManager;
+        // so no endpoint override is threaded through here anymore.
+        // #2025: the auth manager IS used now - titling resolves its API key through the same
+        // GatewayAuthManager seam every other LLM call uses (foreground agent loop, compaction),
+        // rather than calling the provider with no options and relying on environment keys that do
+        // not exist for OAuth providers (the "No API key for github-copilot" failure).
+        _authManager = authManager;
     }
 
     /// <summary>
@@ -144,8 +148,21 @@ public sealed class ConversationAutoTitleService
             // A non-positive configured timeout would otherwise cancel the call instantly; clamp
             // to the 30s default so a mis-set zero degrades to default behaviour, not no titling.
             var effectiveTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+
+            // #2025: resolve credentials through the shared GatewayAuthManager seam and thread the
+            // key into the provider options, exactly as the foreground agent loop and the compactor
+            // do. Without this the provider fell back to environment keys (absent for OAuth
+            // providers like github-copilot) and threw "No API key", surfacing as an empty title.
+            // A null auth manager yields null-key options -> provider env fallback (behaviour-
+            // preserving for callers/tests that construct the service without an auth manager).
+            var streamOptions = _authManager is not null
+                ? await _authManager
+                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions: null, ct)
+                    .ConfigureAwait(false)
+                : null;
+
             completion = await _llmClient
-                .CompleteSimpleAsync(model, context)
+                .CompleteSimpleAsync(model, context, streamOptions)
                 .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
                 .ConfigureAwait(false);
         }

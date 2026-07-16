@@ -606,23 +606,24 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Without this, the provider falls back to environment variables which
         // are not set in the gateway process — resulting in auth failures that
         // surface as empty content responses.
-        string? apiKey = null;
-        if (_authManager is not null)
-        {
-            apiKey = await _authManager.GetApiKeyAsync(model.Provider, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
         // #1652: wire the otherwise-inert StreamSetupTimeoutMs first-token watchdog for this
         // background (non-interactive) compaction call. Always build the options so the cap is
         // applied even when apiKey is null (a null ApiKey falls back to environment keys in the
         // provider, exactly as passing null options did before - behaviour-preserving for auth).
-        var streamOptions = new SimpleStreamOptions
+        // #2025: credential resolution + options threading go through the shared
+        // GatewayAuthManager.CreateAuthenticatedOptionsAsync seam so every background LLM caller
+        // (compaction, auto-title) authenticates identically instead of rolling its own.
+        var baseOptions = new SimpleStreamOptions
         {
-            ApiKey = apiKey,
             CancellationToken = cancellationToken,
             StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options)
         };
+
+        var streamOptions = _authManager is not null
+            ? await _authManager
+                .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, cancellationToken)
+                .ConfigureAwait(false)
+            : baseOptions;
 
         // Create a timeout-linked token so hung provider calls are cancelled after
         // CompactionOptions.TimeoutSeconds. The linked token fires on whichever

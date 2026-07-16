@@ -121,6 +121,34 @@ public sealed class GatewayAuthManager
         return await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// #2025: the single credential-threading seam for background (non-agent-loop) LLM callers.
+    /// Resolves the provider API key via <see cref="GetApiKeyAsync"/> and returns a
+    /// <see cref="SimpleStreamOptions"/> carrying it, mirroring what the foreground agent loop
+    /// (<c>AgentLoopRunner.BuildStreamOptionsAsync</c>) does for interactive turns. Background
+    /// callers (auto-title, compaction) route through this instead of rolling their own
+    /// key-resolution + options-building, so every LLM call authenticates the same way.
+    /// </summary>
+    /// <param name="provider">The model's provider (e.g. <c>github-copilot</c>).</param>
+    /// <param name="baseOptions">Optional caller-supplied options to preserve (timeouts, cancellation,
+    /// stream-setup watchdog). A copy is returned with <see cref="SimpleStreamOptions.ApiKey"/> set;
+    /// the caller's instance is not mutated. When null a fresh options instance is created.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// Options with the resolved key applied. A null/blank resolved key leaves <c>ApiKey</c> null so
+    /// the provider falls back to environment keys - behaviour-preserving for callers that previously
+    /// passed no options at all.
+    /// </returns>
+    public async Task<SimpleStreamOptions> CreateAuthenticatedOptionsAsync(
+        string provider,
+        SimpleStreamOptions? baseOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        var options = baseOptions ?? new SimpleStreamOptions();
+        return string.IsNullOrWhiteSpace(apiKey) ? options : options with { ApiKey = apiKey };
+    }
+
     private async Task<string?> ResolveProviderConfigApiKeyAsync(string provider, CancellationToken cancellationToken)
     {
         if (_platformConfig.CurrentValue.Providers is null)
