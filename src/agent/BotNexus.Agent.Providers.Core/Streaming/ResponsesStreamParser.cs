@@ -54,9 +54,43 @@ public static class ResponsesStreamParser
     /// transport has a confirmed wire-level quirk; tool arguments and reasoning are never changed.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
-    public static async Task ParseAsync(
+    public static Task ParseAsync(
         LlmStream stream,
         StreamReader reader,
+        LlmModel model,
+        StreamOptions? options,
+        string api,
+        ILogger logger,
+        Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
+        Action<JsonElement>? onParsedEvent,
+        Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
+        Func<LlmModel, string, string>? normalizeTextDelta,
+        CancellationToken ct)
+        => ParseEventsAsync(
+            stream,
+            async cancellationToken =>
+            {
+                var evt = await ReadSseEventAsync(reader, cancellationToken).ConfigureAwait(false);
+                return evt is null ? null : new ResponsesEvent(evt.Event, evt.Data);
+            },
+            model,
+            options,
+            api,
+            logger,
+            emitError,
+            onParsedEvent,
+            resolveConfiguredServiceTier,
+            normalizeTextDelta,
+            ct);
+
+    /// <summary>
+    /// Normalizes Responses JSON events from any provider-private wire transport into the shared
+    /// <see cref="LlmStream"/> contract. SSE and WebSocket adapters differ only in how they supply
+    /// the next JSON event.
+    /// </summary>
+    public static async Task ParseEventsAsync(
+        LlmStream stream,
+        Func<CancellationToken, ValueTask<ResponsesEvent?>> readEvent,
         LlmModel model,
         StreamOptions? options,
         string api,
@@ -99,7 +133,7 @@ public static class ResponsesStreamParser
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var evt = await ReadSseEventAsync(reader, ct);
+            var evt = await readEvent(ct).ConfigureAwait(false);
             if (evt is null) break;
 
             if (string.Equals(evt.Event, "error", StringComparison.Ordinal))
@@ -172,6 +206,8 @@ public static class ResponsesStreamParser
                             var state = new ToolState(callId, itemId, name, index);
                             state.Arguments.Append(arguments);
                             toolStates[callId] = state;
+                            if (!string.IsNullOrWhiteSpace(itemId))
+                                toolStates[itemId] = state;
 
                             if (arguments.Length > 0)
                                 stream.Push(new ToolCallDeltaEvent(index, arguments, BuildPartial()));
@@ -241,9 +277,9 @@ public static class ResponsesStreamParser
                 if (evt.Event is "response.function_call_arguments.delta")
                 {
                     EnsureStart();
-                    var callId = GetString(root, "call_id");
+                    var stateKey = GetString(root, "call_id") ?? GetString(root, "item_id");
                     var delta = GetString(root, "delta") ?? "";
-                    if (callId is null || delta.Length == 0 || !toolStates.TryGetValue(callId, out var state)) continue;
+                    if (stateKey is null || delta.Length == 0 || !toolStates.TryGetValue(stateKey, out var state)) continue;
 
                     state.Arguments.Append(delta);
                     contentBlocks[state.ContentIndex] = new ToolCallContent(
@@ -256,9 +292,9 @@ public static class ResponsesStreamParser
 
                 if (evt.Event is "response.function_call_arguments.done")
                 {
-                    var callId = GetString(root, "call_id");
+                    var stateKey = GetString(root, "call_id") ?? GetString(root, "item_id");
                     var finalArgs = GetString(root, "arguments") ?? "";
-                    if (callId is null || !toolStates.TryGetValue(callId, out var state)) continue;
+                    if (stateKey is null || !toolStates.TryGetValue(stateKey, out var state)) continue;
                     var before = state.Arguments.ToString();
                     state.Arguments.Clear();
                     state.Arguments.Append(finalArgs);
@@ -319,6 +355,8 @@ public static class ResponsesStreamParser
                             contentBlocks[state.ContentIndex] = toolCall;
                             stream.Push(new ToolCallEndEvent(state.ContentIndex, toolCall, BuildPartial()));
                             toolStates.Remove(callId);
+                            if (!string.IsNullOrWhiteSpace(state.ItemId))
+                                toolStates.Remove(state.ItemId);
                             break;
                         }
                     }

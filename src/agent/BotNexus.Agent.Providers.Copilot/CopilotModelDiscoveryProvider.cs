@@ -146,7 +146,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
         var (contextWindow, maxTokens) = ResolveLimits(info);
         var compat = api == "github-copilot-completions" ? CopilotCompletionsCompat : null;
 
-        return new LlmModel(
+        var model = new LlmModel(
             Id: id,
             Name: name,
             Api: api,
@@ -160,6 +160,8 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             SupportsExtraHighThinking: supportsExtraHigh,
             Headers: CopilotHeaders,
             Compat: compat);
+        CopilotResolvedModelDescriptors.Set(model, info.SupportedEndpoints);
+        return model;
     }
 
     /// <summary>
