@@ -82,3 +82,8 @@ The Blazor portal communicates exclusively via the SignalR channel:
 - [SignalR Hub Contract](/signalr-hub-contract) — Hub method and event reference
 - [Telegram Channel](/user-guide/channels/telegram) — Alternative channel
 - [Service Bus Channel](/user-guide/channels/service-bus) — Alternative channel
+
+
+## Chat attachments
+
+The desktop portal accepts up to 8 draft attachments through the file picker, plus images pasted into the message box. Individual files and the combined draft are limited to 7 MB so base64 encoding remains within the gateway's default 10 MB SignalR frame limit. Text files are decoded into textual content parts; images and other files retain their MIME type, filename, and bytes as binary content parts.

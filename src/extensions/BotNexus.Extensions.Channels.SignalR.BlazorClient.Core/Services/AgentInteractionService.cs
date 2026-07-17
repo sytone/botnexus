@@ -44,9 +44,20 @@ public sealed class AgentInteractionService : IAgentInteractionService
         value?.Replace("\r", string.Empty, StringComparison.Ordinal)
               .Replace("\n", " ", StringComparison.Ordinal);
 
+    private static MediaContentPartDto ToContentPart(DraftAttachment attachment)
+    {
+        if (attachment.MimeType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+            return new MediaContentPartDto { MimeType = attachment.MimeType, FileName = attachment.FileName, Text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(attachment.Base64Data)) };
+        return new MediaContentPartDto { MimeType = attachment.MimeType, FileName = attachment.FileName, Base64Data = attachment.Base64Data };
+    }
+
     // ── Messaging ─────────────────────────────────────────────────────────
 
-    public async Task SendMessageAsync(string agentId, string content)
+    public Task SendMessageAsync(string agentId, string content)
+        => SendMessageAsync(agentId, content, []);
+
+    /// <inheritdoc />
+    public async Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
         var agent = _store.GetAgent(agentId);
         if (agent is null) return;
@@ -75,7 +86,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         {
             // Always pass the conversation ID — the router handles direct lookup without binding scan.
             // Removed the IsDefault special-case that previously caused duplicate thread bindings and double fan-out.
-            var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow);
+            var result = attachments.Count == 0
+                ? await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow)
+                : await _hub.SendMessageWithMediaAsync(agentId, agent.ChannelType ?? "signalr", content,
+                    attachments.Select(ToContentPart).ToArray(), convIdNow);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convIdNow);
 
             // Refresh conversation so ActiveSessionId is current

@@ -245,6 +245,46 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SendMessageWithMedia_WithConversationId_RoutesToRequestedConversation()
+    {
+        const string targetSessionId = "session-target";
+        const string targetConversationId = "conv-target";
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(value => value.DispatchAsync(
+                It.Is<InboundMessageContext>(context => context.RequestedConversationId == ConversationId.From(targetConversationId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(
+                    ConversationId.From(targetConversationId),
+                    SessionId.From(targetSessionId),
+                    false,
+                    false)));
+        var hub = CreateHub(
+            orchestrator: orchestrator,
+            connectionId: "conn-1",
+            conversationDispatcher: conversationDispatcher.Object);
+        var parts = new List<MediaContentPartDto>
+        {
+            new() { MimeType = "image/png", Base64Data = "AQID", FileName = "pasted.png" }
+        };
+
+        var result = await hub.SendMessageWithMedia(
+            AgentId.From("agent-a"), ChannelKey.From("signalr"), string.Empty, parts, targetConversationId);
+
+        result.SessionId.ShouldBe(targetSessionId);
+        var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
+        var routingHints = Assert.IsType<InboundMessageRoutingHints>(dispatched.RoutingHints);
+        routingHints.RequestedConversationId.ShouldBe(ConversationId.From(targetConversationId));
+        var contentParts = Assert.IsAssignableFrom<IReadOnlyList<MessageContentPart>>(dispatched.ContentParts);
+        var binary = contentParts.ShouldHaveSingleItem().ShouldBeOfType<BinaryContentPart>();
+        binary.FileName.ShouldBe("pasted.png");
+        binary.Data.ShouldBe(new byte[] { 1, 2, 3 });
+    }
+
+    [Fact]
     public async Task GatewayHub_SendMessage_WithAgentAndChannelType_RoutesToExistingSession()
     {
         // Wave 2: second message for same agent+channel+address reuses the existing conversation session.

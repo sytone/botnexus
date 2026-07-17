@@ -5499,3 +5499,14 @@ h3.conversation-title.editable:hover {
     .cron-detail-props { grid-template-columns: 1fr; }
 }
 
+
+/* Chat attachments */
+.attachment-composer { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 55%; }
+.attach-btn { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.attach-btn:focus-within { outline: 2px solid var(--accent); }
+.attachment-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 15rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.78rem; }
+.attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-size { color: var(--text-muted); }
+.attachment-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.attachment-error { flex-basis: 100%; color: var(--error); font-size: 0.8rem; }

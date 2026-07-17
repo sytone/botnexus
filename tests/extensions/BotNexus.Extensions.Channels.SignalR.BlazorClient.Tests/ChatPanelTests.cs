@@ -197,6 +197,7 @@ public sealed class ChatPanelTests : IDisposable
         CreateAndSeedAgent("agent-1");
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("chatScroll.preventEnterSubmit", _ => true);
+        _ctx.JSInterop.SetupVoid("chatAttachments.bindPaste", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.observeTopForLoadMore", _ => true);
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
