@@ -29,7 +29,7 @@ namespace BotNexus.Gateway.Sessions;
 /// A replay counter in session metadata caps retries at <see cref="GatewayOptions.MaxAutoReplayAttempts"/>
 /// to prevent infinite crash loops.
 /// </remarks>
-public sealed class InterruptedTurnNotificationService : IHostedService
+public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 {
     internal const string NotificationContent =
         "⚠️ The gateway was restarted while your last message was being processed. " +
@@ -81,7 +81,21 @@ public sealed class InterruptedTurnNotificationService : IHostedService
     }
 
     /// <inheritdoc />
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>
+    /// No-op at StartAsync: the interrupted-turn scan is deferred to <see cref="StartedAsync"/>.
+    /// The scan iterates <see cref="IAgentRegistry.GetAll"/>, but agents are registered by other
+    /// hosted services (e.g. BuiltInAgentRegistrationService, AgentConfigurationHostedService)
+    /// during their own StartAsync. Running the scan here races that registration and historically
+    /// always observed an empty registry, so the scan silently no-opped and orphaned sentinels
+    /// survived every restart (#2030). StartedAsync runs only after every hosted service's
+    /// StartAsync has completed, so the registry is fully populated by then.
+    /// </summary>
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public async Task StartedAsync(CancellationToken cancellationToken)
     {
         var agents = _agentRegistry.GetAll();
         var notified = 0;
@@ -187,6 +201,12 @@ public sealed class InterruptedTurnNotificationService : IHostedService
 
     /// <inheritdoc />
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     private Task<bool> TryAutoReplayAsync(GatewaySession session, AgentId agentId, CancellationToken cancellationToken)
     {

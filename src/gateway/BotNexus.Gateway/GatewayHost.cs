@@ -67,6 +67,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IActiveLoopTracker? _activeLoopTracker;
     private readonly GatewayAuthManager? _authManager;
     private readonly IOutboundResponseDeliverer _deliverer;
+    private readonly Sessions.ISessionTurnTracker _turnTracker;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -93,7 +94,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IActivityTracker? activityTracker = null,
         IActiveLoopTracker? activeLoopTracker = null,
         GatewayAuthManager? authManager = null,
-        IOutboundResponseDeliverer? outboundResponseDeliverer = null)
+        IOutboundResponseDeliverer? outboundResponseDeliverer = null,
+        Sessions.ISessionTurnTracker? turnTracker = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -115,6 +117,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _activityTracker = activityTracker;
         _activeLoopTracker = activeLoopTracker;
         _authManager = authManager;
+        // Live-turn tracker powers write-time self-heal of orphaned crash sentinels (#2030).
+        // Tests that construct GatewayHost directly may not supply one; a fresh tracker keeps
+        // behaviour identical (no live turns tracked from other GatewayHost instances).
+        _turnTracker = turnTracker ?? new Sessions.SessionTurnTracker();
         // Outbound fan-out delivery is a focused collaborator (#1811). Tests that construct
         // GatewayHost directly may not provide one; build a fallback from the deps we already
         // have so behaviour matches production. When no conversation router is configured there
@@ -316,6 +322,25 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     new KeyValuePair<string, object?>("botnexus.agent.id", agentId),
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType));
             }
+
+            // Write-time self-heal of orphaned crash sentinels (#2030). A turn that died
+            // mid-flight (sub-agent bail, provider stream death, host sleep, unhandled crash)
+            // leaves a crash sentinel that wedges the session: every later user message queues
+            // behind a phantom "turn in progress" that never completes, and the startup scan
+            // only runs on restart. When an inbound message arrives for a session that carries a
+            // sentinel but has NO live in-memory turn, the sentinel is provably an orphan (the
+            // per-session FIFO queue guarantees no concurrent turn for this session is running),
+            // so clear it and proceed - the session unblocks the instant the user retries, no
+            // restart required. If a turn IS live the sentinel is legitimate and left untouched.
+            if (!_turnTracker.HasLiveTurn(sessionId)
+                && session.History.Any(static e => e.IsCrashSentinel))
+            {
+                _logger.LogInformation(
+                    "Self-healing orphaned crash sentinel for session '{SessionId}' (no live turn); "
+                    + "clearing so the interrupted turn unblocks without a restart (#2030).",
+                    sessionId);
+                session.RemoveCrashSentinels();
+            }
             session.ChannelType ??= message.ChannelType;
             // Carry the connecting client kind (e.g. SignalR "mobile" vs "desktop") from the
             // inbound message onto the session so the system-prompt builder can surface it on
@@ -431,6 +456,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             // the exact prior order (compaction -> abandoned-turn handle-stop+notify ->
             // crash sentinel save); none of its locals escape into the execution path below,
             // so applying it here preserves the prior control flow and side-effect ordering.
+            // Mark this session as having a live turn for the duration of execution so the
+            // write-time self-heal above never mistakes a genuinely in-flight turn's sentinel
+            // for an orphan (#2030). Disposed at the end of this per-agent iteration.
+            using var turnScope = _turnTracker.BeginTurn(sessionId);
             await PrepareTurnAsync(session, message, typedAgentId, typedSessionId, sessionId, cancellationToken);
 
             // #1518: capture the run's authoritative session identity (id + conversation) NOW,

@@ -95,7 +95,7 @@ public sealed class InterruptedTurnNotificationServiceTests
         var store = CreateStore(session);
         var service = CreateService(store.Object, CreateRegistry("agent-a"));
 
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         // Sentinel should be gone
         session.History.ShouldNotContain(e => e.IsCrashSentinel);
@@ -117,7 +117,7 @@ public sealed class InterruptedTurnNotificationServiceTests
         var store = CreateStore(session);
         var service = CreateService(store.Object, CreateRegistry("agent-a"));
 
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         session.History.ShouldNotContain(e => e.Role == MessageRole.Notification);
         store.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -134,7 +134,7 @@ public sealed class InterruptedTurnNotificationServiceTests
 
         var service = CreateService(store.Object, CreateRegistry("agent-b"), broadcaster: broadcaster.Object);
 
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         broadcaster.Verify(
             b => b.PublishAsync(
@@ -151,7 +151,7 @@ public sealed class InterruptedTurnNotificationServiceTests
         var store = CreateStore(interrupted, clean);
         var service = CreateService(store.Object, CreateRegistry("agent-x"));
 
-        await service.StartAsync(CancellationToken.None);
+        await service.StartedAsync(CancellationToken.None);
 
         store.Verify(s => s.SaveAsync(interrupted, It.IsAny<CancellationToken>()), Times.Once);
         store.Verify(s => s.SaveAsync(clean, It.IsAny<CancellationToken>()), Times.Never);
