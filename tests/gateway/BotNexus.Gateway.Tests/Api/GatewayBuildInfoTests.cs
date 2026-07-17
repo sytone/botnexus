@@ -1,8 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using BotNexus.Gateway.Api;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Gateway.Tests.Api;
@@ -57,7 +59,29 @@ public sealed class GatewayBuildInfoTests
         commitShort.GetString()!.Length.ShouldBeLessThanOrEqualTo(7);
     }
 
-    private static WebApplicationFactory<Program> CreateTestFactory()
+    [Fact]
+    public async Task InfoEndpoint_ReturnsConfiguredDefaultAgentId()
+    {
+        await using var factory = CreateTestFactory("configured-agent");
+        using var client = factory.CreateClient();
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/api/gateway/info"));
+
+        document.RootElement.GetProperty("defaultAgentId").GetString().ShouldBe("configured-agent");
+    }
+
+    [Fact]
+    public async Task InfoEndpoint_ReturnsNullDefaultAgentId_WhenNotConfigured()
+    {
+        await using var factory = CreateTestFactory();
+        using var client = factory.CreateClient();
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/api/gateway/info"));
+
+        document.RootElement.GetProperty("defaultAgentId").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    private static WebApplicationFactory<Program> CreateTestFactory(string? defaultAgentId = null)
         => new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -65,6 +89,7 @@ public sealed class GatewayBuildInfoTests
                 builder.UseUrls("http://127.0.0.1:0");
                 builder.ConfigureServices(services =>
                 {
+                    services.Configure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
                     var hostedServices = services
                         .Where(d => d.ServiceType == typeof(IHostedService))
                         .ToList();
