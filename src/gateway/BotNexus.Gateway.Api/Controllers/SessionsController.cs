@@ -347,6 +347,12 @@ public sealed class SessionsController : ControllerBase
             systemPromptCapturedAt = session.LastRenderedSystemPromptAt;
         }
 
+        var isExecutionLive = handle?.IsRunning == true;
+        var isCronSession = session.ChannelType?.Value.Equals("cron", StringComparison.Ordinal) == true;
+        var lifecycleDiagnostic = isCronSession && session.Status == SessionStatus.Active
+            ? isExecutionLive ? "live-execution" : "stale-persisted-active"
+            : null;
+
         var result = new
         {
             sessionId = session.SessionId.Value,
@@ -358,6 +364,8 @@ public sealed class SessionsController : ControllerBase
             messageCount = session.MessageCount,
             conversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : (string?)null,
             channelType = session.ChannelType?.Value,
+            isExecutionLive,
+            lifecycleDiagnostic,
             systemPrompt = systemPrompt,
             systemPromptCapturedAt = systemPromptCapturedAt,
             history = new

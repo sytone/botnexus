@@ -695,6 +695,114 @@ public sealed class CronTriggerTests
             "Conversation must still be reactivated even when notifier is absent");
     }
 
+    // -- #2045 terminal cron lifecycle --
+
+    [Fact]
+    public async Task CreateSessionAsync_Success_SealsSessionExactlyOnce()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => statuses.Add(session.Status))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        await trigger.CreateSessionAsync(AgentId.From("agent-terminal"), "run",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-success"), JobName = "Success" });
+
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+        statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_PromptFailure_SealsSessionExactlyOnce()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => statuses.Add(session.Status))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        await Should.ThrowAsync<InvalidOperationException>(() => trigger.CreateSessionAsync(
+            AgentId.From("agent-terminal"), "run",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-failure"), JobName = "Failure" }));
+
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+        statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_AgentResolutionFailure_SealsSessionExactlyOnce()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new KeyNotFoundException("agent not registered"));
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => statuses.Add(session.Status))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        await Should.ThrowAsync<KeyNotFoundException>(() => trigger.CreateSessionAsync(
+            AgentId.From("agent-missing"), "run",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-missing"), JobName = "Missing" }));
+
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+        statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_Timeout_SealsSessionExactlyOnce()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("timed out"));
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => statuses.Add(session.Status))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        await Should.ThrowAsync<TaskCanceledException>(() => trigger.CreateSessionAsync(
+            AgentId.From("agent-terminal"), "run",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-timeout"), JobName = "Timeout" }));
+
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+        statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_Cancellation_SealsSessionExactlyOnce()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => statuses.Add(session.Status))
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        await Should.ThrowAsync<OperationCanceledException>(() => trigger.CreateSessionAsync(
+            AgentId.From("agent-terminal"), "run",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-cancel"), JobName = "Cancel" }));
+
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+        statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     // -- #1722 Part A: near-empty wake sessions are not persisted --
