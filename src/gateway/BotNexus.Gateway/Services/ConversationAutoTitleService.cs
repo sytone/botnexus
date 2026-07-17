@@ -336,31 +336,32 @@ public sealed class ConversationAutoTitleService
     /// </summary>
     internal static string ExtractTitleText(AssistantMessage completion)
     {
-        var text = string.Join(
-            " ",
+        // Provider streaming can surface each delta as a separate content block. Preserve the
+        // provider's exact boundaries: inserting separators here splits token fragments such as
+        // "Container" + "ized" and doubles whitespace already carried by chunks.
+        var text = string.Concat(
             completion.Content
                 .OfType<TextContent>()
-                .Select(t => t.Text)
-                .Where(t => !string.IsNullOrWhiteSpace(t)));
+                .Select(t => t.Text));
 
         if (!string.IsNullOrWhiteSpace(text))
             return text;
 
         // No usable text block — fall back to thinking content so a reasoning model still titles.
-        return string.Join(
-            " ",
+        return string.Concat(
             completion.Content
                 .OfType<ThinkingContent>()
-                .Select(t => t.Thinking)
-                .Where(t => !string.IsNullOrWhiteSpace(t)));
+                .Select(t => t.Thinking));
     }
 
     internal static string SanitizeTitle(string raw)
     {
-        var sanitised = raw
+        var withoutQuotes = raw
             .Replace("\"", "")
-            .Replace("'", "")
-            .Trim();
+            .Replace("'", "");
+        var sanitised = string.Join(
+            " ",
+            withoutQuotes.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         // Limit to 80 chars defensively.
         return sanitised.Length > 80 ? sanitised[..80].TrimEnd() : sanitised;
     }
