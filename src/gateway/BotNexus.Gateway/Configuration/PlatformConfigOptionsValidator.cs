@@ -21,7 +21,8 @@ public sealed class PlatformConfigOptionsValidator : IValidateOptions<PlatformCo
     public ValidateOptionsResult Validate(string? name, PlatformConfig options)
     {
         var errors = new List<string>();
-        errors.AddRange(PlatformConfigSchema.ValidateObject(options));
+        errors.AddRange(PlatformConfigSchema.ValidateObject(options)
+            .Where(error => !IsQuarantinableAgentValueError(error)));
         errors.AddRange(PlatformConfigLoader.ValidateAnnotated(options));
 
         var distinctErrors = errors
@@ -33,4 +34,8 @@ public sealed class PlatformConfigOptionsValidator : IValidateOptions<PlatformCo
             ? ValidateOptionsResult.Fail(distinctErrors)
             : ValidateOptionsResult.Success;
     }
+
+    private static bool IsQuarantinableAgentValueError(string error)
+        => error.StartsWith("schema.agents.", StringComparison.OrdinalIgnoreCase)
+            && error.Contains(".thinking", StringComparison.OrdinalIgnoreCase);
 }

@@ -786,8 +786,7 @@ public sealed class AgentDefinitionConfig
         GroupName = "Agent",
         Order = 4)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 4)]
-    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.ThinkingLevel>))]
-    public BotNexus.Agent.Providers.Core.Models.ThinkingLevel? Thinking { get; set; }
+    public string? Thinking { get; set; }
     /// <summary>
     /// Agent-level default context-window size in tokens. Agent layer of the three-layer
     /// override stack. Null means "unset - inherit the model default". Validated against the

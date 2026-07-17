@@ -191,9 +191,36 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             "Platform-config 'kind: SubAgent' MUST be rejected. If this fails, the platform " +
             "config path is now a vector to bypass the runtime-only sub-agent invariant.");
         logger.Entries.ShouldContain(e =>
-            e.Level == LogLevel.Warning &&
+            e.Level == LogLevel.Error &&
             e.Message.Contains("validation", StringComparison.OrdinalIgnoreCase),
-            "Rejection must surface as a Warning log so operators can detect misconfiguration.");
+            "Rejection must surface as an Error log so operators can detect misconfiguration.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithInvalidThinking_SkipsOnlyInvalidAgentAndLogsError()
+    {
+        var logger = new ListLogger<PlatformConfigAgentSource>();
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["valid"] = new() { Provider = "copilot", Model = "gpt-4.1" },
+                ["invalid"] = new() { Provider = "copilot", Model = "gpt-4.1", Thinking = "warp-speed" }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            logger);
+
+        var descriptors = await source.LoadAsync();
+
+        descriptors.Select(descriptor => descriptor.AgentId.Value).ShouldBe(["valid"]);
+        logger.Entries.ShouldContain(entry =>
+            entry.Level == LogLevel.Error &&
+            entry.Message.Contains("invalid", StringComparison.Ordinal) &&
+            entry.Message.Contains("Skipping", StringComparison.Ordinal));
     }
 
     [Fact]

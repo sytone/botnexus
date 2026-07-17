@@ -764,7 +764,11 @@ internal sealed class AgentCommands
                         error = $"--set thinking='{value}' is not a valid thinking level.";
                         return false;
                     }
-                    descriptor.Thinking = thinking;
+                    descriptor.Thinking = thinking switch
+                    {
+                        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.ExtraHigh => "xhigh",
+                        _ => value.ToLowerInvariant()
+                    };
                     break;
                 default:
                     error = $"Unknown --set key '{key}'. Supported: id, displayName, description, emoji, model, provider, systemPrompt, thinking, contextWindow.";
