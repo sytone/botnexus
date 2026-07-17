@@ -2200,6 +2200,126 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
+    public async Task StreamEvents_InternalPrimaryResolvedToSignalR_DoesNotDuplicateSignalRObserverDelivery()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" }
+            ]));
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From("session-1"),
+            AgentId = AgentId.From("agent-a"),
+            ChannelType = ChannelKey.From("signalr")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.GetAsync(SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var signalrChannel = CreateStreamEventChannel("signalr");
+        var internalChannel = CreateStreamEventChannel("internal");
+        internalChannel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns((ChannelStreamTarget target, AgentStreamEvent evt, CancellationToken ct) =>
+                signalrChannel.As<IStreamEventChannelAdapter>().Object.SendStreamEventAsync(target, evt, ct));
+        internalChannel.As<IChannelDestinationResolver>()
+            .Setup(c => c.ResolveStreamDestinationAsync(SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(signalrChannel.Object);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([internalChannel.Object, signalrChannel.Object]);
+        channelManager.Setup(m => m.Get(It.Is<ChannelKey>(k => k.Value == "internal")))
+            .Returns(internalChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<ChannelKey>(k => k.Value == "internal"), It.IsAny<string?>()))
+            .Returns(internalChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<ChannelKey>(k => k.Value == "signalr")))
+            .Returns(signalrChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
+            .Returns(signalrChannel.Object);
+
+        var signalrBinding = new ChannelBinding
+        {
+            BindingId = BindingId.From("signalr-binding"),
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("portal"),
+            Mode = BindingMode.Interactive
+        };
+        var duplicateGroupBinding = new ChannelBinding
+        {
+            BindingId = BindingId.From("signalr-binding-2"),
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("portal-2"),
+            Mode = BindingMode.Interactive
+        };
+        var conversationRouter = CreateObserverConversationRouter(
+            "conv-test-internal", "session-1", signalrBinding, duplicateGroupBinding);
+
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), channelManager.Object,
+            conversationRouter: conversationRouter.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1", channelType: "internal"));
+
+        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
+            c => c.SendStreamEventAsync(
+                It.IsAny<ChannelStreamTarget>(),
+                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    private static Mock<IChannelAdapter> CreateStreamEventChannel(string channelType)
+    {
+        var channel = new Mock<IChannelAdapter>();
+        channel.SetupGet(c => c.ChannelType).Returns(ChannelKey.From(channelType));
+        channel.SetupGet(c => c.DisplayName).Returns(channelType);
+        channel.SetupGet(c => c.SupportsStreaming).Returns(true);
+        channel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        channel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return channel;
+    }
+
+    private static Mock<IConversationRouter> CreateObserverConversationRouter(
+        string conversationId, string sessionId, params ChannelBinding[] bindings)
+    {
+        var conversationRouter = new Mock<IConversationRouter>();
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.From(conversationId),
+            AgentId = AgentId.From("agent-a")
+        };
+        conversationRouter.Setup(r => r.ResolveInboundAsync(
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<ChannelAddress>(),
+                It.IsAny<ConversationId?>(), It.IsAny<CancellationToken>(), It.IsAny<CitizenId?>()))
+            .ReturnsAsync(new ConversationRoutingResult(conversation, SessionId.From(sessionId), false));
+        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
+                It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(bindings);
+        return conversationRouter;
+    }
+
+    [Fact]
     public async Task StreamEvents_DoNotFanOutToSignalRObserver_WhenOriginatingChannelIsSignalR()
     {
         // Arrange: SignalR is the originating channel -- no additional fan-out expected

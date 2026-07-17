@@ -502,13 +502,22 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // Adapters that need to disambiguate native sub-addresses (e.g. Telegram
                     // forum topics) already fold them into the address itself.
                     var streamingSource = resolvedSource;
+                    var primaryTarget = new ChannelStreamTarget(
+                        session.ConversationId,
+                        typedSessionId,
+                        message.ChannelAddress,
+                        message.BindingId,
+                        message.ChannelRequestId);
 
                     // Resolve SignalR observer bindings for cross-channel live update (#332).
                     // When the originating channel is not SignalR (e.g. Telegram), any SignalR
                     // bindings on the conversation receive stream events so connected web
                     // clients update in real-time without a page reload.
                     IReadOnlyList<(IStreamEventChannelAdapter Adapter, ChannelStreamTarget Target)> signalRObservers = [];
-                    if (_conversationRouter is not null && message.ChannelType.Value != "signalr")
+                    var primaryDestination = channel is IChannelDestinationResolver destinationResolver
+                        ? await destinationResolver.ResolveStreamDestinationAsync(typedSessionId, cancellationToken)
+                        : channel;
+                    if (_conversationRouter is not null)
                     {
                         try
                         {
@@ -530,6 +539,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                     return (Adapter: adapter!, Target: observerTarget);
                                 })
                                 .Where(x => x.Adapter is not null)
+                                .Where(x => !IsSameStreamDestination(
+                                    primaryDestination,
+                                    primaryTarget,
+                                    x.Adapter,
+                                    x.Target))
+                                .DistinctBy(x => GetStreamDestinationKey(x.Adapter, x.Target))
                                 .ToList();
                         }
                         catch (Exception ex)
@@ -577,13 +592,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 // Build the typed stream target the channel adapter uses to
                                 // route this delta or event. Each adapter consumes the field
                                 // that matches its routing semantics — see ChannelStreamTarget.
-                                var streamTarget = new ChannelStreamTarget(
-                                    session.ConversationId,
-                                    typedSessionId,
-                                    message.ChannelAddress,
-                                    message.BindingId,
-                                    message.ChannelRequestId);
-
                                 if (enriched.Type == AgentStreamEventType.UserInputRequired)
                                 {
                                     await HandleUserInputRequiredAsync(
@@ -597,9 +605,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 }
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    await streamEventChannel.SendStreamEventAsync(streamTarget, enriched, ct);
+                                    await streamEventChannel.SendStreamEventAsync(primaryTarget, enriched, ct);
                                 else if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    await channel.SendStreamDeltaAsync(streamTarget, evt.ContentDelta, ct);
+                                    await channel.SendStreamDeltaAsync(primaryTarget, evt.ContentDelta, ct);
 
                                 // Fan-out stream events to SignalR observer bindings (#332).
                                 // Each observer gets the event keyed by its own typed target so the
@@ -1449,6 +1457,34 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// fan-out cluster (#1811); kept here as the stable classification surface for callers/tests.
     /// </summary>
     internal static IReadOnlySet<string> NonDeliverableChannels => OutboundResponseDeliverer.NonDeliverableChannels;
+
+    private static bool IsSameStreamDestination(
+        IChannelAdapter? primaryDestination,
+        ChannelStreamTarget primaryTarget,
+        IStreamEventChannelAdapter observerDestination,
+        ChannelStreamTarget observerTarget)
+        => primaryDestination is not null
+            && observerDestination is IChannelAdapter observerAdapter
+            && GetStreamDestinationKey(primaryDestination, primaryTarget)
+                .Equals(GetStreamDestinationKey(observerAdapter, observerTarget));
+
+    private static StreamDestinationKey GetStreamDestinationKey(
+        IStreamEventChannelAdapter adapter,
+        ChannelStreamTarget target)
+        => GetStreamDestinationKey((IChannelAdapter)adapter, target);
+
+    private static StreamDestinationKey GetStreamDestinationKey(
+        IChannelAdapter adapter,
+        ChannelStreamTarget target)
+        => new(
+            adapter.ChannelType.Value,
+            adapter.AdapterId ?? string.Empty,
+            target.ConversationId.Value);
+
+    private readonly record struct StreamDestinationKey(
+        string ChannelType,
+        string AdapterId,
+        string ConversationGroup);
 
     internal static bool IsNonDeliverableChannel(ChannelKey channelType) =>
         OutboundResponseDeliverer.IsNonDeliverableChannel(channelType);

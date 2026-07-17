@@ -12,7 +12,7 @@ namespace BotNexus.Gateway.Channels;
 /// Channel adapter for internal messages (sub-agent completions, cross-agent routing).
 /// Resolves the target session's original channel and delegates message and stream delivery to that adapter.
 /// </summary>
-public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter
+public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IChannelDestinationResolver
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ISessionStore _sessionStore;
@@ -127,6 +127,15 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventCha
 
         return null;
     }
+
+    /// <summary>
+    /// Exposes the session-resolved destination so the gateway can suppress observer fan-out
+    /// that would otherwise target the same adapter and SignalR conversation group twice.
+    /// </summary>
+    public Task<IChannelAdapter?> ResolveStreamDestinationAsync(
+        SessionId sessionId,
+        CancellationToken cancellationToken = default)
+        => ResolveTargetAdapterForSessionAsync(sessionId, cancellationToken);
 
     private async Task<IChannelAdapter?> ResolveTargetAdapterForSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {

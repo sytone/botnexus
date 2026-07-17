@@ -103,6 +103,24 @@ public interface IChannelAdapter
 }
 
 /// <summary>
+/// Optional contract for forwarding adapters whose stable outbound destination differs from
+/// their inbound channel identity. The gateway uses this when de-duplicating primary delivery
+/// against observer fan-out to the same adapter destination.
+/// </summary>
+public interface IChannelDestinationResolver
+{
+    /// <summary>
+    /// Resolves the adapter that ultimately receives stream events for the session, or
+    /// <c>null</c> when no deliverable destination is available.
+    /// </summary>
+    /// <param name="sessionId">Session whose persisted channel determines the destination.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IChannelAdapter?> ResolveStreamDestinationAsync(
+        SessionId sessionId,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Callback interface for channel adapters to dispatch inbound messages
 /// into the Gateway routing pipeline.
 /// </summary>
