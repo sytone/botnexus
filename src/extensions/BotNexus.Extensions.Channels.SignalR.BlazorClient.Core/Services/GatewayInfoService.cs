@@ -35,4 +35,5 @@ public sealed record GatewayInfo(
     long UptimeSeconds,
     string CommitSha,
     string CommitShort,
-    string Version);
+    string Version,
+    string? DefaultAgentId = null);
