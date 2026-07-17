@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
@@ -40,7 +41,7 @@ namespace BotNexus.Extensions.Channels.ServiceBus;
 /// <see cref="ServiceBusServiceCollectionExtensions.AddBotNexusServiceBusChannel"/>.
 /// </para>
 /// </remarks>
-public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
+public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter
 {
     // Metadata keys stored in InboundMessage.Metadata for use by the outbound path.
     internal const string MetaReplyTo = "servicebus.replyTo";
@@ -82,6 +83,11 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     // MetaRequestKey (the live gateway path does not propagate InboundMessage.Metadata).
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _pendingQueue =
         new(StringComparer.OrdinalIgnoreCase);
+
+    // Accumulators are keyed by the channel-native request identity, never conversation address,
+    // so two concurrent streams in one conversation cannot share text or sequence numbers.
+    private readonly ConcurrentDictionary<string, PendingStreamState> _pendingStreams =
+        new(StringComparer.Ordinal);
 
     /// <summary>
     /// Configuration section this adapter binds its options from when it is loaded as a
@@ -198,6 +204,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         _senders.Clear();
         _pendingReplies.Clear();
         _pendingQueue.Clear();
+        _pendingStreams.Clear();
 
         if (_activeFactory is IAsyncDisposable disposable)
             await disposable.DisposeAsync();
@@ -210,21 +217,135 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     /// <inheritdoc/>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
-        var pendingCtx = DequeuePendingReplyContext(message);
-        var replyQueue = ResolveReplyQueue(message, pendingCtx);
-        var (correlationId, conversationId) = ResolveReplyContext(message, pendingCtx);
+        var pending = ResolvePendingReplyContext(message.ChannelRequestId, message.ChannelAddress);
+        var pendingCtx = pending.Context;
+        var replyQueue = ResolveReplyQueue(message.Metadata, pendingCtx);
+        var (correlationId, conversationId) = ResolveReplyContext(message.Metadata, pendingCtx);
 
         var envelope = new ServiceBusOutboundEnvelope
         {
-            // MessageId is initialised to Guid.NewGuid() by the property initializer.
             CorrelationId = correlationId,
             AgentId = GetMetadataString(message.Metadata, MetaAgentId),
-            ConversationId = conversationId ?? message.ChannelAddress.Value,
+            ConversationId = conversationId ?? message.ConversationId ?? message.ChannelAddress.Value,
             SessionId = message.SessionId,
             Content = message.Content,
+            Type = "done",
+            Sequence = 0,
+            IsFinal = true,
             Timestamp = DateTimeOffset.UtcNow,
         };
 
+        await SendEnvelopeAsync(replyQueue, envelope, pendingCtx, cancellationToken);
+        CommitPendingReply(pending.RequestKey);
+    }
+
+    /// <inheritdoc/>
+    public override Task SendStreamDeltaAsync(
+        ChannelStreamTarget target,
+        string delta,
+        CancellationToken cancellationToken = default)
+        => SendStreamEventAsync(
+            target,
+            new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = delta },
+            cancellationToken);
+
+    /// <inheritdoc/>
+    public async Task SendStreamEventAsync(
+        ChannelStreamTarget target,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (streamEvent.Type is not (AgentStreamEventType.ContentDelta or AgentStreamEventType.RunEnded))
+            return;
+
+        if (string.IsNullOrWhiteSpace(target.ChannelRequestId))
+            throw new InvalidOperationException("A Service Bus stream requires a channel request identity.");
+
+        var requestKey = target.ChannelRequestId;
+        if (!_pendingReplies.TryGetValue(requestKey, out var pendingCtx))
+        {
+            // A repeated terminal event after successful cleanup is harmless. Any other event
+            // without context is unsafe because it could be routed to another request's queue.
+            if (streamEvent.Type == AgentStreamEventType.RunEnded)
+                return;
+            throw new InvalidOperationException($"No pending Service Bus reply context exists for request '{requestKey}'.");
+        }
+
+        var state = _pendingStreams.GetOrAdd(requestKey, _ => new PendingStreamState());
+        await state.SendGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Completed)
+                return;
+
+            var replyQueue = ResolveReplyQueue(
+                new Dictionary<string, object?>(),
+                pendingCtx);
+            if (streamEvent.Type == AgentStreamEventType.ContentDelta)
+            {
+                if (streamEvent.ContentDelta is null)
+                    return;
+
+                var envelope = CreateStreamEnvelope(
+                    target,
+                    streamEvent,
+                    pendingCtx,
+                    "delta",
+                    state.NextSequence,
+                    streamEvent.ContentDelta,
+                    isFinal: false);
+                await SendEnvelopeAsync(replyQueue, envelope, pendingCtx, cancellationToken);
+                state.Content.Append(streamEvent.ContentDelta);
+                state.NextSequence++;
+                return;
+            }
+
+            var finalEnvelope = CreateStreamEnvelope(
+                target,
+                streamEvent,
+                pendingCtx,
+                "done",
+                state.NextSequence,
+                state.Content.ToString(),
+                isFinal: true);
+            await SendEnvelopeAsync(replyQueue, finalEnvelope, pendingCtx, cancellationToken);
+            state.Completed = true;
+            CommitPendingReply(requestKey);
+            _pendingStreams.TryRemove(requestKey, out _);
+        }
+        finally
+        {
+            state.SendGate.Release();
+        }
+    }
+
+    private static ServiceBusOutboundEnvelope CreateStreamEnvelope(
+        ChannelStreamTarget target,
+        AgentStreamEvent streamEvent,
+        PendingReplyContext pendingCtx,
+        string type,
+        long sequence,
+        string content,
+        bool isFinal)
+        => new()
+        {
+            CorrelationId = pendingCtx.CorrelationId,
+            AgentId = streamEvent.AgentId?.Value,
+            ConversationId = pendingCtx.ConversationId ?? target.ConversationId.Value,
+            SessionId = streamEvent.SessionId?.Value ?? target.SessionId.Value,
+            Content = content,
+            Type = type,
+            Sequence = sequence,
+            IsFinal = isFinal,
+            Timestamp = DateTimeOffset.UtcNow,
+        };
+
+    private async Task SendEnvelopeAsync(
+        string replyQueue,
+        ServiceBusOutboundEnvelope envelope,
+        PendingReplyContext? pendingCtx,
+        CancellationToken cancellationToken)
+    {
         var json = JsonSerializer.Serialize(envelope, JsonOptions);
         var sbMessage = new ServiceBusMessage(json)
         {
@@ -235,22 +356,32 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         if (envelope.CorrelationId is not null)
             sbMessage.CorrelationId = envelope.CorrelationId;
 
-        // Mirror key fields as application properties for server-side filtering.
+        if (pendingCtx is not null)
+        {
+            foreach (var property in pendingCtx.ApplicationProperties)
+                sbMessage.ApplicationProperties[property.Key] = property.Value;
+        }
+
         if (envelope.AgentId is not null)
             sbMessage.ApplicationProperties["agentId"] = envelope.AgentId;
         if (envelope.ConversationId is not null)
             sbMessage.ApplicationProperties["conversationId"] = envelope.ConversationId;
         if (envelope.SessionId is not null)
             sbMessage.ApplicationProperties["sessionId"] = envelope.SessionId;
+        sbMessage.ApplicationProperties["type"] = envelope.Type;
+        sbMessage.ApplicationProperties["sequence"] = envelope.Sequence;
+        sbMessage.ApplicationProperties["isFinal"] = envelope.IsFinal;
 
         var sender = GetOrCreateSender(replyQueue);
         await sender.SendMessageAsync(sbMessage, cancellationToken);
 
         _logger.LogDebug(
-            "{DisplayName} reply sent to queue '{ReplyQueue}' (correlationId={CorrelationId})",
+            "{DisplayName} reply sent to queue '{ReplyQueue}' (correlationId={CorrelationId}, type={Type}, sequence={Sequence})",
             DisplayName,
             replyQueue,
-            envelope.CorrelationId);
+            envelope.CorrelationId,
+            envelope.Type,
+            envelope.Sequence);
     }
 
     /// <summary>
@@ -320,7 +451,14 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         // would leave a stale key in _pendingQueue after the first successful reply removes
         // the context, which would cause the next FIFO-fallback lookup to pop the stale key,
         // fail TryRemove, and misroute that reply to the default queue.
-        var pendingContext = new PendingReplyContext(replyTo, correlationId, conversationId);
+        var preservedApplicationProperties = applicationProperties is null
+            ? new Dictionary<string, object>(StringComparer.Ordinal)
+            : applicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
+        var pendingContext = new PendingReplyContext(
+            replyTo,
+            correlationId,
+            conversationId,
+            preservedApplicationProperties);
         if (_pendingReplies.TryAdd(requestKey, pendingContext))
         {
             // First arrival: register in the per-conversation FIFO queue for SendAsync fallback.
@@ -363,6 +501,8 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
                 conversationId: conversationId),
             Timestamp = envelope.Timestamp ?? DateTimeOffset.UtcNow,
             Metadata = metadata,
+            StreamResponse = envelope.StreamResponse == true,
+            ChannelRequestId = requestKey,
         };
 
         await DispatchInboundAsync(inbound, cancellationToken);
@@ -449,55 +589,61 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         return ServiceBusAuthMode.None;
     }
 
-    /// <summary>
-    /// Resolves and atomically removes the pending reply context for the given outbound message.
-    /// Prefers an explicit <see cref="MetaRequestKey"/> in <paramref name="message"/> metadata;
-    /// falls back to dequeuing the oldest context for the conversation address.
-    /// </summary>
-    private PendingReplyContext? DequeuePendingReplyContext(OutboundMessage message)
+    private (string? RequestKey, PendingReplyContext? Context) ResolvePendingReplyContext(
+        string? explicitRequestKey,
+        ChannelAddress channelAddress)
     {
-        // Explicit key: present when the outbound message carries MetaRequestKey (e.g., tests,
-        // or a future gateway path that propagates inbound metadata).
-        if (GetMetadataString(message.Metadata, MetaRequestKey) is { Length: > 0 } requestKey
-            && _pendingReplies.TryRemove(requestKey, out var explicit_ctx))
+        if (!string.IsNullOrWhiteSpace(explicitRequestKey)
+            && _pendingReplies.TryGetValue(explicitRequestKey, out var explicitContext))
         {
-            return explicit_ctx;
+            return (explicitRequestKey, explicitContext);
         }
 
-        // Fallback: dequeue the oldest request key for this conversation.
-        // Relies on the gateway serialising per-session so FIFO order matches reply order.
-        if (_pendingQueue.TryGetValue(message.ChannelAddress.Value, out var queue)
-            && queue.TryDequeue(out var oldestKey)
-            && _pendingReplies.TryRemove(oldestKey, out var fallback_ctx))
+        if (_pendingQueue.TryGetValue(channelAddress.Value, out var queue))
         {
-            return fallback_ctx;
+            while (queue.TryPeek(out var oldestKey))
+            {
+                if (_pendingReplies.TryGetValue(oldestKey, out var fallbackContext))
+                    return (oldestKey, fallbackContext);
+
+                // Successful sends remove the context first. Discard its stale FIFO key only
+                // when a later lookup observes that removal, so a failed send remains retryable.
+                queue.TryDequeue(out _);
+            }
         }
 
-        return null;
+        return (null, null);
     }
 
-    private string ResolveReplyQueue(OutboundMessage message, PendingReplyContext? pendingCtx)
+    private void CommitPendingReply(string? requestKey)
     {
-        // 1. Metadata key (populated when the caller manually constructs OutboundMessage in tests)
-        if (GetMetadataString(message.Metadata, MetaReplyTo) is { Length: > 0 } metaQueue)
+        if (!string.IsNullOrWhiteSpace(requestKey))
+            _pendingReplies.TryRemove(requestKey, out _);
+    }
+
+    private string ResolveReplyQueue(
+        IReadOnlyDictionary<string, object?> metadata,
+        PendingReplyContext? pendingCtx)
+    {
+        if (GetMetadataString(metadata, MetaReplyTo) is { Length: > 0 } metaQueue)
             return metaQueue;
 
-        // 2. Pending-reply context (populated by HandleMessageBodyAsync in the live path)
         if (pendingCtx?.ReplyTo is { Length: > 0 } pendingQueue)
             return pendingQueue;
 
         return _options.DefaultReplyQueueName;
     }
 
-    private (string? CorrelationId, string? ConversationId) ResolveReplyContext(OutboundMessage message, PendingReplyContext? pendingCtx)
+    private static (string? CorrelationId, string? ConversationId) ResolveReplyContext(
+        IReadOnlyDictionary<string, object?> metadata,
+        PendingReplyContext? pendingCtx)
     {
-        // Prefer values from pending-reply context (live gateway path), fall back to metadata.
         if (pendingCtx is not null)
             return (pendingCtx.CorrelationId, pendingCtx.ConversationId);
 
         return (
-            GetMetadataString(message.Metadata, MetaCorrelationId),
-            GetMetadataString(message.Metadata, MetaConversationId));
+            GetMetadataString(metadata, MetaCorrelationId),
+            GetMetadataString(metadata, MetaConversationId));
     }
 
     private IServiceBusSenderWrapper GetOrCreateSender(string queueName)
@@ -514,6 +660,18 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     private static string? GetApplicationProperty(IReadOnlyDictionary<string, object>? props, string key)
         => props is not null && props.TryGetValue(key, out var val) ? val?.ToString() : null;
 
-    /// <summary>Routing context preserved between inbound receipt and outbound reply.</summary>
-    private sealed record PendingReplyContext(string? ReplyTo, string? CorrelationId, string? ConversationId);
+    /// <summary>Routing context preserved between inbound receipt and successful terminal delivery.</summary>
+    private sealed record PendingReplyContext(
+        string? ReplyTo,
+        string? CorrelationId,
+        string? ConversationId,
+        IReadOnlyDictionary<string, object> ApplicationProperties);
+
+    private sealed class PendingStreamState
+    {
+        public StringBuilder Content { get; } = new();
+        public SemaphoreSlim SendGate { get; } = new(1, 1);
+        public long NextSequence { get; set; }
+        public bool Completed { get; set; }
+    }
 }

@@ -118,6 +118,66 @@ public sealed class StreamingPipelineTests
         session.History[0].Content.ShouldBe("empty");
     }
 
+    [Fact]
+    public async Task DispatchAsync_OptInStreamsThroughAdapterWhoseDefaultIsOneShot()
+    {
+        var sessionStore = new InMemorySessionStore();
+        var channel = CreateStreamingChannel();
+        channel.SetupGet(c => c.SupportsStreaming).Returns(false);
+        var streamChannel = channel.As<IStreamEventChannelAdapter>();
+        streamChannel.Setup(c => c.SendStreamEventAsync(
+                It.Is<ChannelStreamTarget>(t => t.ChannelRequestId == "request-42"),
+                It.IsAny<AgentStreamEvent>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        await using var host = CreateStreamingHost(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "opted in" },
+                new AgentStreamEvent { Type = AgentStreamEventType.RunEnded }
+            ],
+            sessionStore,
+            channel.Object,
+            out _);
+
+        await host.DispatchAsync(CreateMessage("hello") with
+        {
+            StreamResponse = true,
+            ChannelRequestId = "request-42",
+        });
+
+        streamChannel.Verify(c => c.SendStreamEventAsync(
+            It.Is<ChannelStreamTarget>(t => t.ChannelRequestId == "request-42"),
+            It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
+            It.IsAny<CancellationToken>()), Times.Once);
+        channel.Verify(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ExplicitOptOutUsesOneShotAndPropagatesRequestIdentity()
+    {
+        var sessionStore = new InMemorySessionStore();
+        var channel = CreateStreamingChannel();
+        var streamChannel = channel.As<IStreamEventChannelAdapter>();
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
+        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "one shot" });
+        await using var host = CreateHostWithHandle(sessionStore, channel.Object, handle.Object);
+
+        await host.DispatchAsync(CreateMessage("hello") with
+        {
+            StreamResponse = false,
+            ChannelRequestId = "request-42",
+        });
+
+        channel.Verify(c => c.SendAsync(
+            It.Is<OutboundMessage>(m => m.ChannelRequestId == "request-42" && m.Content == "one shot"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        streamChannel.Verify(c => c.SendStreamEventAsync(
+            It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static Mock<IChannelAdapter> CreateStreamingChannel()
     {
         var channel = new Mock<IChannelAdapter>();
@@ -173,6 +233,32 @@ public sealed class StreamingPipelineTests
             router.Object,
             sessionStore,
             activity,
+            channelManager.Object,
+            Mock.Of<ISessionCompactor>(),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<GatewayHost>.Instance);
+    }
+
+    private static GatewayHost CreateHostWithHandle(
+        ISessionStore sessionStore,
+        IChannelAdapter channel,
+        IAgentHandle handle)
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle);
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(c => c.Adapters).Returns([channel]);
+        channelManager.Setup(c => c.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns(channel);
+        return new GatewayHost(
+            supervisor.Object,
+            router.Object,
+            sessionStore,
+            new RecordingActivityBroadcaster(),
             channelManager.Object,
             Mock.Of<ISessionCompactor>(),
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),

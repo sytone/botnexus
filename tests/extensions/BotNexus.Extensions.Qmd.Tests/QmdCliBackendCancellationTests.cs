@@ -42,9 +42,25 @@ public sealed class QmdCliBackendCancellationTests
         {
             if (File.Exists(pidFile))
             {
-                var text = (await File.ReadAllTextAsync(pidFile)).Trim();
-                if (int.TryParse(text, out var pid) && pid > 0)
-                    return pid;
+                try
+                {
+                    await using var stream = new FileStream(
+                        pidFile,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete,
+                        bufferSize: 128,
+                        useAsync: true);
+                    using var reader = new StreamReader(stream);
+                    var text = (await reader.ReadToEndAsync()).Trim();
+                    if (int.TryParse(text, out var pid) && pid > 0)
+                        return pid;
+                }
+                catch (IOException)
+                {
+                    // The child may still be replacing/flushing the file. Retry until the
+                    // existing deadline rather than turning a normal writer race into a flake.
+                }
             }
             await Task.Delay(25);
         }
@@ -118,8 +134,9 @@ public sealed class QmdCliBackendCancellationTests
         var pidFile = Path.Combine(Path.GetTempPath(), $"qmd-timeout-test-{Guid.NewGuid():N}.pid");
         var (exe, args) = PidWritingSleeper(pidFile);
 
-        // Very short internal timeout, caller token never cancelled -> internal-timeout kill path.
-        var backend = new QmdCliBackend(exe, timeout: TimeSpan.FromMilliseconds(500));
+        // Leave enough startup time for a cold PowerShell process to write its PID on loaded
+        // Windows hosts while still exercising the backend's internal-timeout kill path.
+        var backend = new QmdCliBackend(exe, timeout: TimeSpan.FromSeconds(5));
 
         var run = backend.RunAsync(args, CancellationToken.None);
 

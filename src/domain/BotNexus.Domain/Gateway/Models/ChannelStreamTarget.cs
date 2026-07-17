@@ -65,8 +65,14 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// echo back to the source binding. <c>null</c> when the stream is not bound to
 /// an explicit channel binding (e.g. internal sub-agent wake-ups).
 /// </param>
+/// <param name="ChannelRequestId">
+/// Opaque identity of the originating transport request. Source adapters use it to
+/// distinguish concurrent streams sharing one channel address. Observer targets leave it
+/// <c>null</c> so source-specific routing state never leaks across channel fan-out.
+/// </param>
 public sealed record ChannelStreamTarget(
     ConversationId ConversationId,
     SessionId SessionId,
     ChannelAddress ChannelAddress,
-    BindingId? BindingId = null);
+    BindingId? BindingId = null,
+    string? ChannelRequestId = null);

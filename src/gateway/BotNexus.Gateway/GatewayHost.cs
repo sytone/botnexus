@@ -482,13 +482,21 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 var sessionSaved = false;
                 var agentDescriptor = _registry?.Get(typedAgentId);
                 var resolvedChannel = ResolveChannelAdapter(message.ChannelType);
-                _logger.LogInformation("Channel resolution: type='{ChannelType}' found={Found} streaming={Streaming} streamEvents={StreamEvents}",
+                var shouldStream = resolvedChannel is not null && message.StreamResponse switch
+                {
+                    true => resolvedChannel is IStreamEventChannelAdapter,
+                    false => false,
+                    null => resolvedChannel.SupportsStreaming,
+                };
+                _logger.LogInformation("Channel resolution: type='{ChannelType}' found={Found} streaming={Streaming} streamEvents={StreamEvents} requested={RequestedStreaming} selected={SelectedStreaming}",
                     message.ChannelType,
                     resolvedChannel is not null,
                     resolvedChannel?.SupportsStreaming,
-                    resolvedChannel is IStreamEventChannelAdapter);
+                    resolvedChannel is IStreamEventChannelAdapter,
+                    message.StreamResponse,
+                    shouldStream);
 
-                if (resolvedChannel is { SupportsStreaming: true } channel)
+                if (resolvedChannel is { } channel && shouldStream)
                 {
                     // Streaming uses the message's opaque ChannelAddress as the stream key.
                     // Adapters that need to disambiguate native sub-addresses (e.g. Telegram
@@ -573,7 +581,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                     session.ConversationId,
                                     typedSessionId,
                                     message.ChannelAddress,
-                                    message.BindingId);
+                                    message.BindingId,
+                                    message.ChannelRequestId);
 
                                 if (enriched.Type == AgentStreamEventType.UserInputRequired)
                                 {
@@ -671,7 +680,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 // ensure replies carry the binding's decoration. Native sub-addresses
                                 // (e.g. Telegram forum topics) are already encoded in ChannelAddress.
                                 BindingId = resolvedSource.BindingId,
-                                DisplayPrefix = resolvedSource.DisplayPrefix
+                                DisplayPrefix = resolvedSource.DisplayPrefix,
+                                ChannelRequestId = message.ChannelRequestId
                             }, cancellationToken);
                         }
                     }
@@ -796,7 +806,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             ChannelType = message.ChannelType,
                             ChannelAddress = message.ChannelAddress,
                             Content = $"Error: {ex.Message}",
-                            SessionId = sessionId
+                            SessionId = sessionId,
+                            ChannelRequestId = message.ChannelRequestId
                         }, CancellationToken.None);
                     }
                 }

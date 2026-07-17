@@ -75,6 +75,7 @@ public sealed class InboundQueuePublisher : IAsyncDisposable
             Content = inboundMessage.Text ?? string.Empty,
             ReplyTo = _options.OutboundQueueName,
             Timestamp = inboundMessage.ReceivedAt,
+            StreamResponse = _options.StreamResponses,
             Metadata = metadata
         };
 
