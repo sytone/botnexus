@@ -82,6 +82,7 @@ public sealed class ConversationAutoTitleServiceTests
     [InlineData("\"Hello World\"", "Hello World")]
     [InlineData("'Chat About Cats'", "Chat About Cats")]
     [InlineData("  Some Title  ", "Some Title")]
+    [InlineData("Containerized\nMarkdown  Journal\tNexus", "Containerized Markdown Journal Nexus")]
     public void SanitizeTitle_RemovesQuotesAndTrims(string raw, string expected)
     {
         ConversationAutoTitleService.SanitizeTitle(raw).ShouldBe(expected);
@@ -107,6 +108,32 @@ public sealed class ConversationAutoTitleServiceTests
     {
         var completion = MakeCompletion(new TextContent("Plain Text Title"));
         ConversationAutoTitleService.ExtractTitleText(completion).ShouldBe("Plain Text Title");
+    }
+
+    [Fact]
+    public void ExtractTitleText_StreamedTextFragments_ConcatenatesWithoutInventingSpaces()
+    {
+        var completion = MakeCompletion(
+            new TextContent("Container"),
+            new TextContent("ized"),
+            new TextContent("\nMarkdown"),
+            new TextContent(" Journal"),
+            new TextContent(" Nexus"));
+
+        ConversationAutoTitleService.ExtractTitleText(completion)
+            .ShouldBe("Containerized\nMarkdown Journal Nexus");
+    }
+
+    [Fact]
+    public void ExtractTitleText_StreamedThinkingFragments_ConcatenatesWithoutInventingSpaces()
+    {
+        var completion = MakeCompletion(
+            new ThinkingContent("Container"),
+            new ThinkingContent("ized\nMarkdown"),
+            new ThinkingContent(" Journal Nexus"));
+
+        ConversationAutoTitleService.ExtractTitleText(completion)
+            .ShouldBe("Containerized\nMarkdown Journal Nexus");
     }
 
     [Fact]
