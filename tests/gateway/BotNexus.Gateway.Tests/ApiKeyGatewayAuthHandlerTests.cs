@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.FeatureManagement;
 
 namespace BotNexus.Gateway.Tests;
@@ -17,6 +18,21 @@ public sealed class ApiKeyGatewayAuthHandlerTests
 
         result.IsAuthenticated.ShouldBeTrue();
         result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_InvalidReloadedConfig_UsesLastKnownAuthSnapshot()
+    {
+        var initial = new PlatformConfig { ApiKey = "secret" };
+        var monitor = new ThrowingOptionsMonitor(initial);
+        var handler = new ApiKeyGatewayAuthHandler(monitor, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        monitor.ThrowOnRead = true;
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "secret" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-api-key");
     }
 
     [Fact]
@@ -313,6 +329,19 @@ public sealed class ApiKeyGatewayAuthHandlerTests
             Path = "/api/messages",
             Method = "POST"
         };
+
+    private sealed class ThrowingOptionsMonitor(PlatformConfig initial) : IOptionsMonitor<PlatformConfig>
+    {
+        public bool ThrowOnRead { get; set; }
+
+        public PlatformConfig CurrentValue => ThrowOnRead
+            ? throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["invalid reload"])
+            : initial;
+
+        public PlatformConfig Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<PlatformConfig, string?> listener) => null;
+    }
 
     /// <summary>
     /// Minimal <see cref="IFeatureManager"/> stub returning a fixed enabled/disabled result for

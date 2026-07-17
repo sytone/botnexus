@@ -307,16 +307,31 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         if (_platformConfig is null)
             return _identitiesByApiKey;
 
-        var currentConfig = _platformConfig.CurrentValue;
-        var rebuilt = BuildIdentityMap(
-            currentConfig.ApiKey,
-            currentConfig.Gateway?.ApiKeys,
-            currentConfig.Gateway?.Satellites);
-
-        lock (_sync)
+        try
         {
-            _identitiesByApiKey = rebuilt;
-            return _identitiesByApiKey;
+            var currentConfig = _platformConfig.CurrentValue;
+            var rebuilt = BuildIdentityMap(
+                currentConfig.ApiKey,
+                currentConfig.Gateway?.ApiKeys,
+                currentConfig.Gateway?.Satellites);
+
+            lock (_sync)
+            {
+                _identitiesByApiKey = rebuilt;
+                return _identitiesByApiKey;
+            }
+        }
+        catch (OptionsValidationException ex)
+        {
+            // A bad unrelated setting must not turn authentication into a site-wide 500 storm.
+            // IOptionsMonitor throws while materialising the whole PlatformConfig, even though
+            // auth only needs its small credential subset. Keep serving the last valid identity
+            // snapshot until a later reload becomes valid.
+            _logger.LogError(
+                ex,
+                "Platform configuration reload is invalid; gateway authentication is using the last valid credential snapshot.");
+            lock (_sync)
+                return _identitiesByApiKey;
         }
     }
 
