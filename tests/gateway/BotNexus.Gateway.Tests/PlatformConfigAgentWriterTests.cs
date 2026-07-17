@@ -54,6 +54,21 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_WithWireThinkingLevel_ProducesReloadableConfig()
+    {
+        var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
+        await writer.SaveAsync(CreateDescriptor("thinking-agent") with { Thinking = "xhigh" });
+
+        var config = await PlatformConfigLoader.LoadAsync(
+            _configPath,
+            CancellationToken.None,
+            validateOnLoad: true,
+            fileSystem: _fileSystem);
+
+        config.Agents!["thinking-agent"].Thinking.ShouldBe("xhigh");
+    }
+
+    [Fact]
     public async Task SaveAsync_PreservesUnknownFieldsAndOmitsEmptyOptionalValues()
     {
         await _fileSystem.File.WriteAllTextAsync(_configPath, """

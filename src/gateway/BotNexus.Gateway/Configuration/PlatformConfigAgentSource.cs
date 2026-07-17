@@ -77,89 +77,83 @@ public sealed class PlatformConfigAgentSource(
             if (!agentConfig.Enabled)
                 continue;
 
-            // Merge world-level agent defaults into this agent's config
-            JsonElement? rawElement = null;
-            if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
-                rawElement = rawEl;
-            var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
-            var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
-            if (effectiveConfig.ToolTimeoutSeconds is int toolTimeoutSeconds)
-                metadata["toolTimeoutSeconds"] = toolTimeoutSeconds;
-
-            var descriptor = new AgentDescriptor
+            try
             {
-                AgentId = AgentId.From(agentId),
-                DisplayName = effectiveConfig.DisplayName ?? agentId,
-                Emoji = effectiveConfig.Emoji,
-                Description = effectiveConfig.Description,
-                ModelId = effectiveConfig.Model ?? string.Empty,
-                ApiProvider = effectiveConfig.Provider ?? string.Empty,
-                SystemPromptFile = effectiveConfig.SystemPromptFile,
-                SystemPromptFiles = ResolveSystemPromptFiles(effectiveConfig),
-                ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
-                AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
-                SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
-                SubAgentRoles = effectiveConfig.SubAgentRoles?.ToArray() ?? [],
-                IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
+                // Merge world-level agent defaults into this agent's config
+                JsonElement? rawElement = null;
+                if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
+                    rawElement = rawEl;
+                var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
+                var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
+                if (effectiveConfig.ToolTimeoutSeconds is int toolTimeoutSeconds)
+                    metadata["toolTimeoutSeconds"] = toolTimeoutSeconds;
+
+                var descriptor = new AgentDescriptor
+                {
+                    AgentId = AgentId.From(agentId),
+                    DisplayName = effectiveConfig.DisplayName ?? agentId,
+                    Emoji = effectiveConfig.Emoji,
+                    Description = effectiveConfig.Description,
+                    ModelId = effectiveConfig.Model ?? string.Empty,
+                    ApiProvider = effectiveConfig.Provider ?? string.Empty,
+                    SystemPromptFile = effectiveConfig.SystemPromptFile,
+                    SystemPromptFiles = ResolveSystemPromptFiles(effectiveConfig),
+                    ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
+                    AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
+                    SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
+                    SubAgentRoles = effectiveConfig.SubAgentRoles?.ToArray() ?? [],
+                    IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
                     ? "in-process"
                     : effectiveConfig.IsolationStrategy,
-                CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
+                    CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
                     ? effectiveConfig.CacheRetention.Value.ToString().ToLowerInvariant()
                     : null,
-                Thinking = effectiveConfig.Thinking.HasValue
-                    ? ThinkingToWire(effectiveConfig.Thinking.Value)
-                    : null,
-                ContextWindow = effectiveConfig.ContextWindow,
-                MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
-                Metadata = metadata,
-                IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
-                Memory = CloneMemoryConfig(effectiveConfig.Memory),
-                Soul = CloneSoulConfig(effectiveConfig.Soul),
-                Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
-                DateTimeInjection = effectiveConfig.DateTimeInjection,
-                SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
-                SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
-                ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
-                ConversationAllowedAgents = effectiveConfig.ConversationAccess?.AllowedAgents?.ToArray()
+                    Thinking = effectiveConfig.Thinking,
+                    ContextWindow = effectiveConfig.ContextWindow,
+                    MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
+                    Metadata = metadata,
+                    IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
+                    Memory = CloneMemoryConfig(effectiveConfig.Memory),
+                    Soul = CloneSoulConfig(effectiveConfig.Soul),
+                    Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
+                    DateTimeInjection = effectiveConfig.DateTimeInjection,
+                    SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
+                    SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
+                    ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
+                    ConversationAllowedAgents = effectiveConfig.ConversationAccess?.AllowedAgents?.ToArray()
                     ?? effectiveConfig.SessionAccess?.AllowedAgents?.ToArray()
                     ?? [],
-                FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
-                ExtensionConfig = ExtensionConfigMerger.Merge(
+                    FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
+                    ExtensionConfig = ExtensionConfigMerger.Merge(
                     platformConfig.Gateway?.Extensions?.Defaults,
                     effectiveConfig.Extensions),
-                Kind = effectiveConfig.Kind ?? AgentKind.Named,
-                ShellCommand = effectiveConfig.ShellCommand
-            };
+                    Kind = effectiveConfig.Kind ?? AgentKind.Named,
+                    ShellCommand = effectiveConfig.ShellCommand
+                };
 
-            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor, modelRegistry: _modelRegistry);
-            if (validationErrors.Count > 0)
-            {
-                _logger.LogWarning(
-                    "Skipping platform-config agent '{AgentId}' due to validation errors: {Errors}",
-                    agentId,
-                    string.Join("; ", validationErrors));
-                continue;
+                var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor, modelRegistry: _modelRegistry);
+                if (validationErrors.Count > 0)
+                {
+                    _logger.LogError(
+                        "Skipping platform-config agent '{AgentId}' due to validation errors. Correct the agent configuration to retry on the next config reload: {Errors}",
+                        agentId,
+                        string.Join("; ", validationErrors));
+                    continue;
+                }
+
+                descriptors.Add(descriptor);
             }
-
-            descriptors.Add(descriptor);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(
+                    ex,
+                    "Skipping invalid platform-config agent '{AgentId}'. Correct the agent configuration to retry on the next config reload.",
+                    agentId);
+            }
         }
 
         return descriptors;
     }
-
-    // Wire-form projection of ThinkingLevel matching the strings AgentDescriptor.Thinking stores
-    // (JSON member names: xhigh/max). Kept local so the source does not depend on the provider
-    // JSON converter internals.
-    private static string ThinkingToWire(BotNexus.Agent.Providers.Core.Models.ThinkingLevel level) => level switch
-    {
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Minimal => "minimal",
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Low => "low",
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Medium => "medium",
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.High => "high",
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.ExtraHigh => "xhigh",
-        BotNexus.Agent.Providers.Core.Models.ThinkingLevel.Max => "max",
-        _ => level.ToString().ToLowerInvariant()
-    };
 
     private static AgentDefaultsConfig? ExtractInlineAgentDefaults(IReadOnlyDictionary<string, AgentDefinitionConfig> agents)
     {

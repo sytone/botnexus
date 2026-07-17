@@ -97,7 +97,7 @@ public sealed class AgentTemplateDescriptor
     public List<string>? ToolIds { get; set; }
 
     [JsonPropertyName("thinking")]
-    public BotNexus.Agent.Providers.Core.Models.ThinkingLevel? Thinking { get; set; }
+    public string? Thinking { get; set; }
 
     [JsonPropertyName("contextWindow")]
     public int? ContextWindow { get; set; }
