@@ -70,6 +70,7 @@ public sealed class CopilotResponsesProvider(
                 stream, reader, model, options, api, logger, emitError,
                 onParsedEvent: static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
                 resolveConfiguredServiceTier: static o => o is CopilotResponsesOptions ro ? ro.ServiceTier : null,
+                normalizeTextDelta: NormalizeTextDelta,
                 ct),
         DecorateHeaders: static (request, _, messages, options) =>
         {
@@ -85,6 +86,20 @@ public sealed class CopilotResponsesProvider(
         ThrowForError: static (response, errorBody) =>
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses"),
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current));
+
+    private static string NormalizeTextDelta(LlmModel model, string delta)
+    {
+        // Copilot's Responses endpoint currently prefixes every gpt-5.6 text delta with a CRLF.
+        // Strip exactly that transport artifact. Any subsequent LF/CRLF remains untouched, so a
+        // real paragraph/list/code-block boundary carried in the same delta is preserved.
+        if (model.Id.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase) &&
+            delta.StartsWith("\r\n", StringComparison.Ordinal))
+        {
+            return delta[2..];
+        }
+
+        return delta;
+    }
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

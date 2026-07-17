@@ -67,6 +67,64 @@ public class CopilotResponsesProviderParityTests
         handler.RequestMethod.ShouldBe("POST");
     }
 
+    [Fact]
+    public async Task Stream_Gpt56_RemovesCopilotChunkCrLf_WhilePreservingMarkdownNewlines()
+    {
+        const string sse =
+            "event: response.output_item.added\n" +
+            "data: {\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\nK\"}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\narthik\"}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\n\\n- first\\n- second\"}\n\n" +
+            "event: response.output_item.done\n" +
+            "data: {\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n" +
+            "event: response.completed\n" +
+            "data: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n";
+
+        var handler = new RecordingHandler(_ => SseResponse(sse));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(handler),
+            NullLogger<CopilotResponsesProvider>.Instance);
+        var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
+
+        var result = await provider.Stream(
+                model,
+                BuildContext(),
+                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        var text = result.Content.OfType<TextContent>().Single().Text;
+        text.ShouldBe("Karthik\n\n- first\n- second");
+    }
+
+    [Fact]
+    public async Task Stream_PreGpt56_PreservesLeadingCrLfVerbatim()
+    {
+        const string sse =
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\nintentional\"}\n\n" +
+            "event: response.completed\n" +
+            "data: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n";
+
+        var handler = new RecordingHandler(_ => SseResponse(sse));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(handler),
+            NullLogger<CopilotResponsesProvider>.Instance);
+
+        var result = await provider.Stream(
+                BuildModel(),
+                BuildContext(),
+                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
+    }
+
     private static async Task<(RecordingHandler CopilotHandler, RecordingHandler OpenAIHandler)> DriveBothProvidersAsync()
     {
         var copilotHandler = new RecordingHandler(_ => SseResponse(MinimalSse));
