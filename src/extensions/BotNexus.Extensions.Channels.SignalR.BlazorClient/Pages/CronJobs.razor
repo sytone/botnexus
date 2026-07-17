@@ -30,9 +30,12 @@
     {
         <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
     }
+    else if (_jobs.Count == 0)
+    {
+        <div class="agents-empty"><p>No cron jobs configured.</p></div>
+    }
     else
     {
-        @* Delete confirmation dialog *@
         @if (_confirmDeleteId is not null)
         {
             <div class="agents-confirm-overlay" @onclick="CancelDelete">
@@ -41,347 +44,233 @@
                     <h4 id="cron-delete-confirm-title">Delete Cron Job</h4>
                     <p>Are you sure you want to delete cron job <strong>@_confirmDeleteName</strong>? This cannot be undone.</p>
                     <div class="agents-confirm-actions">
-                        <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">
-                            @(_busy ? "Deleting." : "Delete")
-                        </button>
+                        <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">@(_busy ? "Deleting." : "Delete")</button>
                         <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_busy">Cancel</button>
                     </div>
                 </div>
             </div>
         }
 
-        @* Detail modal — full properties + execution history + related conversation *@
-        @if (_detailJob is not null)
-        {
-            <div class="agents-confirm-overlay" @onclick="CloseDetail">
-                <div class="cron-modal cron-detail-modal" @onclick:stopPropagation="true" role="dialog"
-                     aria-labelledby="cron-detail-title" data-testid="cron-detail-modal">
-                    <header class="cron-modal-header">
-                        <h3 id="cron-detail-title">
-                            @_detailJob.Name
-                            @if (_detailJob.Enabled)
-                            {
-                                <span class="badge badge-enabled">Enabled</span>
-                            }
-                            else
-                            {
-                                <span class="badge badge-disabled">Disabled</span>
-                            }
-                            @if (_detailJob.System)
-                            {
-                                <span class="badge badge-system">System</span>
-                            }
-                        </h3>
-                        <div class="cron-modal-header-actions">
-                            <button class="toolbar-btn" @onclick="() => RunNowAsync(_detailJob)" disabled="@_busy" title="Run now">&#x25B6;&#xFE0F; Run now</button>
-                            <button class="toolbar-btn" @onclick="() => EditFromDetail(_detailJob)" disabled="@_busy" title="Edit">&#x270F;&#xFE0F; Edit</button>
-                            <button class="cron-modal-close" @onclick="CloseDetail" aria-label="Close details">&#x2715;</button>
-                        </div>
-                    </header>
-
-                    <div class="cron-modal-body">
-                        <section class="cron-detail-section">
-                            <h4>Properties</h4>
-                            <dl class="cron-detail-props">
-                                <dt>ID</dt><dd class="agents-id">@_detailJob.Id</dd>
-                                <dt>Schedule</dt><dd class="agents-id">@_detailJob.Schedule</dd>
-                                <dt>Time Zone</dt><dd>@(string.IsNullOrEmpty(_detailJob.TimeZone) ? "UTC" : _detailJob.TimeZone)</dd>
-                                <dt>Action Type</dt><dd>@_detailJob.ActionType</dd>
-                                <dt>Agent</dt><dd>@(string.IsNullOrEmpty(_detailJob.AgentId) ? "—" : _detailJob.AgentId)</dd>
-                                @if (string.Equals(_detailJob.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    <dt>Model</dt><dd>@(string.IsNullOrEmpty(_detailJob.Model) ? "(agent default)" : _detailJob.Model)</dd>
-                                    @if (!string.IsNullOrEmpty(_detailJob.TemplateName))
-                                    {
-                                        <dt>Template</dt><dd>@_detailJob.TemplateName</dd>
-                                    }
-                                    <dt>Message</dt><dd class="cron-detail-pre">@_detailJob.Message</dd>
-                                }
-                                else if (string.Equals(_detailJob.ActionType, "command", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    <dt>Shell Command</dt><dd class="cron-detail-pre">@_detailJob.ShellCommand</dd>
-                                }
-                                else if (string.Equals(_detailJob.ActionType, "webhook", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    <dt>Webhook URL</dt><dd class="agents-id">@_detailJob.WebhookUrl</dd>
-                                }
-                                <dt>Next Run</dt><dd>@FormatTimestamp(_detailJob.NextRunAt)</dd>
-                                <dt>Last Run</dt>
-                                <dd>
-                                    @FormatTimestamp(_detailJob.LastRunAt)
-                                    @if (!string.IsNullOrEmpty(_detailJob.LastRunStatus))
-                                    {
-                                        <span class="cron-run-status @RunStatusClass(_detailJob.LastRunStatus)">@_detailJob.LastRunStatus</span>
-                                    }
-                                </dd>
-                                @if (!string.IsNullOrEmpty(_detailJob.LastRunError))
-                                {
-                                    <dt>Last Error</dt><dd class="cron-detail-error">@_detailJob.LastRunError</dd>
-                                }
-                                <dt>Created</dt><dd>@FormatTimestamp(_detailJob.CreatedAt)@(string.IsNullOrEmpty(_detailJob.CreatedBy) ? "" : $" by {_detailJob.CreatedBy}")</dd>
-                            </dl>
-                        </section>
-
-                        <section class="cron-detail-section">
-                            <div class="cron-detail-section-head">
-                                <h4>Execution History</h4>
-                                @if (!string.IsNullOrEmpty(_detailJob.ConversationId))
-                                {
-                                    <a class="toolbar-btn" href="@ConversationLink(_detailJob)" title="Open the conversation this job posts into">&#x1F4AC; Related conversation</a>
-                                }
-                            </div>
-
-                            @if (_loadingRuns)
-                            {
-                                <div class="config-loading" aria-live="polite">
-                                    <div class="loading-spinner small"></div>
-                                    <span>Loading run history.</span>
-                                </div>
-                            }
-                            else if (_runs.Count == 0)
-                            {
-                                <div class="cron-detail-empty">No execution history recorded yet.</div>
-                            }
-                            else
-                            {
-                                <table class="agents-table cron-runs-table" aria-label="Execution history" data-testid="cron-runs-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Started</th>
-                                            <th>Duration</th>
-                                            <th>Status</th>
-                                            <th>Session / Conversation</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var run in _runs)
-                                        {
-                                            <tr data-testid="cron-run-row">
-                                                <td class="agents-id">@FormatTimestamp(run.StartedAt)</td>
-                                                <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
-                                                <td><span class="cron-run-status @RunStatusClass(run.Status)">@run.Status</span></td>
-                                                <td class="agents-id">
-                                                    @if (!string.IsNullOrEmpty(run.SessionId))
-                                                    {
-                                                        @if (RunConversationLink(run) is { } link)
-                                                        {
-                                                            <a href="@link" title="Open conversation">@run.SessionId</a>
-                                                        }
-                                                        else
-                                                        {
-                                                            @run.SessionId
-                                                        }
-                                                    }
-                                                    else
-                                                    {
-                                                        <span>—</span>
-                                                    }
-                                                    @if (!string.IsNullOrEmpty(run.Error))
-                                                    {
-                                                        <div class="cron-detail-error">@run.Error</div>
-                                                    }
-                                                </td>
-                                            </tr>
-                                        }
-                                    </tbody>
-                                </table>
-                            }
-                        </section>
+        <section class="cron-selector-section" aria-label="Cron job selection">
+            <label class="cron-selector-label">Select a cron job</label>
+            <div class="cron-rich-select">
+                <button type="button" class="cron-rich-select-toggle" data-testid="cron-job-selector-toggle"
+                        @onclick="ToggleSelector" aria-expanded="@_selectorOpen">
+                    @if (_selectedJob is null)
+                    {
+                        <span class="cron-selector-placeholder">Choose a job to view and edit</span>
+                    }
+                    else
+                    {
+                        <span class="cron-selector-option-main">
+                            <strong>@_selectedJob.Name</strong>
+                            <span>@_selectedJob.Schedule</span>
+                        </span>
+                        <span class="cron-selector-option-meta">
+                            <span>@_selectedJob.ActionType</span>
+                            <span>@OwnerLabel(_selectedJob)</span>
+                        </span>
+                    }
+                    <span class="cron-selector-chevron" aria-hidden="true">&#x25BE;</span>
+                </button>
+                @if (_selectorOpen)
+                {
+                    <div class="cron-rich-select-menu" role="listbox" aria-label="Cron jobs">
+                        @foreach (var job in _jobs)
+                        {
+                            <button type="button" class="cron-rich-select-option @(job.Id == _selectedJob?.Id ? "selected" : "")"
+                                    role="option" aria-selected="@(job.Id == _selectedJob?.Id)"
+                                    data-testid="cron-job-option" @onclick="() => SelectJobAsync(job)">
+                                <span class="cron-selector-option-main">
+                                    <strong>@job.Name</strong>
+                                    <span class="agents-id">@job.Schedule</span>
+                                </span>
+                                <span class="cron-selector-option-meta">
+                                    <span>@job.ActionType</span>
+                                    <span>@OwnerLabel(job)</span>
+                                </span>
+                            </button>
+                        }
                     </div>
-                </div>
+                }
             </div>
-        }
+        </section>
 
-        @* Edit dialog — larger modal with provider/model dropdowns *@
-        @if (_editJob is not null)
+        @if (_selectedJob is null || _editJob is null)
         {
-            <div class="agents-confirm-overlay" @onclick="CancelEdit">
-                <div class="cron-modal cron-edit-modal" @onclick:stopPropagation="true" role="dialog"
-                     aria-labelledby="cron-edit-title" data-testid="cron-edit-dialog">
-                    <header class="cron-modal-header">
-                        <h3 id="cron-edit-title">Edit Cron Job</h3>
-                        <button class="cron-modal-close" @onclick="CancelEdit" aria-label="Close editor">&#x2715;</button>
-                    </header>
-                    <div class="cron-modal-body">
-                        <div class="cron-edit-grid">
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-name">Name</label>
-                                <input id="cron-edit-name" type="text" @bind="_editJob.Name" />
-                            </div>
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-schedule">Schedule (cron expression)</label>
-                                <input id="cron-edit-schedule" type="text" @bind="_editJob.Schedule" placeholder="0 * * * *" />
-                            </div>
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-timezone">Time Zone</label>
-                                <input id="cron-edit-timezone" type="text" @bind="_editJob.TimeZone" placeholder="UTC" />
-                            </div>
-                        </div>
-
-                        @if (string.Equals(_editJob.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
-                        {
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-message">Message</label>
-                                <textarea id="cron-edit-message" rows="5" @bind="_editJob.Message"></textarea>
-                            </div>
-                            <div class="cron-edit-grid">
-                                <div class="cron-edit-field">
-                                    <label for="cron-edit-provider">Provider</label>
-                                    <select id="cron-edit-provider" data-testid="cron-edit-provider" value="@_editProvider" @onchange="OnProviderChange">
-                                        <option value="">(agent default)</option>
-                                        @foreach (var p in _providers)
-                                        {
-                                            <option value="@p.Id">@p.Name</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="cron-edit-field">
-                                    <label for="cron-edit-model">Model</label>
-                                    @if (_loadingModels)
-                                    {
-                                        <span class="agents-field-loading">Loading models.</span>
-                                    }
-                                    else if (_models.Count > 0)
-                                    {
-                                        <select id="cron-edit-model" data-testid="cron-edit-model" value="@_editJob.Model" @onchange="OnModelChange">
-                                            <option value="">(agent default)</option>
-                                            @foreach (var m in _models)
-                                            {
-                                                <option value="@m.ModelId">@m.Name</option>
-                                            }
-                                        </select>
-                                    }
-                                    else
-                                    {
-                                        <input id="cron-edit-model" type="text" @bind="_editJob.Model" placeholder="Select a provider to list models" />
-                                    }
-                                </div>
-                            </div>
-                        }
-                        else if (string.Equals(_editJob.ActionType, "command", StringComparison.OrdinalIgnoreCase))
-                        {
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-shell">Shell Command</label>
-                                <textarea id="cron-edit-shell" rows="5" @bind="_editJob.ShellCommand"></textarea>
-                            </div>
-                        }
-                        else if (string.Equals(_editJob.ActionType, "webhook", StringComparison.OrdinalIgnoreCase))
-                        {
-                            <div class="cron-edit-field">
-                                <label for="cron-edit-webhook">Webhook URL</label>
-                                <input id="cron-edit-webhook" type="text" @bind="_editJob.WebhookUrl" />
-                            </div>
-                        }
-                        <div class="cron-edit-field cron-edit-field-inline">
-                            <label for="cron-edit-enabled">
-                                <input id="cron-edit-enabled" type="checkbox" @bind="_editJob.Enabled" />
-                                Enabled
-                            </label>
-                        </div>
-                    </div>
-                    <footer class="cron-modal-footer">
-                        <button class="toolbar-btn primary" @onclick="SaveEditAsync" disabled="@_busy">
-                            @(_busy ? "Saving." : "Save")
-                        </button>
-                        <button class="toolbar-btn" @onclick="CancelEdit" disabled="@_busy">Cancel</button>
-                    </footer>
-                </div>
-            </div>
-        }
-
-        @if (_jobs.Count == 0)
-        {
-            <div class="agents-empty">
-                <p>No cron jobs configured.</p>
+            <div class="agents-empty cron-selection-empty">
+                <p>Select a cron job above to view its settings and execution history.</p>
             </div>
         }
         else
         {
-            <table class="agents-table" aria-label="Cron job list" data-testid="cron-jobs-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Schedule</th>
-                        <th>Type</th>
-                        <th>Agent</th>
-                        <th>Status</th>
-                        <th>Next Run</th>
-                        <th>Last Run</th>
-                        <th><span class="sr-only">Actions</span></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var job in _jobs)
+            <section class="cron-page-card" data-testid="cron-job-editor">
+                <header class="cron-page-card-header">
+                    <div>
+                        <h3>Edit Cron Job</h3>
+                        <div class="cron-page-card-subtitle">
+                            <span class="agents-id">@_editJob.Id</span>
+                            @if (_editJob.System) { <span class="badge badge-system">System</span> }
+                            @if (_editJob.Enabled) { <span class="badge badge-enabled">Enabled</span> }
+                            else { <span class="badge badge-disabled">Disabled</span> }
+                        </div>
+                    </div>
+                    <div class="cron-page-actions">
+                        @if (ConversationLink(_editJob) is { } conversationLink)
+                        {
+                            <a class="toolbar-btn" href="@conversationLink">&#x1F4AC; Related conversation</a>
+                        }
+                        <button class="toolbar-btn" @onclick="() => RunNowAsync(_editJob)" disabled="@_busy"
+                                aria-label="Run @_editJob.Name now">&#x25B6;&#xFE0F; Run now</button>
+                        <button class="toolbar-btn danger" @onclick="() => RequestDelete(_editJob)" disabled="@_busy"
+                                aria-label="Delete @_editJob.Name">Delete</button>
+                    </div>
+                </header>
+
+                <div class="cron-page-card-body">
+                    <div class="cron-edit-grid">
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-name">Name</label>
+                            <input id="cron-edit-name" type="text" @bind="_editJob.Name" />
+                        </div>
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-schedule">Schedule (cron expression)</label>
+                            <input id="cron-edit-schedule" type="text" @bind="_editJob.Schedule" placeholder="0 * * * *" />
+                        </div>
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-timezone">Time Zone</label>
+                            <input id="cron-edit-timezone" type="text" @bind="_editJob.TimeZone" placeholder="UTC" />
+                        </div>
+                    </div>
+
+                    <dl class="cron-detail-props cron-static-props">
+                        <dt>Action Type</dt><dd>@_editJob.ActionType</dd>
+                        <dt>Owning Agent</dt><dd>@OwnerLabel(_editJob)</dd>
+                        <dt>Created</dt><dd>@FormatTimestamp(_editJob.CreatedAt)@(string.IsNullOrEmpty(_editJob.CreatedBy) ? "" : $" by {_editJob.CreatedBy}")</dd>
+                        <dt>Next Run</dt><dd>@FormatTimestamp(_editJob.NextRunAt)</dd>
+                        <dt>Last Run</dt><dd>@FormatTimestamp(_editJob.LastRunAt) @if (!string.IsNullOrEmpty(_editJob.LastRunStatus)) { <span class="cron-run-status @RunStatusClass(_editJob.LastRunStatus)">@_editJob.LastRunStatus</span> }</dd>
+                        @if (!string.IsNullOrEmpty(_editJob.LastRunError)) { <dt>Last Error</dt><dd class="cron-detail-error">@_editJob.LastRunError</dd> }
+                    </dl>
+
+                    @if (string.Equals(_editJob.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
                     {
-                        <tr data-testid="cron-job-row" data-job-id="@job.Id" class="cron-job-row-clickable" @onclick="() => OpenDetailAsync(job)">
-                            <td>@job.Name</td>
-                            <td class="agents-id">@job.Schedule</td>
-                            <td>@job.ActionType</td>
-                            <td>@(string.IsNullOrEmpty(job.AgentId) ? "—" : job.AgentId)</td>
-                            <td>
-                                @if (job.Enabled)
+                        <div class="cron-edit-field">
+                            <label for="cron-edit-message">Message</label>
+                            <textarea id="cron-edit-message" rows="7" @bind="_editJob.Message"></textarea>
+                        </div>
+                        <div class="cron-edit-grid">
+                            <div class="cron-edit-field">
+                                <label for="cron-edit-provider">Provider</label>
+                                <select id="cron-edit-provider" data-testid="cron-edit-provider" value="@_editProvider" @onchange="OnProviderChange">
+                                    <option value="">(agent default)</option>
+                                    @foreach (var provider in _providers) { <option value="@provider.Id">@provider.Name</option> }
+                                </select>
+                            </div>
+                            <div class="cron-edit-field">
+                                <label for="cron-edit-model">Model</label>
+                                @if (_loadingModels)
                                 {
-                                    <span class="badge badge-enabled">Enabled</span>
+                                    <span class="agents-field-loading">Loading models.</span>
+                                }
+                                else if (_models.Count > 0)
+                                {
+                                    <select id="cron-edit-model" data-testid="cron-edit-model" value="@_editJob.Model" @onchange="OnModelChange">
+                                        <option value="">(agent default)</option>
+                                        @foreach (var model in _models) { <option value="@model.ModelId">@model.Name</option> }
+                                    </select>
                                 }
                                 else
                                 {
-                                    <span class="badge badge-disabled">Disabled</span>
+                                    <input id="cron-edit-model" data-testid="cron-edit-model" type="text" @bind="_editJob.Model" placeholder="Select a provider to list models" />
                                 }
-                            </td>
-                            <td class="agents-id">@FormatTimestamp(job.NextRunAt)</td>
-                            <td class="agents-id">
-                                @FormatTimestamp(job.LastRunAt)
-                                @if (!string.IsNullOrEmpty(job.LastRunStatus))
-                                {
-                                    <span> (@job.LastRunStatus)</span>
-                                }
-                            </td>
-                            <td class="agents-actions" @onclick:stopPropagation="true">
-                                <button class="agents-btn-clone" @onclick="() => OpenDetailAsync(job)" title="View details" aria-label="View @job.Name details">&#x1F441;&#xFE0F;</button>
-                                <button class="agents-btn-clone" @onclick="() => RunNowAsync(job)" disabled="@_busy" title="Run now" aria-label="Run @job.Name now">&#x25B6;&#xFE0F;</button>
-                                <button class="agents-btn-edit" @onclick="() => EditJob(job)" title="Edit @job.Name" aria-label="Edit @job.Name">&#x270F;&#xFE0F;</button>
-                                <button class="agents-btn-delete" @onclick="() => RequestDelete(job)" title="Delete @job.Name" aria-label="Delete @job.Name">&#x1F5D1;&#xFE0F;</button>
-                            </td>
-                        </tr>
+                            </div>
+                        </div>
                     }
-                </tbody>
-            </table>
+                    else if (string.Equals(_editJob.ActionType, "command", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="cron-edit-field"><label for="cron-edit-shell">Shell Command</label><textarea id="cron-edit-shell" rows="7" @bind="_editJob.ShellCommand"></textarea></div>
+                    }
+                    else if (string.Equals(_editJob.ActionType, "webhook", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="cron-edit-field"><label for="cron-edit-webhook">Webhook URL</label><input id="cron-edit-webhook" type="text" @bind="_editJob.WebhookUrl" /></div>
+                    }
+                    <div class="cron-edit-field cron-edit-field-inline">
+                        <label for="cron-edit-enabled"><input id="cron-edit-enabled" type="checkbox" @bind="_editJob.Enabled" /> Enabled</label>
+                    </div>
+                </div>
+                <footer class="cron-page-card-footer">
+                    <button class="toolbar-btn primary" @onclick="SaveEditAsync" disabled="@_busy"
+                            aria-label="Save @_editJob.Name">@(_busy ? "Saving." : "Save changes")</button>
+                    <button class="toolbar-btn" @onclick="ResetEdit">Reset</button>
+                </footer>
+            </section>
+
+            <section class="cron-page-card cron-history-card">
+                <header class="cron-page-card-header"><h3>Execution History</h3></header>
+                <div class="cron-page-card-body">
+                    @if (_loadingRuns)
+                    {
+                        <div class="config-loading" aria-live="polite"><div class="loading-spinner small"></div><span>Loading run history.</span></div>
+                    }
+                    else if (_runs.Count == 0)
+                    {
+                        <div class="cron-detail-empty">No execution history recorded yet.</div>
+                    }
+                    else
+                    {
+                        <table class="agents-table cron-runs-table" aria-label="Execution history" data-testid="cron-runs-table">
+                            <thead><tr><th>Started</th><th>Duration</th><th>Status</th><th>Session / Conversation</th></tr></thead>
+                            <tbody>
+                                @foreach (var run in _runs)
+                                {
+                                    <tr data-testid="cron-run-row">
+                                        <td class="agents-id">@FormatTimestamp(run.StartedAt)</td>
+                                        <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
+                                        <td><span class="cron-run-status @RunStatusClass(run.Status)">@run.Status</span></td>
+                                        <td class="agents-id">
+                                            @if (!string.IsNullOrEmpty(run.SessionId))
+                                            {
+                                                @if (ConversationLink(_editJob) is { } runLink) { <a href="@runLink">@run.SessionId</a> }
+                                                else { @run.SessionId }
+                                            }
+                                            else { <span>—</span> }
+                                            @if (!string.IsNullOrEmpty(run.Error)) { <div class="cron-detail-error">@run.Error</div> }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </section>
         }
     }
 </div>
 
 @code {
     private List<CronJobDto> _jobs = [];
+    private CronJobDto? _selectedJob;
+    private CronJobDto? _editJob;
+    private List<CronRunDto> _runs = [];
     private bool _loading = true;
+    private bool _loadingRuns;
     private bool _busy;
+    private bool _selectorOpen;
     private string? _error;
     private string? _statusMessage;
     private string _statusClass = "";
-
     private string? _confirmDeleteId;
     private string? _confirmDeleteName;
-
-    private CronJobDto? _editJob;
-    private CronJobDto? _detailJob;
-
-    private List<CronRunDto> _runs = [];
-    private bool _loadingRuns;
-
-    // Provider/model dropdown state for the edit modal.
     private List<ProviderItem> _providers = [];
     private List<ModelItem> _models = [];
     private string _editProvider = "";
     private bool _loadingModels;
-
     private CancellationTokenSource? _statusDismissCts;
 
     private sealed record ProviderItem(string Id, string Name);
     private sealed record ModelItem(string ModelId, string Name, string? Provider = null);
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadJobsAsync();
-    }
+    protected override async Task OnInitializedAsync() => await LoadJobsAsync();
 
     public void Dispose()
     {
@@ -394,122 +283,81 @@
         _loading = true;
         _error = null;
         StateHasChanged();
-
+        var selectedId = _selectedJob?.Id;
         var (jobs, error) = await CronApi.ListAsync();
-        if (error is not null)
-        {
-            _error = $"Failed to load cron jobs: {error}";
-        }
+        if (error is not null) _error = $"Failed to load cron jobs: {error}";
         else
         {
-            _jobs = jobs
-                .OrderBy(j => j.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            _jobs = jobs.OrderBy(job => job.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            if (selectedId is not null && _jobs.FirstOrDefault(job => job.Id == selectedId) is { } selected)
+                await SelectJobAsync(selected);
         }
-
         _loading = false;
         StateHasChanged();
     }
 
-    // ── Detail modal ─────────────────────────────────────────────────────────
-    private async Task OpenDetailAsync(CronJobDto job)
+    private void ToggleSelector() => _selectorOpen = !_selectorOpen;
+
+    private async Task SelectJobAsync(CronJobDto job)
     {
-        _detailJob = job;
+        _selectorOpen = false;
+        _selectedJob = job;
+        CloneForEdit(job);
         _runs = [];
         _loadingRuns = true;
         StateHasChanged();
 
-        var (runs, _) = await CronApi.RunsAsync(job.Id, 30);
-        _runs = runs
-            .OrderByDescending(r => r.StartedAt)
-            .ToList();
+        var runsTask = CronApi.RunsAsync(job.Id, 30);
+        if (string.Equals(job.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
+            _ = InitProviderModelPickersAsync(job);
+
+        var (runs, _) = await runsTask;
+        if (_selectedJob?.Id != job.Id) return;
+        _runs = runs.OrderByDescending(run => run.StartedAt).ToList();
         _loadingRuns = false;
         StateHasChanged();
     }
 
-    private void CloseDetail() => _detailJob = null;
-
-    private void EditFromDetail(CronJobDto job)
+    private void CloneForEdit(CronJobDto job)
     {
-        _detailJob = null;
-        EditJob(job);
-    }
-
-    // ── Run now ────────────────────────────────────────────────────────────
-    private async Task RunNowAsync(CronJobDto job)
-    {
-        _busy = true;
-        var (success, error) = await CronApi.RunNowAsync(job.Id);
-        _busy = false;
-        if (success)
-        {
-            SetStatus($"Triggered '{job.Name}'.", "success");
-            if (_detailJob is not null && _detailJob.Id == job.Id)
-                await OpenDetailAsync(job);
-        }
-        else
-        {
-            SetStatus($"Run failed: {error}", "error");
-        }
-    }
-
-    // ── Edit ───────────────────────────────────────────────────────────────
-    private void EditJob(CronJobDto job)
-    {
-        // Clone so cancel discards edits.
         _editJob = new CronJobDto
         {
-            Id = job.Id,
-            Name = job.Name,
-            Schedule = job.Schedule,
-            ActionType = job.ActionType,
-            AgentId = job.AgentId,
-            Message = job.Message,
-            TemplateName = job.TemplateName,
-            Model = job.Model,
-            WebhookUrl = job.WebhookUrl,
-            ShellCommand = job.ShellCommand,
-            Enabled = job.Enabled,
-            System = job.System,
-            TimeZone = job.TimeZone,
-            CreatedBy = job.CreatedBy,
-            CreatedAt = job.CreatedAt,
-            LastRunAt = job.LastRunAt,
-            NextRunAt = job.NextRunAt,
-            LastRunStatus = job.LastRunStatus,
-            LastRunError = job.LastRunError,
-            ConversationId = job.ConversationId,
+            Id = job.Id, Name = job.Name, Schedule = job.Schedule, ActionType = job.ActionType,
+            AgentId = job.AgentId, Message = job.Message, TemplateName = job.TemplateName,
+            Model = job.Model, WebhookUrl = job.WebhookUrl, ShellCommand = job.ShellCommand,
+            Enabled = job.Enabled, System = job.System, TimeZone = job.TimeZone,
+            CreatedBy = job.CreatedBy, CreatedAt = job.CreatedAt, LastRunAt = job.LastRunAt,
+            NextRunAt = job.NextRunAt, LastRunStatus = job.LastRunStatus,
+            LastRunError = job.LastRunError, ConversationId = job.ConversationId,
         };
-
-        // Best-effort load of provider/model dropdown data for agent-prompt jobs.
         _providers = [];
         _models = [];
         _editProvider = "";
-        if (string.Equals(job.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase))
-            _ = InitProviderModelPickersAsync(job);
+    }
+
+    private void ResetEdit()
+    {
+        if (_selectedJob is not null) CloneForEdit(_selectedJob);
     }
 
     private async Task InitProviderModelPickersAsync(CronJobDto job)
     {
         await LoadProvidersAsync();
-
-        // Seed the provider selection from the model's provider (if the current model
-        // maps to a known provider), otherwise leave it blank so the user picks one.
+        if (_selectedJob?.Id != job.Id) return;
         if (!string.IsNullOrEmpty(job.Model))
         {
-            // Try each provider until we find one whose model list contains the current model.
-            foreach (var p in _providers)
+            foreach (var provider in _providers)
             {
-                var models = await FetchModelsAsync(p.Id);
-                if (models.Any(m => string.Equals(m.ModelId, job.Model, StringComparison.OrdinalIgnoreCase)))
+                var models = await FetchModelsAsync(provider.Id);
+                if (_selectedJob?.Id != job.Id) return;
+                if (models.Any(model => string.Equals(model.ModelId, job.Model, StringComparison.OrdinalIgnoreCase)))
                 {
-                    _editProvider = p.Id;
+                    _editProvider = provider.Id;
                     _models = models;
                     break;
                 }
             }
         }
-
         await InvokeAsync(StateHasChanged);
     }
 
@@ -518,9 +366,7 @@
         try
         {
             var url = Nav.BaseUri.TrimEnd('/') + "/api/providers";
-            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var items = await Http.GetFromJsonAsync<List<ProviderItem>>(url, opts);
-            _providers = items ?? [];
+            _providers = await Http.GetFromJsonAsync<List<ProviderItem>>(url, JsonOptions()) ?? [];
         }
         catch { _providers = []; }
     }
@@ -530,26 +376,19 @@
         try
         {
             var url = Nav.BaseUri.TrimEnd('/') + $"/api/models?provider={Uri.EscapeDataString(provider)}";
-            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var items = await Http.GetFromJsonAsync<List<ModelItem>>(url, opts);
-            return items ?? [];
+            return await Http.GetFromJsonAsync<List<ModelItem>>(url, JsonOptions()) ?? [];
         }
         catch { return []; }
     }
+
+    private static JsonSerializerOptions JsonOptions() => new() { PropertyNameCaseInsensitive = true };
 
     private async Task OnProviderChange(ChangeEventArgs e)
     {
         _editProvider = e.Value?.ToString() ?? "";
         _models = [];
-        if (_editJob is not null)
-            _editJob.Model = null;
-
-        if (string.IsNullOrEmpty(_editProvider))
-        {
-            StateHasChanged();
-            return;
-        }
-
+        if (_editJob is not null) _editJob.Model = null;
+        if (string.IsNullOrEmpty(_editProvider)) { StateHasChanged(); return; }
         _loadingModels = true;
         StateHasChanged();
         _models = await FetchModelsAsync(_editProvider);
@@ -561,34 +400,32 @@
     {
         if (_editJob is not null)
         {
-            var v = e.Value?.ToString();
-            _editJob.Model = string.IsNullOrEmpty(v) ? null : v;
+            var value = e.Value?.ToString();
+            _editJob.Model = string.IsNullOrEmpty(value) ? null : value;
         }
     }
-
-    private void CancelEdit() => _editJob = null;
 
     private async Task SaveEditAsync()
     {
-        if (_editJob is null)
-            return;
-
+        if (_editJob is null) return;
         _busy = true;
         var (_, error) = await CronApi.UpdateAsync(_editJob.Id, _editJob);
         _busy = false;
-
-        if (error is not null)
-        {
-            SetStatus($"Save failed: {error}", "error");
-            return;
-        }
-
+        if (error is not null) { SetStatus($"Save failed: {error}", "error"); return; }
         SetStatus($"Cron job '{_editJob.Name}' saved.", "success");
-        _editJob = null;
         await LoadJobsAsync();
     }
 
-    // ── Delete with confirmation ─────────────────────────────────────────────
+    private async Task RunNowAsync(CronJobDto job)
+    {
+        _busy = true;
+        var (success, error) = await CronApi.RunNowAsync(job.Id);
+        _busy = false;
+        if (!success) { SetStatus($"Run failed: {error}", "error"); return; }
+        SetStatus($"Triggered '{job.Name}'.", "success");
+        await SelectJobAsync(_selectedJob ?? job);
+    }
+
     private void RequestDelete(CronJobDto job)
     {
         _confirmDeleteId = job.Id;
@@ -603,49 +440,34 @@
 
     private async Task ConfirmDeleteAsync()
     {
-        if (_confirmDeleteId is null)
-            return;
-
+        if (_confirmDeleteId is null) return;
         _busy = true;
         var name = _confirmDeleteName;
         var (success, error) = await CronApi.DeleteAsync(_confirmDeleteId);
         _busy = false;
-
-        if (!success)
-        {
-            SetStatus($"Delete failed: {error}", "error");
-            return;
-        }
-
+        if (!success) { SetStatus($"Delete failed: {error}", "error"); return; }
         SetStatus($"Cron job '{name}' removed.", "success");
         _confirmDeleteId = null;
         _confirmDeleteName = null;
-        if (_detailJob is not null)
-            _detailJob = null;
+        _selectedJob = null;
+        _editJob = null;
+        _runs = [];
         await LoadJobsAsync();
     }
 
-    // ── Formatting helpers ───────────────────────────────────────────────────
-    private static string FormatTimestamp(DateTimeOffset? ts)
-    {
-        if (ts is null || ts.Value == default)
-            return "—";
-        return ts.Value.ToLocalTime().ToString("MMM d, h:mm tt");
-    }
+    private static string OwnerLabel(CronJobDto job) => string.IsNullOrEmpty(job.AgentId) ? "No agent" : job.AgentId;
+
+    private static string FormatTimestamp(DateTimeOffset? timestamp)
+        => timestamp is null || timestamp.Value == default ? "—" : timestamp.Value.ToLocalTime().ToString("MMM d, h:mm tt");
 
     private static string FormatDuration(DateTimeOffset start, DateTimeOffset? end)
     {
-        if (end is null || end.Value == default)
-            return "—";
+        if (end is null || end.Value == default) return "—";
         var span = end.Value - start;
-        if (span < TimeSpan.Zero)
-            return "—";
-        if (span.TotalSeconds < 1)
-            return $"{span.TotalMilliseconds:F0} ms";
-        if (span.TotalMinutes < 1)
-            return $"{span.TotalSeconds:F1} s";
-        if (span.TotalHours < 1)
-            return $"{span.Minutes}m {span.Seconds}s";
+        if (span < TimeSpan.Zero) return "—";
+        if (span.TotalSeconds < 1) return $"{span.TotalMilliseconds:F0} ms";
+        if (span.TotalMinutes < 1) return $"{span.TotalSeconds:F1} s";
+        if (span.TotalHours < 1) return $"{span.Minutes}m {span.Seconds}s";
         return $"{(int)span.TotalHours}h {span.Minutes}m";
     }
 
@@ -658,34 +480,20 @@
         _ => "cron-run-status-neutral"
     };
 
-    // Deep-link to the pinned conversation the job posts into. The chat route is
-    // /chat/{agentId}/{conversationId}; both are required for a valid link.
-    private string? ConversationLink(CronJobDto job)
+    private static string? ConversationLink(CronJobDto job)
     {
-        if (string.IsNullOrEmpty(job.AgentId) || string.IsNullOrEmpty(job.ConversationId))
-            return null;
+        if (string.IsNullOrEmpty(job.AgentId) || string.IsNullOrEmpty(job.ConversationId)) return null;
         return $"chat/{Uri.EscapeDataString(job.AgentId)}/{Uri.EscapeDataString(job.ConversationId)}";
     }
 
-    // Per-run conversation link. Runs record a SessionId; when the job owns a pinned
-    // conversation we route there (all runs land in the same conversation under P9-D).
-    private string? RunConversationLink(CronRunDto run)
+    private void SetStatus(string message, string cssClass)
     {
-        if (_detailJob is null)
-            return null;
-        return ConversationLink(_detailJob);
-    }
-
-    private void SetStatus(string msg, string cssClass)
-    {
-        _statusMessage = msg;
+        _statusMessage = message;
         _statusClass = cssClass;
-
         _statusDismissCts?.Cancel();
         _statusDismissCts?.Dispose();
         _statusDismissCts = new CancellationTokenSource();
-        var token = _statusDismissCts.Token;
-        _ = DismissStatusAfterDelay(token);
+        _ = DismissStatusAfterDelay(_statusDismissCts.Token);
     }
 
     private async Task DismissStatusAfterDelay(CancellationToken token)
@@ -697,9 +505,6 @@
             _statusClass = "";
             await InvokeAsync(StateHasChanged);
         }
-        catch (TaskCanceledException)
-        {
-            // Dismissed or replaced - ignore
-        }
+        catch (TaskCanceledException) { }
     }
 }

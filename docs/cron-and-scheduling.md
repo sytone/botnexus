@@ -941,22 +941,23 @@ It is backed by the same `/api/cron` endpoints described
 above and shows the merged view of SQLite-persisted (runtime-created) and
 config-file jobs. From this page an operator can:
 
-- **View** every job with its schedule, action type, target agent, enabled state, and
-  next/last run timestamps.
-- **Open a detail view** — click a job row (or the &#x1F441; view button) to open a large
-  modal showing all job properties, an **execution-history timeline** (backed by
-  `GET /api/cron/{jobId}/runs`) with each run's start time, duration, status, and
-  linked session, plus a shortcut to the **related conversation** the job posts into
-  (when the job owns a pinned conversation).
-- **Run now** — trigger an immediate out-of-schedule execution (`POST /api/cron/{jobId}/run`).
-  Triggering from the detail view refreshes the run history in place.
-- **Edit** — change the name, schedule, time zone, action payload, and enabled flag
-  (`PUT /api/cron/{jobId}`) in an enlarged modal. For `agent-prompt` jobs the model is
+- **Select** a job from a rich drop-down showing its name, schedule, action type,
+  and owning agent.
+- **View and edit on one page** — selecting a job loads its full properties into an
+  inline editor. Operators can change the name, schedule, time zone, action payload,
+  and enabled flag (`PUT /api/cron/{jobId}`). For `agent-prompt` jobs the model is
   chosen via **provider and model drop-downs** (populated from `/api/providers` and
-  `/api/models`) rather than free text, so only available provider/model combinations
-  can be selected; command and webhook jobs edit their shell command / webhook URL.
-- **Delete** — remove a job after a confirmation prompt (`DELETE /api/cron/{jobId}`);
-  the job's pinned conversation is archived alongside the record.
+  `/api/models`) rather than free text; command and webhook jobs edit their shell
+  command or webhook URL.
+- **Review execution history below the editor** — the same page lists each run from
+  `GET /api/cron/{jobId}/runs`, including start time, duration, status, linked session,
+  and errors. A related-conversation shortcut is shown when the job owns a pinned
+  conversation.
+- **Run now** — trigger an immediate out-of-schedule execution (`POST /api/cron/{jobId}/run`)
+  and refresh the selected job's execution history in place.
+- **Delete** — remove the selected job after a confirmation prompt
+  (`DELETE /api/cron/{jobId}`); the job's pinned conversation is archived alongside
+  the record.
 
 System jobs are excluded from the list by default, matching the API behaviour.
 
