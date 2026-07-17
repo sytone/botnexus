@@ -151,11 +151,11 @@ else
                     <div class="message @GetMessageClass(msg)" @key="msg.Id">
                         @if (ShouldRenderAsMarkdown(msg.Role) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                         {
-                            <div class="message-content">@((MarkupString)rendered)</div>
+                            <div class="message-content markdown-content">@((MarkupString)rendered)</div>
                         }
                         else
                         {
-                            <div class="message-content">@msg.Content</div>
+                            <div class="message-content plain-text-content">@msg.Content</div>
                         }
                         <div class="message-time">@FormatTimestamp(msg.Timestamp)</div>
                     </div>
@@ -164,7 +164,7 @@ else
             @if (streamState?.IsStreaming == true && !string.IsNullOrEmpty(streamState.Buffer))
             {
                 <div class="message assistant streaming">
-                    <div class="message-content">@streamState.Buffer<span class="stream-cursor">&#x2588;</span></div>
+                    <div class="message-content plain-text-content">@streamState.Buffer<span class="stream-cursor">&#x2588;</span></div>
                 </div>
             }
         </div>

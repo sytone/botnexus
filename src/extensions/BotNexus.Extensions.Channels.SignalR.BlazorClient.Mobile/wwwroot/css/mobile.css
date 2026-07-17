@@ -206,7 +206,6 @@ body {
     border-radius: 12px;
     padding: 8px 12px;
     word-break: break-word;
-    white-space: pre-wrap;
 }
 
 .message.user {
@@ -248,6 +247,13 @@ body {
 }
 
 .message-content { line-height: 1.5; }
+
+/* Rendered Markdown owns its block spacing. Preserve source whitespace only for
+   unrendered platform messages and the live streaming buffer. */
+.plain-text-content { white-space: pre-wrap; }
+
+.markdown-content > :first-child { margin-top: 0; }
+.markdown-content > :last-child { margin-bottom: 0; }
 
 .message-time {
     font-size: 10px;

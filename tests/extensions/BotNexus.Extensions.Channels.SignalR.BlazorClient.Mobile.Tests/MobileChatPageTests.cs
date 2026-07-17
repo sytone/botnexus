@@ -331,6 +331,72 @@ public sealed class MobileChatPageTests : IDisposable
         Assert.Contains("**not rendered**", cut.Markup);
     }
 
+    // -- #2069: mobile Markdown and plain-text whitespace -----------------------
+
+    [Fact]
+    public void Persisted_markdown_uses_markdown_whitespace_surface()
+    {
+        ConfigureReadyConversation(new ChatMessage("assistant", "line one`nline two`n`nnext paragraph", DateTimeOffset.UtcNow));
+        _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true)
+            .SetResult("<p>line one<br>line two</p>`n<p>next paragraph</p>`n");
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        _store.OnChanged += Raise.Event<Action>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var content = cut.Find(".message-content.markdown-content");
+            content.InnerHtml.ShouldContain("<p>line one<br>line two</p>");
+            content.ClassList.ShouldNotContain("plain-text-content");
+        });
+    }
+
+    [Fact]
+    public void Plain_text_fallback_preserves_intentional_whitespace_surface()
+    {
+        ConfigureReadyConversation(new ChatMessage("system", "line one`n  indented", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var content = cut.Find(".message-content.plain-text-content");
+        content.TextContent.ShouldBe("line one`n  indented");
+        content.ClassList.ShouldNotContain("markdown-content");
+    }
+
+    [Fact]
+    public void Live_stream_uses_plain_text_whitespace_surface()
+    {
+        ConfigureReadyConversation();
+        _store.GetStreamState("conv-1").Returns(new ConversationStreamState
+        {
+            IsStreaming = true,
+            Buffer = "line one`n  indented"
+        });
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var content = cut.Find(".message.streaming .message-content.plain-text-content");
+        content.TextContent.ShouldContain("line one`n  indented");
+        content.ClassList.ShouldNotContain("markdown-content");
+    }
+
+    private void ConfigureReadyConversation(params ChatMessage[] messages)
+    {
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "conv-1",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.ActiveAgentId.Returns("agent-1");
+        _store.GetAgent("agent-1").Returns(agent);
+        _store.GetMessages("conv-1").Returns(messages.ToList().AsReadOnly());
+    }
+
     // -- #1691: scroll-up history pagination (load-more) ---------------------
 
     [Fact]
