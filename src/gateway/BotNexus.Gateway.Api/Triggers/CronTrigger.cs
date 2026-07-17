@@ -105,46 +105,61 @@ public sealed class CronTrigger(
         // duplicate user message and suppressing tool call execution. (#656)
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
-        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
-
-        // #1722 Part A: a wake whose turn produced nothing - the response is NO_REPLY or
-        // whitespace AND no tool calls fired - is a pure no-op. Persisting it would leave a
-        // full cron session plus two history rows (user + empty assistant) per silent wake,
-        // which dominates the store over time. Treat it as a no-op: skip the user/assistant
-        // entries entirely. If we also created the transient conv:<guid> for this run (no
-        // human pin), dispose it - delete the cron session and archive the throwaway
-        // conversation. A pinned/human/default conversation is never deleted or archived;
-        // only the trigger's own per-run conversation is disposable.
-        if (IsNoOpTurn(response))
+        var retainSession = true;
+        try
         {
-            logger.LogInformation(
-                "Cron trigger no-op for agent '{AgentId}' job '{JobId}': empty turn (no reply, no tools); skipping persistence.",
-                agentId,
-                request?.CronJobId);
+            var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
+            var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 
-            if (createdFreshConversation && IsDisposableTransientConversation(conversation, sessionId))
+            // #1722 Part A: a wake whose turn produced nothing - the response is NO_REPLY or
+            // whitespace AND no tool calls fired - is a pure no-op. Persisting it would leave a
+            // full cron session plus two history rows (user + empty assistant) per silent wake,
+            // which dominates the store over time. Treat it as a no-op: skip the user/assistant
+            // entries entirely. If we also created the transient conv:<guid> for this run (no
+            // human pin), dispose it - delete the cron session and archive the throwaway
+            // conversation. A pinned/human/default conversation is never deleted or archived;
+            // only the trigger's own per-run conversation is disposable.
+            if (IsNoOpTurn(response))
             {
-                await sessions.DeleteAsync(sessionId, ct).ConfigureAwait(false);
-                await conversations.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+                logger.LogInformation(
+                    "Cron trigger no-op for agent '{AgentId}' job '{JobId}': empty turn (no reply, no tools); skipping persistence.",
+                    agentId,
+                    request?.CronJobId);
+
+                if (createdFreshConversation && IsDisposableTransientConversation(conversation, sessionId))
+                {
+                    await sessions.DeleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+                    retainSession = false;
+                    await conversations.ArchiveAsync(conversation.ConversationId, CancellationToken.None).ConfigureAwait(false);
+                }
+
+                return sessionId;
             }
 
-            return sessionId;
+            // P9-E (#645): stamp Cron on the user entry. Cron is a proxy for the citizen
+            // who scheduled the job - the persisted trigger marks the originating proxy
+            // so audit/UI can render the right badge without sniffing SessionType.
+            // Persisted AFTER PromptAsync so session history never contains the user entry
+            // as prior context when the agent handle is created for this run.
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = prompt,
+                Trigger = TriggerType.Cron
+            });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
         }
-
-        // P9-E (#645): stamp Cron on the user entry. Cron is a proxy for the citizen
-        // who scheduled the job — the persisted trigger marks the originating proxy
-        // so audit/UI can render the right badge without sniffing SessionType.
-        // Persisted AFTER PromptAsync so session history never contains the user entry
-        // as prior context when the agent handle is created for this run.
-        session.AddEntry(new SessionEntry
+        finally
         {
-            Role = MessageRole.User,
-            Content = prompt,
-            Trigger = TriggerType.Cron
-        });
-        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
-        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+            // CronTrigger owns every in-process terminal path after the Active write-ahead save.
+            // Use an independent token so cancellation, timeout, and host shutdown cannot skip it.
+            // A deleted disposable no-op session is the sole path that has no row to seal.
+            if (retainSession && session.Status == SessionStatus.Active)
+            {
+                session.Status = SessionStatus.Sealed;
+                await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
 
         logger.LogInformation(
             "Cron trigger created session '{SessionId}' for agent '{AgentId}' in conversation '{ConversationId}' (jobId: {JobId}, model: {ModelOverride}).",

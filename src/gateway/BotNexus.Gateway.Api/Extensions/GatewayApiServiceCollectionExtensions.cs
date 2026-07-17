@@ -6,6 +6,7 @@ using BotNexus.Gateway.Api.Triggers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Gateway.Api.Extensions;
 
@@ -25,6 +26,8 @@ public static class GatewayApiServiceCollectionExtensions
         services.AddSingleton<ILoggerProvider>(serviceProvider =>
             new RecentLogEntryLoggerProvider(serviceProvider.GetRequiredService<IRecentLogStore>()));
         services.AddSingleton<CronTrigger>();
+        services.AddSingleton<CronSessionStartupReconciler>();
+        services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<CronSessionStartupReconciler>());
         services.AddSingleton<HeartbeatTrigger>();
         services.AddSingleton<SoulTrigger>();
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<CronTrigger>());

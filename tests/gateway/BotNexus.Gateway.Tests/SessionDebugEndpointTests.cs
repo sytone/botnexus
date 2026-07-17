@@ -167,6 +167,46 @@ public sealed class SessionDebugEndpointTests
         root.GetProperty("systemPrompt").GetString().ShouldBe("stamped fallback prompt");
     }
 
+    [Fact]
+    public async Task GetDebug_ActiveCronSession_DistinguishesLiveExecutionFromStalePersistence()
+    {
+        var store = new InMemorySessionStore();
+        var stale = await store.GetOrCreateAsync(SessionId.From("cron:stale"), AgentId.From("agent-cron"));
+        stale.ChannelType = ChannelKey.From("cron");
+        await store.SaveAsync(stale);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        var controller = new SessionsController(store, supervisor: supervisor.Object);
+
+        var result = await controller.GetDebug("cron:stale", 0, 50, CancellationToken.None);
+        var root = SerializeRoot(result.Result.ShouldBeOfType<OkObjectResult>()!.Value);
+
+        root.GetProperty("isExecutionLive").GetBoolean().ShouldBeFalse();
+        root.GetProperty("lifecycleDiagnostic").GetString().ShouldBe("stale-persisted-active");
+    }
+
+    [Fact]
+    public async Task GetDebug_ActiveCronSession_WithRunningHandle_ReportsLiveExecution()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("cron:live"), AgentId.From("agent-cron"));
+        session.ChannelType = ChannelKey.From("cron");
+        await store.SaveAsync(session);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetHandle(AgentId.From("agent-cron"), SessionId.From("cron:live")))
+            .Returns(handle.Object);
+        var controller = new SessionsController(store, supervisor: supervisor.Object);
+
+        var result = await controller.GetDebug("cron:live", 0, 50, CancellationToken.None);
+        var root = SerializeRoot(result.Result.ShouldBeOfType<OkObjectResult>()!.Value);
+
+        root.GetProperty("isExecutionLive").GetBoolean().ShouldBeTrue();
+        root.GetProperty("lifecycleDiagnostic").GetString().ShouldBe("live-execution");
+    }
+
     private static System.Text.Json.JsonElement SerializeRoot(object? value)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(value);
