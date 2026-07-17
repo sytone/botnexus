@@ -27,6 +27,12 @@ public sealed class TeamsProxyOptions
 
     public string OutboundQueueName { get; set; } = "botnexus-outbound";
 
+    /// <summary>
+    /// Requests Service Bus streaming replies. The sample worker deliberately ignores delta
+    /// envelopes and sends only the terminal consolidated response to Teams.
+    /// </summary>
+    public bool StreamResponses { get; set; }
+
     public string BotOpenIdMetadataUrl { get; set; } =
         "https://login.botframework.com/v1/.well-known/openidconfiguration";
 

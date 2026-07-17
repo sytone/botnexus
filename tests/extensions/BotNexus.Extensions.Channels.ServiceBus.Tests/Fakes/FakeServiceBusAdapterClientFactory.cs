@@ -13,6 +13,9 @@ internal sealed class FakeServiceBusAdapterClientFactory : IServiceBusAdapterCli
     /// <summary>The fake processor returned by <see cref="CreateProcessor"/>.</summary>
     public FakeServiceBusProcessor Processor { get; } = new();
 
+    /// <summary>When set, the next send fails before the message is recorded.</summary>
+    public bool FailNextSend { get; set; }
+
     /// <summary>Senders created so far, keyed by queue name.</summary>
     public Dictionary<string, FakeServiceBusSenderWrapper> Senders { get; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -24,7 +27,7 @@ internal sealed class FakeServiceBusAdapterClientFactory : IServiceBusAdapterCli
     /// <inheritdoc/>
     public IServiceBusSenderWrapper CreateSender(string queueName)
     {
-        var sender = new FakeServiceBusSenderWrapper(queueName);
+        var sender = new FakeServiceBusSenderWrapper(queueName, this);
         Senders[queueName] = sender;
         return sender;
     }
@@ -62,7 +65,9 @@ internal sealed class FakeServiceBusProcessor : ServiceBusProcessor
 /// Fake <see cref="IServiceBusSenderWrapper"/> that records sent messages without
 /// connecting to Azure.
 /// </summary>
-internal sealed class FakeServiceBusSenderWrapper(string queueName) : IServiceBusSenderWrapper
+internal sealed class FakeServiceBusSenderWrapper(
+    string queueName,
+    FakeServiceBusAdapterClientFactory factory) : IServiceBusSenderWrapper
 {
     /// <summary>The queue name this sender targets.</summary>
     public string QueueName { get; } = queueName;
@@ -70,10 +75,19 @@ internal sealed class FakeServiceBusSenderWrapper(string queueName) : IServiceBu
     /// <summary>All messages sent via <see cref="SendMessageAsync"/>.</summary>
     public List<ServiceBusMessage> SentMessages { get; } = [];
 
+    private readonly object _sync = new();
+
     /// <inheritdoc/>
     public Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = default)
     {
-        SentMessages.Add(message);
+        if (factory.FailNextSend)
+        {
+            factory.FailNextSend = false;
+            throw new InvalidOperationException("Synthetic Service Bus send failure.");
+        }
+
+        lock (_sync)
+            SentMessages.Add(message);
         return Task.CompletedTask;
     }
 

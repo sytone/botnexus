@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.ServiceBus;
@@ -68,6 +69,14 @@ public sealed class ServiceBusInboundEnvelope
     public DateTimeOffset? Timestamp { get; set; }
 
     /// <summary>
+    /// Requests delta-plus-terminal delivery for this message. Missing, null, or false preserves
+    /// the historical one-shot Service Bus response contract.
+    /// </summary>
+    [JsonPropertyName("streamResponse")]
+    [JsonConverter(typeof(LenientNullableBooleanConverter))]
+    public bool? StreamResponse { get; set; }
+
+    /// <summary>
     /// Caller-supplied key/value metadata forwarded into <c>InboundMessage.Metadata</c>.
     /// Values are deserialized as <see cref="System.Text.Json.JsonElement"/> by the runtime.
     /// </summary>
@@ -78,6 +87,31 @@ public sealed class ServiceBusInboundEnvelope
 /// <summary>
 /// JSON envelope written to the reply queue by <see cref="ServiceBusChannelAdapter.SendAsync"/>.
 /// </summary>
+internal sealed class LenientNullableBooleanConverter : JsonConverter<bool?>
+{
+    public override bool? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.True)
+            return true;
+        if (reader.TokenType is JsonTokenType.False or JsonTokenType.Null)
+            return false;
+
+        // A malformed preference must not reject an otherwise valid legacy envelope. Consume
+        // structured values and fall back to the historical one-shot response mode.
+        if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            using (JsonDocument.ParseValue(ref reader)) { }
+        return false;
+    }
+
+    public override void Write(Utf8JsonWriter writer, bool? value, JsonSerializerOptions options)
+    {
+        if (value.HasValue)
+            writer.WriteBooleanValue(value.Value);
+        else
+            writer.WriteNullValue();
+    }
+}
+
 public sealed class ServiceBusOutboundEnvelope
 {
     /// <summary>Gateway-assigned reply message identifier.</summary>
@@ -110,6 +144,21 @@ public sealed class ServiceBusOutboundEnvelope
     /// <summary>The agent reply text.</summary>
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Delivery discriminator. <c>delta</c> carries incremental text; <c>done</c> carries the
+    /// complete consolidated response. One-shot replies also use <c>done</c>.
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "done";
+
+    /// <summary>Zero-based order within one response stream.</summary>
+    [JsonPropertyName("sequence")]
+    public long Sequence { get; set; }
+
+    /// <summary>True only for the one terminal envelope of a response.</summary>
+    [JsonPropertyName("isFinal")]
+    public bool IsFinal { get; set; } = true;
 
     /// <summary>UTC timestamp when the reply was produced.</summary>
     [JsonPropertyName("timestamp")]

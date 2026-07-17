@@ -40,6 +40,18 @@ public sealed class ServiceBusOutboundEnvelope
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
 
+    /// <summary><c>delta</c> for incremental text or <c>done</c> for the consolidated reply.</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "done";
+
+    /// <summary>Zero-based order within one response stream.</summary>
+    [JsonPropertyName("sequence")]
+    public long Sequence { get; set; }
+
+    /// <summary>True for the terminal consolidated response.</summary>
+    [JsonPropertyName("isFinal")]
+    public bool IsFinal { get; set; } = true;
+
     /// <summary>UTC timestamp when the reply was produced.</summary>
     [JsonPropertyName("timestamp")]
     public DateTimeOffset? Timestamp { get; set; }

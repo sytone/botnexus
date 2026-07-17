@@ -505,6 +505,268 @@ public sealed class ServiceBusChannelAdapterTests
         factory.Senders["reply-queue-B"].SentMessages[0].CorrelationId.ShouldBe("corr-B");
     }
 
+
+    [Fact]
+    public async Task HandleMessageBodyAsync_StreamResponseTrue_MapsTypedPreferenceAndRequestIdentity()
+    {
+        var adapter = CreateAdapter();
+        var dispatcher = StartAdapter(adapter);
+
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "stream", "senderId": "u", "streamResponse": true }""",
+            null,
+            "request-1",
+            CancellationToken.None);
+
+        var inbound = dispatcher.Invocations
+            .Select(i => i.Arguments[0])
+            .OfType<InboundMessage>()
+            .Single();
+        inbound.StreamResponse.ShouldBeTrue();
+        inbound.ChannelRequestId.ShouldBe("request-1");
+        adapter.SupportsStreaming.ShouldBeFalse();
+        adapter.ShouldBeAssignableTo<IStreamEventChannelAdapter>();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{ \"streamResponse\": null }")]
+    [InlineData("{ \"streamResponse\": false }")]
+    public async Task HandleMessageBodyAsync_StreamingNotExplicitlyEnabled_RemainsOneShot(string extraJson)
+    {
+        var adapter = CreateAdapter();
+        var dispatcher = StartAdapter(adapter);
+        var suffix = extraJson == "{}" ? string.Empty : ", " + extraJson[2..^2];
+
+        await adapter.HandleMessageBodyAsync(
+            "{ \"content\": \"one shot\", \"senderId\": \"u\"" + suffix + " }",
+            null,
+            "request-1",
+            CancellationToken.None);
+
+        dispatcher.Invocations.Select(i => i.Arguments[0]).OfType<InboundMessage>()
+            .Single().StreamResponse.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("\"yes\"")]
+    [InlineData("17")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public async Task HandleMessageBodyAsync_MalformedStreamingPreference_RemainsBackwardCompatible(string value)
+    {
+        var adapter = CreateAdapter();
+        var dispatcher = StartAdapter(adapter);
+
+        await adapter.HandleMessageBodyAsync(
+            $$"""{ "content": "one shot", "senderId": "u", "streamResponse": {{value}}, "futureStreamingOption": true }""",
+            null,
+            "request-1",
+            CancellationToken.None);
+
+        dispatcher.Invocations.Select(i => i.Arguments[0]).OfType<InboundMessage>()
+            .Single().StreamResponse.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_DeltasThenRunEnded_SendsOrderedDeltasAndOneConsolidatedTerminal()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        var appProps = new Dictionary<string, object> { ["tenant"] = "north", ["custom"] = 17 };
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "conversationId": "conv", "replyTo": "reply", "correlationId": "corr", "streamResponse": true }""",
+            appProps,
+            "request-1",
+            CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"),
+            SessionId.From("session"),
+            ChannelAddress.From("conv"),
+            ChannelRequestId: "request-1");
+
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Hello " });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "world" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+
+        var sent = factory.Senders["reply"].SentMessages;
+        sent.Count.ShouldBe(3);
+        var envelopes = sent.Select(DeserializeEnvelope).ToList();
+        envelopes.Select(e => e.Type).ShouldBe(["delta", "delta", "done"]);
+        envelopes.Select(e => e.Sequence).ShouldBe([0L, 1L, 2L]);
+        envelopes.Select(e => e.Content).ShouldBe(["Hello ", "world", "Hello world"]);
+        envelopes.Select(e => e.IsFinal).ShouldBe([false, false, true]);
+        sent.ShouldAllBe(m =>
+            m.CorrelationId == "corr" &&
+            m.ApplicationProperties["tenant"].ToString() == "north" &&
+            m.ApplicationProperties["custom"].ToString() == "17");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TerminalSendFails_ContextAndAccumulatorRemainRetryable()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "conversationId": "conv", "replyTo": "reply", "correlationId": "corr", "streamResponse": true }""",
+            null,
+            "request-1",
+            CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"), SessionId.From("session"), ChannelAddress.From("conv"),
+            ChannelRequestId: "request-1");
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "answer" });
+        factory.FailNextSend = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded }));
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+
+        var envelopes = factory.Senders["reply"].SentMessages.Select(DeserializeEnvelope).ToList();
+        envelopes.Select(e => e.Type).ShouldBe(["delta", "done"]);
+        envelopes.Last().Content.ShouldBe("answer");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_CancelledSend_RetainsContextForRetry()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "conversationId": "conv", "replyTo": "reply", "correlationId": "corr", "streamResponse": true }""",
+            null,
+            "request-1",
+            CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"), SessionId.From("session"), ChannelAddress.From("conv"),
+            ChannelRequestId: "request-1");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => adapter.SendStreamEventAsync(
+            target,
+            new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "answer" },
+            cancellation.Token));
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "answer" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+
+        factory.Senders["reply"].SentMessages.Select(DeserializeEnvelope).Select(e => e.Content)
+            .ShouldBe(["answer", "answer"]);
+    }
+
+    [Theory]
+    [InlineData(AgentStreamEventType.RunEnded)]
+    [InlineData(AgentStreamEventType.Error)]
+    public async Task SendStreamEventAsync_NoContentTurn_EmitsOnePredictableEmptyTerminal(AgentStreamEventType precedingEvent)
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "replyTo": "reply", "streamResponse": true }""",
+            null,
+            "request-1",
+            CancellationToken.None);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"), SessionId.From("session"), ChannelAddress.From("u"),
+            ChannelRequestId: "request-1");
+
+        if (precedingEvent != AgentStreamEventType.RunEnded)
+            await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = precedingEvent, ErrorMessage = "failed" });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+        await adapter.SendStreamEventAsync(target, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+
+        var envelope = factory.Senders["reply"].SentMessages.ShouldHaveSingleItem();
+        var terminal = DeserializeEnvelope(envelope);
+        terminal.Type.ShouldBe("done");
+        terminal.Content.ShouldBeEmpty();
+        terminal.IsFinal.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_ConcurrentSameConversation_UsesExactRequestContext()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "a", "senderId": "u", "conversationId": "conv", "replyTo": "reply-a", "correlationId": "corr-a", "streamResponse": true }""",
+            null, "request-a", CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "b", "senderId": "u", "conversationId": "conv", "replyTo": "reply-b", "correlationId": "corr-b", "streamResponse": true }""",
+            null, "request-b", CancellationToken.None);
+        var targetA = new ChannelStreamTarget(ConversationId.From("conv"), SessionId.From("a"), ChannelAddress.From("conv"), ChannelRequestId: "request-a");
+        var targetB = new ChannelStreamTarget(ConversationId.From("conv"), SessionId.From("b"), ChannelAddress.From("conv"), ChannelRequestId: "request-b");
+
+        await adapter.SendStreamEventAsync(targetB, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "B" });
+        await adapter.SendStreamEventAsync(targetA, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "A" });
+        await adapter.SendStreamEventAsync(targetB, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+        await adapter.SendStreamEventAsync(targetA, new AgentStreamEvent { Type = AgentStreamEventType.RunEnded });
+
+        factory.Senders["reply-a"].SentMessages.Select(DeserializeEnvelope).Select(e => e.Content).ShouldBe(["A", "A"]);
+        factory.Senders["reply-b"].SentMessages.Select(DeserializeEnvelope).Select(e => e.Content).ShouldBe(["B", "B"]);
+        factory.Senders["reply-a"].SentMessages.ShouldAllBe(m => m.CorrelationId == "corr-a");
+        factory.Senders["reply-b"].SentMessages.ShouldAllBe(m => m.CorrelationId == "corr-b");
+    }
+
+    [Fact]
+    public async Task SendAsync_FailedFallbackSend_RetainsQueuedContextForRetry()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "conversationId": "conv", "replyTo": "reply", "correlationId": "corr" }""",
+            null, "request-1", CancellationToken.None);
+        var outbound = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv"),
+            Content = "answer",
+        };
+        factory.FailNextSend = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() => adapter.SendAsync(outbound));
+        await adapter.SendAsync(outbound);
+
+        factory.Senders["reply"].SentMessages.ShouldHaveSingleItem().CorrelationId.ShouldBe("corr");
+    }
+
+    [Fact]
+    public async Task SendAsync_FailedSend_RetainsExactContextForRetry()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "q", "senderId": "u", "conversationId": "conv", "replyTo": "reply", "correlationId": "corr" }""",
+            null, "request-1", CancellationToken.None);
+        var outbound = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv"),
+            Content = "answer",
+            ChannelRequestId = "request-1",
+        };
+        factory.FailNextSend = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() => adapter.SendAsync(outbound));
+        await adapter.SendAsync(outbound);
+
+        factory.Senders["reply"].SentMessages.ShouldHaveSingleItem().CorrelationId.ShouldBe("corr");
+    }
+
+    private static ServiceBusOutboundEnvelope DeserializeEnvelope(ServiceBusMessage message)
+        => JsonSerializer.Deserialize<ServiceBusOutboundEnvelope>(
+            message.Body.ToString(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("Expected a valid outbound envelope.");
+
     // ── Auth-mode resolution (issue #2002) ─────────────────────────────────────
 
     [Fact]

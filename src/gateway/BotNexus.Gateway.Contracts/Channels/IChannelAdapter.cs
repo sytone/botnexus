@@ -36,7 +36,12 @@ public interface IChannelAdapter
     /// <summary>Human-readable display name for this channel.</summary>
     string DisplayName { get; }
 
-    /// <summary>Whether this channel supports streaming (deltas) vs. complete messages only.</summary>
+    /// <summary>
+    /// Whether this channel can deliver streaming responses. The gateway combines this capability
+    /// with <see cref="InboundMessage.StreamResponse"/>: a message may opt out, while a capable
+    /// channel can remain opt-in by returning <c>false</c> here and implementing
+    /// <see cref="IStreamEventChannelAdapter"/>.
+    /// </summary>
     bool SupportsStreaming { get; }
 
     /// <summary>Whether this channel supports real-time steering inputs during a running response.</summary>

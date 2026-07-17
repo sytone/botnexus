@@ -94,6 +94,14 @@ public sealed class OutboundQueueWorker : BackgroundService
             return;
         }
 
+        // This sample demonstrates pseudo-streaming: request deltas for responsive consumers,
+        // but ignore them here and send only the consolidated terminal response to Teams.
+        if (!envelope.IsFinal || string.Equals(envelope.Type, "delta", StringComparison.OrdinalIgnoreCase))
+        {
+            await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(envelope.ConversationId))
         {
             await args.DeadLetterMessageAsync(

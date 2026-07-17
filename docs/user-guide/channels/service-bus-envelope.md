@@ -20,6 +20,7 @@ Send a Service Bus message to the **inbound queue** (`botnexus-inbound` by defau
 | `content` | string | **Yes** | The message text to deliver to the agent. |
 | `replyTo` | string | No | Per-message override for the reply queue name. Takes precedence over `DefaultReplyQueueName`. |
 | `timestamp` | ISO 8601 | No | When the message was created (e.g. `2024-11-01T14:30:00Z`). Informational; not used for scheduling. |
+| `streamResponse` | boolean | No | Set `true` to receive ordered `delta` envelopes followed by one consolidated `done` envelope. Missing, `null`, or `false` preserves the historical one-shot reply. |
 | `metadata` | object | No | Arbitrary key/value string pairs forwarded to the gateway as additional context. |
 
 ### Inbound example
@@ -35,6 +36,7 @@ Send a Service Bus message to the **inbound queue** (`botnexus-inbound` by defau
   "role": "user",
   "content": "Summarise the Q3 expense report attached to ticket #8821.",
   "replyTo": "billing-service-replies",
+  "streamResponse": true,
   "timestamp": "2024-11-01T14:30:00Z",
   "metadata": {
     "ticketId": "8821",
@@ -57,7 +59,10 @@ After the agent produces a response, BotNexus sends a Service Bus message to the
 | `conversationId` | string | Echoed from the inbound `conversationId`. |
 | `sessionId` | string | ID of the session that handled the request (use this to resume the conversation). |
 | `role` | string | Always `"assistant"`. |
-| `content` | string | The agent's reply text. |
+| `content` | string | Incremental text for `delta`; the complete consolidated response for `done`. |
+| `type` | string | `delta` for incremental text or `done` for the terminal response. One-shot replies use `done`. |
+| `sequence` | integer | Zero-based order within this request's response stream. |
+| `isFinal` | boolean | `true` only for the terminal `done` envelope. |
 | `timestamp` | ISO 8601 | When the reply was produced. |
 | `metadata` | object | Optional additional metadata. |
 
@@ -72,6 +77,9 @@ After the agent produces a response, BotNexus sends a Service Bus message to the
   "sessionId": "sess-0099aabb",
   "role": "assistant",
   "content": "The Q3 expense report for ticket #8821 shows total expenditure of $142,300, with the largest category being travel at $61,000 (43%). Three line items exceed policy limits and are flagged for review.",
+  "type": "done",
+  "sequence": 4,
+  "isFinal": true,
   "timestamp": "2024-11-01T14:30:04Z",
   "metadata": {}
 }
@@ -94,13 +102,16 @@ The adapter supports application properties on inbound messages as **fallbacks**
 
 > **Precedence:** Envelope JSON fields take priority over application properties when both are present.
 
-On outbound messages, BotNexus mirrors the following values as Service Bus application properties to allow broker-side routing, filtering, or subscriptions:
+Every outbound event preserves all inbound application properties. BotNexus then sets or updates the following standard properties to allow broker-side routing, filtering, and stream handling:
 
 | Application property | Value |
 |----------------------|-------|
 | `agentId` | Agent that produced the reply |
 | `conversationId` | Conversation thread ID |
 | `sessionId` | Session that handled the request |
+| `type` | `delta` or `done` |
+| `sequence` | Event order within the request |
+| `isFinal` | Whether this is the terminal envelope |
 
 ---
 

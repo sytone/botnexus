@@ -56,6 +56,10 @@ public sealed class ServiceBusInboundEnvelope
     [JsonPropertyName("timestamp")]
     public DateTimeOffset? Timestamp { get; set; }
 
+    /// <summary>Requests delta-plus-terminal replies from BotNexus for this message.</summary>
+    [JsonPropertyName("streamResponse")]
+    public bool? StreamResponse { get; set; }
+
     /// <summary>
     /// Teams activity routing metadata needed to send the BotNexus reply back to the
     /// originating conversation. Keys are prefixed with <c>teams.</c>.

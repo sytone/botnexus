@@ -63,6 +63,20 @@ public sealed record InboundMessage
         new Dictionary<string, object?>();
 
     /// <summary>
+    /// Optional per-message response-mode preference. <c>true</c> requests streaming when the
+    /// resolved adapter supports it, <c>false</c> requests one consolidated reply, and
+    /// <c>null</c> preserves the adapter's historical default.
+    /// </summary>
+    public bool? StreamResponse { get; init; }
+
+    /// <summary>
+    /// Opaque request identity supplied by the originating channel. The gateway copies this
+    /// token to source-channel replies and stream targets so an adapter can correlate concurrent
+    /// requests without interpreting or exposing arbitrary inbound metadata.
+    /// </summary>
+    public string? ChannelRequestId { get; init; }
+
+    /// <summary>
     /// The channel binding ID this message arrived on, if known.
     /// Used by fan-out to exclude the originating binding from echo.
     /// </summary>
@@ -184,6 +198,13 @@ public sealed record OutboundMessage
     /// <summary>Extensible metadata for the channel adapter.</summary>
     public IReadOnlyDictionary<string, object?> Metadata { get; init; } =
         new Dictionary<string, object?>();
+
+    /// <summary>
+    /// Opaque request identity copied from the originating inbound message. Source adapters use
+    /// it to recover exact transport reply context when requests sharing an address complete out
+    /// of order. Observer fan-out messages leave it <c>null</c>.
+    /// </summary>
+    public string? ChannelRequestId { get; init; }
 
     /// <summary>
     /// Optional role the delivered content should be recorded/rendered under. <c>null</c>
