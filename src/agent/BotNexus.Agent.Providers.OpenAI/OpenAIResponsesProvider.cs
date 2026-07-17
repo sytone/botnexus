@@ -67,6 +67,7 @@ public sealed class OpenAIResponsesProvider(
                 stream, reader, model, options, api, logger, emitError,
                 onParsedEvent: null,
                 resolveConfiguredServiceTier: static o => o is OpenAIResponsesOptions ro ? ro.ServiceTier : null,
+                normalizeTextDelta: null,
                 ct),
         DecorateHeaders: static (request, model, messages, _) =>
         {

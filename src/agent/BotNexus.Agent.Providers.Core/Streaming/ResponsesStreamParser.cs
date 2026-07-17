@@ -48,6 +48,11 @@ public static class ResponsesStreamParser
     /// provider supplies the cast to its own options type). Used to price usage on completion when
     /// the response body omits <c>service_tier</c>. May be null.
     /// </param>
+    /// <param name="normalizeTextDelta">
+    /// Optional transport-compatibility hook applied only to text/refusal delta payloads before
+    /// they are accumulated or emitted. Providers should leave this null unless their upstream
+    /// transport has a confirmed wire-level quirk; tool arguments and reasoning are never changed.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     public static async Task ParseAsync(
         LlmStream stream,
@@ -59,6 +64,7 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
+        Func<LlmModel, string, string>? normalizeTextDelta,
         CancellationToken ct)
     {
         var contentBlocks = new List<ContentBlock>();
@@ -211,6 +217,8 @@ public static class ResponsesStreamParser
                     }
                     var itemId = GetString(root, "item_id");
                     var delta = GetString(root, "delta") ?? "";
+                    if (normalizeTextDelta is not null)
+                        delta = normalizeTextDelta(model, delta);
                     if (delta.Length == 0) continue;
 
                     if (itemId is null || !textStates.TryGetValue(itemId, out var state))
