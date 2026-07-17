@@ -112,3 +112,39 @@ window.portalPrefs = {
     load: function (key) { return localStorage.getItem(key); },
     save: function (key, value) { localStorage.setItem(key, value); }
 };
+
+window.chatAttachments = {
+    readFiles: async function (files) {
+        return await Promise.all(Array.from(files).map(function (file) {
+            return new Promise(function (resolve, reject) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    resolve({
+                        fileName: file.name || 'clipboard-image.png',
+                        mimeType: file.type || 'application/octet-stream',
+                        base64Data: String(reader.result).split(',')[1],
+                        size: file.size
+                    });
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }));
+    },
+
+    bindPaste: function (element, dotNetRef) {
+        if (!element || element._attachmentPasteBound) return;
+        element.addEventListener('paste', async function (event) {
+            var clipboardFiles = event.clipboardData ? event.clipboardData.files : [];
+            var images = Array.from(clipboardFiles).filter(function (file) {
+                return file.type.startsWith('image/');
+            });
+            if (!images.length) return;
+
+            event.preventDefault();
+            var drafts = await window.chatAttachments.readFiles(images);
+            await dotNetRef.invokeMethodAsync('OnAttachmentsPasted', drafts);
+        });
+        element._attachmentPasteBound = true;
+    }
+};

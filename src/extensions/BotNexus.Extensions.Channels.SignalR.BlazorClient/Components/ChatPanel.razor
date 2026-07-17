@@ -437,6 +437,15 @@
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
 
+                <div class="attachment-composer">
+                    <label class="attach-btn" data-testid="chat-attach" title="Attach files" aria-label="Attach files">&#x1F4CE;<InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
+                    @foreach (var attachment in _attachments)
+                    {
+                        <span class="attachment-chip" data-testid="attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)">&#x2715;</button></span>
+                    }
+                    @if (_attachmentError is not null) { <div class="attachment-error" role="alert">@_attachmentError</div> }
+                </div>
+
                 @if (IsStreaming)
                 {
                     <button class="steer-btn" data-testid="chat-steer-btn"
@@ -468,7 +477,7 @@
                     <button class="send-btn"
                             data-testid="chat-send"
                             @onclick="SendMessage"
-                            disabled="@(!IsConnected || string.IsNullOrWhiteSpace(_inputText))">
+                            disabled="@(!IsConnected || (string.IsNullOrWhiteSpace(_inputText) && _attachments.Count == 0))">
                         Send
                     </button>
                 }
@@ -502,6 +511,7 @@
     {
         Store.OnChanged -= HandleStoreChanged;
         _loadMoreRef?.Dispose();
+        _attachmentPasteRef?.Dispose();
     }
     private ConversationState? ActiveConversation =>
         Agent?.ActiveConversationId is not null ? Agent.Conversations.GetValueOrDefault(Agent.ActiveConversationId) : null;
@@ -542,6 +552,10 @@ private bool IsStreaming =>
     private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
+    private readonly List<DraftAttachment> _attachments = [];
+    private string? _attachmentError;
+    private DotNetObjectReference<ChatPanel>? _attachmentPasteRef;
+    private bool _attachmentPasteBound;
     private ElementReference _messagesContainer;
         private ElementReference _inputElement;
     // #1691: load-more (scroll-up pagination) state.
@@ -1024,6 +1038,13 @@ private bool IsStreaming =>
                 _enterPreventionBound = true;
             }
 
+            if (!_attachmentPasteBound && !IsReadOnly && !hasInlinePrompt)
+            {
+                _attachmentPasteRef ??= DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("chatAttachments.bindPaste", _inputElement, _attachmentPasteRef);
+                _attachmentPasteBound = true;
+            }
+
             // #1691: attach the scroll-to-top observer once so scrolling up fetches the next older
             // page. Idempotent on the JS side too; bind only after the container exists.
             if (!_loadMoreObserverBound)
@@ -1124,15 +1145,46 @@ private bool IsStreaming =>
 
     private async Task SendMessage()
     {
-        var text = _inputText?.Trim();
-        if (string.IsNullOrEmpty(text) || !IsConnected)
-            return;
-
-        _inputText = "";
-        _showCommandPalette = false;
-        _forceScrollNext = true;
-        await Interaction.SendMessageAsync(AgentId, text);
+        var text = _inputText?.Trim() ?? string.Empty;
+        if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return;
+        var attachments = _attachments.ToArray();
+        _inputText = ""; _attachments.Clear(); _attachmentError = null; _showCommandPalette = false; _forceScrollNext = true;
+        if (attachments.Length == 0)
+            await Interaction.SendMessageAsync(AgentId, text);
+        else
+            await Interaction.SendMessageAsync(AgentId, text, attachments);
     }
+
+    private async Task HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        var drafts = new List<DraftAttachment>();
+        foreach (var file in e.GetMultipleFiles(AttachmentLimits.MaxCount + 1))
+        {
+            if (file.Size > AttachmentLimits.MaxFileBytes) { await AddDraftAttachmentsAsync([new(file.Name, file.ContentType, string.Empty, file.Size)]); continue; }
+            await using var stream = file.OpenReadStream(AttachmentLimits.MaxFileBytes);
+            using var memory = new MemoryStream(); await stream.CopyToAsync(memory);
+            drafts.Add(new(file.Name, string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType, Convert.ToBase64String(memory.ToArray()), file.Size));
+        }
+        await AddDraftAttachmentsAsync(drafts);
+    }
+
+    [JSInvokable]
+    public Task OnAttachmentsPasted(IReadOnlyList<DraftAttachment> attachments) => AddDraftAttachmentsAsync(attachments);
+
+    public Task AddDraftAttachmentsAsync(IReadOnlyList<DraftAttachment> attachments)
+    {
+        _attachmentError = null;
+        foreach (var attachment in attachments)
+        {
+            if (_attachments.Count >= AttachmentLimits.MaxCount) { _attachmentError = $"You can attach up to {AttachmentLimits.MaxCount} files."; break; }
+            if (attachment.Size > AttachmentLimits.MaxFileBytes) { _attachmentError = $"{attachment.FileName} is too large. Maximum file size is {FormatBytes(AttachmentLimits.MaxFileBytes)}."; continue; }
+            if (_attachments.Sum(x => x.Size) + attachment.Size > AttachmentLimits.MaxTotalBytes) { _attachmentError = $"Attachments exceed the {FormatBytes(AttachmentLimits.MaxTotalBytes)} total limit."; break; }
+            _attachments.Add(attachment);
+        }
+        StateHasChanged(); return Task.CompletedTask;
+    }
+    private void RemoveAttachment(DraftAttachment attachment) { _attachments.Remove(attachment); _attachmentError = null; }
+    private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private async Task SteerAgent()
     {

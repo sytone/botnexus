@@ -243,14 +243,17 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         AgentId agentId,
         ChannelKey channelType,
         string content,
-        IReadOnlyList<MediaContentPartDto> contentParts)
+        IReadOnlyList<MediaContentPartDto> contentParts,
+        string? conversationId = null)
     {
         EnsureControlScope(nameof(SendMessageWithMedia));
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
-        ArgumentException.ThrowIfNullOrWhiteSpace(content);
-
-        var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        if (string.IsNullOrWhiteSpace(content) && contentParts.Count == 0)
+            throw new ArgumentException("A message must contain text or at least one attachment.", nameof(content));
+        var normalizedContent = content ?? string.Empty;
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId;
+        var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
         await SubscribeConversationInternalAsync(resolution.ConversationId);
 
         _logger.LogInformation(
@@ -263,11 +266,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _ = SafeDispatchAsync(
             () => _app.AcceptAsync(
                 BuildInboundMessage(
-                    typedAgentId, connectionId, content, "message-with-media",
+                    typedAgentId, connectionId, normalizedContent, "message-with-media",
                     new InboundMessageRoutingHints(
                         RequestedAgentId: typedAgentId,
                         RequestedSessionId: resolution.SessionId,
-                        RequestedConversationId: null),
+                        RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
                     parts),
                 CancellationToken.None),
             typedAgentId,

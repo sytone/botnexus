@@ -8,6 +8,9 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 public interface IAgentInteractionService
 {
     Task SendMessageAsync(string agentId, string content);
+
+    /// <summary>Sends optional text plus validated generic attachments through the existing content-parts seam.</summary>
+    Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
     Task SteerAsync(string agentId, string content);
     Task FollowUpAsync(string agentId, string content);
     Task AbortAsync(string agentId);
