@@ -1060,6 +1060,23 @@ X-Api-Key: your-api-key
 
 ---
 
+### Get Session Debug Snapshot
+
+**Endpoint:** `GET /api/sessions/{sessionId}/debug`
+
+**Description:** Returns a diagnostic snapshot containing session fields, the current rendered system prompt, paginated history, and metadata.
+
+**Query Parameters:**
+- `offset` (integer, optional, default: 0) — Zero-based history offset; negative values are clamped to zero.
+- `limit` (integer, optional, default: 50, max: 200) — Number of history entries; values are clamped to 1-200.
+
+The response includes `isExecutionLive`, which reports whether an in-memory handle is currently running. For active cron sessions, `lifecycleDiagnostic` is `live-execution` when that handle is running or `stale-persisted-active` when only the persisted status remains active; it is `null` for other sessions.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
 ### Get Session History (Paginated)
 
 **Endpoint:** `GET /api/sessions/{sessionId}/history`
@@ -1269,6 +1286,26 @@ Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), 
 ---
 
 ## System & Status
+
+### Gateway Information
+
+**Endpoint:** `GET /api/gateway/info`
+
+**Description:** Returns runtime and build information for the running gateway. The portal also uses `defaultAgentId` to select the configured default agent instead of assuming a hard-coded agent ID.
+
+**Response:** 200 OK
+```json
+{
+  "startedAt": "2026-07-18T01:00:00Z",
+  "uptimeSeconds": 3600,
+  "commitSha": "7068c75528fc144277ebe9759929ea512598fb24",
+  "commitShort": "7068c755",
+  "version": "0.28.0",
+  "defaultAgentId": "assistant"
+}
+```
+
+---
 
 ### Health Check
 
