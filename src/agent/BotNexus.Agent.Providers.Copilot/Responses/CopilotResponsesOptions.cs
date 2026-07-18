@@ -23,4 +23,10 @@ public record class CopilotResponsesOptions : BotNexus.Agent.Providers.Core.Stre
     /// dynamic header set is emitted — preserving wire parity with previous releases.
     /// </summary>
     public CopilotHeaderOptions? HeaderOptions { get; set; }
+
+    /// <summary>
+    /// Provider-private diagnostic override for Copilot Responses transport. Auto honors the
+    /// capability advertised by model discovery; the agent loop and gateway never select this.
+    /// </summary>
+    internal CopilotResponsesTransportPreference TransportPreference { get; init; } = CopilotResponsesTransportPreference.Auto;
 }

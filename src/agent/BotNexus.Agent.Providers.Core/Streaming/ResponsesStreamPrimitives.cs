@@ -14,6 +14,12 @@ namespace BotNexus.Agent.Providers.Core.Streaming;
 public sealed record SseEvent(string Event, string Data);
 
 /// <summary>
+/// A transport-neutral Responses API event. Provider-private SSE and WebSocket adapters project
+/// their frames into this shape before semantic normalization.
+/// </summary>
+public sealed record ResponsesEvent(string Event, string Data);
+
+/// <summary>
 /// Mutable accumulator for a single in-flight Responses-API tool call while its argument deltas
 /// stream in. Both Responses parsers build the final <c>ToolCallContent</c> from this state, so it
 /// lives once in Providers.Core (step 5/6 of #1377).
