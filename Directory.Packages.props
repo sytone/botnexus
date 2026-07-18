@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <!-- Test infrastructure -->
+    <PackageVersion Include="AngleSharp" Version="1.5.0" />
     <PackageVersion Include="bunit" Version="2.7.2" />
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.3.25172.1" />
