@@ -138,10 +138,24 @@ public sealed class InProcessIsolationStrategyMapAgentEventTests
         result!.Type.ShouldBe(AgentStreamEventType.ToolEnd);
         result.ToolCallId.ShouldBe("call-7");
         result.ToolName.ShouldBe("read");
-        // Preserves the original behaviour: ToString() of the first content block.
-        result.ToolResult.ShouldBe(content.ToString());
+        result.ToolResult.ShouldBe(content.Value);
         result.ToolIsError.ShouldBe(true);
         result.MessageId.ShouldBe(MessageId);
+    }
+
+    [Theory]
+    [InlineData("{\"name\":\"alpha\"}")]
+    [InlineData("[1,2,3]")]
+    public void MapAgentEvent_ToolExecutionEnd_PreservesRawStructuredResult(string rawResult)
+    {
+        var content = new AgentToolContent(AgentToolContentType.Text, rawResult);
+        var toolResult = new AgentToolResult([content]);
+        var evt = new ToolExecutionEndEvent("call-json", "structured", toolResult, IsError: false, Now);
+
+        var result = InProcessAgentHandle.MapAgentEvent(evt, MessageId);
+
+        result.ShouldNotBeNull();
+        result.ToolResult.ShouldBe(rawResult);
     }
 
     [Fact]

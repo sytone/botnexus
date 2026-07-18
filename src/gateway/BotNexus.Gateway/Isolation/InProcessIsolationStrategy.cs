@@ -1142,7 +1142,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 Type = AgentStreamEventType.ToolEnd,
                 ToolCallId = toolEnd.ToolCallId,
                 ToolName = toolEnd.ToolName,
-                ToolResult = toolEnd.Result.Content.FirstOrDefault()?.ToString(),
+                ToolResult = toolEnd.Result.Content.FirstOrDefault()?.Value,
                 ToolIsError = toolEnd.IsError,
                 MessageId = messageId
             },

@@ -723,14 +723,20 @@ private bool IsStreaming =>
         if (string.IsNullOrEmpty(raw))
             return raw ?? string.Empty;
 
-        // 1 ─ Try JSON pretty-print first.
-        var trimmed = raw.TrimStart();
-        if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '['))
+        // 1 ─ Try JSON pretty-print first, including JSON encoded inside a JSON string.
+        try
         {
-            try
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.String && root.GetString() is { } encodedJson)
             {
-                using var doc = JsonDocument.Parse(raw);
-                var pretty = JsonSerializer.Serialize(doc.RootElement, s_prettyJson);
+                using var encodedDoc = JsonDocument.Parse(encodedJson);
+                root = encodedDoc.RootElement.Clone();
+            }
+
+            if (root.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+            {
+                var pretty = JsonSerializer.Serialize(root, s_prettyJson);
                 // System.Text.Json keeps control chars inside string values escaped
                 // (valid JSON). For DISPLAY we turn \n / \r / \t inside those values
                 // into real formatting so multi-line tool output is readable. We leave
@@ -738,10 +744,10 @@ private bool IsStreaming =>
                 // already emitted as real glyphs by the relaxed encoder.
                 return UnescapeWhitespaceOnly(pretty);
             }
-            catch (JsonException)
-            {
-                // Not valid JSON — fall through to escape-unescaping.
-            }
+        }
+        catch (JsonException)
+        {
+            // Not valid JSON - fall through to escape-unescaping.
         }
 
         // 2 ─ Manual unescape of common backslash sequences.

@@ -1187,6 +1187,26 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void DecodeToolPayload_JsonArray_IsPrettyPrinted()
+    {
+        var raw = "[{\"name\":\"alpha\"},{\"name\":\"beta\"}]";
+
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+
+        Assert.Equal("[\n  {\n    \"name\": \"alpha\"\n  },\n  {\n    \"name\": \"beta\"\n  }\n]", decoded.Replace("\r\n", "\n", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DecodeToolPayload_JsonEncodedInsideString_IsPrettyPrinted()
+    {
+        var raw = "\"{\\\"name\\\":\\\"alpha\\\",\\\"count\\\":2}\"";
+
+        var decoded = ChatPanel.DecodeToolPayload(raw);
+
+        Assert.Equal("{\n  \"name\": \"alpha\",\n  \"count\": 2\n}", decoded.Replace("\r\n", "\n", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DecodeToolPayload_JsonWithEscapedNewlinesInStringValue_RendersRealNewlines()
     {
         // The JSON string value contains an escaped newline + a unicode escape.
