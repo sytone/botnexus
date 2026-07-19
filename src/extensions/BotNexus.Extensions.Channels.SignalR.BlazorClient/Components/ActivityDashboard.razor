@@ -13,10 +13,15 @@
     @if (_summary is { } summary)
     {
         <div class="activity-summary-strip" data-testid="activity-summary-strip" role="group" aria-label="Activity summary">
-            <div class="activity-summary-stat" data-testid="activity-summary-conversations">
+            <button type="button"
+                    class="activity-summary-stat activity-summary-stat--action @(HasActiveFilters ? "active" : "")"
+                    data-testid="activity-summary-conversations"
+                    aria-label="Clear activity filters"
+                    title="Clear all filters"
+                    @onclick="ResetFilters">
                 <span class="activity-summary-value">@summary.ConversationCount</span>
                 <span class="activity-summary-label">@(summary.ConversationCount == 1 ? "conversation" : "conversations")</span>
-            </div>
+            </button>
             <div class="activity-summary-stat" data-testid="activity-summary-agents">
                 <span class="activity-summary-value">@summary.AgentCount</span>
                 <span class="activity-summary-label">@(summary.AgentCount == 1 ? "agent" : "agents")</span>
@@ -215,6 +220,10 @@
         await LoadAsync();
         StateHasChanged();
     }
+
+    private bool HasActiveFilters => _filter != new ActivityDashboardFilter();
+
+    private Task ResetFilters() => ApplyFilterAsync(new ActivityDashboardFilter());
 
     private Task ToggleCron() => ApplyFilterAsync(_filter with { IncludeCron = !_filter.IncludeCron });
 

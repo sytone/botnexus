@@ -241,6 +241,35 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     }
 
     [Fact]
+    public void Clicking_conversations_stat_card_clears_all_filters()
+    {
+        SetupConversations(
+            Conv("c1", agentId: "alpha", title: "Active normal"),
+            Conv("c2", agentId: "beta", title: "Active scheduled", activeSessionId: "cron:job:20260719"),
+            Conv("c3", agentId: "beta", title: "Archived scheduled", status: "Archived", activeSessionId: "cron:job:20260718"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.Find("[data-testid='activity-filter-agent']").Change("beta");
+        cut.Find("[data-testid='activity-filter-status']").Change(ActivityStatusFilter.Archived.ToString());
+        cut.Find("[data-testid='activity-filter-recency']").Change(ActivityRecencyWindow.Month.ToString());
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        Assert.Contains("Active normal", cut.Markup);
+        Assert.DoesNotContain("Active scheduled", cut.Markup);
+        Assert.DoesNotContain("Archived scheduled", cut.Markup);
+        Assert.Equal("", cut.Find("[data-testid='activity-filter-agent']").GetAttribute("value"));
+        Assert.Equal(ActivityStatusFilter.Active.ToString(), cut.Find("[data-testid='activity-filter-status']").GetAttribute("value"));
+        Assert.Equal(ActivityRecencyWindow.Any.ToString(), cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value"));
+        Assert.False(cut.Find("[data-testid='activity-filter-cron']").HasAttribute("aria-pressed"));
+    }
+
+    [Fact]
     public void Clicking_scheduled_stat_card_toggles_cron_visibility()
     {
         SetupConversations(
