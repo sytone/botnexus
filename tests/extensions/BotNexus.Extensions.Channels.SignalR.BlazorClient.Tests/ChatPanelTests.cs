@@ -24,7 +24,9 @@ public sealed class ChatPanelTests : IDisposable
         _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
-        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+        var preferences = Substitute.For<IPortalPreferencesService>();
+        preferences.Current.Returns(new PortalPreferences { ArchiveConfirmEnabled = false });
+        _ctx.Services.AddSingleton(preferences);
         _ctx.Services.AddSingleton<ISlashCommandDispatcher>(new SlashCommandDispatcher(_interaction));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
@@ -45,7 +47,7 @@ public sealed class ChatPanelTests : IDisposable
         return agent;
     }
 
-    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false) =>
+    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false, bool isPinned = false) =>
         new ConversationSummaryDto(
             ConversationId: convId,
             AgentId: agentId,
@@ -55,7 +57,8 @@ public sealed class ChatPanelTests : IDisposable
             ActiveSessionId: null,
             BindingCount: 0,
             CreatedAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow,
+            IsPinned: isPinned);
 
     [Fact]
     public void Renders_agent_display_name_in_header()
@@ -685,6 +688,108 @@ public sealed class ChatPanelTests : IDisposable
 
         Assert.Contains("My Important Conversation", cut.Markup);
     }
+
+    [Fact]
+    public void Active_writable_conversation_shows_pin_and_archive_actions_in_header()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        cut.Find("[data-testid='chat-pin-conversation-btn']");
+        cut.Find("[data-testid='chat-archive-conversation-btn']");
+    }
+
+    [Fact]
+    public async Task Pin_header_action_toggles_the_active_conversation()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-pin-conversation-btn']").Click());
+
+        await _interaction.Received(1).SetConversationPinnedAsync("agent-1", "conv-1", true);
+    }
+
+    [Fact]
+    public async Task Pinned_header_action_exposes_unpin_state_and_toggles_off()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", isPinned: true)]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var pinButton = cut.Find("[data-testid='chat-pin-conversation-btn']");
+        pinButton.GetAttribute("aria-label").ShouldBe("Unpin conversation");
+        pinButton.GetAttribute("aria-pressed").ShouldBe("true");
+
+        await cut.InvokeAsync(() => pinButton.Click());
+
+        await _interaction.Received(1).SetConversationPinnedAsync("agent-1", "conv-1", false);
+    }
+
+    [Fact]
+    public async Task Archive_header_action_honours_confirmation_preference()
+    {
+        var preferences = _ctx.Services.GetRequiredService<IPortalPreferencesService>();
+        preferences.Current.Returns(new PortalPreferences { ArchiveConfirmEnabled = true });
+        _ctx.JSInterop.Setup<bool>("confirm", _ => true).SetResult(false);
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", title: "Keep me")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-archive-conversation-btn']").Click());
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations, call => call.Identifier == "confirm");
+        Assert.Single(invocation.Arguments).ShouldBe("Archive 'Keep me'?");
+        await _interaction.DidNotReceive().ArchiveConversationAsync(Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Archive_header_action_uses_the_existing_archive_flow()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-archive-conversation-btn']").Click());
+
+        await _interaction.Received(1).ArchiveConversationAsync("agent-1", "conv-1");
+    }
+
+    [Fact]
+    public void Default_conversation_hides_pin_and_archive_header_actions()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", isDefault: true)]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll("[data-testid='chat-pin-conversation-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='chat-archive-conversation-btn']"));
+    }
+
+    [Fact]
+    public void Read_only_conversation_hides_pin_and_archive_header_actions()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.GetAgent("agent-1")!.Conversations["conv-1"].IsVirtualSession = true;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll("[data-testid='chat-pin-conversation-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='chat-archive-conversation-btn']"));
+    }
+
     [Fact]
     public void ChatPanel_SubscribesToStoreOnChanged_RendersOnNotify()
     {

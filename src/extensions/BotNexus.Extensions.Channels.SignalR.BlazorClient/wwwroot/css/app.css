@@ -2530,7 +2530,8 @@ details[open] > .thinking-summary::before {
 
 .toggle-btn,
 .config-btn,
-.new-chat-btn {
+.new-chat-btn,
+.conversation-header-action {
     padding: 0.2rem 0.4rem;
     border: 1px solid transparent;
     border-radius: var(--radius);
@@ -2544,7 +2545,8 @@ details[open] > .thinking-summary::before {
 
 .toggle-btn:hover,
 .config-btn:hover,
-.new-chat-btn:hover {
+.new-chat-btn:hover,
+.conversation-header-action:hover {
     background: var(--bg-surface);
     border-color: var(--border);
     color: var(--text-primary);
@@ -2552,6 +2554,14 @@ details[open] > .thinking-summary::before {
 
 .toggle-btn.toggled-off {
     opacity: 0.35;
+}
+
+.conversation-header-action.pinned {
+    color: var(--accent);
+}
+
+.conversation-header-action.archive:hover {
+    color: var(--error, #e55);
 }
 
 .new-chat-btn {
