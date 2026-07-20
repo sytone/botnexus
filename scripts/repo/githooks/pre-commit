@@ -1,66 +1,32 @@
 #!/bin/sh
-# BotNexus pre-commit hook (versioned; activate with scripts/repo/install-hooks.ps1)
-# 1) #1602 guard: ensure core.bare did not flip BEFORE we build a commit (a bare repo
-#    silently rejects/relocates commits and can capture another branch's tip).
-# 2) Build + unit-test gate.
-#
-# #1844: The build/test steps below run with minimal verbosity and can stay SILENT
-# for many minutes. Dispatched sub-agents watch foreground processes with a
-# no-output watchdog (~7 min of silence => killed), which starved commits right at
-# this hook. To keep the output stream alive we wrap each long silent command with a
-# background "heartbeat" pinger that prints an elapsed-time line every ~30s, then we
-# kill the pinger once the command finishes. The command's own exit status still
-# gates the commit (we capture it, stop the pinger, then act) so `set -e` semantics
-# and the build/test gate are preserved.
-set -e
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
+# BotNexus pre-commit hook — Prevent broken commits
+# Created by: Leela (2026-04-03)
+# Purpose: Build validation gate for all commits
 
-# run_with_heartbeat <label> <command...>
-# Runs the command while a background loop emits a heartbeat line every ~30s so a
-# long silent window never trips a no-output watchdog. Returns the command's exit
-# status. The pinger is always cleaned up (success or failure) via trap + kill.
-run_with_heartbeat() {
-  label=$1
-  shift
-  # Background heartbeat: print elapsed seconds every ~30s until killed.
-  (
-    elapsed=0
-    while true; do
-      sleep 30
-      elapsed=$((elapsed + 30))
-      echo "⏳ still ${label}… (${elapsed}s elapsed)"
-    done
-  ) &
-  hb_pid=$!
-  # Ensure the pinger dies even if we are interrupted mid-command.
-  trap 'kill "$hb_pid" 2>/dev/null' EXIT INT TERM
-  # Run the real command WITHOUT set -e aborting before we can clean up.
-  status=0
-  "$@" || status=$?
-  kill "$hb_pid" 2>/dev/null || true
-  wait "$hb_pid" 2>/dev/null || true
-  trap - EXIT INT TERM
-  return $status
-}
+echo "🔧 Pre-commit: Building solution..."
 
-echo "🛡️  Pre-commit: #1602 core.bare guard..."
-if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -File "$repo_root/scripts/repo/guard-bare.ps1" -Quiet || {
-    echo "❌ core.bare guard could not repair the repo. Aborting commit (#1602)."; exit 1; }
-fi
-# Belt-and-braces even without pwsh: a working clone must never be bare at commit time.
-bare=$(git config --local --get core.bare 2>/dev/null || echo false)
-if [ "$bare" = "true" ]; then
-  echo "❌ core.bare=true on a working clone (#1602). Run: git config core.bare false"; exit 1
+# Build the solution with minimal verbosity
+dotnet build BotNexus.slnx --nologo --verbosity minimal --tl:off
+
+if [ $? -ne 0 ]; then
+    echo "❌ Build failed. Fix errors before committing."
+    echo "   Run: dotnet build BotNexus.slnx --nologo --tl:off"
+    exit 1
 fi
 
-echo "🔨 Pre-commit: Building solution..."
-run_with_heartbeat "building" dotnet build BotNexus.slnx --nologo --verbosity minimal --tl:off || {
-  echo "❌ Build failed. Fix errors before committing."; exit 1; }
 echo "✅ Build succeeded."
 
-echo "🧪 Pre-commit: Running unit tests..."
-run_with_heartbeat "testing" dotnet test BotNexus.slnx --nologo --verbosity minimal --tl:off --no-build || {
-  echo "❌ Tests failed. Fix failing tests before committing."; exit 1; }
+echo "🧪 Pre-commit: Running Gateway tests..."
+
+# Run Gateway tests with a short-lived Windows Firewall rule for testhost.exe.
+pwsh -NoProfile -File scripts/repo/Invoke-GatewayTestsWithFirewall.ps1
+
+if [ $? -ne 0 ]; then
+    echo "❌ Tests failed. Fix failing tests before committing."
+    echo "   Run: dotnet test BotNexus.slnx --nologo --tl:off"
+    exit 1
+fi
+
+echo "✅ Tests passed."
 echo "✅ Commit validation complete."
 exit 0

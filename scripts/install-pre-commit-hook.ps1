@@ -6,7 +6,10 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$hookPath = Join-Path $repoRoot ".git" "hooks" "pre-commit"
+$hookPath = (& git -C $repoRoot rev-parse --git-path hooks/pre-commit).Trim()
+if (-not $hookPath) { throw 'Could not resolve the Git pre-commit hook path.' }
+$hookDirectory = Split-Path -Parent $hookPath
+New-Item -ItemType Directory -Path $hookDirectory -Force | Out-Null
 $hookContent = @'
 #!/bin/sh
 # BotNexus pre-commit hook — Prevent broken commits
@@ -28,8 +31,8 @@ echo "✅ Build succeeded."
 
 echo "🧪 Pre-commit: Running Gateway tests..."
 
-# Run Gateway tests (fast feedback loop)
-dotnet test tests/gateway/BotNexus.Gateway.Tests --nologo --verbosity minimal --tl:off --no-build
+# Run Gateway tests with a short-lived Windows Firewall rule for testhost.exe.
+pwsh -NoProfile -File scripts/repo/Invoke-GatewayTestsWithFirewall.ps1
 
 if [ $? -ne 0 ]; then
     echo "❌ Tests failed. Fix failing tests before committing."
