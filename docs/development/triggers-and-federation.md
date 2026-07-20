@@ -219,7 +219,10 @@ The `agent_converse` tool accepts the following parameters:
 | `agentId`   | string  | yes      | The target agent's ID            |
 | `message`   | string  | yes      | Opening message to send          |
 | `objective` | string  | no       | What you want to achieve         |
+| `timeoutSeconds` | integer | no | Wall-clock budget (default: 600, maximum: 1800) |
 | `maxTurns`  | integer | no       | Maximum number of turns (default: 1) |
+
+The wall-clock timeout and `maxTurns` are independent budgets. Values above the 30-minute timeout ceiling are clamped; values below one second or non-integer values are rejected. Caller cancellation continues to stop an exchange immediately.
 
 `ExecuteAsync` resolves the call chain to prevent cycles, then delegates to `IAgentConversationService.ConverseAsync` with a `ConversationRequest`.
 

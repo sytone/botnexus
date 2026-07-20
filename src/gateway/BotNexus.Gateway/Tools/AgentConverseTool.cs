@@ -17,10 +17,18 @@ public sealed class AgentConverseTool(
     SessionId sessionId,
     AgentExchangeOptions? exchangeOptions = null) : IAgentTool
 {
+    private const int DefaultTimeoutSeconds = 600;
+    private const int MaxTimeoutSeconds = 1800;
+
     private readonly AgentExchangeOptions _exchangeOptions = exchangeOptions ?? new AgentExchangeOptions();
 
     public string Name => "agent_converse";
     public string Label => "Agent Converse";
+
+    /// <summary>
+    /// Reserves enough executor time for substantive peer work while individual calls may request a shorter bounded budget.
+    /// </summary>
+    public TimeSpan? DefaultTimeout => TimeSpan.FromSeconds(DefaultTimeoutSeconds);
 
     public Tool Definition => new(
         Name,
@@ -32,6 +40,13 @@ public sealed class AgentConverseTool(
                 "agentId": { "type": "string", "description": "The target agent's ID. Must be an agent whose 'canConverse' is true in list_agents output; otherwise the call is denied by policy." },
                 "message": { "type": "string", "description": "Opening message to send." },
                 "objective": { "type": "string", "description": "What you want to achieve." },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": {{MaxTimeoutSeconds}},
+                  "default": {{DefaultTimeoutSeconds}},
+                  "description": "Wall-clock budget in seconds for this exchange (default 10 minutes, maximum 30 minutes). The 30-minute hard maximum prevents abandoned peer exchanges from consuming executor capacity indefinitely."
+                },
                 "maxTurns": {
                   "type": "integer",
                   "minimum": 1,
@@ -53,7 +68,14 @@ public sealed class AgentConverseTool(
             throw new ArgumentException("Missing required argument: agentId.");
         if (string.IsNullOrWhiteSpace(ReadString(arguments, "message")))
             throw new ArgumentException("Missing required argument: message.");
-        return Task.FromResult(arguments);
+
+        var prepared = new Dictionary<string, object?>(arguments, StringComparer.OrdinalIgnoreCase);
+        var timeoutSeconds = ReadTimeoutSeconds(arguments);
+        prepared["timeoutSeconds"] = timeoutSeconds;
+        // ToolExecutor recognises `timeout` as seconds. Keeping the public schema name explicit avoids
+        // colliding with tools whose timeout unit is implicit while still enforcing this call budget.
+        prepared["timeout"] = timeoutSeconds;
+        return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
@@ -67,6 +89,10 @@ public sealed class AgentConverseTool(
         var message = ReadString(arguments, "message")
             ?? throw new ArgumentException("Missing required argument: message.");
 
+        var timeoutSeconds = ReadTimeoutSeconds(arguments);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
         var result = await conversationService.ConverseAsync(
             new AgentExchangeRequest
             {
@@ -75,9 +101,9 @@ public sealed class AgentConverseTool(
                 Message = message,
                 Objective = ReadString(arguments, "objective"),
                 MaxTurns = Math.Clamp(ReadInt(arguments, "maxTurns", 1), 1, _exchangeOptions.EffectiveMaxTurnsCeiling),
-                CallChain = await ResolveCallChainAsync(cancellationToken).ConfigureAwait(false)
+                CallChain = await ResolveCallChainAsync(timeoutCts.Token).ConfigureAwait(false)
             },
-            cancellationToken).ConfigureAwait(false);
+            timeoutCts.Token).ConfigureAwait(false);
 
         return new AgentToolResult(
             [
@@ -121,6 +147,26 @@ public sealed class AgentConverseTool(
             JsonElement element => element.ToString(),
             _ => value.ToString()
         };
+    }
+
+    private static int ReadTimeoutSeconds(IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (!arguments.TryGetValue("timeoutSeconds", out var rawTimeout) || rawTimeout is null)
+            return DefaultTimeoutSeconds;
+
+        var parsed = rawTimeout switch
+        {
+            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var value) => value,
+            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var value) => value,
+            int value => value,
+            string text when int.TryParse(text, out var value) => value,
+            _ => throw new ArgumentException("timeoutSeconds must be an integer.", nameof(arguments))
+        };
+
+        if (parsed < 1)
+            throw new ArgumentOutOfRangeException(nameof(arguments), "timeoutSeconds must be at least 1 second.");
+
+        return Math.Min(parsed, MaxTimeoutSeconds);
     }
 
     private static int ReadInt(IReadOnlyDictionary<string, object?> args, string key, int defaultValue)
