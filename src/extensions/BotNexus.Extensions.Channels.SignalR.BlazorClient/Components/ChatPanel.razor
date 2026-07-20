@@ -61,6 +61,24 @@
                     @onclick="ToggleTools" title="Toggle tool visibility">
                 🔧
             </button>
+            @if (CanManageActiveConversation)
+            {
+                <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
+                        data-testid="chat-pin-conversation-btn"
+                        title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
+                        aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
+                        aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
+                        @onclick="ToggleActiveConversationPinAsync">
+                    &#x1F4CC;
+                </button>
+                <button class="conversation-header-action archive"
+                        data-testid="chat-archive-conversation-btn"
+                        title="Archive conversation"
+                        aria-label="Archive conversation"
+                        @onclick="ArchiveActiveConversationAsync">
+                    &#x1F5D1;&#xFE0F;
+                </button>
+            }
             <button class="config-btn" data-testid="chat-config-btn" @onclick="OpenConfig" title="Agent configuration">
                 ⚙
             </button>
@@ -93,6 +111,22 @@
                             title="Toggle tool visibility">
                         🔧
                     </button>
+                    @if (CanManageActiveConversation)
+                    {
+                        <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
+                                title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
+                                aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
+                                aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
+                                @onclick="ToggleActiveConversationPinFromMenuAsync">
+                            &#x1F4CC;
+                        </button>
+                        <button class="conversation-header-action archive"
+                                title="Archive conversation"
+                                aria-label="Archive conversation"
+                                @onclick="ArchiveActiveConversationFromMenuAsync">
+                            &#x1F5D1;&#xFE0F;
+                        </button>
+                    }
                     <button class="config-btn" @onclick="OpenConfigFromMenu" title="Agent configuration">
                         ⚙
                     </button>
@@ -525,6 +559,8 @@ private bool IsStreaming =>
             ? Store.GetStreamState(activeConvId).IsTurnActive
             : false; // no active conversation = not in turn
     private bool IsReadOnly => (Agent?.IsReadOnly ?? false) || (ActiveConversation?.IsVirtualSession ?? false);
+    private bool CanManageActiveConversation =>
+        HasActiveConversation && !IsReadOnly && ActiveConversation?.IsDefault != true;
     private bool IsConnected => Agent?.IsConnected ?? false;
     private bool ShowThinking => Agent?.ShowThinking ?? true;
     private bool ShowTools => Agent?.ShowTools ?? true;
@@ -935,6 +971,41 @@ private bool IsStreaming =>
     {
         _showMobileActionsMenu = false;
         await OpenConfig();
+    }
+
+    private async Task ToggleActiveConversationPinAsync()
+    {
+        if (!CanManageActiveConversation || ActiveConversationId is null || ActiveConversation is null)
+            return;
+
+        await Interaction.SetConversationPinnedAsync(AgentId, ActiveConversationId, !ActiveConversation.IsPinned);
+    }
+
+    private async Task ToggleActiveConversationPinFromMenuAsync()
+    {
+        _showMobileActionsMenu = false;
+        await ToggleActiveConversationPinAsync();
+    }
+
+    private async Task ArchiveActiveConversationAsync()
+    {
+        if (!CanManageActiveConversation || ActiveConversationId is null || ActiveConversation is null)
+            return;
+
+        if (Prefs.Current.ArchiveConfirmEnabled)
+        {
+            var confirmed = await JS.InvokeAsync<bool>("confirm", $"Archive '{ActiveConversation.Title}'?");
+            if (!confirmed)
+                return;
+        }
+
+        await Interaction.ArchiveConversationAsync(AgentId, ActiveConversationId);
+    }
+
+    private async Task ArchiveActiveConversationFromMenuAsync()
+    {
+        _showMobileActionsMenu = false;
+        await ArchiveActiveConversationAsync();
     }
 
     private void ConfirmNewSession()
