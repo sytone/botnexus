@@ -1,32 +1,6 @@
 #!/bin/sh
-# BotNexus pre-commit hook — Prevent broken commits
-# Created by: Leela (2026-04-03)
-# Purpose: Build validation gate for all commits
+# BotNexus pre-commit hook — use an exact remote-validation receipt when available,
+# otherwise fall back to the local build and Gateway test gate.
 
-echo "🔧 Pre-commit: Building solution..."
-
-# Build the solution with minimal verbosity
-dotnet build BotNexus.slnx --nologo --verbosity minimal --tl:off
-
-if [ $? -ne 0 ]; then
-    echo "❌ Build failed. Fix errors before committing."
-    echo "   Run: dotnet build BotNexus.slnx --nologo --tl:off"
-    exit 1
-fi
-
-echo "✅ Build succeeded."
-
-echo "🧪 Pre-commit: Running Gateway tests..."
-
-# Run Gateway tests with a short-lived Windows Firewall rule for testhost.exe.
-pwsh -NoProfile -File scripts/repo/Invoke-GatewayTestsWithFirewall.ps1
-
-if [ $? -ne 0 ]; then
-    echo "❌ Tests failed. Fix failing tests before committing."
-    echo "   Run: dotnet test BotNexus.slnx --nologo --tl:off"
-    exit 1
-fi
-
-echo "✅ Tests passed."
-echo "✅ Commit validation complete."
-exit 0
+pwsh -NoProfile -File scripts/repo/Validate-PreCommit.ps1
+exit $?
