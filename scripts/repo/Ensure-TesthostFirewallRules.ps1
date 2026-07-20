@@ -1,46 +1,35 @@
 <#
 .SYNOPSIS
-    Pre-creates Windows Firewall allow-rules for the testhost.exe binaries used by
-    the given test projects, so `dotnet test` never triggers an interactive
-    "Allow app through the firewall" prompt.
+    Leases Windows Firewall rules for BotNexus testhost binaries.
 
 .DESCRIPTION
-    The .NET test host (testhost.exe) opens a loopback socket to talk to the
-    `dotnet test` runner. On Windows, the first time a given testhost.exe path
-    runs, the Defender Firewall shows an interactive allow/deny popup. Because
-    each git worktree lives at a different absolute path
-    (e.g. Q:\repos\botnexus-wt\<branch>\tests\...\bin\Debug\net10.0\testhost.exe),
-    a new prompt appears for every worktree — which blocks unattended/agent runs.
+    Ensure starts one elevated background helper that creates tagged rules,
+    prunes orphaned legacy BotNexus testhost rules, and waits while tests run.
+    Cleanup signals that same helper to remove every rule owned by the lease.
+    The helper also observes the calling process, so it cleans up if a test run
+    is interrupted before Cleanup executes.
 
-    This helper computes the *deterministic* testhost.exe path for each supplied
-    test project (<projectDir>/bin/<Configuration>/<TFM>/testhost.exe), checks
-    which paths do not already have a firewall rule, and — only if any are
-    missing — creates inbound + outbound allow-rules for them.
-
-    Creating firewall rules requires elevation. To keep unattended runs friction-
-    free, all missing rules are batched into a SINGLE self-elevated child process,
-    so at most one UAC prompt appears per run (and none when rules already exist).
-
-    Everything here is BEST-EFFORT and Windows-only:
-      * On non-Windows it returns immediately (no-op).
-      * Any failure (declined UAC, policy block, etc.) is swallowed with a warning
-        so it can never fail a build, a pre-commit hook, or a CI run.
+    This avoids both interactive testhost firewall prompts and an accumulating
+    collection of per-worktree rules. It is best-effort and a no-op outside
+    Windows; firewall policy never changes the test command's result.
 
 .PARAMETER ProjectPath
-    One or more test project (.csproj) paths. The testhost.exe path is derived
-    from each project's directory. Accepts pipeline input.
+    Test project paths used to derive testhost.exe locations.
 
 .PARAMETER Configuration
-    Build configuration segment of the bin path. Defaults to 'Debug'.
+    Build configuration segment in the output path. Defaults to Debug.
 
 .PARAMETER TargetFramework
-    Target framework segment of the bin path. Defaults to 'net10.0'.
+    Target framework segment in the output path. Defaults to net10.0.
+
+.PARAMETER Action
+    Ensure starts the lease. Cleanup releases it.
+
+.PARAMETER LeasePath
+    Shared lease directory used by Ensure and Cleanup for synchronization.
 
 .PARAMETER Quiet
-    Suppress informational output (warnings still show).
-
-.EXAMPLE
-    .\Ensure-TesthostFirewallRules.ps1 -ProjectPath (Get-ChildItem -Recurse -Filter *.Tests.csproj).FullName
+    Suppresses informational output. Warnings are still emitted.
 #>
 [CmdletBinding()]
 param(
@@ -51,11 +40,17 @@ param(
 
     [string]$TargetFramework = 'net10.0',
 
+    [ValidateSet('Ensure', 'Cleanup')]
+    [string]$Action = 'Ensure',
+
+    [Parameter(Mandatory = $true)]
+    [string]$LeasePath,
+
     [switch]$Quiet
 )
 
 begin {
-    $ruleTag = 'BotNexus-Testhost'
+    $ruleGroup = 'BotNexus-Testhost'
     $collected = [System.Collections.Generic.List[string]]::new()
 
     function Write-Info {
@@ -63,7 +58,6 @@ begin {
         if (-not $Quiet) { Write-Host $Message -ForegroundColor $Color }
     }
 
-    # Best-effort guard: only meaningful on Windows.
     $isWindowsOs = $true
     if (Get-Variable -Name 'IsWindows' -ErrorAction SilentlyContinue) {
         $isWindowsOs = $IsWindows
@@ -71,101 +65,163 @@ begin {
 }
 
 process {
-    if (-not $ProjectPath) { return }
-    foreach ($p in $ProjectPath) {
-        if ($p) { $collected.Add($p) }
+    foreach ($path in @($ProjectPath)) {
+        if ($path) { $collected.Add($path) }
     }
 }
 
 end {
     if (-not $isWindowsOs) {
-        Write-Info "Not Windows — skipping testhost firewall setup."
+        Write-Info 'Not Windows — skipping testhost firewall management.'
+        return
+    }
+
+    $readyFile = Join-Path $LeasePath 'ready'
+    $releaseFile = Join-Path $LeasePath 'release'
+    $doneFile = Join-Path $LeasePath 'done'
+
+    if ($Action -eq 'Cleanup') {
+        if (-not (Test-Path $LeasePath)) { return }
+        try {
+            New-Item -ItemType File -Path $releaseFile -Force | Out-Null
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            while (-not (Test-Path $doneFile) -and [DateTime]::UtcNow -lt $deadline) {
+                Start-Sleep -Milliseconds 100
+            }
+            if (-not (Test-Path $doneFile)) {
+                Write-Warning 'Timed out waiting for testhost firewall lease cleanup; the elevated helper will continue cleanup.'
+            }
+            else {
+                Write-Info 'Testhost firewall rules released.' 'Green'
+            }
+        }
+        finally {
+            if (Test-Path $doneFile) {
+                Remove-Item $LeasePath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
         return
     }
 
     if ($collected.Count -eq 0) { return }
 
-    # --- Derive deterministic testhost.exe paths for each project ---
     $candidatePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($proj in $collected) {
+    foreach ($project in $collected) {
         try {
-            $projDir = Split-Path -Parent $proj
-            if (-not $projDir) { continue }
-            $thPath = Join-Path $projDir (Join-Path 'bin' (Join-Path $Configuration (Join-Path $TargetFramework 'testhost.exe')))
-            [void]$candidatePaths.Add($thPath)
+            $projectDirectory = Split-Path -Parent $project
+            if (-not $projectDirectory) { continue }
+            $testhostPath = Join-Path $projectDirectory (Join-Path 'bin' (Join-Path $Configuration (Join-Path $TargetFramework 'testhost.exe')))
+            [void]$candidatePaths.Add([System.IO.Path]::GetFullPath($testhostPath))
         }
         catch {
-            Write-Warning "Could not derive testhost path for '$proj': $($_.Exception.Message)"
+            Write-Warning "Could not derive testhost path for '$project': $($_.Exception.Message)"
         }
     }
 
     if ($candidatePaths.Count -eq 0) { return }
 
-    # --- Determine which paths already have a firewall rule ---
-    $existing = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    try {
-        Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |
-            Where-Object { $_.Program -and $_.Program -like '*testhost.exe' } |
-            ForEach-Object { [void]$existing.Add($_.Program) }
-    }
-    catch {
-        Write-Warning "Could not enumerate existing firewall rules: $($_.Exception.Message)"
-    }
-
-    $missing = @($candidatePaths | Where-Object { -not $existing.Contains($_) })
-
-    if ($missing.Count -eq 0) {
-        Write-Info "Testhost firewall rules already present ($($candidatePaths.Count) path(s)) — nothing to do." 'Green'
-        return
-    }
-
-    Write-Info "Adding firewall allow-rules for $($missing.Count) testhost.exe path(s)..." 'Cyan'
-
-    # --- Build a child script that creates all missing rules in one elevated pass ---
-    # We batch every missing path into a single elevated invocation so UAC prompts
-    # at most once. The child re-checks existence to stay idempotent under races.
-    $ruleLines = foreach ($m in $missing) {
-        $safe = $m -replace "'", "''"
-        @"
-try {
-    if (-not (Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | Where-Object { `$_.Program -eq '$safe' })) {
-        `$dn = '$ruleTag ' + [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName('$safe')))))
-        New-NetFirewallRule -DisplayName `$dn -Group '$ruleTag' -Direction Inbound  -Action Allow -Program '$safe' -Profile Any -ErrorAction Stop | Out-Null
-        New-NetFirewallRule -DisplayName (`$dn + ' (out)') -Group '$ruleTag' -Direction Outbound -Action Allow -Program '$safe' -Profile Any -ErrorAction Stop | Out-Null
-    }
-} catch { }
-"@
-    }
+    New-Item -ItemType Directory -Path $LeasePath -Force | Out-Null
+    $encodedPaths = @($candidatePaths | ForEach-Object {
+        [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_))
+    })
+    $encodedPathLiteral = ($encodedPaths | ForEach-Object { "'$_'" }) -join ', '
+    $safeGroup = $ruleGroup -replace "'", "''"
+    $safeLeasePath = $LeasePath -replace "'", "''"
+    $leaseId = [IO.Path]::GetFileName($LeasePath) -replace '[^A-Za-z0-9-]', ''
+    $callerProcess = Get-Process -Id $PID
+    $callerProcessId = $callerProcess.Id
+    $callerStartTicks = $callerProcess.StartTime.ToUniversalTime().Ticks
 
     $childScript = @"
-`$ErrorActionPreference = 'Continue'
-$($ruleLines -join "`n")
+`$ErrorActionPreference = 'Stop'
+`$ruleGroup = '$safeGroup'
+`$leasePath = '$safeLeasePath'
+`$callerProcessId = $callerProcessId
+`$callerStartTicks = $callerStartTicks
+`$targetPaths = @($encodedPathLiteral) | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(`$_)) }
+`$createdRuleNames = [System.Collections.Generic.List[string]]::new()
+try {
+    # Remove persistent rules from the previous implementation and lease rules
+    # abandoned by terminated runs. Active lease helpers retain their rules.
+    foreach (`$rule in @(Get-NetFirewallRule -Group `$ruleGroup -ErrorAction SilentlyContinue)) {
+        if (`$rule.Name -match '^BotNexus-Testhost-(\d+)-(\d+)-') {
+            `$ownerPid = [int]`$Matches[1]
+            `$ownerStartTicks = [long]`$Matches[2]
+            `$owner = Get-Process -Id `$ownerPid -ErrorAction SilentlyContinue
+            if (-not `$owner -or `$owner.StartTime.ToUniversalTime().Ticks -ne `$ownerStartTicks) {
+                `$rule | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+            }
+        }
+        elseif (`$rule.Name -notlike 'BotNexus-Testhost-*') {
+            `$rule | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        }
+    }
+
+    `$index = 0
+    foreach (`$program in `$targetPaths) {
+        `$projectName = Split-Path (Split-Path (Split-Path (Split-Path `$program -Parent) -Parent) -Parent) -Leaf
+        `$displayName = "BotNexus testhost lease - `$projectName"
+        foreach (`$direction in @('Inbound', 'Outbound')) {
+            `$ruleName = 'BotNexus-Testhost-$callerProcessId-$callerStartTicks-$leaseId-' + `$index
+            New-NetFirewallRule -Name `$ruleName -DisplayName `$displayName -Group `$ruleGroup -Direction `$direction -Action Allow -Program `$program -Profile Any | Out-Null
+            `$createdRuleNames.Add(`$ruleName)
+            `$index++
+        }
+    }
+
+    New-Item -ItemType File -Path (Join-Path `$leasePath 'ready') -Force | Out-Null
+    while (-not (Test-Path (Join-Path `$leasePath 'release'))) {
+        `$caller = Get-Process -Id `$callerProcessId -ErrorAction SilentlyContinue
+        if (-not `$caller -or `$caller.StartTime.ToUniversalTime().Ticks -ne `$callerStartTicks) { break }
+        Start-Sleep -Milliseconds 250
+    }
+}
+finally {
+    foreach (`$ruleName in `$createdRuleNames) {
+        Remove-NetFirewallRule -Name `$ruleName -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType File -Path (Join-Path `$leasePath 'done') -Force | Out-Null
+}
 "@
 
-    $tmpFile = Join-Path ([System.IO.Path]::GetTempPath()) ("botnexus-fw-{0}.ps1" -f ([guid]::NewGuid().ToString('N')))
+    $process = $null
     try {
-        Set-Content -Path $tmpFile -Value $childScript -Encoding UTF8
-
-        $pwshExe = (Get-Process -Id $PID).Path
-        if (-not $pwshExe) { $pwshExe = 'pwsh.exe' }
-
-        # Self-elevate a single child that adds all missing rules, then waits.
-        $proc = Start-Process -FilePath $pwshExe `
-            -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $tmpFile) `
-            -Verb RunAs -PassThru -Wait -WindowStyle Hidden -ErrorAction Stop
-
-        if ($proc.ExitCode -eq 0) {
-            Write-Info "Testhost firewall rules ensured." 'Green'
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childScript))
+        $pwshExecutable = (Get-Process -Id $PID).Path
+        if (-not $pwshExecutable) { $pwshExecutable = 'pwsh.exe' }
+        $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+        $isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        $startParameters = @{
+            FilePath = $pwshExecutable
+            ArgumentList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encodedCommand)
+            PassThru = $true
+            WindowStyle = 'Hidden'
+            ErrorAction = 'Stop'
         }
-        else {
-            Write-Warning "Elevated firewall rule setup exited with code $($proc.ExitCode) — a testhost prompt may still appear."
+        if (-not $isAdministrator) { $startParameters.Verb = 'RunAs' }
+        $process = Start-Process @startParameters
+
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path $readyFile) -and -not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 100
+            $process.Refresh()
         }
+        if (-not (Test-Path $readyFile)) {
+            throw "Elevated firewall lease did not become ready (exit code: $(if ($process.HasExited) { $process.ExitCode } else { 'timeout' }))."
+        }
+        Write-Info "Testhost firewall rules leased for $($candidatePaths.Count) path(s); orphaned rules pruned." 'Green'
     }
     catch {
-        Write-Warning "Could not create testhost firewall rules (continuing anyway): $($_.Exception.Message)"
-        Write-Warning "If a firewall popup appears during tests, approve it once for this worktree, or run this script from an elevated shell."
-    }
-    finally {
-        Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process -and -not $process.HasExited) {
+            New-Item -ItemType File -Path $releaseFile -Force -ErrorAction SilentlyContinue | Out-Null
+            $releaseDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            while (-not (Test-Path $doneFile) -and -not $process.HasExited -and [DateTime]::UtcNow -lt $releaseDeadline) {
+                Start-Sleep -Milliseconds 100
+                $process.Refresh()
+            }
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+        }
+        New-Item -ItemType File -Path $doneFile -Force -ErrorAction SilentlyContinue | Out-Null
+        Write-Warning "Could not lease testhost firewall rules (continuing anyway): $($_.Exception.Message)"
     }
 }

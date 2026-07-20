@@ -55,20 +55,38 @@ $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 $slnxPath = Join-Path $repoRoot 'BotNexus.slnx'
 $firewallHelper = Join-Path $PSScriptRoot 'Ensure-TesthostFirewallRules.ps1'
 
-# Best-effort: pre-create Windows Firewall allow-rules for the testhost.exe paths
-# of the given test projects so `dotnet test` never triggers an interactive
-# "Allow app through the firewall" popup (which blocks unattended/agent runs).
-# Windows-only and fully swallowed on failure — never fails the test run.
-function Invoke-TesthostFirewallSetup {
-    param([string[]]$Projects)
-    if (-not (Test-Path $firewallHelper)) { return }
-    if (-not $Projects -or $Projects.Count -eq 0) { return }
+function Invoke-FirewallAction {
+    param(
+        [string[]]$Projects,
+        [ValidateSet('Ensure', 'Cleanup')]
+        [string]$Action,
+        [string]$LeasePath
+    )
+
     try {
-        & $firewallHelper -ProjectPath $Projects -Configuration $Configuration
+        & $firewallHelper -ProjectPath $Projects -Configuration $Configuration -Action $Action -LeasePath $LeasePath
     }
     catch {
-        Write-Warning "Testhost firewall setup skipped: $($_.Exception.Message)"
+        Write-Warning "Testhost firewall $($Action.ToLowerInvariant()) skipped: $($_.Exception.Message)"
     }
+}
+
+function Invoke-FullTestSuite {
+    param([string[]]$Projects)
+
+    $arguments = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
+    if ($NoBuild) { $arguments += '--no-build' }
+    $leasePath = Join-Path ([IO.Path]::GetTempPath()) ("botnexus-fw-lease-{0}" -f [guid]::NewGuid().ToString('N'))
+    $exitCode = 1
+    try {
+        Invoke-FirewallAction -Projects $Projects -Action Ensure -LeasePath $leasePath
+        & dotnet @arguments | Out-Host
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Invoke-FirewallAction -Projects $Projects -Action Cleanup -LeasePath $leasePath
+    }
+    return $exitCode
 }
 
 # Projects that always run regardless of what changed (cross-cutting safety net)
@@ -92,12 +110,9 @@ function Get-AllSolutionTestProjects {
 
 if ($All) {
     Write-Host "Running full test suite (--All specified)" -ForegroundColor Cyan
-    Invoke-TesthostFirewallSetup -Projects (Get-AllSolutionTestProjects)
-    $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
-    $args = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
-    if ($buildFlag) { $args += $buildFlag }
-    & dotnet @args
-    exit $LASTEXITCODE
+    $allProjects = Get-AllSolutionTestProjects
+    $exitCode = Invoke-FullTestSuite -Projects $allProjects
+    exit $exitCode
 }
 
 # --- Step 1: Ensure dotnet-affected is available ---
@@ -127,12 +142,9 @@ if ($branchExitCode -eq 0) {
 elseif ($branchExitCode -ne 166) {
     Write-Warning "dotnet-affected failed (exit $branchExitCode) — falling back to full test suite"
     Write-Host ($affectedOutput -join "`n") -ForegroundColor DarkGray
-    Invoke-TesthostFirewallSetup -Projects (Get-AllSolutionTestProjects)
-    $buildFlag = if ($NoBuild) { '--no-build' } else { $null }
-    $testArgs = @('test', $slnxPath, '--nologo', '--tl:off', '-c', $Configuration)
-    if ($buildFlag) { $testArgs += $buildFlag }
-    & dotnet @testArgs
-    exit $LASTEXITCODE
+    $allProjects = Get-AllSolutionTestProjects
+    $exitCode = Invoke-FullTestSuite -Projects $allProjects
+    exit $exitCode
 }
 
 # Also check uncommitted/staged changes (HEAD vs working directory)
@@ -203,14 +215,20 @@ if ($DryRun) {
 
 # Run tests
 Write-Host ""
-Invoke-TesthostFirewallSetup -Projects $projectsToTest
 $buildFlag = if ($NoBuild) { '--no-build' } else { '--no-restore' }
+$leasePath = Join-Path ([IO.Path]::GetTempPath()) ("botnexus-fw-lease-{0}" -f [guid]::NewGuid().ToString('N'))
 $failed = $false
-foreach ($proj in $projectsToTest) {
-    $name = [IO.Path]::GetFileNameWithoutExtension($proj)
-    Write-Host "Testing: $name" -ForegroundColor White
-    dotnet test $proj --nologo --tl:off -c $Configuration $buildFlag
-    if ($LASTEXITCODE -ne 0) { $failed = $true }
+try {
+    Invoke-FirewallAction -Projects $projectsToTest -Action Ensure -LeasePath $leasePath
+    foreach ($proj in $projectsToTest) {
+        $name = [IO.Path]::GetFileNameWithoutExtension($proj)
+        Write-Host "Testing: $name" -ForegroundColor White
+        dotnet test $proj --nologo --tl:off -c $Configuration $buildFlag
+        if ($LASTEXITCODE -ne 0) { $failed = $true }
+    }
+}
+finally {
+    Invoke-FirewallAction -Projects $projectsToTest -Action Cleanup -LeasePath $leasePath
 }
 
 # Cleanup
