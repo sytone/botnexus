@@ -63,36 +63,37 @@ You should see the root command help listing all available subcommands.
 11. [agent wizard](#agent-wizard) — Create an agent interactively
 12. [agent export](#agent-export) — Export an agent as a redacted template
 13. [agent import](#agent-import) — Import an agent from a redacted template
-13. [conversation](#conversation) — Manage conversations via the gateway REST API
-14. [config get](#config-get) — Read a config value
-15. [config set](#config-set) — Set a config value
-16. [config schema](#config-schema) — Generate JSON schema
-17. [gateway](#gateway) — Manage the gateway lifecycle
-18. [provider](#provider) — Show or set up providers
-19. [provider setup](#provider-setup) — Interactive provider setup wizard
-20. [provider list](#provider-list) — List configured providers
-21. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-22. [provider remove](#provider-remove) — Remove a provider non-interactively
-23. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-24. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-25. [prompt](#prompt) — Manage prompt templates
-26. [prompt list](#prompt-list) — List available prompt templates
-27. [prompt render](#prompt-render) — Render a prompt template
-28. [prompt run](#prompt-run) — Render and execute a prompt template
-29. [satellite](#satellite) — Manage satellite nodes
-30. [doctor](#doctor) — Diagnose configuration issues
-31. [doctor config](#doctor-config) — Guided config migration
-32. [locations](#locations) — Manage configured locations
-33. [update](#update) — Pull, build, and restart the gateway
-34. [memory](#memory) — Backfill agent memory stores
-35. [cron](#cron-command) — Manage cron jobs from the CLI
-36. [debug sessions](#debug-sessions) — Inspect session SQLite database
-37. [debug logs](#debug-logs) — Inspect log files
-38. [debug memory](#debug-memory) — Inspect agent memory directories
-39. [debug db](#debug-db) — Inspect raw databases
-40. [debug gateway](#debug-gateway) — Live gateway diagnostics
-41. [debug cron](#debug-cron) — Cron scheduler diagnostics
-42. [Examples](#examples)
+14. [conversation](#conversation) — Manage conversations via the gateway REST API
+15. [config get](#config-get) — Read a config value
+16. [config set](#config-set) — Set a config value
+17. [config schema](#config-schema) — Generate JSON schema
+18. [gateway](#gateway) — Manage the gateway lifecycle
+19. [provider](#provider) — Show or set up providers
+20. [provider setup](#provider-setup) — Interactive provider setup wizard
+21. [provider list](#provider-list) — List configured providers
+22. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+23. [provider remove](#provider-remove) — Remove a provider non-interactively
+24. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+25. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+26. [prompt](#prompt) — Manage prompt templates
+27. [prompt list](#prompt-list) — List available prompt templates
+28. [prompt render](#prompt-render) — Render a prompt template
+29. [prompt run](#prompt-run) — Render and execute a prompt template
+30. [satellite](#satellite) — Manage satellite nodes
+31. [doctor](#doctor) — Diagnose configuration issues
+32. [doctor config](#doctor-config) — Guided config migration
+33. [locations](#locations) — Manage configured locations
+34. [update](#update) — Pull, build, and restart the gateway
+35. [memory](#memory) — Backfill agent memory stores
+36. [cron](#cron-command) — Manage cron jobs from the CLI
+37. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+38. [debug sessions](#debug-sessions) — Inspect session SQLite database
+39. [debug logs](#debug-logs) — Inspect log files
+40. [debug memory](#debug-memory) — Inspect agent memory directories
+41. [debug db](#debug-db) — Inspect raw databases
+42. [debug gateway](#debug-gateway) — Live gateway diagnostics
+43. [debug cron](#debug-cron) — Cron scheduler diagnostics
+44. [Examples](#examples)
 
 ---
 
@@ -1986,6 +1987,47 @@ botnexus cron delete morning-briefing
 ```
 
 > For offline scheduler diagnostics (status, history, missed runs) that do not need a running gateway, use [`debug cron`](#debug-cron).
+
+---
+
+## subagent workspace
+
+Inspect and reclaim temporary workspace directories left by completed or interrupted sub-agent runs. The command reconciles directories under the OS temporary folder with persisted `sub_agent_sessions` records; it never deletes a workspace belonging to a running sub-agent. Persisted session records and transcripts are retained.
+
+The top-level command also accepts the alias `subagents`, and `workspace` accepts the alias `workspaces`.
+
+### Usage
+
+```powershell
+botnexus subagent workspace <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List sub-agent workspace directories, their persisted status, and whether each is prunable. |
+| `prune` | Delete workspaces for terminal sub-agents (`completed`, `failed`, `killed`, or `timed-out`) and orphaned directories with no persisted record. Running workspaces are retained. |
+
+### Options
+
+| Option | Applies to | Description |
+|--------|------------|-------------|
+| `--dry-run` | `prune` | Show which directories would be deleted without deleting them. |
+| `--target <DIR>` | all | BotNexus home directory used to locate `sessions.db`. Defaults to `~/.botnexus`. |
+
+### Examples
+
+```powershell
+# Inspect accumulated sub-agent workspaces
+botnexus subagent workspace list
+
+# Preview safe reclamation
+botnexus subagent workspace prune --dry-run
+
+# Delete terminal and orphaned workspaces
+botnexus subagent workspace prune
+```
 
 ---
 

@@ -68,12 +68,14 @@ Run `botnexus provider copilot models` to see the full list available to your ac
 
 BotNexus can query Copilot's model catalog at runtime to discover available models and their capabilities. This happens automatically when using the CLI discovery command.
 
-### Dual API Path
+### API and transport selection
 
-- **Messages API** — Claude models are accessed via the Messages-compatible path
-- **Responses API** — OpenAI models use the Responses API for native tool call flow
+- **Messages API** — Claude models are accessed via the Messages-compatible path.
+- **Responses API** — OpenAI models use the Responses API for native tool call flow.
 
-The provider automatically selects the correct path based on the model family.
+For Responses models, discovery also records the endpoints advertised for each model. When a model advertises `ws:/responses`, BotNexus uses the WebSocket transport automatically; otherwise it keeps the Server-Sent Events (SSE) path. If the WebSocket fails before producing any semantic output, the provider safely retries over SSE. After output begins, it does not replay the request, avoiding duplicated text or tool calls.
+
+Transport selection is capability-driven and has no user-facing configuration setting.
 
 ### Context Window
 
