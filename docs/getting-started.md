@@ -84,7 +84,7 @@ botnexus init
 botnexus agent list
 
 # Add an agent
-botnexus agent add coder --provider openai --model gpt-4o
+botnexus agent add coder --provider copilot --model gpt-5.6-sol
 
 # View a config value
 botnexus config get gateway.listenUrl
