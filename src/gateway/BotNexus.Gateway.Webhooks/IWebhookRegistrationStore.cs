@@ -15,6 +15,16 @@ public interface IWebhookRegistrationStore
     Task<WebhookRegistration?> GetAsync(WebhookId webhookId, CancellationToken ct = default);
     Task<IReadOnlyList<WebhookRegistration>> ListAsync(AgentId? agentId = null, CancellationToken ct = default);
     Task<WebhookRegistration> UpdateAsync(WebhookRegistration registration, CancellationToken ct = default);
+
+    /// <summary>
+    /// Records successful inbound use without rewriting registration fields that may have
+    /// changed concurrently, especially the conversation pin established by first delivery.
+    /// </summary>
+    Task TouchLastUsedAsync(
+        WebhookId webhookId,
+        DateTimeOffset lastUsedAt,
+        CancellationToken ct = default);
+
     Task DeleteAsync(WebhookId webhookId, CancellationToken ct = default);
 
     /// <summary>

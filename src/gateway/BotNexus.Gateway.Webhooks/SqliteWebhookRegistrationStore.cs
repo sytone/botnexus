@@ -153,24 +153,50 @@ public sealed class SqliteWebhookRegistrationStore(
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await using var cmd = connection.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO webhook_registrations
-                    (id, label, agent_id, pinned_conversation_id, secret, default_response_mode, enabled, created_at, last_used_at)
-                VALUES
-                    ($id, $label, $agentId, $pinnedConversationId, $secret, $defaultResponseMode, $enabled, $createdAt, $lastUsedAt)
-                ON CONFLICT(id) DO UPDATE SET
-                    label = excluded.label,
-                    agent_id = excluded.agent_id,
-                    pinned_conversation_id = excluded.pinned_conversation_id,
-                    secret = excluded.secret,
-                    default_response_mode = excluded.default_response_mode,
-                    enabled = excluded.enabled,
-                    created_at = excluded.created_at,
-                    last_used_at = excluded.last_used_at
+                UPDATE webhook_registrations
+                SET label = $label,
+                    default_response_mode = $defaultResponseMode,
+                    enabled = $enabled
+                WHERE id = $id
+                RETURNING id, label, agent_id, pinned_conversation_id, secret,
+                          default_response_mode, enabled, created_at, last_used_at
                 """;
-            BindRegistration(cmd, registration);
-            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            cmd.Parameters.AddWithValue("$id", registration.Id.Value);
+            cmd.Parameters.AddWithValue("$label", registration.Label);
+            cmd.Parameters.AddWithValue("$defaultResponseMode", registration.DefaultResponseMode.ToString());
+            cmd.Parameters.AddWithValue("$enabled", registration.Enabled ? 1 : 0);
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+                throw new InvalidOperationException($"Webhook registration '{registration.Id}' does not exist.");
+
+            var updated = ReadRegistration(reader);
             _logger.LogInformation("Updated webhook registration '{WebhookId}'.", registration.Id);
-            return registration;
+            return updated;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task TouchLastUsedAsync(
+        WebhookId webhookId,
+        DateTimeOffset lastUsedAt,
+        CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = "UPDATE webhook_registrations SET last_used_at = $lastUsedAt WHERE id = $id";
+            cmd.Parameters.AddWithValue("$lastUsedAt", lastUsedAt.ToString("O"));
+            cmd.Parameters.AddWithValue("$id", webhookId.Value);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
         finally
         {

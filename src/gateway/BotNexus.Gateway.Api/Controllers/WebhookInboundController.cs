@@ -122,6 +122,12 @@ public sealed class WebhookInboundController(
             var winner = await registrationStore.TryPinConversationAsync(
                 typedWebhookId, created.ConversationId, cancellationToken);
             resolvedConversationId = winner ?? created.ConversationId;
+
+            // Parallel first deliveries can both create candidates before either reaches the
+            // compare-and-set. Keep only the winning conversation visible; the loser has not
+            // been dispatched or bound yet, so it is safe to archive immediately.
+            if (winner.HasValue && winner.Value != created.ConversationId)
+                await conversationStore.ArchiveAsync(created.ConversationId, cancellationToken);
         }
 
         // ── 7. Resolve response mode ─────────────────────────────────────────
@@ -140,9 +146,12 @@ public sealed class WebhookInboundController(
         };
         run = await runStore.CreateAsync(run, cancellationToken);
 
-        // Update last used
-        await registrationStore.UpdateAsync(
-            registration with { LastUsedAt = DateTimeOffset.UtcNow },
+        // Update only the usage timestamp. Re-saving the registration snapshot here can
+        // erase the conversation pin established above because this request loaded the
+        // snapshot before the compare-and-set mutation.
+        await registrationStore.TouchLastUsedAsync(
+            typedWebhookId,
+            DateTimeOffset.UtcNow,
             cancellationToken);
 
         logger.LogInformation(
