@@ -89,6 +89,64 @@ public sealed class SqliteWebhookRegistrationStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UpdateAsync_WithStaleRegistration_PreservesPinnedConversation()
+    {
+        var staleRegistration = await _store.CreateAsync(MakeRegistration());
+        var conversationId = ConversationId.From("conv-update-preserved");
+        await _store.TryPinConversationAsync(staleRegistration.Id, conversationId);
+
+        await _store.UpdateAsync(staleRegistration with
+        {
+            Label = "updated",
+            Enabled = false,
+            DefaultResponseMode = WebhookResponseMode.Sync
+        });
+
+        var retrieved = await _store.GetAsync(staleRegistration.Id);
+        retrieved.ShouldNotBeNull();
+        retrieved.Label.ShouldBe("updated");
+        retrieved.Enabled.ShouldBeFalse();
+        retrieved.DefaultResponseMode.ShouldBe(WebhookResponseMode.Sync);
+        retrieved.PinnedConversationId.ShouldBe(conversationId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithStaleSnapshot_PreservesStoreOwnedPinAndLastUsed()
+    {
+        var staleRegistration = await _store.CreateAsync(MakeRegistration(label: "original"));
+        var conversationId = ConversationId.From("conv-concurrent");
+        var usedAt = DateTimeOffset.UtcNow;
+        await _store.TryPinConversationAsync(staleRegistration.Id, conversationId);
+        await _store.TouchLastUsedAsync(staleRegistration.Id, usedAt);
+
+        var updated = await _store.UpdateAsync(staleRegistration with { Label = "updated" });
+
+        updated.Label.ShouldBe("updated");
+        updated.PinnedConversationId.ShouldBe(conversationId);
+        updated.LastUsedAt.ShouldBe(usedAt);
+        var retrieved = await _store.GetAsync(staleRegistration.Id);
+        retrieved.ShouldNotBeNull();
+        retrieved.PinnedConversationId.ShouldBe(conversationId);
+        retrieved.LastUsedAt.ShouldBe(usedAt);
+    }
+
+    [Fact]
+    public async Task TouchLastUsedAsync_AfterPin_PreservesPinnedConversation()
+    {
+        var staleRegistration = await _store.CreateAsync(MakeRegistration());
+        var conversationId = ConversationId.From("conv-preserved");
+        await _store.TryPinConversationAsync(staleRegistration.Id, conversationId);
+        var usedAt = DateTimeOffset.UtcNow;
+
+        await _store.TouchLastUsedAsync(staleRegistration.Id, usedAt);
+
+        var retrieved = await _store.GetAsync(staleRegistration.Id);
+        retrieved.ShouldNotBeNull();
+        retrieved.PinnedConversationId.ShouldBe(conversationId);
+        retrieved.LastUsedAt.ShouldBe(usedAt);
+    }
+
+    [Fact]
     public async Task Delete_RemovesRecord()
     {
         var reg = await _store.CreateAsync(MakeRegistration());
