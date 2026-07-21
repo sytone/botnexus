@@ -170,6 +170,61 @@ public class OpenAICompletionsProviderTests
         converted[2]!["content"]!.GetValue<string>().ShouldBe("tool  output");
     }
 
+    [Theory]
+    [InlineData("mistral-small-latest")]
+    [InlineData("devstral-small-latest")]
+    [InlineData("codestral-latest")]
+    [InlineData("pixtral-large-latest")]
+    [InlineData("open-mixtral-8x22b")]
+    public void ConvertMessages_MistralFamily_NormalizesMatchingToolCallIds(string modelId)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var model = new LlmModel(
+            Id: modelId, Name: modelId, Api: "openai-completions", Provider: "custom",
+            BaseUrl: "https://example.test/v1", Reasoning: false, Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 32000, MaxTokens: 4096);
+        const string originalId = "toolu_01CBhTTz95qkd9LJMdC9sf8t";
+        Message[] messages =
+        [
+            new AssistantMessage(
+                [new ToolCallContent(originalId, "read", new Dictionary<string, object?>())],
+                "openai-completions", "custom", modelId, Usage.Empty(), StopReason.ToolUse,
+                null, null, timestamp),
+            new ToolResultMessage(originalId, "read", [new TextContent("ok")], false, timestamp)
+        ];
+
+        var converted = CompletionsMessageConverter.Convert(
+            null, model, messages, new OpenAICompletionsCompat());
+
+        converted[0]!["tool_calls"]![0]!["id"]!.GetValue<string>().ShouldBe("toolu01CB");
+        converted[1]!["tool_call_id"]!.GetValue<string>().ShouldBe("toolu01CB");
+    }
+
+    [Fact]
+    public void ConvertMessages_NonMistralModel_PreservesToolCallIds()
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var model = new LlmModel(
+            Id: "qwen-coder", Name: "Qwen", Api: "openai-completions", Provider: "custom",
+            BaseUrl: "https://example.test/v1", Reasoning: false, Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 32000, MaxTokens: 4096);
+        const string originalId = "call_with-punctuation!";
+        Message[] messages =
+        [
+            new AssistantMessage(
+                [new ToolCallContent(originalId, "read", new Dictionary<string, object?>())],
+                "openai-completions", "custom", model.Id, Usage.Empty(), StopReason.ToolUse,
+                null, null, timestamp),
+            new ToolResultMessage(originalId, "read", [new TextContent("ok")], false, timestamp)
+        ];
+
+        var converted = CompletionsMessageConverter.Convert(
+            null, model, messages, new OpenAICompletionsCompat());
+
+        converted[0]!["tool_calls"]![0]!["id"]!.GetValue<string>().ShouldBe(originalId);
+        converted[1]!["tool_call_id"]!.GetValue<string>().ShouldBe(originalId);
+    }
+
     [Fact]
     public void CompletionsMessageConverter_IsUnifiedIntoCore_NotDuplicatedPerProvider()
     {

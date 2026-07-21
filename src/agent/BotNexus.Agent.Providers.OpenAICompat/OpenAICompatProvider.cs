@@ -307,11 +307,11 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                     break;
 
                 case AssistantMessage assistant:
-                    messages.Add(BuildAssistantMessage(assistant, compat));
+                    messages.Add(BuildAssistantMessage(assistant, compat, model));
                     break;
 
                 case ToolResultMessage toolResult:
-                    messages.Add(BuildToolResultMessage(toolResult, compat));
+                    messages.Add(BuildToolResultMessage(toolResult, compat, model));
 
                     // Insert synthetic assistant message after tool result if required
                     if (compat.RequiresAssistantAfterToolResult == true)
@@ -383,7 +383,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
     }
 
     private static Dictionary<string, object?> BuildAssistantMessage(
-        AssistantMessage assistant, OpenAICompletionsCompat compat)
+        AssistantMessage assistant, OpenAICompletionsCompat compat, LlmModel model)
     {
         var msg = new Dictionary<string, object?> { ["role"] = "assistant" };
 
@@ -405,7 +405,9 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                 case ToolCallContent toolCall:
                     toolCalls.Add(new Dictionary<string, object?>
                     {
-                        ["id"] = toolCall.Id,
+                        ["id"] = model.IsMistralFamily()
+                            ? toolCall.Id.NormalizeMistralToolCallId()
+                            : toolCall.Id,
                         ["type"] = "function",
                         ["function"] = new Dictionary<string, object?>
                         {
@@ -432,7 +434,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
     }
 
     private static Dictionary<string, object?> BuildToolResultMessage(
-        ToolResultMessage toolResult, OpenAICompletionsCompat compat)
+        ToolResultMessage toolResult, OpenAICompletionsCompat compat, LlmModel model)
     {
         var contentText = string.Join("\n", toolResult.Content
             .OfType<TextContent>()
@@ -441,7 +443,9 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         var msg = new Dictionary<string, object?>
         {
             ["role"] = "tool",
-            ["tool_call_id"] = toolResult.ToolCallId,
+            ["tool_call_id"] = model.IsMistralFamily()
+                ? toolResult.ToolCallId.NormalizeMistralToolCallId()
+                : toolResult.ToolCallId,
             ["content"] = contentText,
         };
 

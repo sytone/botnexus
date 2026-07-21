@@ -78,7 +78,7 @@ public static class CompletionsMessageConverter
                     for (; j < transformedMessages.Count && transformedMessages[j] is ToolResultMessage; j++)
                     {
                         var tr = (ToolResultMessage)transformedMessages[j];
-                        result.Add(ConvertToolResultMessage(tr, compat));
+                        result.Add(ConvertToolResultMessage(tr, compat, model));
 
                         var hasImages = tr.Content.Any(c => c is ImageContent);
                         if (hasImages && model.Input.Contains("image"))
@@ -138,6 +138,9 @@ public static class CompletionsMessageConverter
 
     private static string NormalizeToolCallId(string id, LlmModel sourceModel, string targetProviderId)
     {
+        if (sourceModel.IsMistralFamily())
+            return id.NormalizeMistralToolCallId();
+
         if (id.Contains('|'))
         {
             var callId = id.Split('|', 2)[0];
@@ -269,7 +272,8 @@ public static class CompletionsMessageConverter
         return msg;
     }
 
-    private static JsonObject ConvertToolResultMessage(ToolResultMessage toolResult, OpenAICompletionsCompat compat)
+    private static JsonObject ConvertToolResultMessage(
+        ToolResultMessage toolResult, OpenAICompletionsCompat compat, LlmModel model)
     {
         var content = string.Join("\n", toolResult.Content
             .OfType<TextContent>()
@@ -278,7 +282,7 @@ public static class CompletionsMessageConverter
         var msg = new JsonObject
         {
             ["role"] = "tool",
-            ["tool_call_id"] = toolResult.ToolCallId,
+            ["tool_call_id"] = NormalizeToolCallId(toolResult.ToolCallId, model, model.Provider),
             ["content"] = string.IsNullOrWhiteSpace(content) ? "(see attached image)" : content
         };
 
