@@ -16,8 +16,27 @@ public sealed class ServiceBusStreamingSeamTests
     [Fact]
     public async Task StreamedDeltas_ThroughRealProjectionAndPersistence_ConsolidateVerbatim()
     {
-        const string expected = "Agreed. Intentional paragraph.\n\n- first item\n- second item";
-        string[] deltas = ["Ag", "reed", ". Intentional ", "paragraph.\n\n- first", " item\n", "- second item"];
+        const string expected = """
+            ## Formatting Test
+
+            This has **bold**, *italic*, and `inline code`.
+
+            [BotNexus](https://github.com/Sytone/botnexus)
+
+            ```powershell
+            botnexus gateway status
+            ```
+
+            | Component | Status |
+            |---|---|
+            | Gateway | Running |
+            """;
+        string[] deltas =
+        [
+            "##", " Formatting", " Test\n\nThis", " has", " **", "bold", "**, *italic*, and `inline code`.\n\n[",
+            "BotNexus](https://github.com/Sytone/botnexus)\n\n```powershell\nbotnexus gateway status\n```\n\n",
+            "| Component | Status |\n|---|---|\n| Gateway | Running |"
+        ];
         var transport = new RecordingServiceBusFactory();
         var adapter = new ServiceBusChannelAdapter(
             NullLogger<ServiceBusChannelAdapter>.Instance,
@@ -90,6 +109,9 @@ public sealed class ServiceBusStreamingSeamTests
             Content = expected,
         });
         var oneShotTerminal = Deserialize(oneShotTransport.Sender.Messages.ShouldHaveSingleItem());
+        oneShotTerminal.Type.ShouldBe("done");
+        oneShotTerminal.IsFinal.ShouldBeTrue();
+        oneShotTerminal.Content.ShouldBe(expected);
         terminal.Content.ShouldBe(oneShotTerminal.Content);
 
         var persisted = await sessionStore.GetAsync(sessionId);

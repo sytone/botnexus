@@ -94,6 +94,60 @@ public class CopilotMessagesProviderParityTests
         handler.RequestHeaders.ShouldContainKey("Openai-Intent");
     }
 
+    [Fact]
+    public async Task Stream_Gpt56_RemovesCopilotChunkCrLf_WhilePreservingFormattingPayload()
+    {
+        const string expected = """
+            ## Formatting Test
+
+            This has **bold**, *italic*, and `inline code`.
+
+            [BotNexus](https://github.com/Sytone/botnexus)
+
+            ```powershell
+            botnexus gateway status
+            ```
+
+            | Component | Status |
+            |---|---|
+            | Gateway | Running |
+            """;
+        var fragments = new[]
+        {
+            "##", " Formatting", " Test\n\nThis", " has", " **", "bold", "**, *italic*, and `inline code`.\n\n[",
+            "BotNexus](https://github.com/Sytone/botnexus)\n\n```powershell\nbotnexus gateway status\n```\n\n",
+            "| Component | Status |\n|---|---|\n| Gateway | Running |"
+        };
+        var sse = BuildTextSse(fragments.Select(fragment => "\r\n" + fragment));
+        var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
+        var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
+
+        var result = await provider.Stream(
+                model,
+                BuildContext(),
+                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task Stream_NonGpt56_PreservesLeadingCrLfVerbatim()
+    {
+        var sse = BuildTextSse(["\r\nintentional"]);
+        var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
+
+        var result = await provider.Stream(
+                BuildModel(),
+                BuildContext(),
+                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
+    }
+
     private static async Task<(RecordingHandler CopilotHandler, RecordingHandler AnthropicHandler)> DriveBothProvidersAsync()
     {
         var copilotHandler = new RecordingHandler(_ => SseResponse(MinimalSse));
@@ -173,6 +227,37 @@ public class CopilotMessagesProviderParityTests
         "event: message_stop\n" +
         "data: {\"type\":\"message_stop\"}\n" +
         "\n";
+
+    private static string BuildTextSse(IEnumerable<string> fragments)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("event: message_start")
+            .AppendLine("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}")
+            .AppendLine()
+            .AppendLine("event: content_block_start")
+            .AppendLine("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}")
+            .AppendLine();
+        foreach (var fragment in fragments)
+        {
+            builder.AppendLine("event: content_block_delta")
+                .Append("data: ")
+                .AppendLine(JsonSerializer.Serialize(new
+                {
+                    type = "content_block_delta",
+                    index = 0,
+                    delta = new { type = "text_delta", text = fragment }
+                }))
+                .AppendLine();
+        }
+        return builder
+            .AppendLine("event: content_block_stop")
+            .AppendLine("data: {\"type\":\"content_block_stop\",\"index\":0}")
+            .AppendLine()
+            .AppendLine("event: message_stop")
+            .AppendLine("data: {\"type\":\"message_stop\"}")
+            .AppendLine()
+            .ToString();
+    }
 
     private static JsonObject BuildEnvelope(RecordingHandler handler)
     {
