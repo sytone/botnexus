@@ -43,6 +43,69 @@ public class OpenAICompatProviderTests
         mapped.ErrorMessage.ShouldBe(expectedError);
     }
 
+    [Theory]
+    [InlineData("mistral-small-latest")]
+    [InlineData("devstral-small-latest")]
+    [InlineData("codestral-latest")]
+    [InlineData("pixtral-large-latest")]
+    [InlineData("open-mixtral-8x22b")]
+    public void BuildRequestBody_MistralFamily_NormalizesMatchingToolCallIds(string modelId)
+    {
+        var method = typeof(OpenAICompatProvider).GetMethod(
+            "BuildRequestBody", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+        var model = new LlmModel(
+            Id: modelId, Name: modelId, Api: "openai-compat", Provider: "custom",
+            BaseUrl: "https://example.test/v1", Reasoning: false, Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 32000, MaxTokens: 4096);
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        const string originalId = "toolu_01CBhTTz95qkd9LJMdC9sf8t";
+        var context = new Context(null,
+        [
+            new AssistantMessage(
+                [new ToolCallContent(originalId, "read", new Dictionary<string, object?>())],
+                "openai-compat", "custom", modelId, Usage.Empty(), StopReason.ToolUse,
+                null, null, timestamp),
+            new ToolResultMessage(originalId, "read", [new TextContent("ok")], false, timestamp)
+        ], null);
+
+        var body = method!.Invoke(
+            null, [model, context, null, new OpenAICompletionsCompat()]) as JsonObject;
+        var messages = body!["messages"]!.AsArray();
+
+        messages[0]!["tool_calls"]![0]!["id"]!.GetValue<string>().ShouldBe("toolu01CB");
+        messages[1]!["tool_call_id"]!.GetValue<string>().ShouldBe("toolu01CB");
+    }
+
+    [Fact]
+    public void BuildRequestBody_NonMistralModel_PreservesToolCallIds()
+    {
+        var method = typeof(OpenAICompatProvider).GetMethod(
+            "BuildRequestBody", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+        var model = new LlmModel(
+            Id: "qwen-coder", Name: "Qwen", Api: "openai-compat", Provider: "custom",
+            BaseUrl: "https://example.test/v1", Reasoning: false, Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 32000, MaxTokens: 4096);
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        const string originalId = "call_with-punctuation!";
+        var context = new Context(null,
+        [
+            new AssistantMessage(
+                [new ToolCallContent(originalId, "read", new Dictionary<string, object?>())],
+                "openai-compat", "custom", model.Id, Usage.Empty(), StopReason.ToolUse,
+                null, null, timestamp),
+            new ToolResultMessage(originalId, "read", [new TextContent("ok")], false, timestamp)
+        ], null);
+
+        var body = method!.Invoke(
+            null, [model, context, null, new OpenAICompletionsCompat()]) as JsonObject;
+        var messages = body!["messages"]!.AsArray();
+
+        messages[0]!["tool_calls"]![0]!["id"]!.GetValue<string>().ShouldBe(originalId);
+        messages[1]!["tool_call_id"]!.GetValue<string>().ShouldBe(originalId);
+    }
+
     [Fact]
     public void BuildRequestBody_WithToolHistoryAndNoTools_SendsEmptyToolsArray()
     {
