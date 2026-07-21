@@ -15,7 +15,9 @@ $payloadArchive = Join-Path $workRoot 'payload.tar.gz'
 $payloadRoot = Join-Path $workRoot 'payload'
 $sourceRoot = Join-Path $workRoot 'src'
 $artifactsRoot = Join-Path $workRoot 'artifacts'
-New-Item -ItemType Directory -Path $payloadRoot, $artifactsRoot -Force | Out-Null
+$resultsRoot = Join-Path $artifactsRoot 'test-results'
+$runnerResultScript = '/runner/RunnerResult.ps1'
+New-Item -ItemType Directory -Path $payloadRoot, $artifactsRoot, $resultsRoot -Force | Out-Null
 
 $env:AZCOPY_AUTO_LOGIN_TYPE = 'MSI'
 if ($env:AZURE_CLIENT_ID) { $env:AZCOPY_MSI_CLIENT_ID = $env:AZURE_CLIENT_ID }
@@ -32,8 +34,13 @@ if ($LASTEXITCODE -ne 0) { throw "Repository bundle clone failed with exit code 
 tar -xzf (Join-Path $payloadRoot 'workspace.tar.gz') -C $sourceRoot
 if ($LASTEXITCODE -ne 0) { throw "Workspace overlay failed with exit code $LASTEXITCODE." }
 
+# The packed payload is no longer needed after the repository is materialized.
+# Reclaim it before restore/build so test fixtures get the maximum ephemeral space.
+Remove-Item -LiteralPath $payloadArchive, $payloadRoot -Recurse -Force
+
 Push-Location $sourceRoot
 $exitCode = 0
+$testResult = $null
 try {
     git config user.name 'BotNexus Azure Build Runner'
     git config user.email 'build-runner@botnexus.invalid'
@@ -54,31 +61,39 @@ try {
     & dotnet build BotNexus.slnx -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Build failed with exit code $exitCode." }
 
+    $strictResults = $mode -in @('full', 'strict', 'playwright')
     switch ($mode) {
         'full' {
-            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -All -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            & dotnet test BotNexus.slnx --nologo --tl:off -c Debug --no-build --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            $exitCode = $LASTEXITCODE
         }
         'strict' {
             & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
-            $impactedExitCode = $LASTEXITCODE
-            if ($impactedExitCode -ne 0) {
-                $exitCode = $impactedExitCode
-            }
-            else {
-                & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+                & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build --logger "trx;LogFileName=playwright.trx" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
+                $exitCode = $LASTEXITCODE
             }
         }
         'playwright' {
-            & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
+            & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build --logger "trx;LogFileName=playwright.trx" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
+            $exitCode = $LASTEXITCODE
         }
         default {
             & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            $exitCode = $LASTEXITCODE
         }
     }
-    $exitCode = $LASTEXITCODE
-    if ($mode -eq 'strict' -and $exitCode -eq 0 -and -not (Test-Path (Join-Path $artifactsRoot 'playwright.log'))) {
-        $exitCode = 1
-        'Strict validation completed without running Playwright.' | Set-Content -Path (Join-Path $artifactsRoot 'playwright.log')
+
+    if ($strictResults) {
+        . $runnerResultScript
+        $trxPaths = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File | Select-Object -ExpandProperty FullName)
+        $testResult = Get-RunnerTestResult -TrxPaths $trxPaths -RequireZeroSkipped
+        $testResult | ConvertTo-Json | Set-Content -Path (Join-Path $artifactsRoot 'test-result.json')
+        if (-not $testResult.isComplete) {
+            $exitCode = 1
+            throw "Strict $mode validation rejected the test result: $($testResult.failureReason) (total=$($testResult.total), passed=$($testResult.passed), failed=$($testResult.failed), skipped=$($testResult.skipped))."
+        }
     }
 }
 catch {
@@ -94,6 +109,7 @@ finally {
         baseRef = $baseRef
         exitCode = $exitCode
         completedUtc = [DateTime]::UtcNow.ToString('o')
+        tests = $testResult
     } | ConvertTo-Json | Set-Content -Path (Join-Path $artifactsRoot 'result.json')
 
     Write-Host 'Uploading test artifacts with managed identity...'
