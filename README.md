@@ -195,7 +195,8 @@ Agents are named configurations with their own workspace, model, and settings.
 BotNexus creates an `assistant` agent by default. Add more:
 
 ```bash
-botnexus agent add          # Interactive wizard
+botnexus agent wizard       # Interactive wizard
+botnexus agent add <id>     # Add an agent non-interactively
 botnexus agent list         # List configured agents
 ```
 
