@@ -150,30 +150,80 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         // Write PID file
         await WritePidAsync(pidFilePath, pid);
 
-        // Perform health check
-        // Default health URL is http://localhost:5005/health - gateway uses this by default
-        var healthUrl = "http://localhost:5005/health";
-        var healthTimeout = TimeSpan.FromSeconds(10);
+        var healthUrl = options.HealthUrl ?? DefaultHealthUrl;
+        var healthTimeout = options.ReadinessTimeout ?? TimeSpan.FromSeconds(60);
+        var readinessStopwatch = Stopwatch.StartNew();
 
-        _logger.LogInformation("Waiting for gateway to become healthy at {HealthUrl}...", healthUrl);
+        _logger.LogInformation(
+            "Waiting for gateway readiness: endpoint={HealthUrl}, timeout={Timeout}",
+            healthUrl,
+            healthTimeout);
 
-        var isHealthy = await _healthChecker.WaitForHealthyAsync(healthUrl, healthTimeout, cancellationToken);
+        using var readinessCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var healthTask = _healthChecker.WaitForHealthyAsync(
+            healthUrl,
+            healthTimeout,
+            readinessCancellation.Token);
+        var exitTask = process.WaitForExitAsync(readinessCancellation.Token);
+        var completedTask = await Task.WhenAny(healthTask, exitTask);
+
+        if (completedTask == exitTask || process.HasExited)
+        {
+            readinessCancellation.Cancel();
+            await ObserveReadinessCancellationAsync(healthTask, cancellationToken);
+            readinessStopwatch.Stop();
+            var exitCode = process.ExitCode;
+            _logger.LogWarning(
+                "Gateway readiness failed: endpoint={HealthUrl}, timeout={Timeout}, elapsed={Elapsed}, finalState=process exited, exitCode={ExitCode}",
+                healthUrl,
+                healthTimeout,
+                readinessStopwatch.Elapsed,
+                exitCode);
+            return new GatewayStartResult(
+                Success: false,
+                Pid: pid,
+                Message: $"Gateway process exited during readiness after {readinessStopwatch.Elapsed.TotalSeconds:F1}s (PID {pid}, exit code {exitCode}, endpoint {healthUrl})");
+        }
+
+        var isHealthy = await healthTask;
+        readinessCancellation.Cancel();
+        await ObserveReadinessCancellationAsync(exitTask, cancellationToken);
+        readinessStopwatch.Stop();
 
         if (isHealthy)
         {
-            _logger.LogInformation("Gateway is healthy (PID {Pid})", pid);
+            _logger.LogInformation(
+                "Gateway readiness succeeded: endpoint={HealthUrl}, timeout={Timeout}, elapsed={Elapsed}, finalState=healthy and process alive, pid={Pid}",
+                healthUrl,
+                healthTimeout,
+                readinessStopwatch.Elapsed,
+                pid);
             return new GatewayStartResult(
                 Success: true,
                 Pid: pid,
                 Message: $"Gateway started successfully (PID {pid})");
         }
-        else
+
+        _logger.LogWarning(
+            "Gateway readiness timed out: endpoint={HealthUrl}, timeout={Timeout}, elapsed={Elapsed}, finalState=process alive but not healthy",
+            healthUrl,
+            healthTimeout,
+            readinessStopwatch.Elapsed);
+        return new GatewayStartResult(
+            Success: false,
+            Pid: pid,
+            Message: $"Gateway process is alive (PID {pid}) but not healthy after {readinessStopwatch.Elapsed.TotalSeconds:F1}s (timeout {healthTimeout.TotalSeconds:F0}s, endpoint {healthUrl}); it may still be starting");
+    }
+
+    private static async Task ObserveReadinessCancellationAsync(Task task, CancellationToken callerCancellation)
+    {
+        try
         {
-            _logger.LogWarning("Gateway did not become healthy within {Timeout}s (PID {Pid})", healthTimeout.TotalSeconds, pid);
-            return new GatewayStartResult(
-                Success: false,
-                Pid: pid,
-                Message: $"Gateway started (PID {pid}) but did not become healthy within {healthTimeout.TotalSeconds}s");
+            await task;
+        }
+        catch (OperationCanceledException) when (!callerCancellation.IsCancellationRequested)
+        {
+            // The competing readiness operation was cancelled after a final state was established.
         }
     }
 
