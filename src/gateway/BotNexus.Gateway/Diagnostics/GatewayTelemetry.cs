@@ -60,6 +60,14 @@ public static class GatewayTelemetry
         description: "Sub-agent completion wake events dispatched to session queue.");
 
     /// <summary>
+    /// Tracks sub-agent tool starts that could not be durably persisted before execution.
+    /// </summary>
+    public static readonly Counter<long> SubAgentToolWriteAheadFailures = Meter.CreateCounter<long>(
+        "botnexus.subagent.tool.write_ahead.failures",
+        unit: "{failure}",
+        description: "Sub-agent tool invocations that could not be durably recorded before execution.");
+
+    /// <summary>
     /// Tracks sub-agent completion wake events that could not be delivered through the gateway dispatch pipeline.
     /// </summary>
     public static readonly Counter<long> SubAgentWakeDeliveryFailed = Meter.CreateCounter<long>(

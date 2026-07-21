@@ -343,6 +343,49 @@ public sealed class StreamingSessionHelperTests
         session.History.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task ProcessAndSaveAsync_PrePersistedToolStart_DoesNotDuplicateEntry()
+    {
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-prepersisted"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "Tool 'exec' started.",
+            ToolName = "exec",
+            ToolCallId = "tc-prepersisted",
+            ToolArgs = "{\"command\":\"git status\"}"
+        });
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ToolStart,
+                    ToolCallId = "tc-prepersisted",
+                    ToolName = "exec",
+                    ToolArgs = new Dictionary<string, object?> { ["command"] = "git status" }
+                },
+                new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ToolEnd,
+                    ToolCallId = "tc-prepersisted",
+                    ToolName = "exec",
+                    ToolResult = "clean"
+                }
+            ]),
+            session,
+            store.Object);
+
+        session.GetHistorySnapshot().Count(entry =>
+            entry.ToolCallId == "tc-prepersisted" && entry.ToolArgs is not null).ShouldBe(1);
+    }
+
     // ── Write-ahead persistence tests (#1052) ───────────────────────────────
 
     [Fact]

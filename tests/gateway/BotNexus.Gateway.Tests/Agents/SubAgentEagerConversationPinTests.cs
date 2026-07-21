@@ -29,6 +29,42 @@ namespace BotNexus.Gateway.Tests.Agents;
 public sealed class SubAgentEagerConversationPinTests
 {
     [Fact]
+    public async Task SpawnAsync_MaterializesChildSessionBeforeHandleCreation()
+    {
+        var events = new List<string>();
+        var childSession = new GatewaySession();
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(s => s.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((GatewaySession?)null);
+        sessionStore.Setup(s => s.GetOrCreateAsync(
+                It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("create-session"))
+            .ReturnsAsync(childSession);
+        sessionStore.Setup(s => s.SaveAsync(childSession, It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("save-session"))
+            .Returns(Task.CompletedTask);
+
+        var handle = BuildHandle();
+        var manager = BuildManager(handle, sessionStore: sessionStore.Object,
+            onHandleCreate: () => events.Add("create-handle"));
+        var request = new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "x",
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("conv-materialized")
+        };
+
+        await manager.SpawnAsync(request);
+
+        events.IndexOf("create-session").ShouldBeLessThan(events.IndexOf("create-handle"));
+        events.IndexOf("save-session").ShouldBeLessThan(events.IndexOf("create-handle"));
+        childSession.SessionType.ShouldBe(SessionType.AgentSubAgent);
+        childSession.ConversationId.ShouldBe(ConversationId.From("conv-materialized"));
+    }
+
+    [Fact]
     public async Task SpawnAsync_DoesNotReturnUntilConversationIsPinned()
     {
         // Arrange: a session store whose GetAsync blocks on a TCS we control.
@@ -198,11 +234,13 @@ public sealed class SubAgentEagerConversationPinTests
 
     private static DefaultSubAgentManager BuildManager(
         Mock<IAgentHandle> handle,
-        ISessionStore? sessionStore = null)
+        ISessionStore? sessionStore = null,
+        Action? onHandleCreate = null)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor
             .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback(() => onHandleCreate?.Invoke())
             .ReturnsAsync(handle.Object);
 
         var registry = new Mock<IAgentRegistry>();
