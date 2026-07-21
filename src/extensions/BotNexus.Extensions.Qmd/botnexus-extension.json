@@ -1,6 +1,0 @@
-{
-  "id": "botnexus-qmd",
-  "name": "BotNexus QMD Knowledge Base",
-  "description": "Local knowledge base search with BM25, vector, and hybrid modes.",
-  "version": "1.0.0"
-}
