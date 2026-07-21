@@ -1,9 +1,0 @@
-@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Components
-@inherits LayoutComponentBase
-
-<GlobalErrorBoundary>
-    @Body
-</GlobalErrorBoundary>
-@* #1839: friendly auto-retrying reconnect overlay, rendered app-wide so a transient
-   background/foreground drop shows "Reconnecting..." instead of the raw #blazor-error-ui bar. *@
-<ReconnectOverlay />
