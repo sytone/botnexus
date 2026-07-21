@@ -17,6 +17,6 @@ RUN apt-get update \
     && mkdir -p /work /cache/nuget \
     && chmod 0777 /work /cache/nuget
 
-COPY entrypoint.ps1 /runner/entrypoint.ps1
+COPY entrypoint.ps1 RunnerResult.ps1 /runner/
 WORKDIR /work
 ENTRYPOINT ["pwsh", "-NoProfile", "-File", "/runner/entrypoint.ps1"]
