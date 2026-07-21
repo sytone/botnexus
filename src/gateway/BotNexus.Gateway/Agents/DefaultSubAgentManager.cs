@@ -581,37 +581,33 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_records.TryGetValue(subAgentId, out var record))
             return;
 
-        var existing = record.Info;
-
         if (!record.TryBeginCompletion())
         {
             _logger.LogDebug("Skipping duplicate completion for sub-agent '{SubAgentId}'.", subAgentId);
             return;
         }
 
-        if (existing.Status == SubAgentStatus.Killed)
-            return;
-
-        var normalizedSummary = string.IsNullOrWhiteSpace(resultSummary)
-            ? "Sub-agent completed with no summary."
-            : resultSummary;
-
-        var completionStatus = existing.Status == SubAgentStatus.Running
-            ? SubAgentStatus.Completed
-            : existing.Status;
+        const string emptyResponseDiagnostic = "Sub-agent failed because it returned an empty final response.";
+        var hasFinalResponse = !string.IsNullOrWhiteSpace(resultSummary);
 
         if (!TryUpdateSubAgent(
                 subAgentId,
-                current => current with
-                {
-                    Status = completionStatus,
-                    CompletedAt = DateTimeOffset.UtcNow,
-                    ResultSummary = normalizedSummary
-                },
-                out var updated))
+                current => current.Status == SubAgentStatus.Running
+                    ? current with
+                    {
+                        Status = hasFinalResponse ? SubAgentStatus.Completed : SubAgentStatus.Failed,
+                        CompletedAt = DateTimeOffset.UtcNow,
+                        ResultSummary = hasFinalResponse ? resultSummary : emptyResponseDiagnostic
+                    }
+                    : current,
+                out var updated) || updated.Status == SubAgentStatus.Killed)
         {
             return;
         }
+
+        // A timeout/failure may set the terminal record before entering the shared completion path.
+        // Always publish and dispatch the record's winning terminal reason, never a late prompt result.
+        var normalizedSummary = updated.ResultSummary ?? emptyResponseDiagnostic;
 
         // Update the sub-agent session row with the final status (best-effort).
         if (_sessionStore is not null && updated.CompletedAt.HasValue)
@@ -761,43 +757,68 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         try
         {
             var response = await handle.PromptAsync(task, timeoutCts.Token);
-            await OnCompletedAsync(subAgentId, response.Content);
+            if (timeoutCts.IsCancellationRequested)
+            {
+                await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+            }
+            else if (string.IsNullOrWhiteSpace(response.Content))
+            {
+                await CompleteFailedAsync(
+                    subAgentId,
+                    "Sub-agent failed because it returned an empty final response.");
+            }
+            else
+            {
+                await OnCompletedAsync(subAgentId, response.Content);
+            }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
-            if (TryUpdateSubAgent(
-                    subAgentId,
-                    current => current.Status == SubAgentStatus.Killed
-                        ? current
-                        : current with
-                        {
-                            Status = SubAgentStatus.TimedOut,
-                            CompletedAt = DateTimeOffset.UtcNow,
-                            ResultSummary = $"Sub-agent timed out after {timeoutSeconds} seconds."
-                        }))
-            {
-                await OnCompletedAsync(subAgentId, $"Sub-agent timed out after {timeoutSeconds} seconds.");
-            }
+            await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+        }
+        catch (Exception) when (timeoutCts.IsCancellationRequested)
+        {
+            // Some providers translate cancellation into a different exception. Once the
+            // deadline has fired, timeout remains the authoritative terminal reason.
+            await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
         }
         catch (Exception ex)
         {
-            if (TryUpdateSubAgent(
-                    subAgentId,
-                    current => current.Status == SubAgentStatus.Killed
-                        ? current
-                        : current with
-                        {
-                            Status = SubAgentStatus.Failed,
-                            CompletedAt = DateTimeOffset.UtcNow,
-                            ResultSummary = $"Sub-agent failed: {ex.Message}"
-                        }))
-            {
-                await OnCompletedAsync(subAgentId, $"Sub-agent failed: {ex.Message}");
-            }
+            await CompleteFailedAsync(subAgentId, $"Sub-agent failed: {ex.Message}");
         }
         finally
         {
             record.DisposeTimeout();
+        }
+    }
+
+    private Task CompleteTimedOutAsync(string subAgentId, int timeoutSeconds)
+        => CompleteTerminalAsync(
+            subAgentId,
+            SubAgentStatus.TimedOut,
+            $"Sub-agent timed out after {timeoutSeconds} {(timeoutSeconds == 1 ? "second" : "seconds")}.");
+
+    private Task CompleteFailedAsync(string subAgentId, string diagnostic)
+        => CompleteTerminalAsync(subAgentId, SubAgentStatus.Failed, diagnostic);
+
+    private async Task CompleteTerminalAsync(
+        string subAgentId,
+        SubAgentStatus status,
+        string diagnostic)
+    {
+        if (TryUpdateSubAgent(
+                subAgentId,
+                current => current.Status == SubAgentStatus.Running
+                    ? current with
+                    {
+                        Status = status,
+                        CompletedAt = DateTimeOffset.UtcNow,
+                        ResultSummary = diagnostic
+                    }
+                    : current,
+                out var updated) && updated.Status == status)
+        {
+            await OnCompletedAsync(subAgentId, diagnostic);
         }
     }
 
