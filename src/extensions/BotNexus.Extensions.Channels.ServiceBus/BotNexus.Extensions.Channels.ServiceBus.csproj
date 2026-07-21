@@ -17,6 +17,9 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>BotNexus.Extensions.Channels.ServiceBus.Tests</_Parameter1>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>BotNexus.Integration.ServiceBusStreaming.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
   <ItemGroup>
     <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
