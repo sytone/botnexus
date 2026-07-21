@@ -1,5 +1,0 @@
-{
-  "name": "sample-simple-greeting",
-  "prompt": "Say hello to {{name}} in a friendly way.",
-  "description": "A minimal template example with one required parameter."
-}

@@ -1,6 +1,0 @@
-{
-  "id": "botnexus-debug-tool",
-  "name": "BotNexus Platform Debug Tool",
-  "description": "Agent-facing read-only access to sessions.db and gateway runtime state for debugging and introspection.",
-  "version": "1.0.0"
-}
