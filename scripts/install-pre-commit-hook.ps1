@@ -10,9 +10,10 @@ $hookDirectory = Split-Path -Parent $hookPath
 New-Item -ItemType Directory -Path $hookDirectory -Force | Out-Null
 $hookContent = @'
 #!/bin/sh
-# BotNexus pre-commit hook — use an exact remote-validation receipt when available,
-# otherwise fall back to the local build and Gateway test gate.
+# BotNexus pre-commit hook — use an exact strict Azure receipt when available;
+# otherwise run authoritative Azure validation. Local fallback is explicit only.
 
+pwsh -NoProfile -File scripts/repo/Validate-PreCommit.Tests.ps1
 pwsh -NoProfile -File scripts/repo/Validate-PreCommit.ps1
 exit $?
 '@
@@ -29,6 +30,6 @@ if ($IsLinux -or $IsMacOS) {
 
 Write-Host ''
 Write-Host 'The pre-commit hook will now:'
-Write-Host '  1. Accept an Azure validation receipt only when it matches the exact worktree tree and base commit.'
-Write-Host '  2. Otherwise build the full solution and run Gateway tests locally.'
-Write-Host '  3. Block commits if validation fails.'
+Write-Host '  1. Accept a qualifying Azure receipt only for the exact candidate tree and base commit.'
+Write-Host '  2. Otherwise run strict Azure Container Apps validation by default.'
+Write-Host '  3. Use Validate-PreCommit.ps1 -LocalFallback only when Azure is unavailable.'

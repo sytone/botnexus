@@ -4,12 +4,23 @@
 
 BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentation must be portable across both platforms. Do not assume a single OS — CI runs on both, and developer machines vary.
 
-## Helper Scripts
+## Validation
 
-- If this is a new install run `scripts/repo/init.ps1`
-- To build the solution, run `scripts/repo/build.ps1`
-- To run tests, run `scripts/repo/test.ps1`
-- To run only tests affected by your changes, run `scripts/repo/test-impacted.ps1`
+Azure Container Apps is the default authoritative validation path for every candidate:
+
+```powershell
+scripts/repo/Validate-PreCommit.ps1
+```
+
+The command reuses a qualifying receipt only when it matches the exact candidate tree and base commit. Otherwise it runs strict remote validation: full solution build, impacted tests (including architecture and scenario safety nets), and Playwright. Do not repeat those build/tests locally after a qualifying receipt.
+
+When Azure is unavailable, opt into the serialized local equivalent explicitly:
+
+```powershell
+scripts/repo/Validate-PreCommit.ps1 -LocalFallback
+```
+
+The lower-level `build.ps1`, `test.ps1`, and `test-impacted.ps1` scripts remain available for focused diagnosis, but they are not the standard pre-commit or pre-push gate.
 
 
 ## Document Ownership
@@ -59,31 +70,23 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    - Implement until the test passes
    - Never write implementation code to make a pre-existing test pass by deleting the test
 
-2. **Run the impacted test script before every push.** This is not optional:
+2. **Run authoritative validation before every push.** This is not optional:
 
    ```shell
-   scripts/repo/test-impacted.ps1
+   scripts/repo/Validate-PreCommit.ps1
    ```
 
-   This uses `dotnet-affected` to run only test projects transitively affected by your changes, **plus `Architecture.Tests` and `Scenarios.Tests` as mandatory safety-net projects** that always run regardless of what changed. These catch cross-cutting fitness functions (architecture fences, P9-B-2 invariants, scenario contracts) that a narrowly-targeted `dotnet test` on a single project will miss.
+   By default this invokes Azure Container Apps strict validation. A qualifying exact-content receipt bypasses redundant validation. Strict mode builds the full solution, runs impacted tests plus mandatory `Architecture.Tests` and `Scenarios.Tests` safety nets, and runs Playwright. Use `-LocalFallback` only when Azure is unavailable; the fallback is serialized per worktree.
 
-   Use `-DryRun` to preview which projects would run without executing them.
-
-   The full suite is available if needed but is not required for every push:
-
-   ```shell
-   dotnet test BotNexus.slnx --nologo --tl:off
-   ```
+   The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
 3. **Zero failures required.** If any test fails, diagnose and fix the issue before proceeding. Do not commit code with failing tests.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 
-5. **Do not use `--no-verify`** for code changes. The pre-commit hook runs the test suite and must pass.
+5. **Do not use `--no-verify`** for code changes. The pre-commit hook verifies an exact-content strict Azure receipt or starts strict Azure validation itself. Strict mode includes the full build, impacted tests, mandatory architecture/scenario safety nets, and strict Playwright coverage; do not run `test-impacted.ps1` again after it passes.
 
-   > **Note:** The pre-commit hook does _not_ run `test-impacted.ps1`. It builds the solution and runs unit tests, but does not include the architecture or scenario safety-net projects. You must run `test-impacted.ps1` separately before pushing — the pre-commit hook alone is not sufficient.
-
-6. **Do not use `--no-build` with `dotnet test` or `dotnet run` during local development.** It causes stale-binary issues, silent skips when fixtures fail to rebuild, and confusing test-output gaps. Always let `dotnet test` rebuild — if the build is too slow, fix the build, don't bypass it. (The CI workflow and `test-impacted.ps1 -NoBuild` are exceptions — they build once upfront then test with `--no-build` for speed.)
+6. **Do not run local `dotnet build` or `dotnet test` as the normal validation gate.** Use Azure validation to avoid worktree output collisions and development-host saturation. For focused diagnosis only, local commands may be used deliberately. If Azure is unavailable, `Validate-PreCommit.ps1 -LocalFallback` is the sole supported local gate; it serializes validation for the worktree and may use `--no-build` internally after its single build.
 
 7. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
 
@@ -115,11 +118,10 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 
 Before every `git push` on a PR branch:
 
-1. Build is clean: `dotnet build BotNexus.slnx --nologo`
-2. Impacted tests pass: `scripts/repo/test-impacted.ps1`
-3. No `--no-verify` used on commits containing code changes
-
-The pre-commit hook alone is not sufficient — it does not run architecture or scenario tests.
+1. `scripts/repo/Validate-PreCommit.ps1` passes, or a qualifying receipt proves the exact candidate already passed strict Azure validation.
+2. Do not rerun local build/tests when that receipt qualifies.
+3. If Azure is unavailable, use the explicit serialized `-LocalFallback` path and report that evidence.
+4. No `--no-verify` used on commits containing code changes.
 
 ### Worktree Policy
 
@@ -171,13 +173,19 @@ docs(agents): add conventional commit rules for PRs
 chore(deps): bump Microsoft.Extensions.* to 10.0.1
 ```
 
-## Build
+## Build and test validation
+
+Use the remote container gate for normal candidate validation:
 
 ```shell
-dotnet build BotNexus.slnx --nologo --tl:off
+scripts/repo/Validate-PreCommit.ps1
 ```
 
-Build the full solution before running tests to avoid stale assembly issues (e.g., CLI integration tests depend on `BotNexus.Cli.dll` being built).
+A local `dotnet build` is diagnostic-only. Do not run local builds concurrently in the same worktree. When Azure is unavailable, use the explicit serialized fallback instead of hand-running build and test commands:
+
+```shell
+scripts/repo/Validate-PreCommit.ps1 -LocalFallback
+```
 
 ### Build Warnings
 

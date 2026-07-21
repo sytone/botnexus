@@ -10,8 +10,8 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('impacted', 'full', 'playwright')]
-    [string]$Mode = 'impacted',
+    [ValidateSet('strict', 'impacted', 'full', 'playwright')]
+    [string]$Mode = 'strict',
     [string]$WorktreePath = (Get-Location).Path,
     [string]$SubscriptionId = $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID,
     [string]$ResourceGroup = $env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP,
@@ -69,9 +69,24 @@ try {
     & git -C $repoRoot bundle create $bundlePath --all
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create repository bundle.' }
 
+    $archiveFileList = Join-Path $tempRoot 'workspace-files.txt'
+    $trackedFiles = @(& git -C $repoRoot ls-files --cached --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to enumerate worktree files.' }
+    # Use LF explicitly: Windows PowerShell's Set-Content emits CRLF, which GNU tar treats as
+    # part of each pathname when this script runs under Git's Unix toolchain.
+    [IO.File]::WriteAllText($archiveFileList, (($trackedFiles -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+
     Push-Location $repoRoot
     try {
-        & git ls-files --cached --others --exclude-standard -z | tar --null -T - -czf $workspaceArchive
+        # Resolve tar.exe explicitly. Git's /usr/bin/tar interprets a Windows drive-letter
+        # archive path as a remote host specification ("C:"), while bsdtar handles it.
+        $tarCommand = if ($IsWindows) {
+            Join-Path $env:SystemRoot 'System32/tar.exe'
+        }
+        else {
+            (Get-Command tar -CommandType Application | Select-Object -First 1).Source
+        }
+        & $tarCommand -T $archiveFileList -czf $workspaceArchive
         if ($LASTEXITCODE -ne 0) { throw 'Failed to create worktree overlay archive.' }
     }
     finally { Pop-Location }
@@ -132,8 +147,10 @@ try {
 
     $resultFile = Get-ChildItem -Path $OutputPath -Filter result.json -Recurse | Select-Object -First 1
     $result = if ($resultFile) { Get-Content $resultFile.FullName -Raw | ConvertFrom-Json } else { $null }
+    $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
+    $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
-    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0) {
+    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
         $gitDirectory = (& git -C $repoRoot rev-parse --git-dir).Trim()
         if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $repoRoot $gitDirectory }
         $receiptDirectory = Join-Path $gitDirectory 'botnexus-validation'
@@ -157,8 +174,9 @@ try {
         & az storage blob delete-batch --subscription $SubscriptionId --account-name $StorageAccount --source artifacts --pattern "$runId/*" --auth-mode login --only-show-errors | Out-Null
     }
 
-    if ($status.properties.status -ne 'Succeeded' -or $null -eq $result -or $result.exitCode -ne 0) {
-        throw "Azure validation failed. Execution status: $($status.properties.status). Artifacts: $OutputPath"
+    if ($status.properties.status -ne 'Succeeded' -or $null -eq $result -or $result.exitCode -ne 0 -or -not $requiredArtifactsPresent) {
+        $artifactFailure = if ($requiredArtifactsPresent) { '' } else { ' The strict Playwright artifact is missing; the deployed runner does not prove strict mode.' }
+        throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure Artifacts: $OutputPath"
     }
 
     Write-Host "Azure validation passed. Artifacts: $OutputPath" -ForegroundColor Green

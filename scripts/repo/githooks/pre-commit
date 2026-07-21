@@ -1,6 +1,7 @@
 #!/bin/sh
-# BotNexus pre-commit hook — use an exact remote-validation receipt when available,
-# otherwise fall back to the local build and Gateway test gate.
+# BotNexus pre-commit hook — use an exact strict Azure receipt when available;
+# otherwise run authoritative Azure validation. Local fallback is explicit only.
 
+pwsh -NoProfile -File scripts/repo/Validate-PreCommit.Tests.ps1
 pwsh -NoProfile -File scripts/repo/Validate-PreCommit.ps1
 exit $?
