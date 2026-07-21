@@ -70,8 +70,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create repository bundle.' }
 
     $archiveFileList = Join-Path $tempRoot 'workspace-files.txt'
-    $trackedFiles = @(& git -C $repoRoot ls-files --cached --others --exclude-standard)
+    $trackedFiles = @(& git -C $repoRoot ls-files --cached --others --exclude-standard | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($LASTEXITCODE -ne 0) { throw 'Failed to enumerate worktree files.' }
+    if ($trackedFiles.Count -eq 0) { throw 'Worktree overlay contains no files.' }
     # Use LF explicitly: Windows PowerShell's Set-Content emits CRLF, which GNU tar treats as
     # part of each pathname when this script runs under Git's Unix toolchain.
     [IO.File]::WriteAllText($archiveFileList, (($trackedFiles -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))

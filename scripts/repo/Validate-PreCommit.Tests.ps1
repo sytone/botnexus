@@ -8,30 +8,57 @@ $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 $validationScript = Join-Path $repoRoot 'scripts/repo/Validate-PreCommit.ps1'
 $fingerprintScript = Join-Path $repoRoot 'scripts/repo/Get-WorktreeValidationFingerprint.ps1'
 $failures = [Collections.Generic.List[string]]::new()
+$gitEnvironment = @{}
+$gitLocalEnvironmentNames = @(& git -C $repoRoot rev-parse --local-env-vars)
+foreach ($name in $gitLocalEnvironmentNames) {
+    if ([string]::IsNullOrWhiteSpace($name)) { continue }
+    $gitEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 
 function Assert-Equal([object]$Expected, [object]$Actual, [string]$Message) {
     if ($Expected -ne $Actual) { $failures.Add("$Message Expected '$Expected', got '$Actual'.") }
 }
 
+function Invoke-IsolatedGit {
+    param([string[]]$Arguments)
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = 'git'
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($name in $gitLocalEnvironmentNames) {
+        if (-not [string]::IsNullOrWhiteSpace($name)) { [void]$startInfo.Environment.Remove($name) }
+    }
+    foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($startInfo)
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    $global:LASTEXITCODE = $process.ExitCode
+    if ($stdout.Length -gt 0) { Write-Output $stdout.TrimEnd() }
+    if ($stderr.Length -gt 0) { Write-Error $stderr.TrimEnd() -ErrorAction Continue }
+}
+
 function New-TestRepository {
     $path = Join-Path ([IO.Path]::GetTempPath()) "botnexus-validation-test-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $path | Out-Null
-    git -c core.bare=false -C $path init --initial-branch main *> $null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to initialize test repository: $path" }
-    git -C $path config --local user.name test *> $null
-    git -C $path config --local user.email test@example.invalid *> $null
+    Invoke-IsolatedGit -Arguments @('-c', 'core.bare=false', '-C', $path, 'init', '--initial-branch', 'main') *> $null
+    if (-not (Test-Path (Join-Path $path '.git') -PathType Container)) { throw "Unable to initialize test repository: $path" }
+    Invoke-IsolatedGit -Arguments @('-C', $path, 'config', '--local', 'user.name', 'test') *> $null
+    Invoke-IsolatedGit -Arguments @('-C', $path, 'config', '--local', 'user.email', 'test@example.invalid') *> $null
     Set-Content (Join-Path $path 'candidate.txt') 'candidate' -Encoding utf8NoBOM
-    git -C $path add --all *> $null
+    Invoke-IsolatedGit -Arguments @('-C', $path, 'add', '--all') *> $null
     # Isolate fixture commits from the caller's configured hooks. Otherwise a global
     # core.hooksPath can recursively invoke BotNexus validation from inside the fixture.
-    git -c core.hooksPath= -C $path commit -m initial *> $null
-    git -C $path branch origin/main *> $null
+    Invoke-IsolatedGit -Arguments @('-c', 'core.hooksPath=', '-C', $path, 'commit', '-m', 'initial') *> $null
+    Invoke-IsolatedGit -Arguments @('-C', $path, 'branch', 'origin/main') *> $null
     return $path
 }
 
 function Write-Receipt([string]$Repository, [string]$Mode = 'strict') {
     $fingerprint = & $fingerprintScript -WorktreePath $Repository
-    $gitDirectory = (git -C $Repository rev-parse --absolute-git-dir).Trim()
+    $gitDirectory = (Invoke-IsolatedGit -Arguments @('-C', $Repository, 'rev-parse', '--absolute-git-dir')).Trim()
     $receiptDirectory = Join-Path $gitDirectory 'botnexus-validation'
     New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
     @{
@@ -139,6 +166,9 @@ finally {
     if ($null -ne $originalFallbackEnvironment) { $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK = $originalFallbackEnvironment }
     foreach ($repository in $repositories) {
         Remove-Item $repository -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($entry in $gitEnvironment.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
     }
 }
 
