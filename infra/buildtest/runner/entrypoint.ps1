@@ -58,6 +58,16 @@ try {
         'full' {
             & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -All -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
         }
+        'strict' {
+            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            $impactedExitCode = $LASTEXITCODE
+            if ($impactedExitCode -ne 0) {
+                $exitCode = $impactedExitCode
+            }
+            else {
+                & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
+            }
+        }
         'playwright' {
             & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
         }
@@ -66,6 +76,10 @@ try {
         }
     }
     $exitCode = $LASTEXITCODE
+    if ($mode -eq 'strict' -and $exitCode -eq 0 -and -not (Test-Path (Join-Path $artifactsRoot 'playwright.log'))) {
+        $exitCode = 1
+        'Strict validation completed without running Playwright.' | Set-Content -Path (Join-Path $artifactsRoot 'playwright.log')
+    }
 }
 catch {
     if ($exitCode -eq 0) { $exitCode = 1 }
