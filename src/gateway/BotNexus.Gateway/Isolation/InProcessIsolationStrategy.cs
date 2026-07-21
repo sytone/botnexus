@@ -445,13 +445,32 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
+        var subAgentWriteAhead = descriptor.Kind == AgentKind.SubAgent
+            ? new SubAgentToolWriteAhead(
+                sessionStore,
+                _serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor(),
+                context.SessionId,
+                _logger)
+            : null;
 
-        if (hookDispatcher is not null)
+        if (hookDispatcher is not null || subAgentWriteAhead is not null)
         {
             var agentId = descriptor.AgentId;
 
             beforeToolCall = async (ctx, ct) =>
             {
+                if (subAgentWriteAhead is not null)
+                {
+                    await subAgentWriteAhead.PersistAsync(
+                        ctx.ToolCallRequest.Id,
+                        ctx.ToolCallRequest.Name,
+                        ctx.ValidatedArgs,
+                        ct).ConfigureAwait(false);
+                }
+
+                if (hookDispatcher is null)
+                    return null;
+
                 var hookEvent = new BeforeToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
@@ -473,7 +492,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 return null;
             };
 
-            afterToolCall = async (ctx, ct) =>
+            afterToolCall = hookDispatcher is null ? null : async (ctx, ct) =>
             {
                 var resultText = ctx.Result.Content.FirstOrDefault()?.ToString();
                 var hookEvent = new AfterToolCallEvent(

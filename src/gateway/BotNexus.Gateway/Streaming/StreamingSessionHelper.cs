@@ -79,7 +79,13 @@ public static class StreamingSessionHelper
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
                             : null
                     };
-                    streamedHistory.Add(startEntry);
+                    var alreadyPersisted = evt.ToolCallId is not null
+                        && session.GetHistorySnapshot().Any(entry =>
+                            entry.ToolCallId == evt.ToolCallId && entry.ToolArgs is not null);
+                    if (!alreadyPersisted)
+                    {
+                        streamedHistory.Add(startEntry);
+                    }
                     allHistoryEntries.Add(startEntry);
                     if (evt.ToolCallId is not null)
                     {

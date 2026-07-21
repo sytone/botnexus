@@ -93,8 +93,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// between the method returning and the background task being scheduled (Phase 4 / F-6).
     /// </summary>
     /// <remarks>
-    /// No-op when no <see cref="ISessionStore"/> is wired, or when the child session row does not
-    /// yet exist in the store. Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
+    /// No-op when no <see cref="ISessionStore"/> is wired. If the child row does not exist yet,
+    /// this method creates and persists it before handle creation can start background execution.
+    /// Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
     /// named, awaited unit on the orchestration path (#1630); the eager (not lazy) ordering is
     /// guarded by the architecture/behaviour tests. Declared BEFORE <c>SpawnAsync</c> so the
     /// <c>.ConversationId =</c> mutation lexically precedes the fire-and-forget <c>Task.Run</c> in
@@ -104,21 +105,22 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// </remarks>
     /// <param name="request">The spawn request carrying the inherited conversation id.</param>
     /// <param name="childSessionId">The minted child session to bind to the parent conversation.</param>
+    /// <param name="childAgentId">The ephemeral child agent that owns the new session.</param>
     /// <param name="ct">Cancellation token for the store reads/writes.</param>
     private async Task PinChildConversationAsync(
         SubAgentSpawnRequest request,
         SessionId childSessionId,
+        AgentId childAgentId,
         CancellationToken ct)
     {
         if (_sessionStore is null)
             return;
 
-        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
-        if (childSession is not null)
-        {
-            childSession.ConversationId = request.InheritedConversationId;
-            await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
-        }
+        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false)
+            ?? await _sessionStore.GetOrCreateAsync(childSessionId, childAgentId, ct).ConfigureAwait(false);
+        childSession.ConversationId = request.InheritedConversationId;
+        childSession.SessionType = SessionType.AgentSubAgent;
+        await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -171,12 +173,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             });
         }
 
-        var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
+        // Materialize and persist the child session before handle creation. Handle creation can
+        // reach the model immediately, so this is the last safe point to guarantee that every
+        // later tool write-ahead has a durable parent row (#2113).
+        await PinChildConversationAsync(request, childSessionId, childAgentId, ct).ConfigureAwait(false);
 
-        // Eager conversation pinning (Phase 4 / F-6): pin the child session to the
-        // parent conversation BEFORE returning, so concurrent lookups never see the
-        // child as an orphan. See PinChildConversationAsync.
-        await PinChildConversationAsync(request, childSessionId, ct).ConfigureAwait(false);
+        var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
         var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
             ? null
