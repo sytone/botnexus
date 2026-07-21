@@ -277,12 +277,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current));
 
     private static string NormalizeTextDelta(LlmModel model, string delta)
-    {
-        if (model.Id.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase) &&
-            delta.StartsWith("\r\n", StringComparison.Ordinal))
-            return delta[2..];
-        return delta;
-    }
+        => CopilotTextDeltaNormalizer.Normalize(model.Id, delta);
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

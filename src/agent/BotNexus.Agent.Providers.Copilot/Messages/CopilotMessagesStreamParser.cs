@@ -258,7 +258,11 @@ internal static class CopilotMessagesStreamParser
         switch (deltaType)
         {
             case "text_delta":
-                var text = delta.GetProperty("text").GetString() ?? "";
+                var text = CopilotTextDeltaNormalizer.Normalize(
+                    model.Id,
+                    delta.GetProperty("text").GetString() ?? "");
+                if (text.Length == 0)
+                    break;
                 textAccumulators[index].Append(text);
                 stream.Push(new TextDeltaEvent(index, text, partial));
                 break;
