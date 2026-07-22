@@ -1,8 +1,12 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "2.0",
   "environment": "preproduction",
-  "scenario": "repair-two-implementations-refill",
+  "scenario": "planner-orchestrated-repair-two-implementations-refill",
   "criterionMet": true,
+  "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+  "verifiedPrs": 4,
+  "initialPlannerDispatches": 3,
+  "refillPlannerDispatches": 1,
   "proof": "maintenance-throughput-proof.json",
   "eventTrace": "maintenance-event-trace.jsonl",
   "prManifest": "maintenance-pr-manifest.json"
