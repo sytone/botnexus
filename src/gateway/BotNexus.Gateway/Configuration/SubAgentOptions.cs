@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -141,6 +142,40 @@ public sealed class SubAgentOptions
     public int MaxRetainedCompletedRecords { get; set; } = 200;
 
     /// <summary>
+    /// Gets or sets trusted budget overrides keyed by the spawning parent agent ID.
+    /// Keys are matched case-insensitively; request display names, archetypes, and mirror targets
+    /// are never consulted when selecting an override.
+    /// </summary>
+    [Display(
+        Name = "Parent budget overrides",
+        Description = "Trusted sub-agent budget overrides keyed by spawning parent agent ID.",
+        GroupName = "Sub-agents",
+        Order = 9)]
+    public Dictionary<string, SubAgentParentOverrideOptions> ParentOverrides { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves the immutable budget policy for a trusted spawning parent identity.
+    /// Missing override values inherit their global counterparts.
+    /// </summary>
+    /// <param name="parentAgentId">The authenticated parent identity carried by the spawn request.</param>
+    /// <returns>A snapshot that remains stable for the duration of one spawn operation.</returns>
+    public SubAgentBudgetPolicy ResolveBudgetPolicy(AgentId parentAgentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(parentAgentId.Value);
+        var match = (ParentOverrides ?? []).FirstOrDefault(entry =>
+            string.Equals(entry.Key, parentAgentId.Value, StringComparison.OrdinalIgnoreCase));
+        var parentOverride = string.IsNullOrEmpty(match.Key) ? null : match.Value;
+        return new SubAgentBudgetPolicy(
+            parentOverride is null ? "global" : "parent-override",
+            parentOverride?.DefaultTimeoutSeconds ?? DefaultTimeoutSeconds,
+            parentOverride?.MaxTimeoutSeconds ?? MaxTimeoutSeconds,
+            parentOverride?.DefaultMaxTurns ?? DefaultMaxTurns,
+            parentOverride?.MaxTurnsCeiling ?? MaxTurnsCeiling,
+            parentOverride?.MaxConcurrentPerSession ?? MaxConcurrentPerSession);
+    }
+
+    /// <summary>
     /// Resolves the effective turn budget for a spawn request: a non-positive request value falls
     /// back to <see cref="DefaultMaxTurns"/>, and the result is clamped to at most
     /// <see cref="MaxTurnsCeiling"/> (when the ceiling is positive). The floor is always one turn.
@@ -172,5 +207,57 @@ public sealed class SubAgentOptions
         if (MaxTimeoutSeconds > 0 && resolved > MaxTimeoutSeconds)
             resolved = MaxTimeoutSeconds;
         return resolved;
+    }
+}
+
+/// <summary>
+/// Optional trusted overrides for one spawning parent. Null members inherit global settings.
+/// </summary>
+public sealed class SubAgentParentOverrideOptions
+{
+    /// <summary>Gets or sets the default timeout in seconds.</summary>
+    [Range(1, int.MaxValue)]
+    public int? DefaultTimeoutSeconds { get; set; }
+
+    /// <summary>Gets or sets the timeout ceiling in seconds.</summary>
+    [Range(1, int.MaxValue)]
+    public int? MaxTimeoutSeconds { get; set; }
+
+    /// <summary>Gets or sets the default turn budget.</summary>
+    [Range(1, int.MaxValue)]
+    public int? DefaultMaxTurns { get; set; }
+
+    /// <summary>Gets or sets the turn ceiling.</summary>
+    [Range(1, int.MaxValue)]
+    public int? MaxTurnsCeiling { get; set; }
+
+    /// <summary>Gets or sets the maximum concurrent sub-agents per parent session.</summary>
+    [Range(1, int.MaxValue)]
+    public int? MaxConcurrentPerSession { get; set; }
+}
+
+/// <summary>
+/// Immutable effective limits selected from either the global policy or a trusted parent override.
+/// </summary>
+public sealed record SubAgentBudgetPolicy(
+    string Tier,
+    int DefaultTimeoutSeconds,
+    int MaxTimeoutSeconds,
+    int DefaultMaxTurns,
+    int MaxTurnsCeiling,
+    int MaxConcurrentPerSession)
+{
+    /// <summary>Resolves and clamps a requested timeout.</summary>
+    public int ResolveTimeoutSeconds(int requestedTimeoutSeconds)
+    {
+        var resolved = Math.Max(1, requestedTimeoutSeconds > 0 ? requestedTimeoutSeconds : DefaultTimeoutSeconds);
+        return MaxTimeoutSeconds > 0 ? Math.Min(resolved, MaxTimeoutSeconds) : resolved;
+    }
+
+    /// <summary>Resolves and clamps a requested turn budget.</summary>
+    public int ResolveMaxTurns(int requestedMaxTurns)
+    {
+        var resolved = Math.Max(1, requestedMaxTurns > 0 ? requestedMaxTurns : DefaultMaxTurns);
+        return MaxTurnsCeiling > 0 ? Math.Min(resolved, MaxTurnsCeiling) : resolved;
     }
 }

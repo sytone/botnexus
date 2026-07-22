@@ -214,6 +214,8 @@ public sealed class GatewaySettingsConfig
         Order = 3)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 3)]
     public int? WalCheckpointIntervalMinutes { get; set; }
+    /// <summary>Trusted sub-agent spawning limits and per-parent budget overrides.</summary>
+    public SubAgentOptions? SubAgents { get; set; }
     /// <summary>Session compaction settings.</summary>
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
