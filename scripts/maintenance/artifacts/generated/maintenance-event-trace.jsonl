@@ -1,0 +1,10 @@
+{"sequence":1,"at":"1970-01-01T00:00:01.0000000+00:00","event":"cycle-started","id":"cycle","lane":"proof"}
+{"sequence":2,"at":"1970-01-01T00:00:02.0000000+00:00","event":"worktree-created","id":"repair-101","lane":"repair"}
+{"sequence":3,"at":"1970-01-01T00:00:03.0000000+00:00","event":"marker-committed","id":"repair-101","lane":"repair"}
+{"sequence":4,"at":"1970-01-01T00:00:04.0000000+00:00","event":"worktree-created","id":"impl-201","lane":"implementation"}
+{"sequence":5,"at":"1970-01-01T00:00:05.0000000+00:00","event":"marker-committed","id":"impl-201","lane":"implementation"}
+{"sequence":6,"at":"1970-01-01T00:00:06.0000000+00:00","event":"worktree-created","id":"impl-202","lane":"implementation"}
+{"sequence":7,"at":"1970-01-01T00:00:07.0000000+00:00","event":"marker-committed","id":"impl-202","lane":"implementation"}
+{"sequence":8,"at":"1970-01-01T00:00:08.0000000+00:00","event":"worker-completed","id":"impl-201","lane":"implementation"}
+{"sequence":9,"at":"1970-01-01T00:00:09.0000000+00:00","event":"slot-refilled","id":"impl-203","lane":"implementation"}
+{"sequence":10,"at":"1970-01-01T00:00:10.0000000+00:00","event":"cycle-completed","id":"cycle","lane":"proof"}

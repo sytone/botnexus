@@ -1,0 +1,190 @@
+{
+  "schemaVersion": "1.0",
+  "environment": "preproduction",
+  "cycleId": "proof-2169",
+  "criterionMet": true,
+  "productionCriterionMet": false,
+  "baseline": {
+    "workersStarted": 1,
+    "workersCompleted": 1,
+    "implementationStarts": 1,
+    "prsOpened": 1,
+    "prsRepaired": 0,
+    "workerMinutes": 40,
+    "validationMinutes": 20,
+    "cycleMinutes": 60,
+    "throughputPerHour": 1
+  },
+  "actual": {
+    "workersStarted": 4,
+    "workersCompleted": 4,
+    "implementationStarts": 3,
+    "prsOpened": 3,
+    "prsRepaired": 1,
+    "workerMinutes": 100,
+    "validationMinutes": 32,
+    "cycleMinutes": 40,
+    "throughputPerHour": 6,
+    "maxConcurrentWorkers": 3,
+    "refillStarts": 1
+  },
+  "comparative": {
+    "workerStartDelta": 3,
+    "workerCompletionDelta": 3,
+    "implementationStartDelta": 2,
+    "prOpenDelta": 2,
+    "prRepairDelta": 1,
+    "workerMinutesDelta": 60,
+    "validationMinutesDelta": 12,
+    "cycleMinutesDelta": -20,
+    "throughputPerHourDelta": 5,
+    "throughputMultiplier": 6
+  },
+  "negativeControls": {
+    "prCapBlocked": true,
+    "fileOverlapBlocked": true,
+    "invalidRecoveryBlocked": true,
+    "duplicateAssignmentBlocked": true,
+    "blockedRefillAtWaveLimit": true
+  },
+  "treeReceipts": [
+    {
+      "id": "repair-101",
+      "lane": "repair",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-f219496d4884446db76037fae53c031d",
+      "commit": "047c2f9fe441aa53d43fd2cf87ad32f3c553c0c5",
+      "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
+      "baseCommit": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8"
+    },
+    {
+      "id": "impl-201",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-bb2ee9592289467d8f6d361553c3c0c7",
+      "commit": "3c6c037886682e61a49b50da9f86b92a744b4dc4",
+      "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
+      "baseCommit": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8"
+    },
+    {
+      "id": "impl-202",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-176e938fb14e4b1b93350ed23157359b",
+      "commit": "bab9d201ea11f57280a58a333188fb8186f6c6f3",
+      "tree": "1af410cd66781571d75b0b9014f93e360df56601",
+      "baseCommit": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8"
+    },
+    {
+      "id": "impl-203",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-refill-36cda9bc116e4f47a763bb4b36f22d02",
+      "commit": "66f0905403593899317377d1c3f789c9a9419daa",
+      "tree": "e8a8d699d329486c74a409a3b0f75f5359c1ac3f",
+      "baseCommit": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8"
+    }
+  ],
+  "prManifest": [
+    {
+      "id": "repair-101",
+      "head": "047c2f9fe441aa53d43fd2cf87ad32f3c553c0c5",
+      "base": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8",
+      "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
+      "operation": "repair",
+      "draft": true
+    },
+    {
+      "id": "impl-201",
+      "head": "3c6c037886682e61a49b50da9f86b92a744b4dc4",
+      "base": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8",
+      "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
+      "operation": "open",
+      "draft": true
+    },
+    {
+      "id": "impl-202",
+      "head": "bab9d201ea11f57280a58a333188fb8186f6c6f3",
+      "base": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8",
+      "tree": "1af410cd66781571d75b0b9014f93e360df56601",
+      "operation": "open",
+      "draft": true
+    },
+    {
+      "id": "impl-203",
+      "head": "66f0905403593899317377d1c3f789c9a9419daa",
+      "base": "d724e86975bd0c4bf1dd721cd93f9ddf998001e8",
+      "tree": "e8a8d699d329486c74a409a3b0f75f5359c1ac3f",
+      "operation": "open",
+      "draft": true
+    }
+  ],
+  "events": [
+    {
+      "sequence": 1,
+      "at": "1970-01-01T00:00:01.0000000+00:00",
+      "event": "cycle-started",
+      "id": "cycle",
+      "lane": "proof"
+    },
+    {
+      "sequence": 2,
+      "at": "1970-01-01T00:00:02.0000000+00:00",
+      "event": "worktree-created",
+      "id": "repair-101",
+      "lane": "repair"
+    },
+    {
+      "sequence": 3,
+      "at": "1970-01-01T00:00:03.0000000+00:00",
+      "event": "marker-committed",
+      "id": "repair-101",
+      "lane": "repair"
+    },
+    {
+      "sequence": 4,
+      "at": "1970-01-01T00:00:04.0000000+00:00",
+      "event": "worktree-created",
+      "id": "impl-201",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 5,
+      "at": "1970-01-01T00:00:05.0000000+00:00",
+      "event": "marker-committed",
+      "id": "impl-201",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 6,
+      "at": "1970-01-01T00:00:06.0000000+00:00",
+      "event": "worktree-created",
+      "id": "impl-202",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 7,
+      "at": "1970-01-01T00:00:07.0000000+00:00",
+      "event": "marker-committed",
+      "id": "impl-202",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 8,
+      "at": "1970-01-01T00:00:08.0000000+00:00",
+      "event": "worker-completed",
+      "id": "impl-201",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 9,
+      "at": "1970-01-01T00:00:09.0000000+00:00",
+      "event": "slot-refilled",
+      "id": "impl-203",
+      "lane": "implementation"
+    },
+    {
+      "sequence": 10,
+      "at": "1970-01-01T00:00:10.0000000+00:00",
+      "event": "cycle-completed",
+      "id": "cycle",
+      "lane": "proof"
+    }
+  ]
+}
