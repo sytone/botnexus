@@ -90,8 +90,8 @@ if ($localRunnerSource -notmatch "botnexus-local-validation-global" -or
 }
 
 $azureRunnerSource = Get-Content (Join-Path $repoRoot 'scripts/repo/Invoke-AzureBuildTest.ps1') -Raw
-if ($azureRunnerSource -notmatch "Mode -ne 'strict'.+playwrightArtifact" -or
-    $azureRunnerSource -notmatch 'result.exitCode -eq 0 -and \$requiredArtifactsPresent') {
+if ($azureRunnerSource -notmatch "(?s)Mode -ne 'strict'.+playwrightArtifact" -or
+    $azureRunnerSource -notmatch 'result.exitCode -eq 0 -and\s+\$requiredArtifactsPresent') {
     $failures.Add('Strict Azure receipt creation must require a Playwright artifact.')
 }
 if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
@@ -100,33 +100,55 @@ if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
     $failures.Add('Azure snapshot creation must use an LF file list and Windows tar.exe rather than a native pipeline.')
 }
 $entrypointSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1') -Raw
-if ($entrypointSource -notmatch "Strict validation completed without running Playwright" -or
+if ($entrypointSource -notmatch "playwright\.log" -or
     $entrypointSource -notmatch "'strict' \{") {
     $failures.Add('The remote runner must implement strict mode and fail when Playwright did not run.')
 }
 
 $repositories = [Collections.Generic.List[string]]::new()
 $originalFallbackEnvironment = $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK
+$originalModeEnvironment = $env:BOTNEXUS_VALIDATION_MODE
 Remove-Item Env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK -ErrorAction SilentlyContinue
+Remove-Item Env:BOTNEXUS_VALIDATION_MODE -ErrorAction SilentlyContinue
+$noValidationModeEnvironment = [ordered]@{ Process = $null; User = $null; Machine = $null }
 try {
-    # Exact-content receipts are authoritative and bypass both remote and local work.
+    # Exact-content receipts are authoritative only for selected remote validation.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
     Write-Receipt $repo
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
+    Assert-Equal 0 $LASTEXITCODE 'Matching remote receipt should pass.'
+    Assert-Equal $false (Test-Path $marker) 'Matching remote receipt should bypass redundant validation.'
+
+    # Local is the operational default and runs the globally serialized strict gate.
+    $repo = New-TestRepository; $repositories.Add($repo)
+    $marker = Join-Path $repo 'commands.log'
+    $remote = New-CommandScript $repo 'remote.ps1' $marker 9
+    $local = New-CommandScript $repo 'local.ps1' $marker
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationModeEnvironment $noValidationModeEnvironment
+    Assert-Equal 0 $LASTEXITCODE 'Default local validation should pass.'
+    Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Default validation should select local only.'
+
+    # Exact-content receipts are authoritative and bypass remote work.
+    $repo = New-TestRepository; $repositories.Add($repo)
+    $marker = Join-Path $repo 'commands.log'
+    $remote = New-CommandScript $repo 'remote.ps1' $marker
+    $local = New-CommandScript $repo 'local.ps1' $marker
+    Write-Receipt $repo
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
     Assert-Equal 0 $LASTEXITCODE 'Matching receipt should pass.'
     Assert-Equal $false (Test-Path $marker) 'Matching receipt should bypass redundant validation.'
 
-    # Any content change invalidates the receipt and invokes Azure validation by default.
+    # Any content change invalidates the receipt when remote mode is selected.
     $repo = New-TestRepository; $repositories.Add($repo); Write-Receipt $repo
     Add-Content (Join-Path $repo 'candidate.txt') 'changed'
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local
-    Assert-Equal 0 $LASTEXITCODE 'Default remote validation should pass.'
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
+    Assert-Equal 0 $LASTEXITCODE 'Selected remote validation should pass.'
     Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Stale receipt should select Azure only.'
 
     # Local fallback is opt-in and uses a cross-process serialization lock.
@@ -134,36 +156,37 @@ try {
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -LocalFallback
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -LocalFallback -ValidationModeEnvironment $noValidationModeEnvironment
     Assert-Equal 0 $LASTEXITCODE 'Explicit local fallback should pass.'
     Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Explicit fallback should not attempt Azure first.'
 
-    # The environment-variable escape hatch remains explicit and selects only serialized local validation.
+    # The durable selector can choose remote validation without removing local support.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK = '1'
+    $env:BOTNEXUS_VALIDATION_MODE = 'remote'
     try {
         & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local
     }
     finally {
-        Remove-Item Env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK -ErrorAction SilentlyContinue
+        Remove-Item Env:BOTNEXUS_VALIDATION_MODE -ErrorAction SilentlyContinue
     }
-    Assert-Equal 0 $LASTEXITCODE 'Environment-selected local fallback should pass.'
-    Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Environment fallback should not attempt Azure.'
+    Assert-Equal 9 $LASTEXITCODE 'Environment-selected remote validation should preserve failure.'
+    Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Environment selector should choose remote only.'
 
     # A failed authoritative remote run must not silently fall back locally.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local
+    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
     Assert-Equal 9 $LASTEXITCODE 'Remote failure should be preserved.'
     Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Remote failure must not silently run local validation.'
 }
 finally {
     if ($null -ne $originalFallbackEnvironment) { $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK = $originalFallbackEnvironment }
+    if ($null -ne $originalModeEnvironment) { $env:BOTNEXUS_VALIDATION_MODE = $originalModeEnvironment }
     foreach ($repository in $repositories) {
         Remove-Item $repository -Recurse -Force -ErrorAction SilentlyContinue
     }
