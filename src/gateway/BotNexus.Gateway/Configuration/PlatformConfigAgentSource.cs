@@ -7,7 +7,10 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
+using BotNexus.Gateway.Telemetry;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace BotNexus.Gateway.Configuration;
@@ -20,13 +23,36 @@ public sealed class PlatformConfigAgentSource(
     string configDirectory,
     ILogger<PlatformConfigAgentSource> logger,
     ILocationResolver? locationResolver = null,
-    ModelRegistry? modelRegistry = null) : IAgentConfigurationSource
+    ModelRegistry? modelRegistry = null,
+    IMetrics? metrics = null) : IAgentConfigurationSource
 {
     private readonly IOptionsMonitor<PlatformConfig> _configOptions = configOptions;
     private readonly string _configDirectory = Path.GetFullPath(configDirectory);
     private readonly ILogger<PlatformConfigAgentSource> _logger = logger;
     private readonly ILocationResolver? _locationResolver = locationResolver;
     private readonly ModelRegistry? _modelRegistry = modelRegistry;
+
+    // Issue #2114: stable effective fingerprint of the last descriptors we propagated,
+    // used to suppress unchanged IOptionsMonitor callbacks before scheduling a registry
+    // apply (pre-debounce). Guarded by _fingerprintGate.
+    private readonly object _fingerprintGate = new();
+    private string? _lastEffectiveFingerprint;
+
+    private readonly System.Diagnostics.Metrics.Counter<long>? _notificationsCounter =
+        metrics?.CreateCounter<long>(
+            BotNexusMeters.InstrumentName("config_reload", "notifications"),
+            unit: "{notification}",
+            description: "Platform-config agent-source change notifications received.");
+    private readonly System.Diagnostics.Metrics.Counter<long>? _suppressedCounter =
+        metrics?.CreateCounter<long>(
+            BotNexusMeters.InstrumentName("config_reload", "suppressed"),
+            unit: "{notification}",
+            description: "Platform-config change notifications suppressed because effective descriptors were unchanged.");
+    private readonly System.Diagnostics.Metrics.Counter<long>? _appliesCounter =
+        metrics?.CreateCounter<long>(
+            BotNexusMeters.InstrumentName("config_reload", "applies"),
+            unit: "{apply}",
+            description: "Platform-config effective descriptor changes propagated for a registry apply.");
 
     /// <inheritdoc />
     public Task<IReadOnlyList<AgentDescriptor>> LoadAsync(CancellationToken cancellationToken = default)
@@ -39,11 +65,63 @@ public sealed class PlatformConfigAgentSource(
     {
         ArgumentNullException.ThrowIfNull(onChanged);
 
+        // Seed the fingerprint from the current effective descriptors so the first
+        // spurious IOptionsMonitor callback that carries no effective change is suppressed.
+        try
+        {
+            lock (_fingerprintGate)
+            {
+                _lastEffectiveFingerprint ??= ComputeEffectiveFingerprint(
+                    LoadFromConfig(_configOptions.CurrentValue, CancellationToken.None));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Failed to seed platform-config effective fingerprint for config directory '{ConfigDirectory}'.",
+                _configDirectory);
+        }
+
         return _configOptions.OnChange(config =>
         {
             try
             {
+                _notificationsCounter?.Add(1);
+
                 var descriptors = LoadFromConfig(config, CancellationToken.None);
+                var fingerprint = ComputeEffectiveFingerprint(descriptors);
+
+                string? previous;
+                bool unchanged;
+                lock (_fingerprintGate)
+                {
+                    previous = _lastEffectiveFingerprint;
+                    unchanged = string.Equals(previous, fingerprint, StringComparison.Ordinal);
+                    if (!unchanged)
+                        _lastEffectiveFingerprint = fingerprint;
+                }
+
+                if (unchanged)
+                {
+                    _suppressedCounter?.Add(1);
+                    _logger.LogDebug(
+                        "Suppressed unchanged platform-config reload notification. Source='{Source}', ConfigDirectory='{ConfigDirectory}', EffectiveHash='{EffectiveHash}', Reason='unchanged'.",
+                        nameof(PlatformConfigAgentSource),
+                        _configDirectory,
+                        fingerprint);
+                    return;
+                }
+
+                _appliesCounter?.Add(1);
+                _logger.LogInformation(
+                    "Platform-config effective descriptors changed; scheduling registry apply. Source='{Source}', ConfigDirectory='{ConfigDirectory}', EffectiveHash='{EffectiveHash}', PreviousHash='{PreviousHash}', AgentCount={AgentCount}, Reason='effective-change'.",
+                    nameof(PlatformConfigAgentSource),
+                    _configDirectory,
+                    fingerprint,
+                    previous ?? "(none)",
+                    descriptors.Count);
+
                 onChanged(descriptors);
             }
             catch (Exception ex)
@@ -324,6 +402,89 @@ public sealed class PlatformConfigAgentSource(
             .Replace('/', Path.DirectorySeparatorChar)
             .Replace('\\', Path.DirectorySeparatorChar);
         return Path.GetFullPath(Path.Combine(basePath, normalizedSubPath));
+    }
+
+
+    /// <summary>
+    /// Computes a stable, order-independent fingerprint (SHA-256, hex) of the effective
+    /// agent descriptors. Two descriptor sets that are semantically equal produce the same
+    /// fingerprint even though <see cref="LoadFromConfig"/> mints fresh instances each call,
+    /// so unchanged IOptionsMonitor callbacks can be suppressed before a registry apply.
+    /// </summary>
+    private static string ComputeEffectiveFingerprint(IReadOnlyList<AgentDescriptor> descriptors)
+    {
+        var builder = new StringBuilder();
+        foreach (var descriptor in descriptors.OrderBy(d => d.AgentId.Value, StringComparer.Ordinal))
+            AppendDescriptor(builder, descriptor);
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()));
+        return Convert.ToHexString(bytes);
+    }
+
+    private static void AppendDescriptor(StringBuilder builder, AgentDescriptor d)
+    {
+        builder.Append(d.AgentId.Value).Append('\u001f');
+        builder.Append(d.DisplayName).Append('\u001f');
+        builder.Append(d.Kind).Append('\u001f');
+        builder.Append(d.Emoji).Append('\u001f');
+        builder.Append(d.Description).Append('\u001f');
+        builder.Append(d.ModelId).Append('\u001f');
+        builder.Append(d.ApiProvider).Append('\u001f');
+        builder.Append(d.SystemPromptFile).Append('\u001f');
+        builder.Append(d.IsolationStrategy).Append('\u001f');
+        builder.Append(d.CacheRetentionMode).Append('\u001f');
+        builder.Append(d.Thinking).Append('\u001f');
+        builder.Append(d.ContextWindow).Append('\u001f');
+        builder.Append(d.MaxConcurrentSessions).Append('\u001f');
+        builder.Append(d.SessionAccessLevel).Append('\u001f');
+        builder.Append(d.ConversationAccessLevel).Append('\u001f');
+        AppendList(builder, d.ToolIds);
+        AppendList(builder, d.AllowedModelIds);
+        AppendList(builder, d.SubAgentIds);
+        AppendList(builder, d.SubAgentRoles);
+        AppendList(builder, d.SystemPromptFiles);
+        AppendList(builder, d.SessionAllowedAgents);
+        AppendList(builder, d.ConversationAllowedAgents);
+        AppendList(builder, d.ShellCommand);
+        // Metadata, isolation options and extension config are serialized deterministically so
+        // that inline config edits (e.g. metadata, extensions, memory) are also reflected.
+        builder.Append(SerializeStable(d.Metadata)).Append('\u001f');
+        builder.Append(SerializeStable(d.IsolationOptions)).Append('\u001f');
+        builder.Append(SerializeExtensions(d.ExtensionConfig)).Append('\u001f');
+        builder.Append(SerializeStable(d.Memory)).Append('\u001f');
+        builder.Append(SerializeStable(d.Soul)).Append('\u001f');
+        builder.Append(SerializeStable(d.Heartbeat)).Append('\u001f');
+        builder.Append(SerializeStable(d.FileAccess)).Append('\u001e');
+    }
+
+    private static readonly JsonSerializerOptions s_fingerprintJsonOptions = new()
+    {
+        WriteIndented = false,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static void AppendList(StringBuilder builder, IReadOnlyList<string>? values)
+    {
+        if (values is not null)
+        {
+            foreach (var value in values)
+                builder.Append(value).Append('\u001d');
+        }
+        builder.Append('\u001f');
+    }
+
+    private static string SerializeStable(object? value)
+        => value is null ? string.Empty : JsonSerializer.Serialize(value, s_fingerprintJsonOptions);
+
+    private static string SerializeExtensions(IReadOnlyDictionary<string, JsonElement> extensions)
+    {
+        if (extensions is null || extensions.Count == 0)
+            return string.Empty;
+
+        var builder = new StringBuilder();
+        foreach (var kvp in extensions.OrderBy(e => e.Key, StringComparer.Ordinal))
+            builder.Append(kvp.Key).Append('=').Append(kvp.Value.GetRawText()).Append(';');
+        return builder.ToString();
     }
 
     private static IReadOnlyDictionary<string, object?> ConvertObject(JsonElement? element)

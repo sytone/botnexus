@@ -44,23 +44,46 @@ public sealed class ConfigHydrationService : IHostedService
         // read-only config mount (write failure) must never prevent the gateway from starting.
         // The gateway already runs on defaults when config is unreadable; hydration just keeps
         // the on-disk file in sync. Swallow and log so this hosted service can't crash the host.
+        //
+        // Issue #2114: compute the merge against a working copy first so we only invoke a
+        // persistent write when at least one key is actually added. A hydration pass that adds
+        // nothing must not back up or rewrite config.json (avoids startup no-op reload storms).
         try
         {
-            await _writer.MutateAsync(root =>
+            var working = await _writer.ReadAsync(cancellationToken);
+            foreach (var contributor in contributorList)
             {
-                foreach (var contributor in contributorList)
+                var defaults = contributor.GetDefaults();
+                if (defaults is null)
+                    continue;
+
+                var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
+                if (defaultsJson is not JsonObject defaultsObj)
+                    continue;
+
+                addedKeys += MergeAtPath(working, contributor.SectionPath, defaultsObj);
+            }
+
+            if (addedKeys > 0)
+            {
+                // Re-run the identical merge inside the writer's locked read-modify-write so we
+                // persist against the authoritative on-disk document, not our detached copy.
+                await _writer.MutateAsync(root =>
                 {
-                    var defaults = contributor.GetDefaults();
-                    if (defaults is null)
-                        continue;
+                    foreach (var contributor in contributorList)
+                    {
+                        var defaults = contributor.GetDefaults();
+                        if (defaults is null)
+                            continue;
 
-                    var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
-                    if (defaultsJson is not JsonObject defaultsObj)
-                        continue;
+                        var defaultsJson = JsonSerializer.SerializeToNode(defaults, SerializeOptions);
+                        if (defaultsJson is not JsonObject defaultsObj)
+                            continue;
 
-                    addedKeys += MergeAtPath(root, contributor.SectionPath, defaultsObj);
-                }
-            }, "config-hydration", cancellationToken);
+                        MergeAtPath(root, contributor.SectionPath, defaultsObj);
+                    }
+                }, "config-hydration", cancellationToken);
+            }
         }
         catch (JsonException ex)
         {
