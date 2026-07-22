@@ -1,5 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!--
+      Extension assemblies are loaded into an isolated AssemblyLoadContext at runtime, so their
+      managed NuGet dependency closure must ship in the extension output/deploy directory. Library
+      projects do NOT copy transitive managed dependencies by default (only project-reference DLLs
+      and native runtimes land in bin), so the ALC cannot resolve a third-party managed dependency
+      that the host gateway does not already have loaded - it fails with FileNotFoundException at
+      load/dispose time and can crash the host. Copying the lock-file assembly closure fixes this.
+      Same class of defect as the ServiceBus adapter (#2001). See issue #2184.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <PropertyGroup>
     <Description>Audio transcription media handler for BotNexus using Whisper.</Description>
   </PropertyGroup>
 
