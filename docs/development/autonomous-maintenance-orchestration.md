@@ -100,3 +100,12 @@ scripts/maintenance/Get-MaintenanceDispatchPlan.Tests.ps1
 ```
 
 The tests cover independent lanes, push-based refill, every preserved gate, validation ceilings, existing-worktree recovery, and telemetry accumulation.
+
+
+## Throughput proof and production soak
+
+Issue #2169 adds an executable proof extension under `scripts/maintenance`. `Invoke-MaintenanceThroughputProof.ps1` uses real temporary Git worktrees, marker commits, tree receipts, a chronological JSONL event trace, and a PR manifest to demonstrate one repair lane alongside two implementation lanes and a push-style refill. Its baseline and comparative report includes worker starts/completions, implementation starts, PRs opened/repaired, worker minutes, validation minutes, cycle time, throughput per hour, deltas, and multiplier.
+
+`Invoke-MaintenancePreProductionE2E.ps1` regenerates the checked-in preproduction/E2E evidence. Negative controls cover the PR cap, file overlap, invalid recovery, duplicate assignment, and a refill blocked by the cycle wave limit. These deterministic artifacts are evidence of mechanics only. `Aggregate-MaintenanceCycleRecords.ps1` requires at least three qualifying records explicitly marked `production`; the checked-in empty production soak has `productionCriterionMet: false`, so generated proof data cannot claim production readiness.
+
+Focused validation: `pwsh -NoProfile -File scripts/maintenance/Invoke-MaintenanceThroughputProof.Tests.ps1`.

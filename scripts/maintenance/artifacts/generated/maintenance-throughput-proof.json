@@ -1,0 +1,850 @@
+{
+  "schemaVersion": "2.0",
+  "environment": "preproduction",
+  "cycleId": "proof-2169",
+  "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+  "criterionMet": true,
+  "productionCriterionMet": false,
+  "plannerEvidence": {
+    "initialDispatch": "initial-dispatch-result.json",
+    "workerCompletedRefill": "worker-completed-refill-result.json",
+    "initialDispatchCount": 3,
+    "refillDispatchCount": 1
+  },
+  "baseline": {
+    "verifiedPrs": 1,
+    "timeToFirstVerifiedPrMinutes": 30.0,
+    "timeToSecondVerifiedPrMinutes": 60.0,
+    "idleSlotMinutes": 60.0,
+    "maxImplementationConcurrency": 1,
+    "maxRepairConcurrency": 0,
+    "validationQueueMinutes": 20.0,
+    "validationRuntimeMinutes": 20.0,
+    "recoveryCount": 1,
+    "duplicateCount": 1,
+    "capacityBlocks": 0,
+    "actualPrCapViolations": 0,
+    "actualFileOverlapViolations": 0
+  },
+  "actual": {
+    "verifiedPrs": 4,
+    "timeToFirstVerifiedPrMinutes": 0.021401603333333335,
+    "timeToSecondVerifiedPrMinutes": 0.04162321,
+    "idleSlotMinutes": 0.0,
+    "maxImplementationConcurrency": 2,
+    "maxRepairConcurrency": 1,
+    "validationQueueMinutes": 0.0,
+    "validationRuntimeMinutes": 0.0010644733333333334,
+    "recoveryCount": 0,
+    "duplicateCount": 0,
+    "capacityBlocks": 1,
+    "actualPrCapViolations": 0,
+    "actualFileOverlapViolations": 0
+  },
+  "comparative": {
+    "verifiedPrs": {
+      "baseline": 1,
+      "actual": 4,
+      "delta": 3.0
+    },
+    "timeToFirstVerifiedPrMinutes": {
+      "baseline": 30.0,
+      "actual": 0.021401603333333335,
+      "delta": -29.978598396666666
+    },
+    "timeToSecondVerifiedPrMinutes": {
+      "baseline": 60.0,
+      "actual": 0.04162321,
+      "delta": -59.95837679
+    },
+    "idleSlotMinutes": {
+      "baseline": 60.0,
+      "actual": 0.0,
+      "delta": -60.0
+    },
+    "maxImplementationConcurrency": {
+      "baseline": 1,
+      "actual": 2,
+      "delta": 1.0
+    },
+    "maxRepairConcurrency": {
+      "baseline": 0,
+      "actual": 1,
+      "delta": 1.0
+    },
+    "validationQueueMinutes": {
+      "baseline": 20.0,
+      "actual": 0.0,
+      "delta": -20.0
+    },
+    "validationRuntimeMinutes": {
+      "baseline": 20.0,
+      "actual": 0.0010644733333333334,
+      "delta": -19.998935526666667
+    },
+    "recoveryCount": {
+      "baseline": 1,
+      "actual": 0,
+      "delta": -1.0
+    },
+    "duplicateCount": {
+      "baseline": 1,
+      "actual": 0,
+      "delta": -1.0
+    },
+    "capacityBlocks": {
+      "baseline": 0,
+      "actual": 1,
+      "delta": 1.0
+    },
+    "actualPrCapViolations": {
+      "baseline": 0,
+      "actual": 0,
+      "delta": 0.0
+    },
+    "actualFileOverlapViolations": {
+      "baseline": 0,
+      "actual": 0,
+      "delta": 0.0
+    }
+  },
+  "negativeControls": {
+    "prCap": {
+      "blocked": true,
+      "expectedReason": "open-pr-soft-cap",
+      "observedReasons": [
+        "open-pr-soft-cap"
+      ],
+      "plannerCall": "control-pr-cap-result.json"
+    },
+    "fileOverlap": {
+      "blocked": true,
+      "expectedReason": "file-overlap",
+      "observedReasons": [
+        "file-overlap"
+      ],
+      "plannerCall": "control-file-overlap-result.json"
+    },
+    "invalidRecovery": {
+      "blocked": true,
+      "expectedReason": "recovery-worktree-gate",
+      "observedReasons": [
+        "recovery-worktree-gate"
+      ],
+      "plannerCall": "control-invalid-recovery-result.json"
+    },
+    "duplicateAssignment": {
+      "blocked": true,
+      "expectedReason": "already-active",
+      "observedReasons": [
+        "already-active"
+      ],
+      "plannerCall": "control-duplicate-assignment-result.json"
+    },
+    "waveLimit": {
+      "blocked": true,
+      "expectedReason": "implementation-wave-limit",
+      "observedReasons": [
+        "implementation-wave-limit"
+      ],
+      "plannerCall": "control-wave-limit-result.json"
+    }
+  },
+  "treeReceipts": [
+    {
+      "id": "repair-101",
+      "lane": "repair",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
+      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a\\repair-101.marker",
+      "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+      "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
+      "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+    },
+    {
+      "id": "impl-201",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
+      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408\\impl-201.marker",
+      "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+      "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
+      "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+    },
+    {
+      "id": "impl-202",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
+      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd\\impl-202.marker",
+      "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+      "tree": "1af410cd66781571d75b0b9014f93e360df56601",
+      "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+    },
+    {
+      "id": "impl-203",
+      "lane": "implementation",
+      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
+      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99\\impl-203.marker",
+      "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+      "tree": "19f9189b93cd8f19975da25c4a714b1446cb63f2",
+      "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+    }
+  ],
+  "prManifest": [
+    {
+      "id": "repair-101",
+      "head": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+      "base": "8da5341174dbcc5376c68f297aff7916411eaf54",
+      "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
+      "operation": "repair",
+      "draft": false,
+      "verified": true
+    },
+    {
+      "id": "impl-201",
+      "head": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+      "base": "8da5341174dbcc5376c68f297aff7916411eaf54",
+      "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
+      "operation": "open",
+      "draft": false,
+      "verified": true
+    },
+    {
+      "id": "impl-202",
+      "head": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+      "base": "8da5341174dbcc5376c68f297aff7916411eaf54",
+      "tree": "1af410cd66781571d75b0b9014f93e360df56601",
+      "operation": "open",
+      "draft": false,
+      "verified": true
+    },
+    {
+      "id": "impl-203",
+      "head": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+      "base": "8da5341174dbcc5376c68f297aff7916411eaf54",
+      "tree": "19f9189b93cd8f19975da25c4a714b1446cb63f2",
+      "operation": "open",
+      "draft": false,
+      "verified": true
+    }
+  ],
+  "events": [
+    {
+      "sequence": 1,
+      "timestampUtc": "2026-07-22T03:06:48.1182331+00:00",
+      "event": "cycle-started",
+      "id": "proof-2169",
+      "lane": "proof",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+      }
+    },
+    {
+      "sequence": 2,
+      "timestampUtc": "2026-07-22T03:06:48.3591727+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/initial-dispatch",
+      "details": {
+        "trigger": "cycle-started",
+        "blockerCount": 0
+      }
+    },
+    {
+      "sequence": 3,
+      "timestampUtc": "2026-07-22T03:06:48.3636092+00:00",
+      "event": "worker-dispatched",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/initial-dispatch",
+      "details": {
+        "files": [
+          "src/repair.cs"
+        ],
+        "validation": {
+          "plane": "remote",
+          "reserved": false,
+          "reservedCost": 0
+        }
+      }
+    },
+    {
+      "sequence": 4,
+      "timestampUtc": "2026-07-22T03:06:48.3642874+00:00",
+      "event": "worker-dispatched",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/initial-dispatch",
+      "details": {
+        "files": [
+          "src/one.cs"
+        ],
+        "validation": {
+          "plane": "remote",
+          "reserved": false,
+          "reservedCost": 0
+        }
+      }
+    },
+    {
+      "sequence": 5,
+      "timestampUtc": "2026-07-22T03:06:48.3645528+00:00",
+      "event": "worker-dispatched",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/initial-dispatch",
+      "details": {
+        "files": [
+          "src/two.cs"
+        ],
+        "validation": {
+          "plane": "remote",
+          "reserved": false,
+          "reservedCost": 0
+        }
+      }
+    },
+    {
+      "sequence": 6,
+      "timestampUtc": "2026-07-22T03:06:48.7738519+00:00",
+      "event": "worktree-created",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
+        "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+      }
+    },
+    {
+      "sequence": 7,
+      "timestampUtc": "2026-07-22T03:06:49.3483099+00:00",
+      "event": "marker-committed",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+        "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98"
+      }
+    },
+    {
+      "sequence": 8,
+      "timestampUtc": "2026-07-22T03:06:49.3702127+00:00",
+      "event": "validation-queued",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+        "plane": "proof-local"
+      }
+    },
+    {
+      "sequence": 9,
+      "timestampUtc": "2026-07-22T03:06:49.3862373+00:00",
+      "event": "validation-completed",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+        "outcome": "passed"
+      }
+    },
+    {
+      "sequence": 10,
+      "timestampUtc": "2026-07-22T03:06:49.4023293+00:00",
+      "event": "pr-verified",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
+        "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
+        "verification": "tree-receipt-and-marker"
+      }
+    },
+    {
+      "sequence": 11,
+      "timestampUtc": "2026-07-22T03:06:49.9940287+00:00",
+      "event": "worktree-created",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
+        "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+      }
+    },
+    {
+      "sequence": 12,
+      "timestampUtc": "2026-07-22T03:06:50.5739143+00:00",
+      "event": "marker-committed",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+        "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849"
+      }
+    },
+    {
+      "sequence": 13,
+      "timestampUtc": "2026-07-22T03:06:50.5837715+00:00",
+      "event": "validation-queued",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+        "plane": "proof-local"
+      }
+    },
+    {
+      "sequence": 14,
+      "timestampUtc": "2026-07-22T03:06:50.5997441+00:00",
+      "event": "validation-completed",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+        "outcome": "passed"
+      }
+    },
+    {
+      "sequence": 15,
+      "timestampUtc": "2026-07-22T03:06:50.6156257+00:00",
+      "event": "pr-verified",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
+        "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
+        "verification": "tree-receipt-and-marker"
+      }
+    },
+    {
+      "sequence": 16,
+      "timestampUtc": "2026-07-22T03:06:50.9385938+00:00",
+      "event": "worktree-created",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
+        "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+      }
+    },
+    {
+      "sequence": 17,
+      "timestampUtc": "2026-07-22T03:06:51.5801883+00:00",
+      "event": "marker-committed",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+        "tree": "1af410cd66781571d75b0b9014f93e360df56601"
+      }
+    },
+    {
+      "sequence": 18,
+      "timestampUtc": "2026-07-22T03:06:51.5947114+00:00",
+      "event": "validation-queued",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+        "plane": "proof-local"
+      }
+    },
+    {
+      "sequence": 19,
+      "timestampUtc": "2026-07-22T03:06:51.6105679+00:00",
+      "event": "validation-completed",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+        "outcome": "passed"
+      }
+    },
+    {
+      "sequence": 20,
+      "timestampUtc": "2026-07-22T03:06:51.6262824+00:00",
+      "event": "pr-verified",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
+        "tree": "1af410cd66781571d75b0b9014f93e360df56601",
+        "verification": "tree-receipt-and-marker"
+      }
+    },
+    {
+      "sequence": 21,
+      "timestampUtc": "2026-07-22T03:06:51.6424383+00:00",
+      "event": "worker-completed",
+      "id": "impl-201",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "outcome": "pr-verified",
+        "trigger": "worker-completed"
+      }
+    },
+    {
+      "sequence": 22,
+      "timestampUtc": "2026-07-22T03:06:51.6998888+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/worker-completed-refill",
+      "details": {
+        "trigger": "worker-completed",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 23,
+      "timestampUtc": "2026-07-22T03:06:51.7000421+00:00",
+      "event": "worker-dispatched",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/worker-completed-refill",
+      "details": {
+        "files": [
+          "src/three.cs"
+        ],
+        "validation": {
+          "plane": "remote",
+          "reserved": false,
+          "reservedCost": 0
+        }
+      }
+    },
+    {
+      "sequence": 24,
+      "timestampUtc": "2026-07-22T03:06:51.7009816+00:00",
+      "event": "dispatch-blocked",
+      "id": "impl-204",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "proof/worker-completed-refill",
+      "details": {
+        "reason": "implementation-wave-limit"
+      }
+    },
+    {
+      "sequence": 25,
+      "timestampUtc": "2026-07-22T03:06:52.1461122+00:00",
+      "event": "worktree-created",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
+        "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
+      }
+    },
+    {
+      "sequence": 26,
+      "timestampUtc": "2026-07-22T03:06:52.7421223+00:00",
+      "event": "marker-committed",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+        "tree": "19f9189b93cd8f19975da25c4a714b1446cb63f2"
+      }
+    },
+    {
+      "sequence": 27,
+      "timestampUtc": "2026-07-22T03:06:52.7538084+00:00",
+      "event": "validation-queued",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+        "plane": "proof-local"
+      }
+    },
+    {
+      "sequence": 28,
+      "timestampUtc": "2026-07-22T03:06:52.7698231+00:00",
+      "event": "validation-completed",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+        "outcome": "passed"
+      }
+    },
+    {
+      "sequence": 29,
+      "timestampUtc": "2026-07-22T03:06:52.7857610+00:00",
+      "event": "pr-verified",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
+        "tree": "19f9189b93cd8f19975da25c4a714b1446cb63f2",
+        "verification": "tree-receipt-and-marker"
+      }
+    },
+    {
+      "sequence": 30,
+      "timestampUtc": "2026-07-22T03:06:52.8016273+00:00",
+      "event": "worker-completed",
+      "id": "repair-101",
+      "lane": "repair",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "outcome": "pr-verified"
+      }
+    },
+    {
+      "sequence": 31,
+      "timestampUtc": "2026-07-22T03:06:52.8169911+00:00",
+      "event": "worker-completed",
+      "id": "impl-202",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "outcome": "pr-verified"
+      }
+    },
+    {
+      "sequence": 32,
+      "timestampUtc": "2026-07-22T03:06:52.8320883+00:00",
+      "event": "worker-completed",
+      "id": "impl-203",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "outcome": "pr-verified"
+      }
+    },
+    {
+      "sequence": 33,
+      "timestampUtc": "2026-07-22T03:06:52.8902684+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/pr-cap",
+      "details": {
+        "trigger": "negative-control",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 34,
+      "timestampUtc": "2026-07-22T03:06:52.8904414+00:00",
+      "event": "dispatch-blocked",
+      "id": "cap",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/pr-cap",
+      "details": {
+        "reason": "open-pr-soft-cap"
+      }
+    },
+    {
+      "sequence": 35,
+      "timestampUtc": "2026-07-22T03:06:53.0236836+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/file-overlap",
+      "details": {
+        "trigger": "negative-control",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 36,
+      "timestampUtc": "2026-07-22T03:06:53.0238027+00:00",
+      "event": "dispatch-blocked",
+      "id": "overlap",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/file-overlap",
+      "details": {
+        "reason": "file-overlap"
+      }
+    },
+    {
+      "sequence": 37,
+      "timestampUtc": "2026-07-22T03:06:53.1282333+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/invalid-recovery",
+      "details": {
+        "trigger": "negative-control",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 38,
+      "timestampUtc": "2026-07-22T03:06:53.1283979+00:00",
+      "event": "dispatch-blocked",
+      "id": "recovery",
+      "lane": "recovery",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/invalid-recovery",
+      "details": {
+        "reason": "recovery-worktree-gate"
+      }
+    },
+    {
+      "sequence": 39,
+      "timestampUtc": "2026-07-22T03:06:53.2363081+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/duplicate-assignment",
+      "details": {
+        "trigger": "negative-control",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 40,
+      "timestampUtc": "2026-07-22T03:06:53.2364257+00:00",
+      "event": "dispatch-blocked",
+      "id": "duplicate",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/duplicate-assignment",
+      "details": {
+        "reason": "already-active"
+      }
+    },
+    {
+      "sequence": 41,
+      "timestampUtc": "2026-07-22T03:06:53.3530533+00:00",
+      "event": "cycle-planned",
+      "id": "proof-2169",
+      "lane": "planner",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/wave-limit",
+      "details": {
+        "trigger": "negative-control",
+        "blockerCount": 1
+      }
+    },
+    {
+      "sequence": 42,
+      "timestampUtc": "2026-07-22T03:06:53.3531522+00:00",
+      "event": "dispatch-blocked",
+      "id": "wave",
+      "lane": "implementation",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "negative-control/wave-limit",
+      "details": {
+        "reason": "implementation-wave-limit"
+      }
+    },
+    {
+      "sequence": 43,
+      "timestampUtc": "2026-07-22T03:06:53.4227894+00:00",
+      "event": "cycle-completed",
+      "id": "proof-2169",
+      "lane": "proof",
+      "cycleId": "proof-2169",
+      "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
+      "provenance": "Invoke-MaintenanceThroughputProof",
+      "details": {
+        "verifiedPrs": 4
+      }
+    }
+  ]
+}
