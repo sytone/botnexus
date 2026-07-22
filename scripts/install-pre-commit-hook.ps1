@@ -30,6 +30,6 @@ if ($IsLinux -or $IsMacOS) {
 
 Write-Host ''
 Write-Host 'The pre-commit hook will now:'
-Write-Host '  1. Accept a qualifying Azure receipt only for the exact candidate tree and base commit.'
-Write-Host '  2. Otherwise run strict Azure Container Apps validation by default.'
-Write-Host '  3. Use Validate-PreCommit.ps1 -LocalFallback only when Azure is unavailable.'
+Write-Host '  1. Resolve BOTNEXUS_VALIDATION_MODE from process, user, then machine scope.'
+Write-Host '  2. Run the strict, globally serialized local gate by default.'
+Write-Host '  3. Preserve exact-content Azure receipts when remote mode is selected.'

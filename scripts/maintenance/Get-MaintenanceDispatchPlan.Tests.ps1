@@ -22,6 +22,7 @@ function New-State {
     return @{
         cycleId = 'cycle-1'; trigger = 'worker-completed'; openPrCount = 1
         budgets = @{ implementation = 2; repair = 1; recovery = 1; maxImplementationStartsPerCycle = 4; openPrSoftCap = 5 }
+        validationMode = 'local'
         remoteValidation = @{ active = 0; maxConcurrent = 2; committedCost = 0; maxCost = 10 }
         workers = @(); candidates = @()
     }
@@ -83,8 +84,18 @@ Assert-Equal 0 $plan.dispatch.Count 'Open PR files and active assignments should
 Assert-True (@($plan.blockers | Where-Object reason -eq 'file-overlap').Count -eq 1) 'Open PR file overlap should be reported.'
 Assert-True (@($plan.blockers | Where-Object reason -eq 'already-active').Count -eq 1) 'Duplicate active issue assignment should be reported.'
 
-# Remote validation concurrency and cost reservations are enforced before spawn.
-$state = New-State; $state.remoteValidation.active = 1; $state.remoteValidation.committedCost = 8
+# Local validation is the maintenance default and does not reserve the remote plane.
+$state = New-State; $state.remoteValidation.active = 2; $state.remoteValidation.committedCost = 10
+$state.candidates = @(
+    @{ id = 'local-a'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/local-a.cs'); validationRequired = $true; estimatedValidationCost = 2 },
+    @{ id = 'local-b'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/local-b.cs'); validationRequired = $true; estimatedValidationCost = 2 }
+)
+$plan = Invoke-Plan $state
+Assert-Equal 2 $plan.dispatch.Count 'Remote saturation must not block local-mode candidates.'
+Assert-True (@($plan.dispatch | Where-Object { $_.validation.plane -eq 'local' -and -not $_.validation.reserved }).Count -eq 2) 'Local dispatch should not consume remote reservations.'
+
+# Remote mode preserves concurrency and cost reservations when deliberately selected.
+$state = New-State; $state.validationMode = 'remote'; $state.remoteValidation.active = 1; $state.remoteValidation.committedCost = 8
 $state.candidates = @(
     @{ id = 'fits'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/a.cs'); validationRequired = $true; estimatedValidationCost = 2 },
     @{ id = 'no-remote-slot'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/b.cs'); validationRequired = $true; estimatedValidationCost = 1 }

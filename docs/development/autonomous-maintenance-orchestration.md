@@ -24,6 +24,7 @@ Pass a JSON file with this shape:
     "maxImplementationStartsPerCycle": 4,
     "openPrSoftCap": 5
   },
+  "validationMode": "local",
   "remoteValidation": {
     "active": 0,
     "maxConcurrent": 2,
@@ -62,7 +63,7 @@ $plan = scripts/maintenance/Get-MaintenanceDispatchPlan.ps1 -StatePath maintenan
 
 Candidate order is priority order. The runtime owns issue/PR discovery and must populate `trusted`, `decisionFree`, and the complete intended file set from authoritative evidence. Put every path changed by an open PR in `reservedFiles`; active workers contribute their file sets automatically. Missing evidence fails closed, and an issue already assigned to an active worker is rejected as `already-active`.
 
-Set `validationRequired` when the dispatch needs a new remote reservation. Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner reserves capacity but does not replace validation or exact-content receipts. `remoteValidation.maxConcurrent` and `maxCost` are hard per-cycle ceilings. Keep estimates in one operator-defined cost unit (for example maximum job-minutes) and include active reservations when producing state.
+Set `validationMode` to `local` or `remote`; omitted values default to `local`, matching the repository gate. Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In local mode no remote capacity is reserved, eliminating the unhealthy remote runner from the current critical path while `Invoke-LocalValidation.ps1` globally serializes host work. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings.
 
 ## Preserved gates
 
@@ -75,7 +76,7 @@ Before every dispatch the planner checks, in order:
 - bounded implementation waves and the projected open-PR soft cap;
 - lane capacity;
 - recovery phase plus existing worktree identity;
-- remote validation concurrency and cost reservations.
+- remote validation concurrency and cost reservations only when remote mode is selected.
 
 The planner never opens, updates, or merges a PR and never changes validation policy. PR review, merge decision, live PR-cap reconciliation, and post-worker validation remain explicit runtime responsibilities. Re-run the planner with fresh live state before each refill event; projected PR count prevents multiple implementation dispatches in one plan from overbooking the cap.
 
