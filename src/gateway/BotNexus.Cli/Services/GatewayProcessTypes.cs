@@ -6,11 +6,16 @@ namespace BotNexus.Cli.Services;
 /// <param name="ExecutablePath">Path to the dotnet executable or BotNexus.Gateway.Api.dll.</param>
 /// <param name="Arguments">Optional command-line arguments to pass to the gateway process.</param>
 /// <param name="Attached">If true, run in foreground for debugging; if false (default), run detached in a new console window.</param>
+/// <param name="HomePath">BotNexus home directory where the PID file is written.</param>
+/// <param name="HealthUrl">Effective gateway health endpoint. Callers should derive this from the requested listen URL.</param>
+/// <param name="ReadinessTimeout">Maximum cold-start readiness interval; defaults to 60 seconds.</param>
 public record GatewayStartOptions(
     string ExecutablePath,
     string? Arguments = null,
     bool Attached = false,
-    string? HomePath = null   // BotNexus home — PID file written here. Defaults to ~/.botnexus.
+    string? HomePath = null,
+    string? HealthUrl = null,
+    TimeSpan? ReadinessTimeout = null
 );
 
 /// <summary>

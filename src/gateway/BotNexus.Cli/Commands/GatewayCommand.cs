@@ -161,7 +161,8 @@ internal sealed class GatewayCommand
             ExecutablePath: gatewayDll,
             Arguments: $"--urls \"{gatewayUrl}\" --environment Development",
             Attached: false,
-            HomePath: home
+            HomePath: home,
+            HealthUrl: $"{gatewayUrl}/health"
         );
 
         GatewayStartResult result;

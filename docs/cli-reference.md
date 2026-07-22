@@ -1023,6 +1023,8 @@ botnexus gateway start --port 8080 --skip-build
 botnexus gateway start --attached
 ```
 
+Detached startup waits up to 60 seconds for the effective `--port` health endpoint to become ready. With `--verbose`, readiness diagnostics include the endpoint, timeout, elapsed duration, and whether the process became healthy, exited, or remained alive but unhealthy.
+
 ### gateway stop
 
 Stop the running gateway process.

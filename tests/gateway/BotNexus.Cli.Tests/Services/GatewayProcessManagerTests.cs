@@ -29,6 +29,104 @@ public sealed class GatewayProcessManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_UsesSixtySecondDefaultReadinessTimeoutAndEffectiveHealthUrl()
+    {
+        _healthChecker.WaitForHealthyAsync(
+            Arg.Any<string>(),
+            Arg.Any<TimeSpan>(),
+            Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var options = new GatewayStartOptions(
+            ExecutablePath: "BotNexus.Gateway.Api.dll",
+            Arguments: null,
+            HomePath: _testPidDirectory,
+            HealthUrl: "http://localhost:6123/health");
+
+        var result = await _manager.StartAsync(options);
+
+        result.Success.ShouldBeTrue();
+        await _healthChecker.Received(1).WaitForHealthyAsync(
+            "http://localhost:6123/health",
+            TimeSpan.FromSeconds(60),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenProcessExitsDuringReadiness_FailsPromptlyWithExitCode()
+    {
+        _healthChecker.WaitForHealthyAsync(
+            Arg.Any<string>(),
+            Arg.Any<TimeSpan>(),
+            Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), call.Arg<CancellationToken>());
+                return false;
+            });
+
+        var options = new GatewayStartOptions(
+            ExecutablePath: "missing-gateway.dll",
+            HomePath: _testPidDirectory,
+            ReadinessTimeout: TimeSpan.FromSeconds(60));
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await _manager.StartAsync(options);
+
+        stopwatch.Stop();
+        result.Success.ShouldBeFalse();
+        result.Message.ShouldNotBeNull();
+        result.Message.ShouldContain("exited");
+        result.Message.ShouldContain("exit code");
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenProcessAliveButReadinessTimesOut_ReportsAliveAndUnhealthy()
+    {
+        _healthChecker.WaitForHealthyAsync(
+            Arg.Any<string>(),
+            Arg.Any<TimeSpan>(),
+            Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        var options = new GatewayStartOptions(
+            ExecutablePath: "BotNexus.Gateway.Api.dll",
+            HomePath: _testPidDirectory,
+            ReadinessTimeout: TimeSpan.FromMilliseconds(50));
+
+        var result = await _manager.StartAsync(options);
+
+        result.Success.ShouldBeFalse();
+        result.Message.ShouldNotBeNull();
+        result.Message.ShouldContain("alive");
+        result.Message.ShouldContain("not healthy");
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenReadinessIsCancelled_PropagatesCancellation()
+    {
+        _healthChecker.WaitForHealthyAsync(
+            Arg.Any<string>(),
+            Arg.Any<TimeSpan>(),
+            Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), call.Arg<CancellationToken>());
+                return false;
+            });
+
+        var options = new GatewayStartOptions(
+            ExecutablePath: "BotNexus.Gateway.Api.dll",
+            HomePath: _testPidDirectory,
+            ReadinessTimeout: TimeSpan.FromSeconds(60));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            _manager.StartAsync(options, cancellation.Token));
+    }
+
+    [Fact]
     public async Task StartAsync_WhenAlreadyRunning_ReturnsAlreadyRunningResult()
     {
         // Write a PID file with the current process ID (which is definitely running)

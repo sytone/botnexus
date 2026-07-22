@@ -112,6 +112,33 @@ public sealed class HttpHealthCheckerTests
     }
 
     [Fact]
+    public async Task WaitForHealthyAsync_WhenEndpointBecomesHealthyAfterTenSeconds_SucceedsWithinSixtySeconds()
+    {
+        var responses = Enumerable.Repeat(HttpStatusCode.ServiceUnavailable, 8)
+            .Append(HttpStatusCode.OK)
+            .ToArray();
+        var handler = new CountingMockHttpMessageHandler(responses);
+        var checker = new HttpHealthChecker(NullLogger<HttpHealthChecker>.Instance);
+        var httpClient = new HttpClient(handler);
+        var httpClientField = typeof(HttpHealthChecker).GetField(
+            "_httpClient",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        httpClientField.ShouldNotBeNull();
+        httpClientField.SetValue(checker, httpClient);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        var result = await checker.WaitForHealthyAsync(
+            "http://localhost:6123/health",
+            TimeSpan.FromSeconds(60),
+            CancellationToken.None);
+
+        stopwatch.Stop();
+        result.ShouldBeTrue();
+        stopwatch.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(10));
+        handler.RequestCount.ShouldBe(9);
+    }
+
+    [Fact]
     public async Task WaitForHealthyAsync_WhenTimeoutReached_StopsRetrying()
     {
         // Always fail
