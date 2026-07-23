@@ -16,6 +16,10 @@ public class ExtensionAssemblyLoadContextSharedAssemblyTests
     [InlineData("Microsoft.Extensions.Options")]
     [InlineData("Microsoft.Extensions.DependencyInjection.Abstractions")]
     [InlineData("Microsoft.Extensions.Logging.Abstractions")]
+    // System.IO.Abstractions assemblies must be shared so an extension's IFileSystem endpoint/tool
+    // parameter keeps the host's type identity and stays bindable as a DI service (regression #2184).
+    [InlineData("Testably.Abstractions.FileSystem.Interface")]
+    [InlineData("TestableIO.System.IO.Abstractions.Wrappers")]
     public void IsHostAssembly_returns_true_for_shared_configuration_and_di_assemblies(string assemblyName)
     {
         ExtensionAssemblyLoadContext.IsHostAssembly(assemblyName).ShouldBeTrue();
