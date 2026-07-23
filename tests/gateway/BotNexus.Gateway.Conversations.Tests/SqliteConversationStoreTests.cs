@@ -66,6 +66,38 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task ListAsync_ReturnsAllRows_WhenCountExceedsCacheCapacity()
+    {
+        // Regression for #2226: the list materialiser must NOT gate result membership on the
+        // bounded LRU cache surviving the warm pass. With more conversations than the cache
+        // capacity, warming id N can evict id N-cap; a rebuild that re-reads from the cache then
+        // silently drops the evicted ids and conversations flicker in and out of the list. The
+        // returned list must contain EVERY row regardless of cache capacity.
+        using var fixture = new StoreFixture();
+        const int cap = 8;
+        const int total = 40;
+        var store = fixture.CreateStore(cacheCapacity: cap);
+
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < total; i++)
+        {
+            var conversation = CreateConversation(Agent("agent-a"), $"conv-{i}", CreateBinding("telegram", $"{i}"));
+            await store.CreateAsync(conversation);
+            expected.Add(conversation.ConversationId.Value);
+        }
+
+        // Fresh store instance => cold cache, so materialisation must load + hydrate all rows and
+        // survive its own LRU eviction while doing so.
+        var list = await fixture.CreateStore(cacheCapacity: cap).ListAsync();
+
+        list.Count.ShouldBe(total);
+        var returnedIds = list.Select(c => c.ConversationId.Value).ToHashSet(StringComparer.Ordinal);
+        returnedIds.SetEquals(expected).ShouldBeTrue();
+        // Bindings must survive the batched hydrate too (not just the id set).
+        list.ShouldAllBe(c => c.ChannelBindings.Count == 1);
+    }
+
+    [Fact]
     public async Task ListAsync_FiltersByAgentId()
     {
         using var fixture = new StoreFixture();
