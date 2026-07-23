@@ -449,6 +449,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             // target conversation doesn't exist, so this MUST follow the first SaveAsync.
             await EnsureCallerParticipantAsync(session, message.Sender, cancellationToken).ConfigureAwait(false);
 
+            // #2126: generate a PROVISIONAL conversation title from the first user message now,
+            // before the assistant turn runs, so a human-agent conversation stops showing
+            // "New conversation" almost immediately - even for a long, tool-heavy first turn or a
+            // turn that is cancelled before completion. Best-effort and fire-and-forget: a title
+            // failure never delays or fails the foreground turn (the post-response path still runs
+            // and refines the provisional title once when the assistant response completes).
+            TryTriggerProvisionalTitle(session, typedAgentId, message);
+
             // #1503 (increment 2, follow-up to #1381): the pre-execution "prepare turn"
             // concern -- auto-compaction, abandoned-turn detection (#790), and the
             // write-ahead crash sentinel (#363) -- is extracted into PrepareTurnAsync so
@@ -1367,6 +1375,49 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// conversation that was busy on its first turn can still get titled on a later turn). No-op
     /// when auto-title is not wired or the conversation is not initialised.
     /// </summary>
+    /// <summary>
+    /// Fires PROVISIONAL title generation (#2126) when the first live user message has just been
+    /// persisted for a still-default-titled, interactive human-agent conversation. Titles from the
+    /// user message alone, before the assistant turn completes, so the conversation stops showing
+    /// "New conversation" almost immediately. No-op when auto-title is disabled/unwired, the
+    /// conversation is not human-agent/interactive, the sender is not a human, the conversation is
+    /// cron-owned or already non-default, or an assistant entry already exists. Best-effort and
+    /// fire-and-forget: never delays or fails the foreground turn.
+    /// </summary>
+    private void TryTriggerProvisionalTitle(GatewaySession session, AgentId typedAgentId, InboundMessage message)
+    {
+        if (_autoTitleService is null)
+            return;
+        if (!session.ConversationId.IsInitialized())
+            return;
+
+        var titling = _platformConfig?.Value?.Gateway?.Auxiliary?.Titling;
+        if (titling is { Enabled: false })
+            return;
+
+        // Only human-initiated, interactive user-agent conversations are provisionally titled.
+        // Excludes cron-owned turns (Session.IsInteractive is false for the cron channel),
+        // agent-agent / sub-agent turns, and any agent-authored channel post (webhook/service-
+        // address relays, cross-channel agent posts) whose derived role is Assistant.
+        if (!session.IsInteractive)
+            return;
+        if (message.Sender.Kind != CitizenKind.User)
+            return;
+        if (message.DeriveChannelPostRole() != MessageRole.User)
+            return;
+
+        var userText = ConversationAutoTitleService.ShouldTriggerProvisionalTitle(session.History);
+        if (userText is null)
+            return;
+
+        _autoTitleService.TriggerProvisionalBestEffort(
+            session.ConversationId,
+            typedAgentId,
+            userText,
+            titling?.Model,
+            titling?.TimeoutSeconds ?? 30);
+    }
+
     private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
     {
         // Diagnostic: previously these guards no-op'd silently, so a conversation stuck on the
