@@ -10,6 +10,16 @@ public sealed class ClientStateStore : IClientStateStore
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
     private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
+    // #2243 hardening: sub-agent ids marked read-only-for-navigation at SPAWN time, before any
+    // AgentState exists or its SessionType has been stamped. The original guard only rejected a
+    // switch when target.IsReadOnly was ALREADY derived true (SessionType == "agent-subagent"),
+    // but HandleSubAgentSpawned registers the sub-agent asynchronously — during the spawn-during-send
+    // window there is often no AgentState yet, or one still carrying the default "user-agent"
+    // SessionType, so the derived flag reads false and the guard leaks. Tracking the id at spawn
+    // makes the rejection independent of that ordering race. Explicit user "view sub-agent" clicks
+    // still bypass via SetActiveSubAgent.
+    private readonly HashSet<string> _knownSubAgentIds = new(StringComparer.Ordinal);
+
     private string? _activeAgentId;
 
     // High-frequency streaming deltas (content/thinking) route through NotifyChangedThrottled,
@@ -52,8 +62,8 @@ public sealed class ClientStateStore : IClientStateStore
         {
             if (value is not null
                 && !_allowSubAgentActivation
-                && _agents.TryGetValue(value, out var target)
-                && target.IsReadOnly)
+                && (_knownSubAgentIds.Contains(value)
+                    || (_agents.TryGetValue(value, out var target) && target.IsReadOnly)))
             {
                 return;
             }
@@ -78,6 +88,13 @@ public sealed class ClientStateStore : IClientStateStore
         {
             _allowSubAgentActivation = false;
         }
+    }
+
+    /// <inheritdoc />
+    public void MarkSubAgent(string subAgentId)
+    {
+        if (!string.IsNullOrEmpty(subAgentId))
+            _knownSubAgentIds.Add(subAgentId);
     }
 
     /// <inheritdoc />

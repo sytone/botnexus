@@ -554,6 +554,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         };
 
         // Register sub-agent's own session
+        _store.MarkSubAgent(payload.SubAgentId);
         _store.RegisterSession(payload.SubAgentId, payload.SubAgentId);
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)

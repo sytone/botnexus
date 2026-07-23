@@ -41,6 +41,15 @@ public interface IClientStateStore
     /// <param name="subAgentId">The sub-agent whose session should become the active view.</param>
     void SetActiveSubAgent(string subAgentId);
 
+    /// <summary>
+    /// Records <paramref name="subAgentId"/> as a sub-agent session so the anti-hijack guard on
+    /// <see cref="AgentState.ActiveAgentId"/> rejects any non-user-initiated switch onto it, even
+    /// before its <see cref="AgentState"/> exists or its SessionType has been stamped read-only.
+    /// Call this at sub-agent spawn time. Idempotent (#2243).
+    /// </summary>
+    /// <param name="subAgentId">The spawned sub-agent id to mark read-only for navigation.</param>
+    void MarkSubAgent(string subAgentId);
+
     /// <summary>Seed initial agent list from hub or REST.</summary>
     void SeedAgents(IEnumerable<AgentSummary> agents);
 
