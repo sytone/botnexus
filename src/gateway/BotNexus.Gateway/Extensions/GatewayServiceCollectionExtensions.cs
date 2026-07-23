@@ -71,6 +71,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<GatewayOptions>();
         services.AddOptions<SessionCleanupOptions>();
         services.AddOptions<ConversationRetentionOptions>();
+        services.AddOptions<SubAgentWorkspaceSweepOptions>();
         services.AddOptions<SessionWarmupOptions>();
         services.AddOptions<DelayToolOptions>();
         services.AddOptions<FileWatcherToolOptions>();
@@ -90,6 +91,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<AgentExchangeOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
+            services.Configure<SubAgentWorkspaceSweepOptions>(config.GetSection("gateway:subAgentWorkspace"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
@@ -294,6 +296,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService<SessionCleanupService>();
         services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
+        services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
         // Liveness watchdog: monitors gateway activity and logs warnings on stalls

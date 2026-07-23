@@ -804,6 +804,34 @@ The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. 
 
 The section is optional — when absent, the 7-day cron noop retention default applies. Because the predicate requires ≤ 2 messages, any cron session that did real work (multiple turns or tool calls, which add history rows) is never pruned by this branch.
 
+#### Sub-agent workspace sweep
+
+Ephemeral sub-agent workers occasionally leave workspace husks under the **persistent** agents root (`<BotNexus home>/agents/<parent>--subagent--<archetype>--<guid>`). Unlike the temp-root pruning and the manual `doctor` reconciliation of top-level registered agents, these husks have no time-based lifecycle and grow without bound. The gateway runs a periodic `SubAgentWorkspaceSweepHostedService` that automatically reclaims them by age.
+
+The sweep only ever considers directories whose name contains the `--subagent--` marker, so **top-level registered agent workspaces are never touched**. Directories modified within the grace window are always skipped so a live / in-flight worker is never yanked, deletion is confined to the resolved agents root, and reparse points (symlinks / junctions) are never followed or deleted through.
+
+```json
+{
+  "gateway": {
+    "subAgentWorkspace": {
+      "enabled": true,
+      "retentionHours": 24,
+      "graceMinutes": 60,
+      "checkInterval": "01:00:00"
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `subAgentWorkspace.enabled` | bool | `true` | Master switch for the automatic age-based sweep. When false, no sub-agent workspace directories are removed automatically. |
+| `subAgentWorkspace.retentionHours` | int | `24` | Idle hours after which a `*--subagent--*` workspace (by last-write time) is eligible for removal. Zero or negative disables removal. |
+| `subAgentWorkspace.graceMinutes` | int | `60` | Safety window; a directory modified within this many minutes is always skipped, protecting live workers. |
+| `subAgentWorkspace.checkInterval` | TimeSpan | `01:00:00` (1h) | How often the sweep scans the agents root. The sweep also runs once shortly after gateway startup. |
+
+Each sweep pass emits a single log line with the number of directories removed, bytes reclaimed, and directories skipped as recent/unexpired. Configurable via `gateway:subAgentWorkspace:*`.
+
 
 #### Tool Result Persistence
 
