@@ -138,10 +138,31 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleRunEnded(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+
+        // #2195: RunEnded is the authoritative idle signal that clears the turn-active bracket
+        // (Steer/Redirect/Follow Up/Stop). If it is missed or misrouted the input stays stuck on
+        // those controls until reload. The resolved ConversationId can be a stale/misrouted hint
+        // that does not map to any local conversation (GetValueOrDefault returns null), so clearing
+        // ONLY that conversation would silently no-op and leave the active conversation stuck.
+        // Harden the recovery: clear the resolved conversation when it exists, and always also clear
+        // the agent's active conversation bracket as a fallback so a null/mismatched hint can never
+        // strand the user.
+        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
+
+        var cleared = false;
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             conv.StreamState.EndRun();
+            cleared = convId == agent.ActiveConversationId;
+        }
+
+        // Fallback: the resolved conversation was unknown (misrouted hint) or was not the active
+        // one -- clear the active conversation's bracket so the portal reliably swaps back to Send.
+        if (!cleared
+            && agent!.ActiveConversationId is { } activeConvId
+            && agent.Conversations.GetValueOrDefault(activeConvId) is { } activeConv)
+        {
+            activeConv.StreamState.EndRun();
         }
 
         agent!.IsStreaming = false;

@@ -1154,4 +1154,49 @@ public sealed class GatewayEventHandlerTests
         // A notification message about the interruption is surfaced to the user.
         Assert.Contains(conv.Messages, m => m.Role == "Notification");
     }
+
+    // ---- #2195: resilient RunEnded recovery when the event is misrouted ----
+
+    [Fact]
+    public void HandleRunEnded_with_mismatched_ConversationId_still_clears_active_conversation_bracket()
+    {
+        // #2195: A RunEnded whose ConversationId points at a conversation the client does not
+        // know (misrouted/stale hint) must NOT leave the active conversation stuck turn-active.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read" });
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        // RunEnded arrives carrying a ConversationId that does not resolve to any local conversation.
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-does-not-exist" });
+
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+        Assert.Null(agent.ProcessingStage);
+    }
+
+    [Fact]
+    public void HandleRunEnded_with_null_ConversationId_and_unregistered_session_clears_active_bracket()
+    {
+        // #2195: the RunEnded may carry no ConversationId hint. As long as the owning agent can be
+        // resolved, the agent's active conversation bracket must still be cleared so the input is
+        // not stuck on turn-active controls until reload.
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = null });
+
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+    }
 }

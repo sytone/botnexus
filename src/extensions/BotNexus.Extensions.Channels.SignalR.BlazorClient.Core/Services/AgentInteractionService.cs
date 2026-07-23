@@ -181,7 +181,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     public async Task AbortAsync(string agentId)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
             return;
 
         try
@@ -192,6 +192,32 @@ public sealed class AgentInteractionService : IAgentInteractionService
         {
             AppendError(agentId, $"Abort failed: {ex.Message}");
         }
+        finally
+        {
+            // #2195: Stop is the user's escape hatch. Even if the gateway never delivers a RunEnded
+            // (missed/misrouted event), the local turn-active bracket must clear so the input swaps
+            // back to Send and the user is never fully locked out without a page reload. Force-clear
+            // the active conversation's run state locally regardless of the hub result.
+            ForceClearLocalTurnState(agentId, convId);
+        }
+    }
+
+    // #2195: unconditionally clear the local run bracket (IsRunActive/IsStreaming/ActiveToolCalls)
+    // for the given conversation so the portal recovers from a stuck turn-active state. Safe to call
+    // even when the run already ended -- EndRun is idempotent.
+    private void ForceClearLocalTurnState(string agentId, string conversationId)
+    {
+        var agent = _store.GetAgent(agentId);
+        if (agent is null)
+            return;
+
+        agent.IsStreaming = false;
+        agent.ProcessingStage = null;
+
+        if (agent.Conversations.GetValueOrDefault(conversationId) is { } conv)
+            conv.StreamState.EndRun();
+
+        _store.NotifyChanged();
     }
 
     // ── Session management ────────────────────────────────────────────────
