@@ -42,6 +42,7 @@ public static class AgentConfigMerger
             // Identity / provider fields — never inherited from defaults
             Provider = agent.Provider,
             DisplayName = agent.DisplayName,
+            Emoji = agent.Emoji,
             Description = agent.Description,
             Model = agent.Model,
             Thinking = agent.Thinking,
@@ -52,6 +53,7 @@ public static class AgentConfigMerger
             SubAgents = agent.SubAgents,
             SubAgentRoles = agent.SubAgentRoles,
             IsolationStrategy = agent.IsolationStrategy,
+            CacheRetention = agent.CacheRetention,
             MaxConcurrentSessions = agent.MaxConcurrentSessions,
             ToolTimeoutSeconds = MergeToolTimeoutSeconds(defaults.ToolTimeoutSeconds, agent.ToolTimeoutSeconds, agentObj),
             Metadata = agent.Metadata,
@@ -60,6 +62,9 @@ public static class AgentConfigMerger
             Soul = agent.Soul,
             SessionAccess = agent.SessionAccess,
             ConversationAccess = agent.ConversationAccess,
+            DateTimeInjection = agent.DateTimeInjection,
+            ShellCommand = agent.ShellCommand,
+            Kind = agent.Kind,
             ToolPolicy = agent.ToolPolicy,
             Extensions = agent.Extensions,
 
