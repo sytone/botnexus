@@ -31,17 +31,20 @@ public sealed class TodoToolTests
     }
 
     [Fact]
-    public void Tool_DescriptionDistinguishesExecutionChecklistFromTaskNexus()
+    public void Tool_DescriptionDistinguishesExecutionChecklistFromDurableSystems()
     {
         var description = new TodoTool(null, null).Definition.Description;
 
+        // The todo tool is the agent's own execution checklist for its work loop; it must stay
+        // generic and NOT name any particular external task/work-tracking system (#2071).
         description.ShouldContain("per-conversation execution checklist", Case.Insensitive);
-        description.ShouldContain("one TaskNexus task may map to many todo items", Case.Insensitive);
-        description.ShouldContain("durable system of record", Case.Insensitive);
+        description.ShouldContain("loop or set of loops", Case.Insensitive);
+        description.ShouldContain("not a durable or user-facing", Case.Insensitive);
+        description.ShouldContain("source of truth", Case.Insensitive);
         description.ShouldContain("ownership", Case.Insensitive);
-        description.ShouldContain("do not use todo instead of TaskNexus", Case.Insensitive);
-        description.ShouldContain("do not create a TaskNexus task for every implementation step", Case.Insensitive);
+        description.ShouldContain("Do not substitute this list", Case.Insensitive);
         description.ShouldContain("verified by a tool result", Case.Insensitive);
+        description.ShouldNotContain("TaskNexus", Case.Insensitive);
     }
 
     // ── write happy path ────────────────────────────────────────────────

@@ -88,14 +88,14 @@ public sealed class TodoTool(
 
     public Tool Definition => new(
         Name,
-        "Manage a per-conversation execution checklist for the current agent loop. "
-        + "Use it to decompose a higher-level TaskNexus task or direct user request into detailed, resumable steps "
-        + "for sequencing, checkpoints, retries, validation, deployment, and handoff. "
-        + "The checklist survives context compaction, interruption, and session continuation. "
-        + "One TaskNexus task may map to many todo items. "
-        + "TaskNexus remains the durable system of record for higher-level outcomes, ownership, priority, due dates, provenance, history, and cross-agent reporting. "
-        + "Do not use todo instead of TaskNexus for durable, assigned, cross-session, or user-visible work. "
-        + "Do not create a TaskNexus task for every implementation step unless that step independently needs long-term ownership or tracking. "
+        "Manage a per-conversation execution checklist the agent keeps for itself to track what it is doing across "
+        + "a loop or set of loops, so it does not lose track of the outcome, the remaining steps, or its interactions with the user. "
+        + "Use it to break the current request into detailed, resumable steps for sequencing, checkpoints, retries, "
+        + "validation, deployment, and handoff. The checklist survives context compaction, interruption, and session continuation. "
+        + "This is the agent's own working memory of its plan, not a durable or user-facing task system of record. "
+        + "If the user tracks work in an external system (for example a task manager, issue tracker, or work-item system), that system "
+        + "remains the source of truth for ownership, priority, due dates, and cross-session reporting; one such item may map to many todo items. "
+        + "Do not substitute this list for that durable, assigned, or user-visible work, and do not push every implementation step back into an external system unless it independently needs long-term tracking there. "
         + "Use action='write' to replace the whole list, 'update' to change one item by id, 'list' to read it, and 'clear' to empty it. "
         + "Status is pending|in_progress|done|cancelled. "
         + "Mark an item done only after the corresponding work is verified by a tool result this turn; narration does not flip a checkbox.",

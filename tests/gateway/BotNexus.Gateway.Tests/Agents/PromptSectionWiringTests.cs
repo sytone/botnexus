@@ -43,15 +43,17 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
-    public void ToolEnforcementSection_IncludesTodoTaskNexusBoundaryGuidance()
+    public void ToolEnforcementSection_IncludesTodoBoundaryGuidance()
     {
         var prompt = BuildFullPrompt();
 
-        // Guards the todo-vs-TaskNexus boundary guidance (#2071): the todo tool is a
-        // per-conversation execution checklist, TaskNexus is the durable system of record.
+        // Guards the todo boundary guidance (#2071): the todo tool is the agent's own
+        // per-conversation execution checklist for its work loop, and the guidance stays generic
+        // -- it must NOT name any particular external task/work-tracking system.
         prompt.ShouldContain("per-conversation execution checklist");
-        prompt.ShouldContain("One TaskNexus task may map to many todo items");
-        prompt.ShouldContain("durable system of record");
+        prompt.ShouldContain("loop or set of loops");
+        prompt.ShouldContain("not a durable or user-facing system of record");
+        prompt.ShouldNotContain("TaskNexus");
     }
 
     [Fact]
