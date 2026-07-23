@@ -104,11 +104,23 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             }
         }
 
-        // Spawn the process — cross-platform detached launch
+        // Spawn the process — cross-platform detached launch.
+        //
+        // Prefer launching the native apphost executable (e.g. BotNexus.Gateway.Api.exe) that the
+        // publish step emits next to the target DLL. Doing so gives the gateway a DISTINCT process
+        // name ("BotNexus.Gateway.Api") instead of the generic "dotnet". Autonomous-maintenance
+        // workers spawn 15-18 build/test dotnet processes and their recovery logic force-kills
+        // orphaned/hung ones by name; a name-based `Get-Process dotnet | Stop-Process` would take
+        // out a `dotnet <dll>`-launched gateway as collateral (confirmed root cause of repeated
+        // gateway crashes, see issue #2199). Launching the apphost makes the gateway immune to that.
+        //
+        // Fall back to `dotnet <dll>` when no apphost is present (framework-dependent layouts that
+        // ship only the managed DLL, and cross-platform builds without a native host).
+        var (launchFileName, launchArguments) = ResolveLaunchTarget(options);
         var psi = new ProcessStartInfo
         {
-            FileName = "dotnet",
-            Arguments = $"\"{options.ExecutablePath}\" {options.Arguments ?? ""}".TrimEnd(),
+            FileName = launchFileName,
+            Arguments = launchArguments,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = false,
@@ -225,6 +237,56 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         {
             // The competing readiness operation was cancelled after a final state was established.
         }
+    }
+
+    /// <summary>
+    /// Resolves the executable and argument string used to launch the gateway.
+    /// <para>
+    /// Prefers a native apphost executable published next to the target DLL (e.g.
+    /// <c>BotNexus.Gateway.Api.exe</c>). Launching the apphost gives the gateway a distinct process
+    /// name rather than the generic <c>dotnet</c>, so name-based process kills aimed at build/test
+    /// <c>dotnet</c> processes cannot terminate it as collateral (issue #2199).
+    /// </para>
+    /// <para>
+    /// Falls back to <c>dotnet &lt;dll&gt;</c> when no apphost is found next to the DLL.
+    /// </para>
+    /// </summary>
+    internal (string FileName, string Arguments) ResolveLaunchTarget(GatewayStartOptions options)
+    {
+        var extraArgs = options.Arguments ?? string.Empty;
+
+        try
+        {
+            var dllPath = options.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(dllPath)
+                && dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            {
+                // The apphost sits beside the DLL with the same base name. On Windows it carries a
+                // .exe suffix; on Unix it is extension-less. Probe both so this works cross-platform.
+                var dir = Path.GetDirectoryName(dllPath) ?? string.Empty;
+                var baseName = Path.GetFileNameWithoutExtension(dllPath);
+                var candidates = OperatingSystem.IsWindows()
+                    ? new[] { Path.Combine(dir, baseName + ".exe") }
+                    : new[] { Path.Combine(dir, baseName) };
+
+                foreach (var apphost in candidates)
+                {
+                    if (File.Exists(apphost))
+                    {
+                        _logger.LogDebug("Launching gateway via apphost executable {Apphost}", apphost);
+                        return (apphost, extraArgs.Trim());
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
+        {
+            // Probing the filesystem must never block launch; fall through to the dotnet host.
+            _logger.LogDebug(ex, "Apphost probe failed; falling back to dotnet host launch");
+        }
+
+        // Framework-dependent fallback: run the managed DLL through the shared dotnet host.
+        return ("dotnet", $"\"{options.ExecutablePath}\" {extraArgs}".TrimEnd());
     }
 
     /// <summary>
