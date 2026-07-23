@@ -210,7 +210,7 @@ Default settings for all agents. Individual agents can override any property.
 | `Temperature` | double? | null | Randomness (0.0=deterministic, 1.0=creative). If unset, provider decides |
 | `MaxToolIterations` | int | 40 | Max tool call loops in a single agent cycle |
 | `MaxRepeatedToolCalls` | int | 2 | Max times the same tool can be called with identical arguments (loop detection) |
-| `ToolTimeoutSeconds` | int? | null | Per-tool execution timeout in seconds. When set, overrides the runtime default (120s). Propagated to all agents that don't set their own |
+| `ToolTimeoutSeconds` | int? | 300 | Global per-tool execution timeout in seconds. Inherited by all agents that do not set their own override; five minutes accommodates long-running cross-agent calls while still bounding stuck tools |
 | `Timezone` | string | `UTC` | Default timezone for agent operations (IANA format) |
 | `Named` | dict | `{}` | Per-agent customizations (see AgentConfig below) |
 
@@ -257,7 +257,7 @@ Override any default for a specific agent:
 | `MaxRepeatedToolCalls` | int | Override default repeated tool call limit (loop detection) |
 | `Timezone` | string | Override default timezone |
 | `EnableMemory` | bool | Enable persistent memory for this agent |
-| `ToolTimeoutSeconds` | int? | Per-tool execution timeout in seconds. Overrides the defaults-level value for this agent. When null, inherits from AgentDefaults |
+| `ToolTimeoutSeconds` | int? | Per-tool execution timeout in seconds. Overrides the global `agents.defaults.toolTimeoutSeconds` value for this agent. When null or omitted, inherits the global default (300 seconds unless configured otherwise) |
 | `DisallowedTools` | list | Tool names to exclude for this agent (e.g., `["shell", "filesystem"]`) — see [Internal Tools](#internal-tools) |
 | `McpServers` | list | MCP servers enabled for this agent (see [MCP Servers](#mcp-servers)) |
 | `Skills` | list | Named skill references (plugin extension names) |

@@ -102,6 +102,43 @@ public class CopilotResponsesProviderParityTests
     }
 
     [Fact]
+    public async Task Stream_Gpt56_RemovesRepeatedCopilotChunkCrLf_WithoutLosingTokenWhitespace()
+    {
+        // gpt-5.6-sol frames every token fragment with CRLF - sometimes more than one pair.
+        // #2119: the single-pair SSE fix left the artifact when framing repeated, persisting
+        // as one-token-per-line output. All leading CRLF pairs must be stripped while a
+        // genuine token-leading space and LF Markdown boundaries survive.
+        const string sse =
+            "event: response.output_item.added\n" +
+            "data: {\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\nUnder\"}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\nstood\"}\n\n" +
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\n now\"}\n\n" +
+            "event: response.output_item.done\n" +
+            "data: {\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n" +
+            "event: response.completed\n" +
+            "data: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n";
+
+        var handler = new RecordingHandler(_ => SseResponse(sse));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(handler),
+            NullLogger<CopilotResponsesProvider>.Instance);
+        var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
+
+        var result = await provider.Stream(
+                model,
+                BuildContext(),
+                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("Understood now");
+    }
+
+    [Fact]
     public async Task Stream_PreGpt56_PreservesLeadingCrLfVerbatim()
     {
         const string sse =

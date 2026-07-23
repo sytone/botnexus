@@ -39,9 +39,74 @@ public sealed record AgentResponseUsage(
     int? CacheRead = null,
     int? CacheWrite = null);
 /// <summary>
-/// Information about a tool call made during agent execution.
+/// Information about a tool call made during agent execution, carried on
+/// <see cref="AgentResponse.ToolCalls"/> so blocking callers (cron, soul, heartbeat, sub-agents) can
+/// project a full tool timeline into session history - matching the tool-start / tool-end rows that
+/// interactive streaming persists (issue #2118). The blocking prompt path used to surface only
+/// id / name / error, which discarded the arguments and result content needed to reconstruct the
+/// timeline; those are now carried through so cron history has parity with the streaming path.
 /// </summary>
-public sealed record AgentToolCallInfo(string ToolCallId, string ToolName, bool IsError);
+/// <param name="ToolCallId">The tool call correlation id (matches the model's tool-use id).</param>
+/// <param name="ToolName">The tool name.</param>
+/// <param name="IsError">True when the tool execution failed.</param>
+/// <param name="Arguments">
+/// Serialized JSON arguments the model supplied for the call, or <c>null</c> when unavailable.
+/// Mirrors the <c>ToolArgs</c> stamped on an interactive tool-start row.
+/// </param>
+/// <param name="ResultContent">
+/// The tool result content (first content block), or <c>null</c> when the tool produced no textual
+/// result. Mirrors the content of an interactive tool-end row.
+/// </param>
+/// <param name="IsIncomplete">
+/// True when the tool call started but never produced a result because the run was cancelled or timed
+/// out mid-flight. Such a call is represented as an interrupted tool-end row so the transcript stays
+/// consistent (issue #2118 cancellation acceptance).
+/// </param>
+public sealed record AgentToolCallInfo(
+    string ToolCallId,
+    string ToolName,
+    bool IsError,
+    string? Arguments = null,
+    string? ResultContent = null,
+    bool IsIncomplete = false);
+
+/// <summary>
+/// Thrown by a blocking agent prompt (<see cref="BotNexus.Gateway.Abstractions.Agents.IAgentHandle"/>'s
+/// <c>PromptAsync</c>) when the run is cancelled or times out mid-flight. Carries the
+/// <see cref="PartialResponse"/> assembled from tool activity that completed before the interruption
+/// so the caller (e.g. the cron trigger) can still persist a faithful tool timeline - including any
+/// in-flight tool that never returned - before re-surfacing the cancellation (issue #2118).
+/// </summary>
+/// <remarks>
+/// This deliberately derives from <see cref="Exception"/>, not <see cref="OperationCanceledException"/>.
+/// Throwing an <see cref="OperationCanceledException"/>-derived type out of an <c>async</c> method
+/// transitions the returned task to the <see cref="System.Threading.Tasks.TaskStatus.Canceled"/> state,
+/// which erases the concrete exception type - the caller would then observe a bare
+/// <see cref="System.Threading.Tasks.TaskCanceledException"/> and lose the <see cref="PartialResponse"/>.
+/// Keeping this a plain exception guarantees the faulted task preserves the type so the cron trigger can
+/// catch it, persist the tool rows, and then re-surface a normal cancellation via
+/// <see cref="CancellationToken"/>.
+/// </remarks>
+public sealed class AgentPromptInterruptedException : Exception
+{
+    /// <summary>
+    /// Initializes a new instance carrying the partial response assembled up to the interruption point.
+    /// </summary>
+    /// <param name="partialResponse">The response projected from tool activity completed before cancellation.</param>
+    /// <param name="cancellationToken">The token that triggered cancellation.</param>
+    public AgentPromptInterruptedException(AgentResponse partialResponse, CancellationToken cancellationToken)
+        : base("The agent run was interrupted (cancelled or timed out) mid-flight.")
+    {
+        PartialResponse = partialResponse;
+        CancellationToken = cancellationToken;
+    }
+
+    /// <summary>The tool activity captured before the run was interrupted.</summary>
+    public AgentResponse PartialResponse { get; }
+
+    /// <summary>The cancellation token that triggered the interruption, re-surfaced by the caller.</summary>
+    public CancellationToken CancellationToken { get; }
+}
 /// <summary>
 /// A streaming event from an agent, emitted during real-time interaction.
 /// Maps to the AgentEvent system in AgentCore but at the Gateway level.

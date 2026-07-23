@@ -109,7 +109,35 @@ public sealed class CronTrigger(
         try
         {
             var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-            var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
+            AgentResponse response;
+            try
+            {
+                response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+            }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                // #2118: the run was cancelled or timed out mid-flight, but tools may have executed
+                // before the interruption. Persist the user entry plus the captured tool timeline
+                // (completed tools + an interrupted-tool row for any in-flight call) so the transcript
+                // reflects the work that actually happened, then re-surface the cancellation. The
+                // assistant text row is intentionally omitted - the turn never produced a final answer.
+                session.AddEntry(new SessionEntry
+                {
+                    Role = MessageRole.User,
+                    Content = prompt,
+                    Trigger = TriggerType.Cron
+                });
+                foreach (var toolEntry in ProjectToolEntries(interrupted.PartialResponse))
+                    session.AddEntry(toolEntry);
+
+                // Re-surface as a normal cancellation so upstream cancellation/timeout handling is
+                // unchanged; the interrupted exception is chained as the inner exception for diagnostics.
+                throw new OperationCanceledException(
+                    "Cron run was interrupted (cancelled or timed out) mid-flight.",
+                    interrupted,
+                    interrupted.CancellationToken);
+            }
 
             // #1722 Part A: a wake whose turn produced nothing - the response is NO_REPLY or
             // whitespace AND no tool calls fired - is a pure no-op. Persisting it would leave a
@@ -147,6 +175,14 @@ public sealed class CronTrigger(
                 Content = prompt,
                 Trigger = TriggerType.Cron
             });
+
+            // #2118: project each tool call the turn executed into ordered tool rows (id, name,
+            // arguments, result content, error) so a completed cron session shows the same tool
+            // timeline the interactive streaming path persists. Placed between the user and
+            // assistant entries to preserve execution order.
+            foreach (var toolEntry in ProjectToolEntries(response))
+                session.AddEntry(toolEntry);
+
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
         }
         finally
@@ -188,6 +224,36 @@ public sealed class CronTrigger(
             return true;
 
         return content.Trim().Equals("NO_REPLY", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Projects the tool calls carried on an <see cref="AgentResponse"/> into ordered
+    /// <see cref="MessageRole.Tool"/> history entries, mirroring the tool rows the interactive
+    /// streaming path persists (issue #2118). Each call yields a single row carrying the tool call
+    /// id, name, serialized arguments, result content, and error state. A call that never completed
+    /// (cancelled/timed-out mid-flight, <see cref="AgentToolCallInfo.IsIncomplete"/>) is rendered
+    /// with a synthesized "did not complete" body and an error flag so the transcript stays
+    /// consistent with the streaming orphan-synthesis behaviour.
+    /// </summary>
+    private static IEnumerable<SessionEntry> ProjectToolEntries(AgentResponse response)
+    {
+        foreach (var call in response.ToolCalls)
+        {
+            var content = call.IsIncomplete
+                ? $"Tool '{call.ToolName}' did not complete - result synthesized for transcript consistency."
+                : call.ResultContent
+                    ?? (call.IsError ? "Tool execution failed." : "Tool execution completed.");
+
+            yield return new SessionEntry
+            {
+                Role = MessageRole.Tool,
+                Content = content,
+                ToolName = call.ToolName,
+                ToolCallId = call.ToolCallId,
+                ToolArgs = call.Arguments,
+                ToolIsError = call.IsError
+            };
+        }
     }
 
     /// <summary>
