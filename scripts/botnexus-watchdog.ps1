@@ -92,7 +92,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $ConfigDir) {
     $ConfigDir = Join-Path $HOME '.botnexus'
 }
-if (-not $RepoPath) {
+if (-not $PSBoundParameters.ContainsKey('RepoPath')) {
     $RepoPath = Join-Path $HOME 'botnexus'
 }
 if (-not $LogDir) {
@@ -126,14 +126,18 @@ function Write-Log {
     Write-Host $line
 }
 
+function New-State {
+    return @{
+        FailureCount = 0
+        LastGitCheck = $null
+        LastCliCheck = $null
+        LastKnownGoodConfig = $lastKnownGoodPath
+    }
+}
+
 function Read-State {
     if (-not (Test-Path $StateFile)) {
-        return [ordered]@{
-            FailureCount = 0
-            LastGitCheck = $null
-            LastCliCheck = $null
-            LastKnownGoodConfig = $lastKnownGoodPath
-        }
+        return New-State
     }
 
     try {
@@ -141,12 +145,7 @@ function Read-State {
     }
     catch {
         Write-Log "State file is invalid JSON. Reinitializing: $StateFile" 'WRN'
-        return [ordered]@{
-            FailureCount = 0
-            LastGitCheck = $null
-            LastCliCheck = $null
-            LastKnownGoodConfig = $lastKnownGoodPath
-        }
+        return New-State
     }
 }
 
