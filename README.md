@@ -87,7 +87,7 @@ BotNexus gives you a local playground for running and observing agents:
 Get BotNexus running from the published CLI tool in three steps (requires the
 .NET 10 SDK — see [Prerequisites](#prerequisites)):
 
-`ash
+```bash
 # 1. Install the BotNexus CLI (global .NET tool) and build the platform
 dotnet tool install -g BotNexus.Cli
 botnexus install --build
@@ -98,7 +98,7 @@ botnexus provider setup
 
 # 3. Start the gateway
 botnexus gateway start
-`
+```
 
 Open the WebUI at <http://localhost:5005>. Prefer building from source? See
 [Install And Run From Source](#install-and-run-from-source) and
