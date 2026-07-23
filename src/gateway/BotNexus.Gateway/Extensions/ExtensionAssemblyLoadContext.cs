@@ -27,6 +27,15 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
         // injects null, breaking config self-binding fallbacks (see Service Bus channel adapter).
         "Microsoft.Extensions.Configuration.Abstractions",
         "Microsoft.Extensions.Configuration.Binder",
+        // System.IO.Abstractions must be shared so an extension endpoint/tool receives the host's
+        // IFileSystem type identity. The gateway registers IFileSystem -> FileSystem in DI; a
+        // minimal-API handler parameter typed as IFileSystem is only bound as a service when its
+        // type identity matches that registration. An extension that ships its own copy of these
+        // assemblies (e.g. via CopyLocalLockFileAssemblies, #2193) otherwise gets a distinct
+        // IFileSystem type; ASP.NET no longer sees it as a service and infers it as a request body,
+        // which is illegal on GET/DELETE and aborts host startup (regression: Skills endpoints, #2184).
+        "Testably.Abstractions.FileSystem.Interface",
+        "TestableIO.System.IO.Abstractions.Wrappers",
     };
 
     public ExtensionAssemblyLoadContext(string mainAssemblyPath, bool isCollectible = true)
