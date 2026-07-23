@@ -311,6 +311,73 @@ public sealed class HeartbeatTriggerTests
     }
 
     // -----------------------------------------------------------------
+    // #2127: tool-audit records must survive an ack-shaped heartbeat turn
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task CreateSessionAsync_AckWithToolActivity_PersistsToolRows_AndDoesNotPrune()
+    {
+        var agentId = AgentId.From("agent-a");
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: false);
+
+        GatewaySession? saved = null;
+        mocks.Sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => saved = session)
+            .Returns(Task.CompletedTask);
+
+        var handle = new Mock<IAgentHandle>();
+        // Final text looks like an ack, but a side-effecting tool ran this turn.
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse
+            {
+                Content = "HEARTBEAT_OK",
+                ToolCalls = [new AgentToolCallInfo("call-1", "memory_save", false, "{\"note\":\"x\"}", "saved")]
+            });
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        await trigger.CreateSessionAsync(agentId, "Heartbeat ping");
+
+        saved.ShouldNotBeNull();
+        var history = saved!.GetHistorySnapshot();
+        // The heartbeat user turn must NOT be pruned when tools ran.
+        history.ShouldContain(e => e.Role == MessageRole.User && e.Trigger == TriggerType.Heartbeat);
+        // The tool row must be durably recorded with full metadata.
+        var toolRow = history.Where(e => e.Role == MessageRole.Tool).ShouldHaveSingleItem();
+        toolRow.ToolCallId.ShouldBe("call-1");
+        toolRow.ToolName.ShouldBe("memory_save");
+        toolRow.ToolArgs.ShouldNotBeNull().ShouldContain("note");
+        toolRow.Content.ShouldBe("saved");
+        // The assistant text is retained too.
+        history.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "HEARTBEAT_OK");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_AckWithoutToolActivity_StillPrunesTurn()
+    {
+        var agentId = AgentId.From("agent-a");
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: false);
+
+        GatewaySession? saved = null;
+        mocks.Sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => saved = session)
+            .Returns(Task.CompletedTask);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "HEARTBEAT_OK" });
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        await trigger.CreateSessionAsync(agentId, "Heartbeat ping");
+
+        saved.ShouldNotBeNull();
+        // Pure ack, no tools: the heartbeat turn is pruned as before.
+        saved!.GetHistorySnapshot().ShouldNotContain(e => e.Role == MessageRole.Tool);
+        saved.GetHistorySnapshot().ShouldNotContain(e => e.Role == MessageRole.User && e.Trigger == TriggerType.Heartbeat);
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 

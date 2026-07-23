@@ -180,6 +180,24 @@ public sealed class HeartbeatTrigger(
 
         var ackMaxChars = descriptor?.Heartbeat?.AckMaxChars ?? AckMaxCharsDefault;
 
+        // #2127 (addendum finding 1): a heartbeat turn that executed tools is NEVER an ack-only
+        // no-op, even when the final text looks like an acknowledgement. Pruning it would erase the
+        // only durable record that side-effecting tools ran. Persist the user turn, the tool
+        // timeline, and the assistant text so the audit trail survives instead of being pruned.
+        if (TriggerToolAuditProjector.HasToolActivity(response))
+        {
+            foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(response))
+                session.AddEntry(toolEntry);
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+            logger.LogInformation(
+                "HeartbeatTrigger: tool-active turn from agent '{AgentId}' session '{SessionId}' - ack-prune skipped to preserve tool audit records (jobId: {JobId}).",
+                agentId, sessionId, request?.CronJobId);
+
+            return sessionId;
+        }
+
         if (IsHeartbeatAck(response.Content, ackMaxChars))
         {
             // Replacement = snapshot minus its last entry (the heartbeat user
