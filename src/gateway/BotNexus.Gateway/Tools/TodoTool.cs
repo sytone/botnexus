@@ -88,11 +88,17 @@ public sealed class TodoTool(
 
     public Tool Definition => new(
         Name,
-        "Manage a per-conversation todo list so a multi-step plan lives as structured, persisted state rather than prose. "
-        + "Use action='write' to replace the whole list, 'update' to change one item by id (text and/or status), "
-        + "'list' to read the current items, and 'clear' to empty it. Item status is one of pending|in_progress|done|cancelled. "
-        + "A todo item is only legitimately marked 'done' when the work was actually accomplished by a tool result this turn -- "
-        + "narration does not flip a checkbox. The list persists on the conversation across sessions and survives compaction.",
+        "Manage a per-conversation execution checklist the agent keeps for itself to track what it is doing across "
+        + "a loop or set of loops, so it does not lose track of the outcome, the remaining steps, or its interactions with the user. "
+        + "Use it to break the current request into detailed, resumable steps for sequencing, checkpoints, retries, "
+        + "validation, deployment, and handoff. The checklist survives context compaction, interruption, and session continuation. "
+        + "This is the agent's own working memory of its plan, not a durable or user-facing task system of record. "
+        + "If the user tracks work in an external system (for example a task manager, issue tracker, or work-item system), that system "
+        + "remains the source of truth for ownership, priority, due dates, and cross-session reporting; one such item may map to many todo items. "
+        + "Do not substitute this list for that durable, assigned, or user-visible work, and do not push every implementation step back into an external system unless it independently needs long-term tracking there. "
+        + "Use action='write' to replace the whole list, 'update' to change one item by id, 'list' to read it, and 'clear' to empty it. "
+        + "Status is pending|in_progress|done|cancelled. "
+        + "Mark an item done only after the corresponding work is verified by a tool result this turn; narration does not flip a checkbox.",
         ToolSchema);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(

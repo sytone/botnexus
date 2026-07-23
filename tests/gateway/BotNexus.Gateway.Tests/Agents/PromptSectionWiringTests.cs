@@ -43,6 +43,20 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
+    public void ToolEnforcementSection_IncludesTodoBoundaryGuidance()
+    {
+        var prompt = BuildFullPrompt();
+
+        // Guards the todo boundary guidance (#2071): the todo tool is the agent's own
+        // per-conversation execution checklist for its work loop, and the guidance stays generic
+        // -- it must NOT name any particular external task/work-tracking system.
+        prompt.ShouldContain("per-conversation execution checklist");
+        prompt.ShouldContain("loop or set of loops");
+        prompt.ShouldContain("not a durable or user-facing system of record");
+        prompt.ShouldNotContain("TaskNexus");
+    }
+
+    [Fact]
     public void ShellEfficiencySection_AppearsInFullPrompt()
     {
         var prompt = BuildFullPrompt();

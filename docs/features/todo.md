@@ -43,7 +43,19 @@ completing, and the warning never appears for an empty list or a list whose item
 
 ## Todo Tool
 
-Agents manage the list through the built-in `todo` tool.
+Agents manage the list through the built-in `todo` tool. It is a per-conversation execution checklist
+the agent keeps for itself to track what it is doing across a loop or set of loops, so it does not
+lose track of the outcome, the remaining steps, or its interactions with the user. Use it for detailed
+sequencing, checkpoints, retries, validation, deployment, and handoff steps so work can resume
+accurately after context compaction, interruption, or session continuation.
+
+The `todo` list is the agent's own working memory of its plan -- it is not a durable or user-facing
+task system of record. If the user tracks work in an external system (for example a task manager,
+issue tracker, or work-item system of their choice), that system remains the source of truth for
+ownership, priority, due dates, and cross-session reporting, and one such item may map to many `todo`
+items. Do not substitute `todo` for that durable, assigned, cross-session, or user-visible work, and
+do not push every implementation step back into an external system unless that step independently
+needs long-term tracking there.
 
 | Action   | Description                                                                          |
 | -------- | ------------------------------------------------------------------------------------ |
