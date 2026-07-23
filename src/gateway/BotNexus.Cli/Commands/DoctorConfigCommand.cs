@@ -88,7 +88,15 @@ internal sealed class DoctorConfigCommand
             return 0;
         }
 
-        var interactive = AnsiConsole.Profile.Capabilities.Interactive && !autoApply;
+        // Only prompt when a real interactive stdin is attached. Checking
+        // AnsiConsole.Profile.Capabilities.Interactive alone is not sufficient:
+        // under `dotnet test` (and other automation) a terminal may be reported
+        // as interactive while stdin is unavailable, so AnsiConsole.Confirm would
+        // block forever waiting on input that never arrives. Guarding with
+        // Console.IsInputRedirected keeps the CLI from hanging in non-tty contexts.
+        var canPrompt = AnsiConsole.Profile.Capabilities.Interactive
+            && !Console.IsInputRedirected
+            && !autoApply;
         var appliedCount = 0;
         var skippedCount = 0;
         var alreadyOkCount = Checks.Count - applicable.Count;
@@ -108,14 +116,23 @@ internal sealed class DoctorConfigCommand
             }
 
             bool apply;
-            if (interactive)
+            if (autoApply)
+            {
+                apply = true;
+                AnsiConsole.MarkupLine("        [dim]--yes: applying...[/]");
+            }
+            else if (canPrompt)
             {
                 apply = AnsiConsole.Confirm("        Apply?", defaultValue: true);
             }
             else
             {
-                apply = true;
-                AnsiConsole.MarkupLine("        [dim]--yes: applying...[/]");
+                // No interactive stdin and --yes was not passed: never block on a
+                // prompt. Skip the fix and hint at the non-interactive flag.
+                apply = false;
+                AnsiConsole.MarkupLine("        [dim]— skipped (no interactive input; re-run with [green]--yes[/] to apply)[/]");
+                skippedCount++;
+                continue;
             }
 
             if (apply)
