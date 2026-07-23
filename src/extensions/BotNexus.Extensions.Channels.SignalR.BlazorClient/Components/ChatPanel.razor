@@ -353,9 +353,10 @@
                 {
                 <div class="message @msg.CssClass"
                      data-testid="message"
-                     data-message-role="@msg.Role">
+                     data-message-role="@msg.Role"
+                     data-author="@AuthorLabel(msg.Role)">
                     <div class="message-header">
-                        <span class="message-role">@msg.Role</span>
+                        <span class="message-role">@AuthorLabel(msg.Role)</span>
                         <div class="message-meta">
                             <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
                             @if (msg.Role == "Assistant" && !string.IsNullOrWhiteSpace(msg.Content))
@@ -420,9 +421,10 @@
             <div class="message assistant streaming"
                  @key="@("__streaming__")"
                  data-testid="streaming-message"
-                 data-message-role="Assistant">
+                 data-message-role="Assistant"
+                 data-author="@AuthorLabel("Assistant")">
                 <div class="message-header">
-                    <span class="message-role">Assistant</span>
+                    <span class="message-role">@AuthorLabel("Assistant")</span>
                     <span class="message-time">now</span>
                 </div>
                 <div class="message-content">@CurrentStreamBuffer</div>
@@ -551,6 +553,22 @@
         Agent?.ActiveConversationId is not null ? Agent.Conversations.GetValueOrDefault(Agent.ActiveConversationId) : null;
 
     private string DisplayName => Agent?.DisplayName ?? AgentId;
+
+    // #2185: assistant-role messages are labelled with the participating agent's display
+    // name instead of the generic "Assistant" protocol role. The protocol role value is kept
+    // verbatim in data-message-role for assistant-vs-user classification and CSS; only the
+    // human-facing author label is substituted. Non-assistant roles (User, Tool, System,
+    // Error) keep their role text. Falls back to the role text when no display name resolves.
+    private string AuthorLabel(string role)
+    {
+        if (string.Equals(role, "Assistant", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? role : name;
+        }
+
+        return role;
+    }
     private string? ActiveConversationId => Agent?.ActiveConversationId;
     private bool HasActiveConversation => ActiveConversation is not null;
     private string? ActiveConversationTitle => ActiveConversation?.Title;
