@@ -13,6 +13,22 @@ using System.IO.Abstractions;
 namespace BotNexus.Tools;
 
 /// <summary>
+/// Metadata describing the outcome of an <see cref="EditTool"/> invocation. Exposed via
+/// <see cref="AgentToolResult.Details"/> so callers can distinguish a real mutation from an
+/// idempotent no-op (issue #2100) without parsing the human-readable message.
+/// </summary>
+/// <param name="Changed">
+/// <c>true</c> when at least one edit changed file bytes; <c>false</c> when every requested edit
+/// was already satisfied and the file was left untouched.
+/// </param>
+/// <param name="AlreadySatisfiedIndices">
+/// Zero-based indices (into the requested edits array) of edits whose replacement text was already
+/// present, and so were treated as no-ops.
+/// </param>
+public sealed record EditResultDetails(bool Changed, IReadOnlyList<int> AlreadySatisfiedIndices);
+
+
+/// <summary>
 /// Represents edit tool.
 /// </summary>
 public sealed class EditTool : IAgentTool
@@ -149,21 +165,51 @@ public sealed class EditTool : IAgentTool
             }
             var originalLineEnding = DetectLineEnding(original);
             var normalizedOriginal = original.NormalizeLineEndings();
-            var replacements = ResolveReplacements(normalizedOriginal, edits);
-            var updatedNormalized = ApplyReplacements(normalizedOriginal, replacements);
-            var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
-            if (string.Equals(updatedText, original, StringComparison.Ordinal))
+            var resolved = ResolveReplacements(normalizedOriginal, edits);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
+
+            // Issue #2100: an edit whose resolved target text already equals its replacement is an
+            // idempotent no-op. Separate those from the edits that actually change bytes so an
+            // already-satisfied entry never fails the batch and, when every entry is a no-op, the
+            // whole call succeeds without touching the file.
+            var alreadySatisfied = resolved
+                .Where(edit => string.Equals(edit.OldText, edit.NewText, StringComparison.Ordinal))
+                .OrderBy(edit => edit.EditIndex)
+                .Select(edit => edit.EditIndex)
+                .ToList();
+            var effective = resolved
+                .Where(edit => !string.Equals(edit.OldText, edit.NewText, StringComparison.Ordinal))
+                .ToList();
+
+            if (effective.Count == 0)
             {
-                throw new InvalidOperationException("Edit produced no change — the replacement text is identical to the original.");
+                var noOpMessage = "No changes needed - replacement text is already present.";
+                var noOpDetails = new EditResultDetails(false, alreadySatisfied);
+                return new AgentToolResult(
+                    [new AgentToolContent(AgentToolContentType.Text, noOpMessage)],
+                    noOpDetails);
             }
+
+            var updatedNormalized = ApplyReplacements(normalizedOriginal, effective);
+            var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
 
             _fileSystem.File.WriteAllText(fullPath, updatedText, new UTF8Encoding(hasUtf8Bom));
 
-            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
             var diff = BuildUnifiedDiff(relativePath, normalizedOriginal, updatedNormalized);
-            var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\n{diff}";
+            var message = $"Successfully replaced {effective.Count} block(s) in '{relativePath}'.";
+            if (alreadySatisfied.Count > 0)
+            {
+                // Report which requested edits were already present so a mixed batch is transparent.
+                var indices = string.Join(", ", alreadySatisfied);
+                message += $" {alreadySatisfied.Count} edit(s) were already present (indices: {indices}).";
+            }
 
-            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+            message += $"\n{diff}";
+
+            var details = new EditResultDetails(true, alreadySatisfied);
+            return new AgentToolResult(
+                [new AgentToolContent(AgentToolContentType.Text, message)],
+                details);
         }).ConfigureAwait(false);
     }
 
@@ -285,7 +331,7 @@ public sealed class EditTool : IAgentTool
     {
         var normalizedForFuzzy = NormalizeForFuzzyMatchWithMap(normalizedOriginal);
         var replacements = edits
-            .Select(edit =>
+            .Select((edit, editIndex) =>
             {
                 var normalizedOld = edit.OldText.NormalizeLineEndings();
                 var normalizedNew = edit.NewText.NormalizeLineEndings();
@@ -301,7 +347,7 @@ public sealed class EditTool : IAgentTool
                 {
                     var start = normalizedOriginal.IndexOf(normalizedOld, StringComparison.Ordinal);
                     var end = start + normalizedOld.Length;
-                    return new ResolvedEdit(start, end, normalizedOriginal[start..end], normalizedNew);
+                    return new ResolvedEdit(editIndex, start, end, normalizedOriginal[start..end], normalizedNew);
                 }
 
                 var fuzzyOld = NormalizeForFuzzyMatch(normalizedOld);
@@ -323,6 +369,7 @@ public sealed class EditTool : IAgentTool
                 var endIndex = normalizedForFuzzy.IndexMap[fuzzyStart + fuzzyOld.Length];
 
                 return new ResolvedEdit(
+                    editIndex,
                     startIndex,
                     endIndex,
                     normalizedOriginal[startIndex..endIndex],
@@ -851,7 +898,7 @@ public sealed class EditTool : IAgentTool
 
     private sealed record EditEntry(string OldText, string NewText);
 
-    private sealed record ResolvedEdit(int StartIndex, int EndIndex, string OldText, string NewText);
+    private sealed record ResolvedEdit(int EditIndex, int StartIndex, int EndIndex, string OldText, string NewText);
 
     private sealed record NormalizedFuzzyText(string Normalized, IReadOnlyList<int> IndexMap);
 }
