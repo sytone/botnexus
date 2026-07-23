@@ -58,7 +58,13 @@ public static class PowerShellPreflight
             return false;
         }
 
-        var name = Path.GetFileNameWithoutExtension(executable.Trim());
+        // Normalize both Windows and POSIX separators so a Windows-style path such as
+        // "C:\Program Files\PowerShell\7\pwsh.exe" classifies correctly even when this runs on
+        // a Linux host (where Path.GetFileNameWithoutExtension does not treat '\' as a separator).
+        var trimmed = executable.Trim();
+        var lastSeparator = trimmed.LastIndexOfAny(new[] { '/', '\\' });
+        var fileName = lastSeparator >= 0 ? trimmed[(lastSeparator + 1)..] : trimmed;
+        var name = Path.GetFileNameWithoutExtension(fileName);
         return string.Equals(name, "pwsh", StringComparison.OrdinalIgnoreCase)
                || string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase);
     }
