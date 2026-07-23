@@ -17,7 +17,71 @@ internal static class CliApp
 
         using var serviceProvider = BuildServiceProvider();
         var root = BuildRootCommand(serviceProvider);
+
+        // Intercept the noun-first/verb-first inversion (e.g. `botnexus list agents`) before the
+        // default pipeline emits its self-referential "did you mean 'list'?" noise, replacing it
+        // with fully-qualified guidance (`agent list`, `cron list`, ...). Falls through untouched
+        // for every other input so normal dispatch and default errors are unaffected.
+        if (TryBuildUnmatchedCommandGuidance(root, args, out var guidance))
+        {
+            await Console.Error.WriteLineAsync(guidance).ConfigureAwait(false);
+            return 1;
+        }
+
         return await root.InvokeAsync(args);
+    }
+
+    /// <summary>
+    /// Detects the case where the first positional token is an unrecognised root command that
+    /// nevertheless matches one or more parent-scoped subcommand names, and produces qualified
+    /// "did you mean" guidance for it. Returns <see langword="false"/> (leaving <paramref name="guidance"/>
+    /// empty) for every other input so the default System.CommandLine pipeline handles it.
+    /// </summary>
+    /// <param name="root">The configured root command.</param>
+    /// <param name="args">The raw CLI arguments.</param>
+    /// <param name="guidance">The formatted guidance line when this method returns true.</param>
+    internal static bool TryBuildUnmatchedCommandGuidance(RootCommand root, string[] args, out string guidance)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(args);
+        guidance = string.Empty;
+
+        // Only the leading positional token can be an unmatched *root command*; option-led or
+        // empty invocations are never this class of mistake.
+        var firstToken = args.FirstOrDefault(a => !string.IsNullOrEmpty(a) && !a.StartsWith('-'));
+        if (string.IsNullOrEmpty(firstToken))
+        {
+            return false;
+        }
+
+        // If the token is already a valid root command (or alias) there is nothing to correct.
+        foreach (var command in root.Subcommands)
+        {
+            if (string.Equals(command.Name, firstToken, StringComparison.OrdinalIgnoreCase)
+                || command.Aliases.Any(a => string.Equals(a, firstToken, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+        }
+
+        var suggestions = CommandSuggestionResolver.BuildQualifiedSuggestions(root, firstToken);
+        if (suggestions.Count == 0)
+        {
+            return false;
+        }
+
+        guidance = CommandSuggestionResolver.FormatMessage(firstToken, suggestions);
+        return true;
+    }
+
+    /// <summary>
+    /// Builds the fully-configured root command for tests that need to exercise
+    /// command-tree traversal (suggestion resolution) without spinning up a process.
+    /// </summary>
+    internal static RootCommand CreateRootCommandForTesting()
+    {
+        var serviceProvider = BuildServiceProvider();
+        return BuildRootCommand(serviceProvider);
     }
 
     /// <summary>
