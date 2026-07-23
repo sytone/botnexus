@@ -5,6 +5,10 @@
     optionally hands off to an interactive GitHub Copilot CLI session primed with
     everything it needs to find the fault and propose a fix.
 
+    Motivation: when the gateway is down, the built-in BotNexus helper agent
+    (Nexus Trailguide) cannot help either -- the gateway that hosts the agent
+    runtime is the very thing that is down.
+
 .DESCRIPTION
     When the gateway fails to start (a common cause is an extension assembly-load
     regression that aborts host startup -- see PR #2218 / issue #2184), the CLI only
@@ -270,9 +274,9 @@ if (-not $Yes) {
 # Platform-aware priming prompt.
 $prompt = @"
 You are helping recover the BotNexus gateway, which is currently DOWN (its /health
-endpoint is not returning 200). The normal in-platform agent (Farnsworth) cannot help
-because the gateway that hosts it is the thing that is down -- so you are the break-glass
-assistant.
+endpoint is not returning 200). The built-in BotNexus helper agent (Nexus Trailguide)
+cannot help because the gateway that hosts it is the thing that is down -- so you are
+the break-glass assistant.
 
 ABOUT BOTNEXUS
 - BotNexus is a .NET 10 application: a Blazor Server UI + SignalR messaging gateway that

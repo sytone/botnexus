@@ -1,9 +1,9 @@
 # Break-Glass Gateway Recovery
 
-When the BotNexus gateway fails to start or become healthy, the normal in-platform
-agent (Farnsworth) cannot help you — the gateway that hosts the agent runtime is the
-very thing that is down. The CLI only surfaces a generic 10-second `/health` timeout,
-which **hides the real fault**.
+When the BotNexus gateway fails to start or become healthy, the built-in BotNexus
+helper agent (Nexus Trailguide) cannot help you — the gateway that hosts the agent
+runtime is the very thing that is down. The CLI only surfaces a generic 10-second
+`/health` timeout, which **hides the real fault**.
 
 `scripts/recover-gateway.ps1` is a standalone break-glass tool that runs independently
 of a running gateway. It gathers diagnostics and can hand off to an interactive GitHub
