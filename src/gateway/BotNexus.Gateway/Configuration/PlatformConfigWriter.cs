@@ -202,8 +202,24 @@ public sealed class PlatformConfigWriter
         return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
     }
 
+    private static readonly JsonSerializerOptions PlatformPersistOptions = new() { WriteIndented = true };
+
     private async Task WriteRootAsync(JsonObject root, string reason, CancellationToken ct)
     {
+        var json = root.ToJsonString(PlatformPersistOptions);
+
+        // Issue #2114: no-op detection. If the resulting canonical JSON is byte-for-byte
+        // identical to what is already on disk, do not back up, replace, or otherwise touch
+        // the file. This prevents startup and redundant-mutation reload storms (an atomic
+        // File.Move rewrites the inode/timestamp and re-triggers the IConfiguration reload
+        // pipeline even when nothing effectively changed).
+        if (_fileSystem.File.Exists(_configPath))
+        {
+            var existing = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
+            if (JsonCanonicalEquals(existing, json))
+                return;
+        }
+
         _backup?.Backup(_configPath, reason);
 
         var directory = _fileSystem.Path.GetDirectoryName(_configPath);
@@ -213,7 +229,6 @@ public sealed class PlatformConfigWriter
         var tempPath = _configPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
             await _fileSystem.File.WriteAllTextAsync(tempPath, json, ct);
             _fileSystem.File.Move(tempPath, _configPath, overwrite: true);
         }
@@ -221,6 +236,29 @@ public sealed class PlatformConfigWriter
         {
             if (_fileSystem.File.Exists(tempPath))
                 _fileSystem.File.Delete(tempPath);
+        }
+    }
+
+    /// <summary>
+    /// Compares two JSON documents for structural (effective) equality, tolerating whitespace
+    /// and formatting differences so that a re-serialized identical document is treated as a
+    /// no-op even when the on-disk copy used a different indentation or key formatting.
+    /// </summary>
+    private static bool JsonCanonicalEquals(string existing, string candidate)
+    {
+        if (string.Equals(existing, candidate, StringComparison.Ordinal))
+            return true;
+
+        try
+        {
+            var existingNode = JsonNode.Parse(existing);
+            var candidateNode = JsonNode.Parse(candidate);
+            return JsonNode.DeepEquals(existingNode, candidateNode);
+        }
+        catch (JsonException)
+        {
+            // Existing file is not valid JSON: treat as different so we rewrite it.
+            return false;
         }
     }
 }

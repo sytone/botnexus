@@ -282,4 +282,50 @@ public class ConfigHydrationServiceTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // --- Issue #2114: hydration must not rewrite config.json when nothing is missing ---
+
+    [Fact]
+    public async Task StartAsync_WithZeroMissingKeys_DoesNotRewriteFileOrCreateBackup()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "botnexus-hydration-noop-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        var backupsDir = Path.Combine(dir, "backups");
+        try
+        {
+            var contributor = new GatewaySchemaContributor();
+            // Pre-populate the file with the full contributor defaults so hydration adds nothing.
+            var defaults = JsonSerializer.SerializeToNode(
+                contributor.GetDefaults(),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!.AsObject();
+            var seeded = new JsonObject { ["gateway"] = defaults };
+            var seededJson = seeded.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(configPath, seededJson);
+
+            var fileSystem = new FileSystem();
+            var backup = new ConfigBackupService(backupsDir, fileSystem);
+            var writer = new PlatformConfigWriter(configPath, fileSystem, backup);
+            var service = new ConfigHydrationService(writer, [contributor], NullLogger<ConfigHydrationService>.Instance);
+
+            var before = File.GetLastWriteTimeUtc(configPath);
+            var beforeBytes = await File.ReadAllBytesAsync(configPath);
+            await Task.Delay(20);
+
+            await service.StartAsync(CancellationToken.None);
+
+            var after = File.GetLastWriteTimeUtc(configPath);
+            var afterBytes = await File.ReadAllBytesAsync(configPath);
+
+            after.ShouldBe(before, "Hydration with zero missing keys must not rewrite config.json (identity preserved).");
+            afterBytes.ShouldBe(beforeBytes);
+            (Directory.Exists(backupsDir) && Directory.GetFiles(backupsDir, "config-*.json").Length > 0)
+                .ShouldBeFalse("A no-op hydration must not create a backup.");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
 }

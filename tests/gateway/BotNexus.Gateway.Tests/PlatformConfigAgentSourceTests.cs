@@ -1349,6 +1349,168 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.ContextWindow.ShouldBeNull();
     }
 
+    // -------------------------------------------------------------------------
+    // Issue #2114: suppress unchanged reload notifications (pre-debounce fingerprint)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Watch_WhenConfigChangesButEffectiveDescriptorsUnchanged_DoesNotInvokeCallback()
+    {
+        // A config-change notification whose effective agent descriptors are unchanged
+        // must NOT propagate a reload. The source computes a stable effective fingerprint
+        // and suppresses identical notifications before scheduling a registry apply.
+        var initial = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(initial);
+        var source = new PlatformConfigAgentSource(monitor, _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+
+        int callbackCount = 0;
+        using var subscription = source.Watch(_ => callbackCount++);
+
+        // Fire a change whose agents are equivalent (fresh instances, same values).
+        monitor.RaiseChanged(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        });
+
+        callbackCount.ShouldBe(0,
+            "Effective descriptors are unchanged, so the notification must be suppressed pre-debounce.");
+    }
+
+    [Fact]
+    public void Watch_RepeatedIdenticalConfigCallbacks_InvokeCallbackZeroTimes()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(config);
+        var source = new PlatformConfigAgentSource(monitor, _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+
+        int callbackCount = 0;
+        using var subscription = source.Watch(_ => callbackCount++);
+
+        for (int i = 0; i < 5; i++)
+        {
+            monitor.RaiseChanged(new PlatformConfig
+            {
+                Agents = new Dictionary<string, AgentDefinitionConfig>
+                {
+                    ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+                }
+            });
+        }
+
+        callbackCount.ShouldBe(0, "Repeated identical effective descriptors must produce zero applies.");
+    }
+
+    [Fact]
+    public void Watch_WhenRealDescriptorChange_InvokesCallbackExactlyOnce()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(config);
+        var source = new PlatformConfigAgentSource(monitor, _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+
+        int callbackCount = 0;
+        using var subscription = source.Watch(_ => callbackCount++);
+
+        // A genuine descriptor change (display name) must fire exactly once.
+        monitor.RaiseChanged(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", DisplayName = "Renamed", Enabled = true }
+            }
+        });
+        // A subsequent identical change must be suppressed.
+        monitor.RaiseChanged(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", DisplayName = "Renamed", Enabled = true }
+            }
+        });
+
+        callbackCount.ShouldBe(1, "Exactly one apply for a real change; the following identical change is suppressed.");
+    }
+
+    [Fact]
+    public void Watch_EmitsNotificationSuppressedAndApplyMetrics()
+    {
+        using var meter = new System.Diagnostics.Metrics.Meter("BotNexus.Test.ConfigReload." + Guid.NewGuid().ToString("N"));
+        long notifications = 0, suppressed = 0, applies = 0;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter == meter)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name.EndsWith(".notifications", StringComparison.Ordinal)) notifications += measurement;
+            else if (instrument.Name.EndsWith(".suppressed", StringComparison.Ordinal)) suppressed += measurement;
+            else if (instrument.Name.EndsWith(".applies", StringComparison.Ordinal)) applies += measurement;
+        });
+        listener.Start();
+
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(config);
+        var source = new PlatformConfigAgentSource(
+            monitor,
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            locationResolver: null,
+            modelRegistry: null,
+            metrics: new BotNexus.Gateway.Telemetry.BotNexusMetrics(meter));
+
+        using var subscription = source.Watch(_ => { });
+
+        // Identical change -> suppressed.
+        monitor.RaiseChanged(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", Enabled = true }
+            }
+        });
+        // Real change -> applied.
+        monitor.RaiseChanged(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1", DisplayName = "Renamed", Enabled = true }
+            }
+        });
+        listener.Dispose();
+
+        notifications.ShouldBe(2);
+        suppressed.ShouldBe(1);
+        applies.ShouldBe(1);
+    }
+
     private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
     {
         private readonly IReadOnlyDictionary<string, string> _paths = paths;

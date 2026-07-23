@@ -387,7 +387,8 @@ public static class GatewayServiceCollectionExtensions
                 configDirectory,
                 serviceProvider.GetRequiredService<ILogger<PlatformConfigAgentSource>>(),
                 serviceProvider.GetRequiredService<ILocationResolver>(),
-                serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>()));
+                serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+                serviceProvider.GetService<BotNexus.Gateway.Telemetry.IMetrics>()));
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
             CreatePlatformConfigWriter(
                 resolvedConfigPath,
