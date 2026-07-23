@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-07-23
+
+### ✨ Features
+
+- **agents:** Support per-parent sub-agent budget overrides (#2207)
+- **portal:** Show agent display name instead of generic assistant label (#2210)
+- **#2126:** Generate provisional conversation title from first user message (#2211)
+
+### 🐛 Bug Fixes
+
+- **provider:** Classify provider-specific token-limit errors as context overflow (#2192)
+- **extensions:** Emit managed dependency closure for extension assemblies (#2193)
+- **sessions:** Skip and self-heal orphaned sessions with deleted conversations (#2194)
+- **cli:** Stop doctor config prompt from hanging without interactive stdin (#2198)
+- **agents:** Normalize pathological token-per-line sub-agent completion summaries (#2200)
+- **platform:** Initialize watchdog state on first run (#2201)
+- **portal:** Recover stuck turn-active input when RunEnded is missed (#2202)
+- **#2199:** Launch gateway via apphost exe to avoid name-based dotnet kills (#2203)
+- **gateway:** Verify scheduler responsiveness before fatal liveness alert (#2204)
+- **cli:** Suppress self-referential command suggestions and qualify matches (#2205)
+- **gateway:** Suppress unchanged config reload notifications and no-op writes (#2206)
+- **#2136:** Stop registering sub-agent archetypes as named conversational agents (#2209)
+- **tools:** Treat identical edit replacement as idempotent no-op (#2212)
+- **config:** Preserve per-agent fields when merging agent defaults (#2215)
+- **security:** Centralize tool-audit projection for blocking trigger runs (#2216)
+
+### 📖 Documentation
+
+- Backfill v0.29.0/v0.30.0/v0.32.0 release pages and wire azure runner sidebar (#2214)
+- **tools:** Clarify todo as generic agent execution checklist (#2217)
+
+## [0.32.0] - 2026-07-23
+
+### ✨ Features
+
+- **#1888:** Make agents stat card focus the agent filter (#2187)
+- **gateway:** Raise default agent tool timeout to 300s with defaults inheritance (#2191)
+
+### 🐛 Bug Fixes
+
+- **cli:** Stop OAuth provider setup from overwriting baseUrl with Ollama defaults (#2180)
+- **portal:** Shrink conversation title so header actions stay visible (#2186)
+- **provider:** Strip transport CRLF on GPT-5.6 Copilot WebSocket deltas (#2189)
+- **cron:** Persist tool call and result history for agent-prompt runs (#2190)
+
 ## [0.31.0] - 2026-07-22
 
 ### 🐛 Bug Fixes
@@ -3206,6 +3251,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.33.0]: https://github.com/sytone/botnexus/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/sytone/botnexus/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/sytone/botnexus/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/sytone/botnexus/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/sytone/botnexus/compare/v0.28.0...v0.29.0
