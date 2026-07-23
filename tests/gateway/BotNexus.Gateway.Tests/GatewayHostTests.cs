@@ -1808,7 +1808,8 @@ public sealed partial class GatewayHostTests
         IConversationStore? conversationStore = null,
         IOptions<PlatformConfig>? platformConfig = null,
         LlmClient? llmClient = null,
-        ISessionTurnTracker? turnTracker = null)
+        ISessionTurnTracker? turnTracker = null,
+        IConversationChangeNotifier? conversationChangeNotifier = null)
         => new(
             supervisor,
             router,
@@ -1825,7 +1826,8 @@ public sealed partial class GatewayHostTests
             conversationStore: conversationStore,
             platformConfig: platformConfig,
             llmClient: llmClient,
-            turnTracker: turnTracker);
+            turnTracker: turnTracker,
+            conversationChangeNotifier: conversationChangeNotifier);
 
     private static InboundMessage CreateMessage(
         string content,
