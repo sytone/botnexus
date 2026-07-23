@@ -33,7 +33,7 @@ public sealed class ConversationsControllerResetTests
             ActiveSessionId = SessionId.From("session-active"),
         };
         conversationStore.Setup(c => c.GetAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
-        conversationStore.Setup(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        conversationStore.Setup(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var resetService = new Mock<IConversationResetService>();
         resetService
@@ -46,7 +46,7 @@ public sealed class ConversationsControllerResetTests
             .Callback(() => sequence.Add("reset"))
             .ReturnsAsync(new ConversationResetResult(ConversationResetOutcome.Reset, SessionId.From("session-active"), TestAgent));
         conversationStore
-            .Setup(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>()))
+            .Setup(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>()))
             .Callback(() => sequence.Add("archive"))
             .Returns(Task.CompletedTask);
 
@@ -60,7 +60,7 @@ public sealed class ConversationsControllerResetTests
         result.ShouldBeOfType<NoContentResult>();
         sequence.ShouldBe(new[] { "reset", "archive" });
         resetService.Verify(r => r.ResetActiveSessionAsync(conversationId, null, It.IsAny<CancellationToken>()), Times.Once);
-        conversationStore.Verify(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public sealed class ConversationsControllerResetTests
         var conversation = new Conversation { ConversationId = conversationId, AgentId = TestAgent, ActiveSessionId = SessionId.From("session-active") };
         var conversationStore = new Mock<IConversationStore>();
         conversationStore.Setup(c => c.GetAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
-        conversationStore.Setup(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        conversationStore.Setup(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var sessions = new Mock<ISessionStore>(MockBehavior.Strict);
         // GetAsync may be called for virtual cron lookup; permit it returning null.
@@ -101,7 +101,7 @@ public sealed class ConversationsControllerResetTests
         var conversation = new Conversation { ConversationId = conversationId, AgentId = TestAgent, ActiveSessionId = SessionId.From("session-active") };
         var conversationStore = new Mock<IConversationStore>();
         conversationStore.Setup(c => c.GetAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
-        conversationStore.Setup(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        conversationStore.Setup(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var resetService = new Mock<IConversationResetService>();
         resetService
@@ -116,7 +116,7 @@ public sealed class ConversationsControllerResetTests
         var result = await controller.Archive(conversationId.Value, CancellationToken.None);
 
         result.ShouldBeOfType<NoContentResult>();
-        conversationStore.Verify(c => c.ArchiveAsync(conversationId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(c => c.ArchiveAsync(conversationId, "rest-api", It.IsAny<string?>(), "api", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

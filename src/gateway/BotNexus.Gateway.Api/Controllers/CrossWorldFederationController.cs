@@ -495,7 +495,7 @@ public sealed class CrossWorldFederationController(
     /// </summary>
     /// <remarks>
     /// Subsumes <see cref="ClearActiveSessionAsync"/> on the success-finished and error
-    /// paths because <see cref="IConversationStore.ArchiveAsync"/> atomically sets
+    /// paths because <see cref="IConversationStore.ArchiveAsync(ConversationId, CancellationToken)"/> atomically sets
     /// <c>Status = Archived</c> AND <c>ActiveSessionId = null</c>. Strict pointer guard:
     /// only archives when latest <c>ActiveSessionId</c> equals
     /// <paramref name="expectedSessionId"/> (any other state — null, different SessionId,
@@ -523,7 +523,7 @@ public sealed class CrossWorldFederationController(
                     conversation.ConversationId, latest.ActiveSessionId, expectedSessionId);
                 return;
             }
-            await conversationStore.ArchiveAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+            await conversationStore.ArchiveAsync(conversation.ConversationId, "agent-exchange-completion", expectedSessionId.Value, "system", cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

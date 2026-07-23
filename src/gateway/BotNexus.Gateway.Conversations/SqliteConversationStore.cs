@@ -336,6 +336,7 @@ public sealed class SqliteConversationStore : IConversationStore
     /// <inheritdoc />
     public async Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        ValidateLifecycleState(conversation);
         using var activity = ActivitySource.StartActivity("conversation.save", ActivityKind.Internal);
         activity?.SetTag("botnexus.conversation.id", conversation.ConversationId.Value);
         activity?.SetTag("botnexus.agent.id", conversation.AgentId.Value);
@@ -398,6 +399,125 @@ public sealed class SqliteConversationStore : IConversationStore
         finally
         {
             conversationLock.Dispose();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        using var activity = ActivitySource.StartActivity("conversation.archive", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        activity?.SetTag("botnexus.conversation.archive_source", source);
+        activity?.SetTag("botnexus.conversation.correlation_id", correlationId);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await EnsureAuditSchemaAsync(connection, ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var updatedAt = DateTimeOffset.UtcNow;
+
+            await using (var archive = connection.CreateCommand())
+            {
+                archive.Transaction = transaction;
+                archive.CommandText = """
+                    UPDATE conversations
+                    SET status = $status,
+                        active_session_id = NULL,
+                        updated_at = $updatedAt
+                    WHERE id = $id
+                    """;
+                archive.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
+                archive.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+                archive.Parameters.AddWithValue("$id", conversationId.Value);
+                await archive.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await using (var audit = connection.CreateCommand())
+            {
+                audit.Transaction = transaction;
+                audit.CommandText = """
+                    INSERT INTO conversation_audit
+                        (conversation_id, action, actor, source, correlation_id, previous_value, new_value, timestamp)
+                    VALUES ($conversationId, 'archived', $actor, $source, $correlationId, NULL, NULL, $timestamp)
+                    """;
+                audit.Parameters.AddWithValue("$conversationId", conversationId.Value);
+                audit.Parameters.AddWithValue("$actor", actor);
+                audit.Parameters.AddWithValue("$source", source);
+                audit.Parameters.AddWithValue("$correlationId", (object?)correlationId ?? DBNull.Value);
+                audit.Parameters.AddWithValue("$timestamp", updatedAt.ToString("O"));
+                await audit.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+            if (_cache.TryGet(conversationId.Value, out var cached))
+            {
+                var archived = CloneConversation(cached);
+                archived.Status = ConversationStatus.Archived;
+                archived.ActiveSessionId = null;
+                archived.UpdatedAt = updatedAt;
+                _cache.Set(conversationId.Value, archived);
+            }
+        }
+        finally
+        {
+            conversationLock.Dispose();
+        }
+    }
+
+    private static async Task EnsureAuditSchemaAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS conversation_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                source TEXT NOT NULL,
+                correlation_id TEXT,
+                previous_value TEXT,
+                new_value TEXT,
+                timestamp TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_audit_conversation_id
+                ON conversation_audit(conversation_id, timestamp DESC);
+            """;
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        await using var tableInfo = connection.CreateCommand();
+        tableInfo.CommandText = "PRAGMA table_info(conversation_audit);";
+        var hasCorrelationId = false;
+        await using (var reader = await tableInfo.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                hasCorrelationId |= string.Equals(reader.GetString(1), "correlation_id", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (hasCorrelationId)
+            return;
+
+        await using var migration = connection.CreateCommand();
+        migration.CommandText = "ALTER TABLE conversation_audit ADD COLUMN correlation_id TEXT";
+        try
+        {
+            await migration.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+        {
+            // Another process completed the additive migration after the schema probe.
         }
     }
 
@@ -1466,5 +1586,13 @@ public sealed class SqliteConversationStore : IConversationStore
         command.Parameters.AddWithValue("$id", conversationId.Value);
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+    private static void ValidateLifecycleState(Conversation conversation)
+    {
+        if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
+        }
     }
 }

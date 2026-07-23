@@ -160,6 +160,23 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task ArchiveAsync_WithProvenance_WritesCentralAuditEntry()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversation = await store.CreateAsync(CreateConversation(Agent("agent-a"), "Audited"));
+
+        await store.ArchiveAsync(conversation.ConversationId, "retention", "job-2167", "system");
+
+        using var audit = new SqliteConversationAuditLog(fixture.ConnectionString);
+        ConversationAuditEntry entry = (await audit.GetAsync(conversation.ConversationId.Value)).ShouldHaveSingleItem();
+        entry.Action.ShouldBe("archived");
+        entry.Source.ShouldBe("retention");
+        entry.CorrelationId.ShouldBe("job-2167");
+        entry.Actor.ShouldBe("system");
+    }
+
+    [Fact]
     public async Task ArchiveAsync_ClearsActiveSessionId()
     {
         using var fixture = new StoreFixture();

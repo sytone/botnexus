@@ -25,7 +25,8 @@ public sealed class ConversationTool(
     IReadOnlyList<string>? allowedAgents = null,
     ISessionStore? sessionStore = null,
     IInboundMessageOrchestrator? messageOrchestrator = null,
-    IConversationChangeNotifier? changeNotifier = null) : IAgentTool
+    IConversationChangeNotifier? changeNotifier = null,
+    IConversationRouter? conversationRouter = null) : IAgentTool
 {
     public string Name => "conversation";
     public string Label => "Conversation Context";
@@ -146,33 +147,22 @@ public sealed class ConversationTool(
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
 
-        // Reuse active session if present, otherwise create a fresh one.
-        GatewaySession session;
-        if (conversation.ActiveSessionId is { } existingSessionId)
-        {
-            var existing = await sessionStore.GetAsync(existingSessionId, ct).ConfigureAwait(false);
-            if (existing is not null)
-            {
-                session = existing;
-            }
-            else
-            {
-                session = await sessionStore.GetOrCreateAsync(SessionId.Create(), conversation.AgentId, ct).ConfigureAwait(false);
-                session.ConversationId = conversation.ConversationId;
-                conversation.ActiveSessionId = session.SessionId;
-                conversation.UpdatedAt = DateTimeOffset.UtcNow;
-                await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            session = await sessionStore.GetOrCreateAsync(SessionId.Create(), conversation.AgentId, ct).ConfigureAwait(false);
-            session.ConversationId = conversation.ConversationId;
-            conversation.ActiveSessionId = session.SessionId;
-            conversation.UpdatedAt = DateTimeOffset.UtcNow;
-            await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
-        }
+        var router = conversationRouter ?? new DefaultConversationRouter(
+            conversationStore,
+            sessionStore,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultConversationRouter>.Instance);
 
+        // Route through the canonical inbound lifecycle seam. The router reactivates archived
+        // conversations and persists the active-session assignment before dispatch.
+        var routing = await router.ResolveInboundAsync(
+            conversation.AgentId,
+            ChannelKey.From("internal"),
+            ChannelAddress.From(conversation.AgentId.Value),
+            conversation.ConversationId,
+            ct,
+            CitizenId.Of(agentId)).ConfigureAwait(false);
+        conversation = routing.Conversation;
+        var sessionId = routing.SessionId;
         // Carry the parsed speak_as override (if any) onto the inbound message so
         // GatewayHost derives the recorded role from it -- and from the agent-kind
         // sender when it is absent -- rather than re-deriving or hardcoding.
@@ -188,7 +178,7 @@ public sealed class ConversationTool(
                 SpeakAs = speakAs,
                 RoutingHints = new InboundMessageRoutingHints(
                     RequestedAgentId: conversation.AgentId,
-                    RequestedSessionId: session.SessionId,
+                    RequestedSessionId: sessionId,
                     RequestedConversationId: conversation.ConversationId),
                 Metadata = new Dictionary<string, object?>
                 {
@@ -200,7 +190,7 @@ public sealed class ConversationTool(
         return TextResult(JsonSerializer.Serialize(new
         {
             conversationId = conversation.ConversationId.Value,
-            sessionId = session.SessionId.Value
+            sessionId = sessionId.Value
         }, JsonOptions));
     }
 
@@ -381,7 +371,7 @@ public sealed class ConversationTool(
     {
         var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
         EnsureCanAccess(conversation.AgentId);
-        await conversationStore.ArchiveAsync(conversation.ConversationId, ct).ConfigureAwait(false);
+        await conversationStore.ArchiveAsync(conversation.ConversationId, "conversation-tool", currentConversationId?.Value, agentId.Value, ct).ConfigureAwait(false);
         await NotifyBestEffortAsync("archived", conversation, ct).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(new
         {

@@ -106,6 +106,23 @@ public interface IConversationStore
     Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default);
 
     /// <summary>
+    /// Archives a conversation while recording the lifecycle source and correlation identifier.
+    /// Production callers use this overload so every archive transition has central provenance.
+    /// </summary>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="source">Stable source name such as <c>rest-api</c> or <c>retention</c>.</param>
+    /// <param name="correlationId">Request, job, session, or trace identifier for the transition.</param>
+    /// <param name="actor">The actor initiating the transition.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task ArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+        => ArchiveAsync(conversationId, ct);
+
+    /// <summary>
     /// Resolves an active conversation for the given agent and channel binding details.
     /// Returns <c>null</c> if no matching conversation exists.
     /// </summary>

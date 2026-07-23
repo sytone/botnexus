@@ -124,6 +124,8 @@ public sealed class FileConversationStore : IConversationStore
     /// <inheritdoc />
     public async Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
+            throw new InvalidOperationException($"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
         StampWorldId(conversation);
         conversation = conversation with { UpdatedAt = DateTimeOffset.UtcNow };
         await _lock.WaitAsync(ct).ConfigureAwait(false);

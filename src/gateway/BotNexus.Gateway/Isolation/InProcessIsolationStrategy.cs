@@ -529,7 +529,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 conversationStore,
                 sessionStore,
                 _serviceProvider.GetService<IConversationChangeNotifier>(),
-                _serviceProvider.GetService<IInboundMessageOrchestrator>()),
+                _serviceProvider.GetService<IInboundMessageOrchestrator>(),
+                _serviceProvider.GetService<IConversationRouter>()),
             new ToolProviders.AskUserToolProvider(
                 _serviceProvider.GetService<IAskUserResponseRegistry>(),
                 conversationStore,
