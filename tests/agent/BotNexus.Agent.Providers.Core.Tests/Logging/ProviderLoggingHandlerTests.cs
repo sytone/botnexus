@@ -11,7 +11,7 @@ public class ProviderLoggingHandlerTests
     // ----- helpers -----
 
     private static (ProviderLoggingHandler handler, List<(LogLevel level, string msg)> logs) CreateHandler(
-        bool debugEnabled = true, HttpMessageHandler? inner = null)
+        bool debugEnabled = true, HttpMessageHandler? inner = null, Func<string, string>? secretRedactor = null)
     {
         var captured = new List<(LogLevel level, string msg)>();
         var loggerMock = new Mock<ILogger<ProviderLoggingHandler>>();
@@ -29,7 +29,7 @@ public class ProviderLoggingHandlerTests
                 captured.Add((lvl, formatter.DynamicInvoke(state, null) as string ?? ""));
             });
 
-        var handler = new ProviderLoggingHandler(loggerMock.Object)
+        var handler = new ProviderLoggingHandler(loggerMock.Object, secretRedactor)
         {
             InnerHandler = inner ?? new OkHandler()
         };
@@ -160,6 +160,85 @@ public class ProviderLoggingHandlerTests
         Assert.DoesNotContain("message_start", responseLog.msg);
     }
 
+    // ----- body secret redaction (issue #453) -----
+
+    // A stand-in for the gateway SecretRedactor: replaces any Anthropic-shaped key with [REDACTED].
+    private static string StubRedact(string input)
+        => System.Text.RegularExpressions.Regex.Replace(input, @"sk-ant-[A-Za-z0-9_\-]{6}", "[REDACTED]");
+
+    [Fact]
+    public async Task RequestBody_SecretsAreRedacted_ViaInjectedRedactor()
+    {
+        var (handler, logs) = CreateHandler(secretRedactor: StubRedact);
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(body: "{\"api_key\":\"sk-ant-abcdef123456\"}");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.Contains("[REDACTED]", requestLog.msg);
+        Assert.DoesNotContain("sk-ant-abcdef123456", requestLog.msg);
+    }
+
+    [Fact]
+    public async Task ResponseBody_SecretsAreRedacted_ViaInjectedRedactor()
+    {
+        var inner = new BodyHandler("{\"leaked\":\"sk-ant-zzzzzz999999\"}");
+        var (handler, logs) = CreateHandler(inner: inner, secretRedactor: StubRedact);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        var responseLog = logs.First(l => l.msg.Contains("response"));
+        Assert.Contains("[REDACTED]", responseLog.msg);
+        Assert.DoesNotContain("sk-ant-zzzzzz999999", responseLog.msg);
+    }
+
+    // ----- token usage extraction (issue #453) -----
+
+    [Fact]
+    public async Task ResponseLog_IncludesUsage_WhenPresentInBody()
+    {
+        var inner = new BodyHandler("{\"usage\":{\"input_tokens\":12,\"output_tokens\":34}}");
+        var (handler, logs) = CreateHandler(inner: inner);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        var responseLog = logs.First(l => l.msg.Contains("response"));
+        Assert.Contains("input_tokens", responseLog.msg);
+        Assert.Contains("34", responseLog.msg);
+    }
+
+    [Fact]
+    public async Task ResponseLog_UsageIsNa_WhenAbsent()
+    {
+        var inner = new BodyHandler("{\"content\":[]}");
+        var (handler, logs) = CreateHandler(inner: inner);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        var responseLog = logs.First(l => l.msg.Contains("response"));
+        Assert.Contains("n/a", responseLog.msg);
+    }
+
+    // ----- streaming stays non-destructive (issue #453) -----
+
+    [Fact]
+    public async Task StreamingResponse_BodyStreamRemainsReadable_AfterLogging()
+    {
+        var sseBody = "event: message_start\ndata: {\"usage\":{\"output_tokens\":7}}\n\n";
+        var (handler, _) = CreateHandler(inner: new SseHandler(sseBody));
+        var invoker = new HttpMessageInvoker(handler);
+
+        var response = await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        // The caller must still be able to read the full, unconsumed stream body.
+        var readBack = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        Assert.Equal(sseBody, readBack);
+    }
+
     // ----- truncation -----
 
     [Fact]
@@ -193,6 +272,15 @@ public class ProviderLoggingHandlerTests
             => Task.FromResult(new HttpResponseMessage(code)
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class BodyHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
             });
     }
 

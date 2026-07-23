@@ -199,6 +199,18 @@ public sealed class ShellTool : IAgentTool
         }
 
         var invocation = BuildShellInvocation(command, _shellPreference, _shellCommand);
+
+        // Preflight inline pwsh/powershell -Command scripts: reject syntax errors (empty pipe
+        // elements, malformed ${...} references, unbalanced braces) BEFORE spawning a process so the
+        // agent gets an immediate, actionable rejection instead of a late runtime ParserError. Only
+        // inline -Command invocations are checked; -File invocations and non-PowerShell shells pass
+        // through untouched, and valid one-liners are never altered.
+        if (PowerShellPreflight.IsPowerShellExecutable(invocation.FileName)
+            && PowerShellPreflight.TryGetInlineScript(invocation.BaseArgs, invocation.Command, out var inlineScript))
+        {
+            PowerShellPreflight.ThrowIfInvalid(inlineScript);
+        }
+
         // Combine the clamp warning (if any) with the shell-detection warning so both surface
         // on the tool result without threading two prefixes through every output build site.
         var warningPrefix = string.Concat(clampWarning, invocation.WarningPrefix);

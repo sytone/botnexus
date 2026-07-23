@@ -453,6 +453,7 @@ public sealed class AgentExchangeConversationTests
 
         // Simulate a second owner claiming ActiveSessionId after #1's clear.
         var newerOwner = SessionId.Create();
+        conv.Status = ConversationStatus.Active;
         conv.ActiveSessionId = newerOwner;
         await conversationStore.SaveAsync(conv);
 

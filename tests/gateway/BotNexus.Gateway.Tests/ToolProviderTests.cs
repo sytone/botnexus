@@ -103,7 +103,7 @@ public class ToolProviderTests
     [Fact]
     public void ConversationToolProvider_ExcludedWithoutStore()
     {
-        new ConversationToolProvider(null, null, null, null).ShouldInclude(Context()).ShouldBeFalse();
+        new ConversationToolProvider(null, null, null, null, null).ShouldInclude(Context()).ShouldBeFalse();
     }
 
     [Fact]

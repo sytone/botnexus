@@ -415,6 +415,81 @@ public sealed class ClientStateStoreTests
         store.GetAgent("a-1")!.SessionId.ShouldBe("sess-new");
     }
 
+    // ── #2243 active-view anti-hijack guard ────────────────────────────────────
+
+    [Fact]
+    public void ActiveAgentId_setter_rejects_switching_onto_a_read_only_sub_agent()
+    {
+        // #2243: a SubAgentSpawned or streaming event that lands around send time must never be
+        // able to promote the sub-agent's read-only virtual session to the active view. The store
+        // setter is the single choke point every non-user-click assignment flows through, so it
+        // silently rejects a switch onto a read-only agent.
+        var store = CreateSeededStore();
+        store.ActiveAgentId = "a-1";
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub-agent",
+            SessionType = "agent-subagent", // => IsReadOnly == true
+            IsConnected = true
+        });
+
+        store.ActiveAgentId = "sub-1";
+
+        store.ActiveAgentId.ShouldBe("a-1",
+            customMessage: "A concurrent event must not hijack the active view onto a read-only " +
+                "sub-agent session; the user's own agent stays active.");
+    }
+
+    [Fact]
+    public void ActiveAgentId_setter_allows_switching_between_user_agents()
+    {
+        var store = CreateSeededStore();
+
+        store.ActiveAgentId = "a-1";
+        store.ActiveAgentId = "a-2";
+
+        store.ActiveAgentId.ShouldBe("a-2");
+    }
+
+    [Fact]
+    public void SetActiveSubAgent_promotes_read_only_sub_agent_on_explicit_user_view()
+    {
+        // The explicit "view sub-agent" user click is the ONE path allowed to switch the active
+        // view onto a read-only session. It routes through SetActiveSubAgent, which bypasses the
+        // anti-hijack guard.
+        var store = CreateSeededStore();
+        store.ActiveAgentId = "a-1";
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub-agent",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+
+        store.SetActiveSubAgent("sub-1");
+
+        store.ActiveAgentId.ShouldBe("sub-1");
+    }
+
+    [Fact]
+    public void SetActiveSubAgent_does_not_leave_the_guard_open_for_later_events()
+    {
+        // The allow-flag must be scoped to the single SetActiveSubAgent call: a subsequent
+        // background event switching onto another read-only sub-agent must still be rejected.
+        var store = CreateSeededStore();
+        store.UpsertAgent(new AgentState { AgentId = "sub-1", DisplayName = "Sub 1", SessionType = "agent-subagent", IsConnected = true });
+        store.UpsertAgent(new AgentState { AgentId = "sub-2", DisplayName = "Sub 2", SessionType = "agent-subagent", IsConnected = true });
+
+        store.SetActiveSubAgent("sub-1");
+        store.ActiveAgentId = "sub-2"; // simulates a background SubAgentSpawned assignment
+
+        store.ActiveAgentId.ShouldBe("sub-1",
+            customMessage: "The sub-agent activation allowance must not persist past the explicit " +
+                "SetActiveSubAgent call.");
+    }
+
     private static ClientStateStore CreateSeededStore()
     {
         var store = new ClientStateStore();

@@ -73,7 +73,7 @@ public sealed class CronScheduler(
             {
                 using var scope = _scopeFactory.CreateScope();
                 var conversations = scope.ServiceProvider.GetRequiredService<IConversationStore>();
-                await conversations.ArchiveAsync(existing.ConversationId.Value, cancellationToken).ConfigureAwait(false);
+                await conversations.ArchiveAsync(existing.ConversationId.Value, "cron-delete-after-run", jobId.Value, "system", cancellationToken).ConfigureAwait(false);
                 _logger.LogInformation(
                     "Archived conversation '{ConversationId}' for deleted cron job '{JobId}'.",
                     existing.ConversationId.Value,
@@ -537,7 +537,7 @@ public sealed class CronScheduler(
             await conversations.SaveAsync(winnerConversation, ct).ConfigureAwait(false);
         }
 
-        await conversations.ArchiveAsync(loserConversationId, ct).ConfigureAwait(false);
+        await conversations.ArchiveAsync(loserConversationId, "cron-transient-cleanup", sessionId?.Value, "system", ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -696,7 +696,7 @@ public sealed class CronScheduler(
 
         foreach (var duplicate in duplicates)
         {
-            await conversations.ArchiveAsync(duplicate.ConversationId, ct).ConfigureAwait(false);
+            await conversations.ArchiveAsync(duplicate.ConversationId, "cron-duplicate-cleanup", jobIdSlug, "system", ct).ConfigureAwait(false);
             archivedCount++;
         }
 

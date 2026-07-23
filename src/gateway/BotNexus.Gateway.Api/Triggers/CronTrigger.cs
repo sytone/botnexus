@@ -158,7 +158,7 @@ public sealed class CronTrigger(
                 {
                     await sessions.DeleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     retainSession = false;
-                    await conversations.ArchiveAsync(conversation.ConversationId, CancellationToken.None).ConfigureAwait(false);
+                    await conversations.ArchiveAsync(conversation.ConversationId, "cron-transient-cleanup", sessionId.Value, "system", CancellationToken.None).ConfigureAwait(false);
                 }
 
                 return sessionId;

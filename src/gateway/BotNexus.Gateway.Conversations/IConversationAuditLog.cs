@@ -17,6 +17,9 @@ public sealed record ConversationAuditEntry
     /// <summary>How the action was triggered: tool, rest-api, portal, signalr-hub.</summary>
     public required string Source { get; init; }
 
+    /// <summary>Request, job, trace, or session identifier linking the transition to its caller.</summary>
+    public string? CorrelationId { get; init; }
+
     /// <summary>Previous value (truncated to 200 chars) for change actions, null for create/archive.</summary>
     public string? PreviousValue { get; init; }
 

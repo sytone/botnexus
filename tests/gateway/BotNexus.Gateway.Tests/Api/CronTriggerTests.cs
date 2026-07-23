@@ -1061,7 +1061,7 @@ public sealed class CronTriggerTests
         // Transient conversation we created this run is disposed: cron session deleted + conv archived.
         createdConversation.ShouldNotBeNull();
         sessionStore.Verify(s => s.DeleteAsync(sessionId, It.IsAny<CancellationToken>()), Times.Once);
-        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, "cron-transient-cleanup", It.IsAny<string?>(), "system", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -1088,7 +1088,7 @@ public sealed class CronTriggerTests
 
         createdConversation.ShouldNotBeNull();
         sessionStore.Verify(s => s.DeleteAsync(sessionId, It.IsAny<CancellationToken>()), Times.Once);
-        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
+        conversationStore.Verify(s => s.ArchiveAsync(createdConversation!.ConversationId, "cron-transient-cleanup", It.IsAny<string?>(), "system", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

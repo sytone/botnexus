@@ -127,7 +127,7 @@ public sealed class WebhookInboundController(
             // compare-and-set. Keep only the winning conversation visible; the loser has not
             // been dispatched or bound yet, so it is safe to archive immediately.
             if (winner.HasValue && winner.Value != created.ConversationId)
-                await conversationStore.ArchiveAsync(created.ConversationId, cancellationToken);
+                await conversationStore.ArchiveAsync(created.ConversationId, "webhook-loser-cleanup", System.Diagnostics.Activity.Current?.Id, "system", cancellationToken);
         }
 
         // ── 7. Resolve response mode ─────────────────────────────────────────

@@ -7,6 +7,8 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Agent.Providers.Core.Logging;
+using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.Extensions.Logging;
 using BotNexus.Agent.Providers.Core.Resilience;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Copilot.Messages;
@@ -287,7 +289,17 @@ builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
 builder.Services.AddHttpClient();
-builder.Services.AddTransient<ProviderLoggingHandler>();
+builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
+{
+    // Always wire the gateway's shared SecretRedactor into the handler so that any API key or
+    // token that leaks into a request/response body (not just the well-known auth headers) is
+    // scrubbed before it is written to the logs. Redaction is applied unconditionally whenever
+    // the handler logs; the config flag below only controls whether the handler runs at all.
+    var redactor = sp.GetService<ISecretRedactor>();
+    return new ProviderLoggingHandler(
+        sp.GetRequiredService<ILogger<ProviderLoggingHandler>>(),
+        redactor is null ? null : redactor.Redact);
+});
 builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
