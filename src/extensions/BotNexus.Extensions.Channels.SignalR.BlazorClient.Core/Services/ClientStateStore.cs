@@ -10,6 +10,8 @@ public sealed class ClientStateStore : IClientStateStore
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
     private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
+    private string? _activeAgentId;
+
     // High-frequency streaming deltas (content/thinking) route through NotifyChangedThrottled,
     // which coalesces a burst into at most one render per window so a long streamed response
     // does not trigger one StateHasChanged per token (#1620). Discrete lifecycle events keep
@@ -34,7 +36,49 @@ public sealed class ClientStateStore : IClientStateStore
     public IReadOnlyDictionary<string, AgentState> Agents => _agents;
 
     /// <inheritdoc />
-    public string? ActiveAgentId { get; set; }
+    /// <remarks>
+    /// #2243 anti-hijack guard: a sub-agent read-only virtual session (<see cref="AgentState.IsReadOnly"/>)
+    /// must never become the active view except through an explicit user "view sub-agent" click, which
+    /// routes through <see cref="SetActiveSubAgent"/>. Every other assignment path — SubAgentSpawned and
+    /// other streaming events, route/state refreshes, reconnect recovery — flows through this setter, so
+    /// silently rejecting a switch onto a read-only agent here keeps the composer, the new-conversation
+    /// button, and the user's own conversation in place. This mirrors the existing SeedConversations guard
+    /// that already stops virtual sessions from auto-hijacking the active conversation tab.
+    /// </remarks>
+    public string? ActiveAgentId
+    {
+        get => _activeAgentId;
+        set
+        {
+            if (value is not null
+                && !_allowSubAgentActivation
+                && _agents.TryGetValue(value, out var target)
+                && target.IsReadOnly)
+            {
+                return;
+            }
+
+            _activeAgentId = value;
+        }
+    }
+
+    // Set only for the duration of an explicit user-initiated sub-agent view (SetActiveSubAgent),
+    // which is the one path allowed to promote a read-only sub-agent session to the active view.
+    private bool _allowSubAgentActivation;
+
+    /// <inheritdoc />
+    public void SetActiveSubAgent(string subAgentId)
+    {
+        _allowSubAgentActivation = true;
+        try
+        {
+            ActiveAgentId = subAgentId;
+        }
+        finally
+        {
+            _allowSubAgentActivation = false;
+        }
+    }
 
     /// <inheritdoc />
     public void SeedAgents(IEnumerable<AgentSummary> agents)

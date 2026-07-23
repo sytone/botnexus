@@ -1659,6 +1659,55 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void SubAgentSpawned_event_does_not_desync_active_view_composer_stays_visible()
+    {
+        // Regression guard for #2243: with an active user-agent conversation, a SubAgentSpawned
+        // event landing around send time must NOT promote the sub-agent's read-only virtual
+        // session to the active view. The composer + new-session button stay visible and the
+        // read-only sub-agent banner is never shown (IsReadOnly stays false).
+        CreateAndSeedAgent("agent-1", "Farnsworth", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", isDefault: true)]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.ActiveAgentId = "agent-1";
+        _store.RegisterSession("agent-1", "sess-1", conversationId: "conv-1");
+        _store.GetConversation("conv-1")!.ActiveSessionId = "sess-1";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // A sub-agent spawns while the user is viewing their own conversation.
+        var handler = new GatewayEventHandler(
+            _store,
+            new GatewayHubConnection(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-1",
+            Name: "Flare",
+            Task: "background work",
+            Model: "test-model",
+            Archetype: "coder",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false,
+            ChildSessionId: "child-sess-1"));
+
+        cut.Render();
+
+        // Active view is unchanged: still the user's own agent + conversation.
+        _store.ActiveAgentId.ShouldBe("agent-1");
+        _store.GetAgent("agent-1")!.ActiveConversationId.ShouldBe("conv-1");
+
+        // Composer, send button, and new-session button remain visible; read-only banner absent.
+        Assert.NotNull(cut.Find("[data-testid=chat-input]"));
+        Assert.NotNull(cut.Find("[data-testid=chat-send]"));
+        Assert.NotNull(cut.Find(".new-chat-btn"));
+        Assert.DoesNotContain("read-only-banner", cut.Markup);
+    }
+
+    [Fact]
     public void Title_region_containers_are_shrinkable_so_header_actions_stay_visible()
     {
         // Regression guard for #2141: the intermediate flex containers between

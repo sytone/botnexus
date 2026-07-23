@@ -660,7 +660,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
             _store.RegisterSession(subAgentId, childSessionId);
         }
 
-        _store.ActiveAgentId = subAgentId;
+        // #2243: this is the sole user-initiated path allowed to promote a read-only sub-agent
+        // session to the active view. Route through SetActiveSubAgent, which bypasses the store's
+        // anti-hijack guard that otherwise rejects switching ActiveAgentId onto a read-only agent.
+        _store.SetActiveSubAgent(subAgentId);
         _store.NotifyChanged();
 
         // Load history if needed
