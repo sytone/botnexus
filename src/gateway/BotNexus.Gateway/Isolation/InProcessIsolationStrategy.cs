@@ -193,76 +193,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.Add(new MemoryGetTool(memoryStore));
         }
 
-        var cronEnabled = effectiveToolIds.Count == 0
-                          || effectiveToolIds.Contains("cron", StringComparer.OrdinalIgnoreCase);
-        var hasCronTool = tools.Any(tool => string.Equals(tool.Name, "cron", StringComparison.OrdinalIgnoreCase));
-        if (cronEnabled && !hasCronTool)
-        {
-            var cronStore = _serviceProvider.GetService<ICronStore>();
-            var cronScheduler = _serviceProvider.GetService<CronScheduler>();
-            if (cronStore is not null && cronScheduler is not null)
-            {
-                var allowCrossAgentCron = ResolveAllowCrossAgentCron(descriptor);
-                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId, allowCrossAgentCron));
-            }
-        }
-
-        // Session tool ΓÇö always available, access level from config
-        var sessionStore = _serviceProvider.GetService<ISessionStore>();
-        if (sessionStore is not null)
-        {
-            var (sessionAccessLevel, sessionAllowedAgents) = ResolveSessionAccess(descriptor);
-            tools.Add(new SessionTool(sessionStore, descriptor.AgentId, sessionAccessLevel, sessionAllowedAgents));
-        }
-
-        var conversationStore = _serviceProvider.GetService<IConversationStore>();
-        if (conversationStore is not null)
-        {
-            var conversationId = await GetConversationIdAsync(conversationStore, sessionStore)
-                .ConfigureAwait(false);
-            var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
-            var conversationChangeNotifier = _serviceProvider.GetService<IConversationChangeNotifier>();
-            var messageOrchestrator = _serviceProvider.GetService<IInboundMessageOrchestrator>();
-            tools.Add(new ConversationTool(
-                conversationStore,
-                descriptor.AgentId,
-                conversationId,
-                conversationAccessLevel,
-                conversationAllowedAgents,
-                sessionStore,
-                messageOrchestrator,
-                conversationChangeNotifier));
-        }
-
-        var includeAskUser = effectiveToolIds.Count == 0
-            || effectiveToolIds.Contains("ask_user", StringComparer.OrdinalIgnoreCase);
-        var askUserRegistry = _serviceProvider.GetService<IAskUserResponseRegistry>();
-        if (includeAskUser && askUserRegistry is not null)
-        {
-            var askUserConversationId = conversationStore is not null
-                ? await GetConversationIdAsync(conversationStore, sessionStore).ConfigureAwait(false)
-                : null;
-            tools.Add(new AskUserTool(
-                askUserRegistry,
-                descriptor.AgentId,
-                context.SessionId,
-                askUserConversationId,
-                conversationStore));
-        }
-        var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
-        tools.Add(new DelayTool(delayToolOptions));
-        var platformConfig = _serviceProvider.GetService<IOptions<PlatformConfig>>();
-        var serverTimezone = platformConfig?.Value.Gateway?.DefaultTimezone;
-        tools.Add(new DateTimeTool(descriptor.Soul?.Timezone ?? serverTimezone));
-
-        var fileWatcherToolOptions = _serviceProvider.GetService<IOptions<FileWatcherToolOptions>>() ?? Options.Create(new FileWatcherToolOptions());
-        tools.Add(new FileWatcherTool(fileWatcherToolOptions, pathValidator));
-        // Pull-based AGENTS.md discovery: the agent calls get_agent_files with a path to load
-        // the conventions that apply there, instead of always-on injection that could exhaust context.
-        tools.Add(new AgentFilesTool(pathValidator, _serviceProvider.GetService<System.IO.Abstractions.IFileSystem>()));
-
-        var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
-        var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
+        // #1382 Finding 1: the per-tool availability + allowlist gates that previously issued 23
+        // inline _serviceProvider.GetService<...>() calls are now explicit IToolProvider units (see
+        // Isolation/ToolProviders). Sub-agent gate diagnostics stay here because they observe an
+        // invariant, not a tool; the computed flag is handed to the SubAgentToolProvider.
+        //
         // Phase 5 / F-6 part 1: primary signal is the typed descriptor.Kind (AgentKind.SubAgent
         // is set exactly once by DefaultSubAgentManager.SpawnAsync). The SessionId.IsSubAgent
         // substring check is retained as defense-in-depth so the gate fails CLOSED if a future
@@ -285,7 +220,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             _logger.LogWarning(
                 "Isolation gate: descriptor.Kind=SubAgent but SessionId '{SessionId}' is not a sub-agent shape " +
                 "for agent '{AgentId}'. Spawn tools will be blocked (correct), but this indicates an invariant " +
-                "drift — typed and substring signals must agree.",
+                "drift - typed and substring signals must agree.",
                 context.SessionId,
                 descriptor.AgentId);
         }
@@ -294,134 +229,38 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             _logger.LogWarning(
                 "Isolation gate: SessionId '{SessionId}' is a sub-agent shape but descriptor.Kind={Kind} for " +
                 "agent '{AgentId}'. The substring fallback is correctly blocking spawn tools, but the typed " +
-                "signal should also be SubAgent — this indicates the descriptor was registered outside of " +
+                "signal should also be SubAgent - this indicates the descriptor was registered outside of " +
                 "DefaultSubAgentManager.SpawnAsync.",
                 context.SessionId,
                 descriptor.Kind,
                 descriptor.AgentId);
         }
-        if (subAgentManager is not null &&
-            subAgentOptions is { MaxDepth: > 0 } &&
-            !isSubAgentSession)
-        {
-            var includeSpawn = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("spawn_subagent", StringComparer.OrdinalIgnoreCase);
-            var includeList = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("list_subagents", StringComparer.OrdinalIgnoreCase);
-            var includeManage = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
-            if (includeSpawn)
-            {
-                var spawnConversationId = conversationStore is not null
-                    ? await GetConversationIdAsync(conversationStore, sessionStore).ConfigureAwait(false)
-                    : null;
-                if (spawnConversationId is { } resolvedSpawnConversationId)
-                {
-                    tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId, resolvedSpawnConversationId));
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "Skipping spawn_subagent tool for session '{SessionId}' (agent '{AgentId}'): no conversation is bound to this session. " +
-                        "Sub-agent sessions must inherit a parent conversation to remain visible in the portal thread.",
-                        context.SessionId,
-                        descriptor.AgentId);
-                }
-            }
-            if (includeList)
-                tools.Add(new SubAgentListTool(subAgentManager, context.SessionId));
-            if (includeManage)
-                tools.Add(new SubAgentManageTool(subAgentManager, context.SessionId));
-        }
 
-        var conversationService = _serviceProvider.GetService<IAgentExchangeService>();
-        if (conversationService is not null && sessionStore is not null)
-        {
-            var includeConverse = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
-            if (includeConverse)
-            {
-                var converseExchangeOptions = _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()?.Value;
-                tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId, converseExchangeOptions));
-            }
-        }
+        // Shared locals still needed by the agent-options assembly further down.
+        var sessionStore = _serviceProvider.GetService<ISessionStore>();
+        var platformConfig = _serviceProvider.GetService<IOptions<PlatformConfig>>();
 
-        // Phase 8 (F-11): register finish_agent_exchange when this is an agent-to-agent session.
-        // Bypasses effectiveToolIds because this is a system control tool, not an agent-configured
-        // capability — without it the substring-based completion heuristic that issue #379 patched
-        // around would have nothing to replace it.
-        if (sessionStore is not null)
-        {
-            var sessionForFinishTool = await sessionStore.GetAsync(context.SessionId, cancellationToken).ConfigureAwait(false);
-            if (sessionForFinishTool is not null && sessionForFinishTool.SessionType == SessionType.AgentAgent)
-            {
-                tools.Add(new FinishAgentExchangeTool(sessionStore, context.SessionId));
-            }
-        }
+        var toolProviderContext = new ToolProviders.ToolProviderContext(
+            descriptor,
+            context,
+            effectiveToolIds,
+            new HashSet<string>(tools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase),
+            isSubAgentSession,
+            pathValidator,
+            store => GetConversationIdAsync(store, sessionStore),
+            _logger,
+            cancellationToken);
 
-        var agentRegistry = _serviceProvider.GetService<IAgentRegistry>();
-        if (agentRegistry is not null)
+        // #1382 Finding 1: providers.Where(ShouldInclude).SelectMany(CreateTools). Kept as an
+        // explicit loop rather than a LINQ SelectMany because CreateToolsAsync is asynchronous
+        // (bound-conversation resolution / live-session reads); the semantics are identical.
+        foreach (var toolProvider in BuildToolProviders(sessionStore, platformConfig))
         {
-            var includeListAgents = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
-            if (includeListAgents)
-            {
-                var exchangeOptions = _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()?.Value;
-                tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId, exchangeOptions));
-            }
-        }
-
-        var configurationWriter = _serviceProvider.GetService<IAgentConfigurationWriter>();
-        var botNexusHome = _serviceProvider.GetService<BotNexusHome>();
-        var changeNotifiers = _serviceProvider.GetServices<IAgentChangeNotifier>();
-        if (agentRegistry is not null && configurationWriter is not null && botNexusHome is not null)
-        {
-            var apiProviderRegistry = _serviceProvider.GetService<ApiProviderRegistry>();
-            var includeCreateAgent = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("create_agent", StringComparer.OrdinalIgnoreCase);
-            if (includeCreateAgent)
-            {
-                var platformConfigOptions = _serviceProvider.GetService<IOptions<PlatformConfig>>();
-                tools.Add(new CreateAgentTool(agentRegistry, configurationWriter, changeNotifiers, botNexusHome, platformConfigOptions, apiProviderRegistry, _llmClient.Models));
-            }
-
-            var includeUpdateAgent = effectiveToolIds.Count == 0
-                || effectiveToolIds.Contains("update_agent", StringComparer.OrdinalIgnoreCase);
-            if (includeUpdateAgent)
-                tools.Add(new UpdateAgentTool(agentRegistry, configurationWriter, changeNotifiers, apiProviderRegistry, _llmClient.Models));
-        }
-
-        var includeCanvas = effectiveToolIds.Count == 0
-                            || effectiveToolIds.Contains("canvas", StringComparer.OrdinalIgnoreCase);
-        if (includeCanvas)
-        {
-            var canvasNotifiers = _serviceProvider.GetServices<IAgentCanvasNotifier>().ToArray();
-            ConversationId? canvasConversationId = null;
-            var canvasConvStore = _serviceProvider.GetService<IConversationStore>();
-            if (canvasConvStore is not null)
-            {
-                canvasConversationId = await GetConversationIdAsync(canvasConvStore, sessionStore)
-                    .ConfigureAwait(false);
-            }
-            tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasConvStore, canvasNotifiers));
-        }
-
-        var includeTodo = effectiveToolIds.Count == 0
-                          || effectiveToolIds.Contains("todo", StringComparer.OrdinalIgnoreCase);
-        if (includeTodo)
-        {
-            // Per-conversation todo list (#1464 step 2). Resolved per conversation exactly like the
-            // canvas tool so the plan state is anchored to the bound conversation; no-ops safely when
-            // there is no conversation context.
-            var todoNotifiers = _serviceProvider.GetServices<IAgentTodoNotifier>().ToArray();
-            ConversationId? todoConversationId = null;
-            var todoConvStore = _serviceProvider.GetService<IConversationStore>();
-            if (todoConvStore is not null)
-            {
-                todoConversationId = await GetConversationIdAsync(todoConvStore, sessionStore)
-                    .ConfigureAwait(false);
-            }
-            tools.Add(new TodoTool(todoConversationId, todoConvStore, descriptor.AgentId, todoNotifiers));
+            if (!toolProvider.ShouldInclude(toolProviderContext))
+                continue;
+            var providerTools = await toolProvider.CreateToolsAsync(toolProviderContext).ConfigureAwait(false);
+            if (providerTools.Count > 0)
+                tools.AddRange(providerTools);
         }
 
         List<object> extensionResourcesToDispose = [];
@@ -669,25 +508,72 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     // Parse the descriptor's wire-form thinking string ("minimal".."max", plus "xhigh") into the
     // ThinkingLevel enum for the resolver's agent layer. Unset / unrecognised => null (fall through
     // to the model default). Capability validity is enforced at registration; this is a lenient read.
+    // #1382 Finding 1: assemble the explicit tool providers that replaced the inline service-locator
+    // gates. Every GetService/GetServices call that used to be scattered through CreateAsync now
+    // lives here in one place, feeding each provider its dependencies through a normal constructor.
+    // Providers whose dependencies are absent gate themselves out via ShouldInclude, preserving the
+    // pre-refactor "is not null" semantics exactly. Order matches the original registration order so
+    // the resulting tool list is identical.
+    private IReadOnlyList<ToolProviders.IToolProvider> BuildToolProviders(
+        ISessionStore? sessionStore,
+        IOptions<PlatformConfig>? platformConfig)
+    {
+        var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        return
+        [
+            new ToolProviders.CronToolProvider(
+                _serviceProvider.GetService<ICronStore>(),
+                _serviceProvider.GetService<CronScheduler>()),
+            new ToolProviders.SessionToolProvider(sessionStore),
+            new ToolProviders.ConversationToolProvider(
+                conversationStore,
+                sessionStore,
+                _serviceProvider.GetService<IConversationChangeNotifier>(),
+                _serviceProvider.GetService<IInboundMessageOrchestrator>()),
+            new ToolProviders.AskUserToolProvider(
+                _serviceProvider.GetService<IAskUserResponseRegistry>(),
+                conversationStore,
+                sessionStore),
+            new ToolProviders.DelayToolProvider(_serviceProvider.GetService<IOptions<DelayToolOptions>>()),
+            new ToolProviders.DateTimeToolProvider(platformConfig),
+            new ToolProviders.FileWatcherToolProvider(_serviceProvider.GetService<IOptions<FileWatcherToolOptions>>()),
+            new ToolProviders.AgentFilesToolProvider(_serviceProvider.GetService<System.IO.Abstractions.IFileSystem>()),
+            new ToolProviders.SubAgentToolProvider(
+                _serviceProvider.GetService<ISubAgentManager>(),
+                _serviceProvider.GetService<IOptions<GatewayOptions>>(),
+                conversationStore,
+                sessionStore),
+            new ToolProviders.AgentConverseToolProvider(
+                _serviceProvider.GetService<IAgentExchangeService>(),
+                sessionStore,
+                _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()),
+            new ToolProviders.FinishAgentExchangeToolProvider(sessionStore),
+            new ToolProviders.ListAgentsToolProvider(
+                _serviceProvider.GetService<IAgentRegistry>(),
+                _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()),
+            new ToolProviders.AgentManagementToolProvider(
+                _serviceProvider.GetService<IAgentRegistry>(),
+                _serviceProvider.GetService<IAgentConfigurationWriter>(),
+                _serviceProvider.GetService<BotNexusHome>(),
+                _serviceProvider.GetServices<IAgentChangeNotifier>(),
+                _serviceProvider.GetService<ApiProviderRegistry>(),
+                _serviceProvider.GetService<IOptions<PlatformConfig>>(),
+                _llmClient),
+            new ToolProviders.CanvasToolProvider(
+                _serviceProvider.GetService<IConversationStore>(),
+                _serviceProvider.GetServices<IAgentCanvasNotifier>()),
+            new ToolProviders.TodoToolProvider(
+                _serviceProvider.GetService<IConversationStore>(),
+                _serviceProvider.GetServices<IAgentTodoNotifier>()),
+        ];
+    }
+
     private static BotNexus.Agent.Providers.Core.Models.ThinkingLevel? ParseAgentThinking(string? thinking)
     {
         if (string.IsNullOrWhiteSpace(thinking))
             return null;
         return AgentDescriptorValidator.TryParseThinking(thinking, out var level) ? level : null;
     }
-    private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)
-    {
-        if (!descriptor.Metadata.TryGetValue("allowCrossAgentCron", out var raw) || raw is null)
-            return false;
-
-        return raw switch
-        {
-            bool value => value,
-            string value when bool.TryParse(value, out var parsed) => parsed,
-            _ => false
-        };
-    }
-
     private TimeSpan? ResolveToolTimeout(AgentDescriptor descriptor)
     {
         if (!descriptor.Metadata.TryGetValue("toolTimeoutSeconds", out var raw) || raw is null)
@@ -747,67 +633,6 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         seconds = parsed;
         return true;
-    }
-
-    private static (SessionAccessLevel level, IReadOnlyList<string>? allowedAgents) ResolveSessionAccess(AgentDescriptor descriptor)
-    {
-        var level = (descriptor.SessionAccessLevel ?? "own").ToLowerInvariant() switch
-        {
-            "all" => SessionAccessLevel.All,
-            "allowlist" => SessionAccessLevel.Allowlist,
-            _ => SessionAccessLevel.Own
-        };
-
-        var allowed = descriptor.SessionAllowedAgents is { Count: > 0 }
-            ? descriptor.SessionAllowedAgents
-            : null;
-
-        // If sub-agents are configured, automatically include them in the allowlist
-        if (descriptor.SubAgentIds is { Count: > 0 } && level != SessionAccessLevel.All)
-        {
-            var combined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (allowed is not null)
-                foreach (var a in allowed) combined.Add(a);
-            foreach (var s in descriptor.SubAgentIds) combined.Add(s);
-
-            if (combined.Count > 0)
-            {
-                level = SessionAccessLevel.Allowlist;
-                allowed = combined.ToList();
-            }
-        }
-
-        return (level, allowed);
-    }
-
-    private static (ConversationAccessLevel level, IReadOnlyList<string>? allowedAgents) ResolveConversationAccess(AgentDescriptor descriptor)
-    {
-        var level = (descriptor.ConversationAccessLevel ?? "own").ToLowerInvariant() switch
-        {
-            "all" => ConversationAccessLevel.All,
-            "allowlist" => ConversationAccessLevel.Allowlist,
-            _ => ConversationAccessLevel.Own
-        };
-
-        var allowed = descriptor.ConversationAllowedAgents is { Count: > 0 }
-            ? descriptor.ConversationAllowedAgents
-            : null;
-
-        if (descriptor.SubAgentIds is { Count: > 0 } && level != ConversationAccessLevel.All)
-        {
-            var combined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (allowed is not null)
-                foreach (var agent in allowed) combined.Add(agent);
-            foreach (var subAgentId in descriptor.SubAgentIds) combined.Add(subAgentId);
-
-            if (combined.Count > 0)
-            {
-                level = ConversationAccessLevel.Allowlist;
-                allowed = combined.ToList();
-            }
-        }
-
-        return (level, allowed);
     }
 
     // #1706: build the conversation-level override layer for the resolver from the conversation
