@@ -11,6 +11,19 @@ using System.IO.Abstractions;
 namespace BotNexus.Tools;
 
 /// <summary>
+/// Metadata describing the outcome of a <see cref="ReadTool"/> invocation. Exposed via
+/// <see cref="AgentToolResult.Details"/> so a caller can capture an optimistic-concurrency token
+/// (issue #2101) and pass it back to the <c>edit</c> tool as <c>expectedHash</c>; the edit then
+/// detects that the file changed since it was read instead of blindly fuzzy-matching stale text.
+/// </summary>
+/// <param name="ConcurrencyToken">
+/// A stable content token for the file that was read, or <c>null</c> for non-file reads
+/// (directory listings and images).
+/// </param>
+public sealed record ReadResultDetails(string? ConcurrencyToken);
+
+
+/// <summary>
 /// Represents read tool.
 /// </summary>
 public sealed class ReadTool : IAgentTool
@@ -153,7 +166,13 @@ public sealed class ReadTool : IAgentTool
             var offset = arguments.TryGetValue("offset", out var offsetObj) && offsetObj is int parsedOffset ? parsedOffset : 1;
             var limit = arguments.TryGetValue("limit", out var limitObj) && limitObj is int parsedLimit ? parsedLimit : (int?)null;
             var content = ReadText(textContent, relativePath, offset, limit);
-            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, content)]);
+            // Surface an optimistic-concurrency token (issue #2101) so a later edit can detect the
+            // file changed since this read. Computed over the whole decoded file, not the returned
+            // slice, so the token is stable regardless of offset/limit paging.
+            var token = ContentToken.Compute(textContent);
+            return new AgentToolResult(
+                [new AgentToolContent(AgentToolContentType.Text, content)],
+                new ReadResultDetails(token));
         }
 
         if (_fileSystem.Directory.Exists(resolvedPath))

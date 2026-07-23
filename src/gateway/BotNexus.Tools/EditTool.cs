@@ -29,6 +29,17 @@ public sealed record EditResultDetails(bool Changed, IReadOnlyList<int> AlreadyS
 
 
 /// <summary>
+/// Metadata describing an <see cref="EditTool"/> invocation that was rejected because the file
+/// changed since the caller read it (issue #2101). Exposed via <see cref="AgentToolResult.Details"/>
+/// so a caller can distinguish a stale-content rejection from a real match failure and re-read
+/// deterministically instead of retrying blindly with stale <c>oldText</c>.
+/// </summary>
+/// <param name="ExpectedHash">The concurrency token the caller supplied (from a prior <c>read</c>).</param>
+/// <param name="ActualHash">The current concurrency token of the file on disk.</param>
+public sealed record EditStaleContentDetails(string ExpectedHash, string ActualHash);
+
+
+/// <summary>
 /// Represents edit tool.
 /// </summary>
 public sealed class EditTool : IAgentTool
@@ -77,6 +88,10 @@ public sealed class EditTool : IAgentTool
                   "type": "string",
                   "description": "Path to the file to edit (relative or absolute)."
                 },
+                "expectedHash": {
+                  "type": "string",
+                  "description": "Optional optimistic-concurrency token from the `read` tool's structured result. When supplied, the edit is rejected with a stale-content outcome if the file changed since it was read. Re-read immediately before editing; never reuse oldText after another edit; never copy oldText from shell output."
+                },
                 "edits": {
                   "type": "array",
                   "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Expected shape: { \"path\": \"...\", \"edits\": [ { \"oldText\": \"...\", \"newText\": \"...\" } ] }.",
@@ -112,13 +127,19 @@ public sealed class EditTool : IAgentTool
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
+        var prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["path"] = ReadRequiredString(arguments, "path"),
             ["edits"] = ReadEdits(arguments)
         };
 
-        return Task.FromResult(prepared);
+        var expectedHash = ReadOptionalExpectedHash(arguments);
+        if (expectedHash is not null)
+        {
+            prepared["expectedHash"] = expectedHash;
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
     /// <summary>
@@ -137,6 +158,7 @@ public sealed class EditTool : IAgentTool
         var rawPath = arguments["path"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: path.");
         var edits = arguments["edits"] as IReadOnlyList<EditEntry> ?? ReadEdits(arguments);
+        var expectedHash = ReadOptionalExpectedHash(arguments);
 
         var fullPath = _validator?.ValidateAndResolve(rawPath, FileAccessMode.Write);
         if (_validator is not null && fullPath is null)
@@ -163,6 +185,24 @@ public sealed class EditTool : IAgentTool
             {
                 original = original[1..];
             }
+            // Issue #2101: if the caller supplied a concurrency token, reject the edit when the file
+            // changed since it was read. This converts a blind stale-content retry (the "found 0"
+            // family) into one deterministic re-read, and never applies edits against changed bytes.
+            if (expectedHash is not null)
+            {
+                var actualHash = ContentToken.Compute(original);
+                if (!string.Equals(actualHash, expectedHash, StringComparison.Ordinal))
+                {
+                    var staleMessage =
+                        "File changed since read; re-read before editing. "
+                        + $"expectedHash '{expectedHash}' but the file is now '{actualHash}'. "
+                        + "No edits were applied.";
+                    return new AgentToolResult(
+                        [new AgentToolContent(AgentToolContentType.Text, staleMessage)],
+                        new EditStaleContentDetails(expectedHash, actualHash));
+                }
+            }
+
             var originalLineEnding = DetectLineEnding(original);
             var normalizedOriginal = original.NormalizeLineEndings();
             var resolved = ResolveReplacements(normalizedOriginal, edits);
@@ -309,6 +349,24 @@ public sealed class EditTool : IAgentTool
             ReadRequiredString(arguments, oldKey),
             ReadRequiredString(arguments, newKey));
         return true;
+    }
+
+    private static string? ReadOptionalExpectedHash(IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (!arguments.TryGetValue("expectedHash", out var value) || value is null)
+        {
+            return null;
+        }
+
+        var text = value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.Null } => null,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            JsonElement element => element.ToString(),
+            _ => value.ToString()
+        };
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     private static string ReadRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
