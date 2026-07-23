@@ -31,6 +31,16 @@ public interface IClientStateStore
     /// <summary>The currently visible/active agent tab.</summary>
     string? ActiveAgentId { get; set; }
 
+    /// <summary>
+    /// Promotes a sub-agent read-only virtual session to the active view. This is the ONLY
+    /// path allowed to switch <see cref="ActiveAgentId"/> onto a read-only agent — the setter
+    /// itself rejects read-only targets so a concurrent <c>SubAgentSpawned</c> or streaming event
+    /// can never hijack the active view onto a sub-agent session (#2243). Call this from the
+    /// explicit user "view sub-agent" interaction only.
+    /// </summary>
+    /// <param name="subAgentId">The sub-agent whose session should become the active view.</param>
+    void SetActiveSubAgent(string subAgentId);
+
     /// <summary>Seed initial agent list from hub or REST.</summary>
     void SeedAgents(IEnumerable<AgentSummary> agents);
 
