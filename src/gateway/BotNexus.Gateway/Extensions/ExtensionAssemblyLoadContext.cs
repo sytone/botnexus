@@ -7,7 +7,14 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
 {
     private readonly AssemblyDependencyResolver _resolver;
 
-    // Assemblies that must come from the host to preserve type identity.
+    // Minimal explicit override list. This is NOT the primary mechanism for host unification -
+    // the categorical check in Load() unifies any assembly the host has ALREADY loaded into
+    // AssemblyLoadContext.Default. This list only covers assemblies the host may not have
+    // lazily loaded yet at the moment an extension is loaded, but which must still resolve from
+    // the host to preserve type identity (e.g. rarely-touched configuration/abstraction
+    // assemblies referenced only through an extension's DI surface). Keeping it minimal avoids
+    // the reactive, crash-prone maintenance burden of the old allow-list (recurring startup
+    // crash, #2219).
     private static readonly HashSet<string> HostAssemblies = new(StringComparer.OrdinalIgnoreCase)
     {
         "BotNexus.Agent.Core",
@@ -38,6 +45,10 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
         "TestableIO.System.IO.Abstractions.Wrappers",
     };
 
+    // Snapshot cache of assembly simple-names currently loaded into the host's default context.
+    // Rebuilt lazily and refreshed on miss so lazily-loaded host assemblies are still picked up.
+    private static volatile HashSet<string>? _hostLoadedNames;
+
     public ExtensionAssemblyLoadContext(string mainAssemblyPath, bool isCollectible = true)
         : base($"BotNexus.Extension::{Path.GetFileNameWithoutExtension(mainAssemblyPath)}::{Guid.NewGuid():N}", isCollectible)
     {
@@ -46,9 +57,15 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
-        // Shared host assemblies must come from the default context
-        // to preserve type identity for interfaces like IAgentTool.
-        if (assemblyName.Name is not null && IsHostAssembly(assemblyName.Name))
+        var name = assemblyName.Name;
+
+        // UNIFICATION (primary): if the requested assembly is already loaded in the host's
+        // default context, resolve it from the host - categorically, regardless of name - so
+        // the extension shares the host's type identity. Returning null delegates resolution to
+        // the default context. This is the standard .NET plugin unification pattern and replaces
+        // the old reactive allow-list that had to be manually extended for every shared contract
+        // (recurring gateway startup crash, #2219).
+        if (name is not null && ShouldUnifyWithHost(name))
             return null;
 
         var assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName);
@@ -61,7 +78,50 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
     /// <summary>
     /// Returns true when the named assembly must be resolved from the host's default load
     /// context rather than a private extension copy, to preserve type identity across the
-    /// extension boundary. Exposed for testing the shared-assembly contract.
+    /// extension boundary. An assembly unifies with the host when it is either already loaded in
+    /// <see cref="AssemblyLoadContext.Default"/> (categorical) or present in the minimal explicit
+    /// override list. Exposed for testing the shared-assembly contract.
+    /// </summary>
+    internal static bool ShouldUnifyWithHost(string assemblyName)
+        => IsLoadedInHost(assemblyName) || IsHostAssembly(assemblyName);
+
+    /// <summary>
+    /// Returns true when the named assembly is in the minimal explicit host-unification override
+    /// list. This list is a fallback for assemblies the host may not have lazily loaded yet;
+    /// the categorical <see cref="IsLoadedInHost"/> check is the primary unification mechanism.
+    /// Exposed for testing the shared-assembly contract.
     /// </summary>
     internal static bool IsHostAssembly(string assemblyName) => HostAssemblies.Contains(assemblyName);
+
+    /// <summary>
+    /// Returns true when an assembly with the given simple name is already loaded into the host's
+    /// default <see cref="AssemblyLoadContext"/>. Refreshes the cached snapshot on a miss so
+    /// assemblies the host loads lazily after this context was created are still unified.
+    /// </summary>
+    internal static bool IsLoadedInHost(string assemblyName)
+    {
+        var snapshot = _hostLoadedNames;
+        if (snapshot is not null && snapshot.Contains(assemblyName))
+            return true;
+
+        // Miss (or first call): rebuild the snapshot from the current default-context assemblies.
+        // Lazily-loaded host assemblies appear here once loaded, so a rebuild-on-miss keeps the
+        // unification decision correct without paying enumeration cost on every hit.
+        var rebuilt = BuildHostLoadedNames();
+        _hostLoadedNames = rebuilt;
+        return rebuilt.Contains(assemblyName);
+    }
+
+    private static HashSet<string> BuildHostLoadedNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var assembly in Default.Assemblies)
+        {
+            var simpleName = assembly.GetName().Name;
+            if (!string.IsNullOrEmpty(simpleName))
+                names.Add(simpleName);
+        }
+
+        return names;
+    }
 }
