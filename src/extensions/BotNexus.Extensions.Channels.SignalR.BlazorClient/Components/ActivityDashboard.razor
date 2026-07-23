@@ -22,10 +22,15 @@
                 <span class="activity-summary-value">@summary.ConversationCount</span>
                 <span class="activity-summary-label">@(summary.ConversationCount == 1 ? "conversation" : "conversations")</span>
             </button>
-            <div class="activity-summary-stat" data-testid="activity-summary-agents">
+            <button type="button"
+                    class="activity-summary-stat activity-summary-stat--action @(_filter.AgentId is not null ? "active" : "")"
+                    data-testid="activity-summary-agents"
+                    aria-label="Jump to the agent filter"
+                    title="Filter by a specific agent"
+                    @onclick="FocusAgentPicker">
                 <span class="activity-summary-value">@summary.AgentCount</span>
                 <span class="activity-summary-label">@(summary.AgentCount == 1 ? "agent" : "agents")</span>
-            </div>
+            </button>
             <button type="button"
                     class="activity-summary-stat activity-summary-stat--action @(_filter.IncludeCron ? "active" : "")"
                     data-testid="activity-summary-scheduled"
@@ -51,6 +56,7 @@
                 @onclick="ToggleCron">@(_filter.IncludeCron ? "\u2611" : "\u2610") Cron</button>
 
         <select class="activity-filter-select" data-testid="activity-filter-agent"
+                @ref="_agentSelect"
                 aria-label="Filter by agent"
                 value="@(_filter.AgentId ?? "")"
                 @onchange="OnAgentFilterChanged">
@@ -150,6 +156,7 @@
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     private ActivityDashboardFilter _filter = new();
+    private ElementReference _agentSelect;
     private IReadOnlyList<ActivityRow>? _rows;
     private ActivitySummary? _summary;
     private bool _isLoading;
@@ -226,6 +233,24 @@
     private Task ResetFilters() => ApplyFilterAsync(new ActivityDashboardFilter());
 
     private Task ToggleCron() => ApplyFilterAsync(_filter with { IncludeCron = !_filter.IncludeCron });
+
+    /// <summary>
+    /// Turns the agents stat card into navigation: focuses the agent-filter dropdown so a click on the
+    /// number takes the user straight to picking an agent, mirroring the interactive treatment the
+    /// conversations and scheduled cards already have. Keeps the picker as the single source of truth for
+    /// the agent facet rather than duplicating agent-selection state on the card.
+    /// </summary>
+    private async Task FocusAgentPicker()
+    {
+        try
+        {
+            await _agentSelect.FocusAsync();
+        }
+        catch
+        {
+            // Focus is a best-effort affordance; a missing element (e.g. during teardown) must not surface.
+        }
+    }
 
     private Task OnAgentFilterChanged(ChangeEventArgs e)
     {
