@@ -29,6 +29,50 @@ public sealed class GatewayProcessManagerTests : IDisposable
     }
 
     [Fact]
+    public void ResolveLaunchTarget_PrefersApphostExe_WhenPresentNextToDll()
+    {
+        // Arrange: a fake published layout with an apphost exe next to the managed DLL.
+        var dllPath = Path.Combine(_testPidDirectory, "BotNexus.Gateway.Api.dll");
+        File.WriteAllText(dllPath, "managed");
+        var apphostName = OperatingSystem.IsWindows() ? "BotNexus.Gateway.Api.exe" : "BotNexus.Gateway.Api";
+        var apphostPath = Path.Combine(_testPidDirectory, apphostName);
+        File.WriteAllText(apphostPath, "native");
+        var options = new GatewayStartOptions(
+            ExecutablePath: dllPath,
+            Arguments: "--foo bar",
+            HomePath: _testPidDirectory,
+            HealthUrl: "http://localhost:6123/health");
+
+        // Act
+        var (fileName, arguments) = _manager.ResolveLaunchTarget(options);
+
+        // Assert: launch the apphost directly so the process name is NOT "dotnet" (issue #2199).
+        Assert.Equal(apphostPath, fileName);
+        Assert.DoesNotContain("dotnet", fileName, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("--foo bar", arguments);
+    }
+
+    [Fact]
+    public void ResolveLaunchTarget_FallsBackToDotnetHost_WhenNoApphostPresent()
+    {
+        // Arrange: only the managed DLL exists (framework-dependent, no native host).
+        var dllPath = Path.Combine(_testPidDirectory, "BotNexus.Gateway.Api.dll");
+        File.WriteAllText(dllPath, "managed");
+        var options = new GatewayStartOptions(
+            ExecutablePath: dllPath,
+            Arguments: "--foo bar",
+            HomePath: _testPidDirectory,
+            HealthUrl: "http://localhost:6123/health");
+
+        // Act
+        var (fileName, arguments) = _manager.ResolveLaunchTarget(options);
+
+        // Assert
+        Assert.Equal("dotnet", fileName);
+        Assert.Equal($"\"{dllPath}\" --foo bar", arguments);
+    }
+
+    [Fact]
     public async Task StartAsync_UsesSixtySecondDefaultReadinessTimeoutAndEffectiveHealthUrl()
     {
         _healthChecker.WaitForHealthyAsync(
