@@ -157,6 +157,7 @@ export default defineConfig({
           { text: 'Git Worktree Config Hardening', link: '/development/git-worktree-config-hardening' },
           { text: 'Gateway Crash Diagnostics', link: '/development/gateway-crash-diagnostics' },
           { text: 'Running Impacted Tests', link: '/development/running-tests' },
+          { text: 'Azure Build and Test Runner', link: '/development/azure-build-test-runner' },
           { text: 'Maintenance Orchestration', link: '/development/autonomous-maintenance-orchestration' },
         ],
       },
