@@ -339,6 +339,40 @@ public sealed class ConversationToolTests
     }
 
     [Fact]
+    public async Task SendMessage_WhenConversationArchived_ReactivatesBeforeAssigningSession()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Archived planning", "Preserve this purpose"));
+        await conversationStore.ArchiveAsync(conversation.ConversationId);
+        var router = new DefaultConversationRouter(
+            conversationStore,
+            sessionStore,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultConversationRouter>.Instance);
+        var tool = new ConversationTool(
+            conversationStore,
+            AgentId.From("orchestrator"),
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            messageOrchestrator: orchestrator,
+            conversationRouter: router);
+
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Reactivate this conversation"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        var sessionId = SessionId.From(document.RootElement.GetProperty("sessionId").GetString() ?? string.Empty);
+        var reopened = await conversationStore.GetAsync(conversation.ConversationId);
+        reopened.ShouldNotBeNull();
+        reopened.Status.ShouldBe(ConversationStatus.Active);
+        reopened.ActiveSessionId.ShouldBe(sessionId);
+        reopened.Title.ShouldBe("Archived planning");
+        reopened.Purpose.ShouldBe("Preserve this purpose");
+    }
+    [Fact]
     public async Task SendMessage_WithSpeakAsUser_ThreadsUserSpeakAsOntoInboundMessage()
     {
         // Hybrid rule (#1650), AC 2: an explicit speak_as:"user" on the `message`
@@ -468,6 +502,82 @@ public sealed class ConversationToolTests
         document.RootElement.GetProperty("sessionId").GetString().ShouldBe(session.SessionId.Value);
     }
 
+    [Fact]
+    public async Task SendMessage_WithSqliteStore_ReopensDurablyAndPreservesMetadataAndBindings()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"botnexus-2167-{Guid.NewGuid():N}.sqlite");
+        var connectionString = $"Data Source={databasePath};Pooling=False";
+        try
+        {
+            var conversationStore = new SqliteConversationStore(
+                connectionString,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SqliteConversationStore>.Instance);
+            var sessionStore = new SqliteSessionStore(
+                connectionString,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SqliteSessionStore>.Instance,
+                conversationStore);
+            var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+            var conversation = CreateConversation("nova", "Durable title", "Durable purpose");
+            conversation.ChannelBindings.Add(new ChannelBinding
+            {
+                ChannelType = ChannelKey.From("signalr"),
+                ChannelAddress = ChannelAddress.From("portal-2167")
+            });
+            conversation = await conversationStore.CreateAsync(conversation);
+            await conversationStore.ArchiveAsync(conversation.ConversationId);
+            var router = new DefaultConversationRouter(
+                conversationStore,
+                sessionStore,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultConversationRouter>.Instance);
+            var tool = new ConversationTool(
+                conversationStore,
+                AgentId.From("orchestrator"),
+                accessLevel: ConversationAccessLevel.All,
+                sessionStore: sessionStore,
+                messageOrchestrator: orchestrator,
+                conversationRouter: router);
+
+            var result = await tool.ExecuteAsync("call-2167", Args(
+                "message",
+                conversationId: conversation.ConversationId.Value,
+                message: "Reopen durably"));
+            using var document = JsonDocument.Parse(ReadText(result));
+            var sessionId = SessionId.From(document.RootElement.GetProperty("sessionId").GetString() ?? string.Empty);
+            await conversationStore.TouchAsync(conversation.ConversationId);
+
+            var reopenedStore = new SqliteConversationStore(
+                connectionString,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SqliteConversationStore>.Instance);
+            var reopened = await reopenedStore.GetAsync(conversation.ConversationId);
+            reopened.ShouldNotBeNull();
+            reopened.Status.ShouldBe(ConversationStatus.Active);
+            reopened.ActiveSessionId.ShouldBe(sessionId);
+            reopened.Title.ShouldBe("Durable title");
+            reopened.Purpose.ShouldBe("Durable purpose");
+            reopened.ChannelBindings.ShouldHaveSingleItem().ChannelAddress.ShouldBe(ChannelAddress.From("portal-2167"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_RejectsArchivedConversationWithActiveSession()
+    {
+        var store = new InMemoryConversationStore();
+        var invalid = CreateConversation("nova", "Invalid", null) with
+        {
+            Status = ConversationStatus.Archived,
+            ActiveSessionId = SessionId.Create()
+        };
+
+        await store.CreateAsync(invalid with { ActiveSessionId = null });
+        Func<Task> save = () => store.SaveAsync(invalid);
+
+        (await save.ShouldThrowAsync<InvalidOperationException>()).Message.ShouldContain("cannot be archived");
+    }
     // --- List status filter tests (#1301) ---
 
     [Fact]

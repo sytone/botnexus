@@ -461,8 +461,7 @@ public sealed class ConversationsController : ControllerBase
             _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
         }
 
-        await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
-        await AuditAsync(conversation.ConversationId.Value, "archived", "api", "rest-api", null, null, cancellationToken);
+        await _conversations.ArchiveAsync(conversation.ConversationId, "rest-api", HttpContext?.TraceIdentifier ?? System.Diagnostics.Activity.Current?.Id, "api", cancellationToken);
         await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }

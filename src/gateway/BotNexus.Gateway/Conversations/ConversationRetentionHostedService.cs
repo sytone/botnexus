@@ -1,4 +1,4 @@
-﻿using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -105,7 +105,7 @@ public sealed class ConversationRetentionHostedService(
             if (inactiveFor < TimeSpan.FromDays(effectiveThresholdDays))
                 continue;
 
-            await _conversationStore.ArchiveAsync(conv.ConversationId, cancellationToken)
+            await _conversationStore.ArchiveAsync(conv.ConversationId, "retention", conv.ConversationId.Value, "system", cancellationToken)
                 .ConfigureAwait(false);
 
             _logger.LogInformation(

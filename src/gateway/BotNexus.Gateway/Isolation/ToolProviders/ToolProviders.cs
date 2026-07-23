@@ -187,7 +187,8 @@ internal sealed class ConversationToolProvider(
     IConversationStore? conversationStore,
     ISessionStore? sessionStore,
     IConversationChangeNotifier? conversationChangeNotifier,
-    IInboundMessageOrchestrator? messageOrchestrator) : IToolProvider
+    IInboundMessageOrchestrator? messageOrchestrator,
+    IConversationRouter? conversationRouter) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context) => conversationStore is not null;
@@ -207,7 +208,8 @@ internal sealed class ConversationToolProvider(
                 allowed,
                 sessionStore,
                 messageOrchestrator,
-                conversationChangeNotifier)
+                conversationChangeNotifier,
+                conversationRouter)
         ];
     }
 

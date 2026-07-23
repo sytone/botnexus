@@ -261,7 +261,7 @@ public sealed class AgentExchangeTurnEngine
                     conversation.ConversationId, latest.ActiveSessionId, expectedSessionId);
                 return;
             }
-            await _conversationStore.ArchiveAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+            await _conversationStore.ArchiveAsync(conversation.ConversationId, "agent-exchange-completion", expectedSessionId.Value, "system", cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
