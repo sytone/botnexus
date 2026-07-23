@@ -76,6 +76,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<FileWatcherToolOptions>();
         services.AddOptions<CompactionOptions>();
         services.AddOptions<SqliteWalCheckpointOptions>();
+        services.AddOptions<LivenessWatchdogOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -89,6 +90,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<AgentExchangeOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
+            services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -296,7 +298,7 @@ public static class GatewayServiceCollectionExtensions
 
         // Liveness watchdog: monitors gateway activity and logs warnings on stalls
         services.AddSingleton<IActivityTracker, ActivityTracker>();
-        services.Configure<LivenessWatchdogOptions>(_ => { });
+        services.AddSingleton<IThreadPoolProbe, ThreadPoolProbe>();
         services.AddHostedService<LivenessWatchdogService>();
 
         // Satellite registry and stale detection

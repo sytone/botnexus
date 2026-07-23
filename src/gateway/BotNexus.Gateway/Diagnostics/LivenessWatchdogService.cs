@@ -20,95 +20,100 @@ public sealed class LivenessWatchdogOptions
     public TimeSpan WarningThreshold { get; set; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// Duration of inactivity after which the watchdog runs an active responsiveness
-    /// probe. Default: 30 minutes.
-    /// Passive idle time alone NEVER escalates to CRITICAL — see remarks on
-    /// <see cref="LivenessWatchdogService"/>. A CRITICAL alert is only emitted when the
-    /// active probe cannot schedule work within <see cref="ProbeTimeout"/>, which is a
-    /// genuine deadlock / threadpool-exhaustion signal (#1320, #1924).
+    /// Duration of inactivity after which scheduler responsiveness is verified. Default: 30 minutes.
     /// </summary>
     public TimeSpan CriticalThreshold { get; set; } = TimeSpan.FromMinutes(30);
 
     /// <summary>
-    /// How long the active responsiveness probe is allowed to take before the gateway is
-    /// declared unresponsive. Default: 5 seconds. A healthy threadpool schedules and runs
-    /// a no-op continuation in well under a millisecond; only a true stall (deadlock or
-    /// threadpool exhaustion) blows past this budget.
+    /// How long the scheduler probe may take before the gateway is declared unresponsive.
+    /// Default: 5 seconds.
     /// </summary>
-    public TimeSpan ProbeTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan CriticalProbeTimeout { get; set; } = TimeSpan.FromSeconds(5);
 }
 
 /// <summary>
-/// Background service that monitors gateway activity and logs warnings when the process
-/// appears unresponsive. Detects the scenario where the gateway is alive (port open)
-/// but unable to schedule work (deadlock/threadpool exhaustion).
-///
-/// "Activity" is recorded by <see cref="IActivityTracker"/> from the agent execution
-/// choke point (<c>InProcessAgentHandle</c>) on every streamed agent event and on the
-/// blocking prompt path, plus at inbound dispatch entry. This means a long-running turn
-/// or a cron/soul run keeps the tracker fresh.
-///
-/// <para>
-/// Passive inactivity is <b>expected</b> — the gateway is legitimately idle overnight and
-/// between cron jobs. Prior versions treated crossing the critical inactivity threshold as
-/// a FATAL "possible deadlock" alert, which produced nightly false positives (#1320, #1924).
-/// Crossing the critical threshold now only <i>triggers an active responsiveness probe</i>:
-/// the watchdog schedules a no-op onto the threadpool and waits up to
-/// <see cref="LivenessWatchdogOptions.ProbeTimeout"/>. If the probe completes, the process is
-/// responsive and merely idle (logged at debug, no alert). Only a probe that fails to complete
-/// in time — a real deadlock or threadpool exhaustion — escalates to CRITICAL.
-/// </para>
+/// Verifies that work queued to the runtime scheduler can execute within a bounded interval.
+/// </summary>
+public interface IThreadPoolProbe
+{
+    /// <summary>
+    /// Queues work and reports whether it ran before <paramref name="timeout"/> elapsed.
+    /// Cancellation represents host shutdown and must not be interpreted as scheduler failure.
+    /// </summary>
+    Task<bool> IsResponsiveAsync(TimeSpan timeout, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Probes the runtime scheduler by queuing a no-op to the managed thread pool.
+/// </summary>
+public sealed class ThreadPoolProbe : IThreadPoolProbe
+{
+    /// <inheritdoc />
+    public async Task<bool> IsResponsiveAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!ThreadPool.QueueUserWorkItem(static state => ((TaskCompletionSource)state!).TrySetResult(), completion))
+        {
+            return false;
+        }
+
+        try
+        {
+            await completion.Task.WaitAsync(timeout, cancellationToken);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+}
+
+/// <summary>
+/// Monitors gateway inactivity and verifies scheduler responsiveness before emitting a fatal alert.
+/// Quiet gateways remain actionable without conflating ordinary idle time with scheduler failure.
 /// </summary>
 public sealed class LivenessWatchdogService : BackgroundService
 {
     private readonly IActivityTracker _activityTracker;
+    private readonly IThreadPoolProbe _threadPoolProbe;
     private readonly LivenessWatchdogOptions _options;
     private readonly ILogger<LivenessWatchdogService> _logger;
+    private bool _warningEmitted;
+    private bool _criticalEpisodeEvaluated;
 
     /// <summary>
-    /// Active responsiveness probe. Returns <c>true</c> if the threadpool scheduled and ran
-    /// work within the timeout, <c>false</c> if it stalled. Injectable for deterministic tests.
+    /// Creates the watchdog with the scheduler probe used to corroborate critical inactivity.
     /// </summary>
-    private readonly Func<TimeSpan, bool> _responsivenessProbe;
-
-    private bool _warningEmitted;
-    private bool _criticalEmitted;
-
     public LivenessWatchdogService(
         IActivityTracker activityTracker,
+        IThreadPoolProbe threadPoolProbe,
         IOptions<LivenessWatchdogOptions> options,
         ILogger<LivenessWatchdogService> logger)
-        : this(activityTracker, options, logger, responsivenessProbe: null)
-    {
-    }
-
-    /// <summary>
-    /// Test constructor allowing the responsiveness probe to be overridden.
-    /// </summary>
-    internal LivenessWatchdogService(
-        IActivityTracker activityTracker,
-        IOptions<LivenessWatchdogOptions> options,
-        ILogger<LivenessWatchdogService> logger,
-        Func<TimeSpan, bool>? responsivenessProbe)
     {
         _activityTracker = activityTracker;
+        _threadPoolProbe = threadPoolProbe;
         _options = options.Value;
         _logger = logger;
-        _responsivenessProbe = responsivenessProbe ?? DefaultThreadPoolProbe;
     }
 
+    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Give the gateway time to start up before monitoring
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                CheckLiveness();
+                await CheckLivenessAsync(stoppingToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Liveness watchdog check failed unexpectedly.");
             }
@@ -117,52 +122,46 @@ public sealed class LivenessWatchdogService : BackgroundService
         }
     }
 
-    internal void CheckLiveness()
+    internal async Task CheckLivenessAsync(CancellationToken cancellationToken)
     {
         var elapsed = _activityTracker.TimeSinceLastActivity;
 
         if (elapsed >= _options.CriticalThreshold)
         {
-            // Passive idle time is NOT sufficient to declare a deadlock — the gateway is
-            // routinely idle overnight and between cron jobs. Actively probe the threadpool:
-            // only a probe that cannot complete indicates a genuine stall (#1320, #1924).
-            var responsive = _responsivenessProbe(_options.ProbeTimeout);
-
-            if (responsive)
+            if (_criticalEpisodeEvaluated)
             {
-                // Alive and responsive, just idle. Not an alert condition. Clear any prior
-                // warning/critical latch so recovery is reported correctly if it fires later.
-                if (_criticalEmitted)
-                {
-                    _logger.LogInformation(
-                        "Gateway liveness recovered: responsiveness probe succeeded after {Elapsed} of inactivity.",
-                        elapsed);
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "Gateway idle for {Elapsed} but responsive (probe passed). No action needed.",
-                        elapsed);
-                }
-
-                _criticalEmitted = false;
-                _warningEmitted = false;
                 return;
             }
 
-            if (!_criticalEmitted)
+            var responsive = await _threadPoolProbe.IsResponsiveAsync(
+                _options.CriticalProbeTimeout,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _criticalEpisodeEvaluated = true;
+            _warningEmitted = true;
+
+            if (responsive)
             {
-                _logger.LogCritical(
-                    "Gateway liveness CRITICAL: responsiveness probe failed to complete within {ProbeTimeout} " +
-                    "after {Elapsed} of inactivity. Last activity at {LastActivity}. " +
-                    "Deadlock or threadpool exhaustion.",
-                    _options.ProbeTimeout,
+                _logger.LogWarning(
+                    "Gateway liveness WARNING: no activity for {Elapsed}, but scheduler probe succeeded " +
+                    "within {CriticalProbeTimeout}. Gateway is responsive and idle. Last activity at {LastActivity}.",
                     elapsed,
+                    _options.CriticalProbeTimeout,
                     _activityTracker.LastActivityUtc);
-                _criticalEmitted = true;
+                return;
             }
+
+            _logger.LogCritical(
+                "Gateway liveness CRITICAL: scheduler probe timed out after {CriticalProbeTimeout} " +
+                "with {Elapsed} of inactivity. Last activity at {LastActivity}. " +
+                "Deadlock or thread pool exhaustion may have prevented scheduling.",
+                _options.CriticalProbeTimeout,
+                elapsed,
+                _activityTracker.LastActivityUtc);
+            return;
         }
-        else if (elapsed >= _options.WarningThreshold)
+
+        if (elapsed >= _options.WarningThreshold)
         {
             if (!_warningEmitted)
             {
@@ -172,35 +171,18 @@ public sealed class LivenessWatchdogService : BackgroundService
                     _activityTracker.LastActivityUtc);
                 _warningEmitted = true;
             }
-        }
-        else
-        {
-            // Activity resumed — reset flags
-            if (_warningEmitted || _criticalEmitted)
-            {
-                _logger.LogInformation(
-                    "Gateway liveness recovered. Activity resumed after {Elapsed} of inactivity.",
-                    elapsed);
-            }
-            _warningEmitted = false;
-            _criticalEmitted = false;
-        }
-    }
 
-    /// <summary>
-    /// Default probe: schedules a no-op onto the threadpool and waits up to <paramref name="timeout"/>.
-    /// Returns <c>true</c> if the work ran (responsive), <c>false</c> if it could not be scheduled
-    /// in time (deadlock / threadpool exhaustion).
-    /// </summary>
-    private static bool DefaultThreadPoolProbe(TimeSpan timeout)
-    {
-        using var scheduled = new ManualResetEventSlim(false);
-        if (!ThreadPool.QueueUserWorkItem(static state => ((ManualResetEventSlim)state!).Set(), scheduled))
-        {
-            // Could not even queue the work item.
-            return false;
+            return;
         }
 
-        return scheduled.Wait(timeout);
+        if (_warningEmitted || _criticalEpisodeEvaluated)
+        {
+            _logger.LogInformation(
+                "Gateway liveness recovered. Activity resumed after {Elapsed} of inactivity.",
+                elapsed);
+        }
+
+        _warningEmitted = false;
+        _criticalEpisodeEvaluated = false;
     }
 }
