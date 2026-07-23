@@ -9,6 +9,11 @@ namespace BotNexus.Gateway.Configuration;
 /// </summary>
 public sealed class AgentDefaultsConfig
 {
+    /// <summary>
+    /// Five minutes accommodates tools that wait on another agent while still bounding genuinely stuck calls.
+    /// </summary>
+    public const int DefaultToolTimeoutSeconds = 300;
+
     /// <summary>Default tool IDs inherited by agents that do not explicitly set their own toolIds.</summary>
     public List<string>? ToolIds { get; set; }
 
@@ -17,11 +22,12 @@ public sealed class AgentDefaultsConfig
     /// </summary>
     [Display(
         Name = "Tool timeout (seconds)",
-        Description = "Default per-tool timeout, in seconds, inherited by agents that do not set their own.",
+        Description = "Default per-tool timeout, in seconds, inherited by agents that do not set their own. Defaults to 300 seconds.",
         GroupName = "Agent defaults",
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent-defaults", Order = 0)]
-    public int? ToolTimeoutSeconds { get; set; }
+    [DefaultValue(DefaultToolTimeoutSeconds)]
+    public int? ToolTimeoutSeconds { get; set; } = DefaultToolTimeoutSeconds;
 
     /// <summary>Default memory configuration inherited by agents.</summary>
     public MemoryAgentConfig? Memory { get; set; }
