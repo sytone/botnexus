@@ -32,6 +32,7 @@ using OpenTelemetry.Trace;
 using BotNexus.Gateway.Telemetry;
 using Serilog;
 using System.Reflection;
+using BotNexus.Gateway.Tools;
 using BotNexus.Gateway.Webhooks;
 
 const string GatewayCorsPolicy = "GatewayCorsPolicy";
@@ -213,6 +214,11 @@ builder.Services.Configure<CronOptions>(options =>
 var webhookDataDir = BotNexusHome.ResolveDataPath() ?? System.IO.Path.GetDirectoryName(resolvedConfigPath)!;
 var webhookDbPath = System.IO.Path.Combine(webhookDataDir, "webhooks.sqlite");
 builder.Services.AddBotNexusWebhooks(webhookDbPath);
+
+// Portal Tools store - SQLite placed in the same writable data directory so user-defined
+// tools survive gateway restarts and roam with the user across browsers/devices (#2232).
+var toolsDbPath = System.IO.Path.Combine(webhookDataDir, "tools.sqlite");
+builder.Services.AddBotNexusTools(toolsDbPath);
 
 static string? ResolveCronModel(CronJobConfig config)
 {
