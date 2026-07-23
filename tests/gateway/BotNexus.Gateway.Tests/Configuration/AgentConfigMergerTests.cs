@@ -414,6 +414,117 @@ public sealed class AgentConfigMergerTests
         result.IntervalMinutes.ShouldBe(15);
     }
 
+    // -------------------------------------------------------------------------
+    // Issue #2213 - pass-through fields must survive merge when defaults present
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Merge_WithDefaults_PreservesEmoji()
+    {
+        var defaults = new AgentDefaultsConfig
+        {
+            Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" }
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Emoji = "\uD83D\uDD2E"
+        };
+        var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","emoji":"\uD83D\uDD2E"}""").RootElement;
+
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        result.Emoji.ShouldBe("\uD83D\uDD2E");
+    }
+
+    [Fact]
+    public void Merge_WithDefaults_PreservesCacheRetentionDateTimeInjectionKindAndShellCommand()
+    {
+        var defaults = new AgentDefaultsConfig
+        {
+            Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" }
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            CacheRetention = BotNexus.Agent.Providers.Core.Models.CacheRetention.Long,
+            DateTimeInjection = new DateTimeInjectionConfig(),
+            Kind = BotNexus.Domain.World.AgentKind.SubAgent,
+            ShellCommand = ["pwsh", "-NoProfile"]
+        };
+
+        var result = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null);
+
+        result.CacheRetention.ShouldBe(BotNexus.Agent.Providers.Core.Models.CacheRetention.Long);
+        result.DateTimeInjection.ShouldBeSameAs(agent.DateTimeInjection);
+        result.Kind.ShouldBe(BotNexus.Domain.World.AgentKind.SubAgent);
+        result.ShellCommand.ShouldBe(["pwsh", "-NoProfile"]);
+    }
+
+    /// <summary>
+    /// Reflection guard (#2213 proposed fix step 2): every simple pass-through property on
+    /// <see cref="AgentDefinitionConfig"/> must survive Merge() when a non-null defaults object
+    /// is supplied. Prevents future field additions from silently regressing the allow-list.
+    /// Deep-merged structural fields (memory, heartbeat, fileAccess, toolIds, toolTimeoutSeconds)
+    /// have dedicated scenario tests above and are excluded here.
+    /// </summary>
+    [Fact]
+    public void Merge_DoesNotDropAnyAgentPassThroughField()
+    {
+        var mergedFields = new HashSet<string>
+        {
+            nameof(AgentDefinitionConfig.Memory),
+            nameof(AgentDefinitionConfig.Heartbeat),
+            nameof(AgentDefinitionConfig.FileAccess),
+            nameof(AgentDefinitionConfig.ToolIds),
+            nameof(AgentDefinitionConfig.ToolTimeoutSeconds),
+        };
+
+        var agent = new AgentDefinitionConfig();
+        var props = typeof(AgentDefinitionConfig).GetProperties(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        // Assign a distinctive non-default value to every writable property so a dropped
+        // field surfaces as null/default after merge.
+        foreach (var p in props)
+        {
+            if (!p.CanWrite || mergedFields.Contains(p.Name))
+                continue;
+            p.SetValue(agent, SampleValueFor(p.PropertyType));
+        }
+
+        var defaults = new AgentDefaultsConfig
+        {
+            Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" }
+        };
+
+        var result = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null);
+
+        foreach (var p in props)
+        {
+            if (!p.CanWrite || mergedFields.Contains(p.Name))
+                continue;
+            var expected = p.GetValue(agent);
+            var actual = p.GetValue(result);
+            actual.ShouldBe(expected, $"Field '{p.Name}' was dropped by Merge() (regression of #2213).");
+        }
+    }
+
+    private static object? SampleValueFor(Type t)
+    {
+        var underlying = Nullable.GetUnderlyingType(t) ?? t;
+        if (underlying == typeof(string)) return "sample";
+        if (underlying == typeof(bool)) return true;
+        if (underlying == typeof(int)) return 42;
+        if (underlying == typeof(string[])) return new[] { "a", "b" };
+        if (underlying == typeof(List<string>)) return new List<string> { "a", "b" };
+        if (underlying.IsEnum) return Enum.GetValues(underlying).GetValue(underlying == typeof(BotNexus.Domain.World.AgentKind) ? 1 : 0);
+        if (underlying == typeof(JsonElement)) return JsonDocument.Parse("""{"k":"v"}""").RootElement;
+        // Reference config sub-objects: any distinct instance is enough to detect a drop.
+        return Activator.CreateInstance(underlying);
+    }
     private static void SetPromptInjection(MemoryAgentConfig config, string value)
     {
         var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
