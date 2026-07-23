@@ -32,6 +32,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = 'Sytone/botnexus'
+. (Join-Path $PSScriptRoot 'repo/Remove-Worktree.ps1')
 
 function Output-Result {
     param([bool]$Success, [string]$Message)
@@ -128,9 +129,17 @@ if ($worktreePath) {
 
         Output-Result -Success $true -Message "Rebased $Branch onto main ($behind commit(s)) and force-pushed successfully."
     } finally {
-        if (Test-Path $tempDir) {
-            git worktree remove $tempDir --force 2>$null
+        # Lock-aware cleanup: never delete the temp branch while the worktree
+        # is still registered (Windows file locks otherwise leak a dangling
+        # branch + registered-but-removed worktree). See issue #2104.
+        $cleanup = Remove-WorktreeSafely -RepoRoot (git rev-parse --show-toplevel).Trim() `
+            -WorktreePath $tempDir -DeleteBranch:$false -Force
+        if ($cleanup.outcome -eq 'removed') {
+            git branch -D $tempBranch 2>$null
         }
-        git branch -D $tempBranch 2>$null
+        else {
+            Write-Warning "Skipping temp branch deletion; worktree '$tempDir' cleanup outcome: $($cleanup.outcome). Branch '$tempBranch' retained."
+        }
     }
 }
+
