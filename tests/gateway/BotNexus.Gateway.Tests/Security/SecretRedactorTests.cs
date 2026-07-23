@@ -117,6 +117,90 @@ public sealed class SecretRedactorTests
     }
 
     [Fact]
+    public void Redact_AuthorizationBasicHeader_IsRedacted()
+    {
+        // Basic auth base64-encodes user:password; the full credential must not survive.
+        const string cred = "dXNlcm5hbWU6c3VwZXJzZWNyZXRwYXNzd29yZA==";
+        var input = $"Authorization: Basic {cred}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(cred);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_AuthorizationBotHeader_IsRedacted()
+    {
+        // Discord-style bot token.
+        const string token = "MTIzNDU2Nzg5MDEyMzQ1Njc4.AbCdEf.GhIjKlMnOpQrStUvWxYz012345";
+        var input = $"Authorization: Bot {token}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(token);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_ProxyAuthorizationHeader_IsRedacted()
+    {
+        const string cred = "aGVsbG86d29ybGRzZWNyZXR2YWx1ZQ==";
+        var input = $"Proxy-Authorization: Basic {cred}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(cred);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Theory]
+    [InlineData("X-Api-Key")]
+    [InlineData("X-Auth-Token")]
+    [InlineData("X-OpenClaw-Token")]
+    public void Redact_ApiKeyStyleHeader_IsRedacted(string header)
+    {
+        const string secret = "aBcDeFgHiJkLmNoPqRsT1234";
+        var input = $"{header}: {secret}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(secret);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_StandaloneBearerToken_IsRedacted()
+    {
+        // A raw diagnostic / exception line that prints "Bearer <token>" with no
+        // Authorization: header name in front still leaks the token.
+        const string token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwR";
+        var input = $"HttpRequestException: sent header Bearer {token}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(token);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_QuotedAuthorizationHeader_IsRedacted()
+    {
+        // JSON-embedded / serialized header form: "Authorization": "Bearer <token>".
+        const string token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwR";
+        var input = $"{{\"Authorization\": \"Bearer {token}\"}}";
+        var result = _sut.Redact(input);
+        result.ShouldNotContain(token);
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_WordBearerInProse_IsNotOverRedacted()
+    {
+        // The word "Bearer" in ordinary prose (no long token following) must survive.
+        const string safe = "The bearer of this message is a friend.";
+        _sut.Redact(safe).ShouldBe(safe);
+    }
+
+    [Fact]
+    public void Redact_ShortApiKeyHeaderValue_IsNotRedacted()
+    {
+        // Values shorter than the minimum length must pass through.
+        const string safe = "X-Api-Key: abc";
+        _sut.Redact(safe).ShouldBe(safe);
+    }
+
+    [Fact]
     public void Redact_ApiKeyInQueryString_IsRedacted()
     {
         const string key = "AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234";

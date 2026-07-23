@@ -47,6 +47,21 @@ public sealed partial class SecretRedactor : ISecretRedactor
         // Authorization: Bearer <token> HTTP headers
         AuthorizationBearerRegex(),
 
+        // Authorization: Basic <base64> HTTP headers
+        AuthorizationBasicRegex(),
+
+        // Authorization: Bot <token> HTTP headers (Discord-style)
+        AuthorizationBotRegex(),
+
+        // Proxy-Authorization: <scheme> <credential> HTTP headers
+        ProxyAuthorizationRegex(),
+
+        // X-Api-Key / X-Auth-Token / X-*-Token style header credentials
+        ApiKeyStyleHeaderRegex(),
+
+        // Standalone Bearer <token> not preceded by an Authorization header name
+        StandaloneBearerRegex(),
+
         // Generic api_key / api-key = <value> patterns in text
         GenericApiKeyRegex(),
     ];
@@ -157,8 +172,38 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
     // Capture group 1 = prefix up to and including "Bearer "; group 2 = the token itself.
     // Replace entire match so the header name is preserved: "Authorization: Bearer [REDACTED]"
-    [GeneratedRegex(@"(Authorization:\s*Bearer\s+)[A-Za-z0-9+/=._\-]{20,}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(Authorization""?\s*[:=]?\s*""?\s*Bearer\s+)[A-Za-z0-9+/=._\-]{20,}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex AuthorizationBearerRegex();
+
+    // Authorization: Basic <base64>. Basic auth base64-encodes the full "user:password";
+    // a logged/exception-captured Basic header would otherwise land in the session store
+    // unredacted. The optional quote/colon allowance ("Authorization": "Basic ...") handles
+    // the serialized/JSON-embedded header form.
+    [GeneratedRegex(@"(Authorization""?\s*[:=]?\s*""?\s*Basic\s+)[A-Za-z0-9+/=]{16}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex AuthorizationBasicRegex();
+
+    // Authorization: Bot <token> (Discord-style). Same serialized/quoted hardening as Basic.
+    [GeneratedRegex(@"(Authorization""?\s*[:=]?\s*""?\s*Bot\s+)[A-Za-z0-9._\-+=]{18}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex AuthorizationBotRegex();
+
+    // Proxy-Authorization: <scheme> <opaque credential>. Any single-word scheme
+    // (Basic/Bearer/Negotiate/NTLM/...) followed by an opaque credential.
+    [GeneratedRegex(@"(Proxy-Authorization""?\s*[:=]?\s*""?\s*\w+\s+)[A-Za-z0-9+/=._\-]{16}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex ProxyAuthorizationRegex();
+
+    // Header-style API-key credentials the generic api[_-]?key shape misses: X-Api-Key,
+    // X-Auth-Token, X-OpenClaw-Token, and the broader X-*-Token / X-*-Key family. Preserves
+    // the header name and redacts the value.
+    [GeneratedRegex(@"(X-(?:Api-Key|Auth-Token|OpenClaw-Token|[A-Za-z0-9]+-(?:Token|Key))""?\s*[:=]\s*""?)[^\s""',;]{8}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex ApiKeyStyleHeaderRegex();
+
+    // Standalone "Bearer <token>" that is NOT preceded by an Authorization header name -
+    // e.g. a raw HttpRequestException / diagnostic that prints "Bearer eyJ..." outside a
+    // full header line. The negative lookbehind avoids double-processing header forms already
+    // covered by AuthorizationBearerRegex, and the {18} length floor keeps the word "Bearer"
+    // in ordinary prose untouched.
+    [GeneratedRegex(@"(?<!Authorization""?\s*[:=]?\s*""?\s*)\bBearer\s+[A-Za-z0-9._\-+=]{18}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex StandaloneBearerRegex();
 
     // Handles: api_key=VALUE, api-key: VALUE, apiKey=VALUE  (case-insensitive key name)
     [GeneratedRegex(@"(?i)api[_\-]?key\s*[=:]\s*[A-Za-z0-9+/=._\-]{20,}", RegexOptions.Compiled)]
