@@ -304,6 +304,85 @@ public sealed class ChatPanelTests : IDisposable
         Assert.Equal("Assistant", bubble.GetAttribute("data-message-role"));
     }
 
+    // #2185: assistant-role messages must show the participating agent's DisplayName as the
+    // author label (not the generic "Assistant" protocol role). The underlying protocol role
+    // must stay unchanged (data-message-role="Assistant") so assistant-vs-user classification
+    // and CSS keep working; the display name is surfaced via a separate data-author attribute
+    // and the visible .message-role label.
+    [Fact]
+    public void Assistant_message_author_label_shows_agent_display_name()
+    {
+        CreateAndSeedAgent("agent-1", "Farnsworth");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Hello from the agent", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var label = cut.Find(".message .message-role");
+        Assert.Equal("Farnsworth", label.TextContent.Trim());
+        // Protocol role unchanged for classification semantics.
+        var bubble = cut.Find("[data-message-role]");
+        Assert.Equal("Assistant", bubble.GetAttribute("data-message-role"));
+        Assert.Equal("Farnsworth", bubble.GetAttribute("data-author"));
+    }
+
+    // #2185: when no agent identity is resolvable the label falls back cleanly so nothing
+    // renders blank.
+    [Fact]
+    public void Assistant_message_author_label_falls_back_when_no_display_name()
+    {
+        var agent = new AgentState { AgentId = "agent-1", DisplayName = "" };
+        _store.UpsertAgent(agent);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Hello", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var label = cut.Find(".message .message-role");
+        // The author label uses the same resolution as the header (DisplayName -> AgentId),
+        // so it is non-empty and never rendered blank.
+        Assert.False(string.IsNullOrWhiteSpace(label.TextContent));
+    }
+
+    // #2185: user-role messages keep the "User" author label -- the display-name substitution
+    // applies only to assistant-role messages.
+    [Fact]
+    public void User_message_author_label_is_unchanged()
+    {
+        CreateAndSeedAgent("agent-1", "Farnsworth");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "Hi there", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var label = cut.Find(".message .message-role");
+        Assert.Equal("User", label.TextContent.Trim());
+    }
+
+    // #2185: the streaming placeholder must also show the agent display name as its author
+    // label while keeping data-message-role="Assistant".
+    [Fact]
+    public void Streaming_placeholder_author_label_shows_agent_display_name()
+    {
+        CreateAndSeedAgent("agent-1", "Farnsworth", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetStreaming("conv-1", true);
+        _store.AppendStreamBuffer("conv-1", "streaming text");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var streaming = cut.Find("[data-testid='streaming-message']");
+        Assert.Equal("Assistant", streaming.GetAttribute("data-message-role"));
+        Assert.Equal("Farnsworth", streaming.GetAttribute("data-author"));
+        var label = streaming.QuerySelector(".message-role");
+        Assert.NotNull(label);
+        Assert.Equal("Farnsworth", label!.TextContent.Trim());
+    }
+
     // #1651: the on-behalf-of-user kickoff explicitly stamps MessageRole.User even though
     // the sender is an agent (speak_as:"user" in Step 2). That post must still render as a
     // USER bubble -- the Hybrid rule's explicit override is honoured all the way to the DOM.
