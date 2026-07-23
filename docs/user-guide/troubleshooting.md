@@ -826,19 +826,25 @@ System.Globalization.CultureNotFoundException: Culture is not supported. (Parame
 
 **Cause:** .NET 10 on Linux attempts to resolve the locale from assembly metadata when SignalR enumerates hub methods. Generic type names (containing `` `1 ``) produce invalid culture identifiers, crashing `OnConnectedAsync` before the client can handshake.
 
-**Fix:** Run the gateway with globalization invariant mode:
+**Fix:** Run the gateway with globalization invariant mode. Prefer the native
+apphost executable (`BotNexus.Gateway.Api.exe`, or `BotNexus.Gateway.Api` on
+Linux) published next to the DLL — it gives the gateway a distinct process name
+so name-based `dotnet` process kills can't take it down (see #2199):
 ```bash
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-dotnet BotNexus.Gateway.Api.dll --urls "http://0.0.0.0:5005"
+./BotNexus.Gateway.Api --urls "http://0.0.0.0:5005"
 ```
 
 Or set it permanently in your launch script / systemd service:
 ```ini
-# systemd service example
+# systemd service example — launch the apphost executable, not `dotnet <dll>`
 [Service]
 Environment="DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"
-ExecStart=/home/user/.dotnet/dotnet /path/to/BotNexus.Gateway.Api.dll
+ExecStart=/path/to/BotNexus.Gateway.Api
 ```
+
+> If your published layout is framework-dependent and has no apphost, fall back
+> to `ExecStart=/home/user/.dotnet/dotnet /path/to/BotNexus.Gateway.Api.dll`.
 
 ---
 
