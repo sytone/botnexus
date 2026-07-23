@@ -592,6 +592,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         const string emptyResponseDiagnostic = "Sub-agent failed because it returned an empty final response.";
         var hasFinalResponse = !string.IsNullOrWhiteSpace(resultSummary);
 
+        // Normalize pathological token-per-line whitespace at the earliest point so
+        // the record, session persistence, LLM parent context, and every channel all
+        // observe the same clean content (#2150). Done before the record is updated
+        // rather than only at dispatch time to avoid a divergent persisted summary.
+        var normalizedResultSummary = SubAgentSummaryNormalizer.Normalize(resultSummary);
+
         if (!TryUpdateSubAgent(
                 subAgentId,
                 current => current.Status == SubAgentStatus.Running
@@ -599,7 +605,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     {
                         Status = hasFinalResponse ? SubAgentStatus.Completed : SubAgentStatus.Failed,
                         CompletedAt = DateTimeOffset.UtcNow,
-                        ResultSummary = hasFinalResponse ? resultSummary : emptyResponseDiagnostic
+                        ResultSummary = hasFinalResponse ? normalizedResultSummary : emptyResponseDiagnostic
                     }
                     : current,
                 out var updated) || updated.Status == SubAgentStatus.Killed)
