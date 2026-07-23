@@ -2025,4 +2025,31 @@ public sealed class PlatformConfigValidationTests
         property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection validation.");
         return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
+
+    [Fact]
+    public void ValidateJson_SubAgentParentOverrides_AcceptsTrustedBudgetPolicy()
+    {
+        const string json = """
+            {
+              "gateway": {
+                "subAgents": {
+                  "defaultTimeoutSeconds": 1800,
+                  "maxTimeoutSeconds": 1800,
+                  "parentOverrides": {
+                    "farnsworth": {
+                      "defaultTimeoutSeconds": 3600,
+                      "maxTimeoutSeconds": 3600,
+                      "defaultMaxTurns": 60,
+                      "maxTurnsCeiling": 90,
+                      "maxConcurrentPerSession": 8
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+        PlatformConfigSchema.ValidateJson(json).ShouldBeEmpty();
+    }
+
 }

@@ -716,6 +716,51 @@ Gateway HTTP server settings.
 | `SignalR.StreamBufferCapacity` | int | 10 | Maximum items buffered for client upload streams before processing blocks. Non-positive values fall back to the default. |
 
 
+#### Trusted per-parent sub-agent budgets
+
+`gateway.subAgents` defines global spawn defaults and ceilings. `parentOverrides` may grant a
+specific trusted spawning parent a different timeout policy and optional turn/concurrency limits.
+Keys are agent IDs and are matched case-insensitively. Policy selection uses the authenticated
+`ParentAgentId` carried by the spawn request; a task, display name, archetype, or mirrored target
+cannot select another parent's policy.
+
+```json
+{
+  "gateway": {
+    "subAgents": {
+      "defaultTimeoutSeconds": 1800,
+      "maxTimeoutSeconds": 1800,
+      "defaultMaxTurns": 30,
+      "maxTurnsCeiling": 30,
+      "maxConcurrentPerSession": 5,
+      "parentOverrides": {
+        "farnsworth": {
+          "defaultTimeoutSeconds": 3600,
+          "maxTimeoutSeconds": 3600,
+          "defaultMaxTurns": 60,
+          "maxTurnsCeiling": 90,
+          "maxConcurrentPerSession": 8
+        }
+      }
+    }
+  }
+}
+```
+
+Omitted override fields inherit the global value. Unknown parents use the complete global policy.
+Configuration reloads apply to subsequent spawns; running sub-agents retain the policy snapshot
+selected when they started. Clamp warning logs include `ParentAgentId` and `PolicyTier` (`global`
+or `parent-override`) so operators can audit which authorization tier applied.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
+| `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
+| `subAgents.defaultMaxTurns` | int | 30 | Turn budget used when omitted. |
+| `subAgents.maxTurnsCeiling` | int | 30 | Global turn ceiling. |
+| `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
+| `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
+
 #### SignalR Hub Limits
 
 The gateway registers its SignalR hub with **explicit** transport limits rather than relying on the framework's implicit defaults (32 KB frame size, 1 parallel invocation, 10 stream-buffer items). The defaults below are intentionally bounded: the inbound frame cap is generous enough to carry base64-encoded inline media via `SendMessageWithMedia` (base64 inflates payloads by ~33%) while still preventing a single frame from exhausting server memory, and the parallel-invocation bound limits how much concurrent work one connection can force on the server.

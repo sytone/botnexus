@@ -107,6 +107,16 @@
             }
           ]
         },
+        "subAgents": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/SubAgentOptions"
+            }
+          ]
+        },
         "compaction": {
           "oneOf": [
             {
@@ -242,6 +252,36 @@
             "string"
           ]
         }
+      }
+    },
+    "SubAgentOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxConcurrentPerSession": { "type": "integer", "minimum": 1 },
+        "defaultMaxTurns": { "type": "integer", "minimum": 1 },
+        "maxTurnsCeiling": { "type": "integer" },
+        "defaultTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "maxTimeoutSeconds": { "type": "integer" },
+        "maxDepth": { "type": "integer", "minimum": 1 },
+        "defaultModel": { "type": "string" },
+        "completedRecordRetentionMinutes": { "type": "integer" },
+        "maxRetainedCompletedRecords": { "type": "integer" },
+        "parentOverrides": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/SubAgentParentOverrideOptions" }
+        }
+      }
+    },
+    "SubAgentParentOverrideOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultTimeoutSeconds": { "type": ["integer", "null"], "minimum": 1 },
+        "maxTimeoutSeconds": { "type": ["integer", "null"], "minimum": 1 },
+        "defaultMaxTurns": { "type": ["integer", "null"], "minimum": 1 },
+        "maxTurnsCeiling": { "type": ["integer", "null"], "minimum": 1 },
+        "maxConcurrentPerSession": { "type": ["integer", "null"], "minimum": 1 }
       }
     },
     "CompactionOptions": {

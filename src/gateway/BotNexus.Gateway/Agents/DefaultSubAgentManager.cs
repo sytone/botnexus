@@ -136,7 +136,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
 
-        EnforceSpawnLimits(request);
+        var budgetPolicy = ResolveBudgetPolicy(request);
+        EnforceSpawnLimits(request, budgetPolicy);
 
         var uniqueId = Guid.NewGuid().ToString("N");
         var subAgentId = uniqueId;
@@ -227,22 +228,22 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 _policyProvider.SetDynamicDenyList(childAgentId, effectiveDenyList);
         }
 
-        var subAgentOptions = _options.CurrentValue.SubAgents;
-
         // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
         // already bounded above; without this the timeout (the only budget wired to a real
         // cancellation token) could be set arbitrarily high, letting a background sub-agent run
         // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
-        var timeoutSeconds = subAgentOptions.ResolveTimeoutSeconds(request.TimeoutSeconds);
+        var timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
 
         // Clamp the requested turn budget too. It is not yet wired to a live per-turn counter, but
         // bounding it here keeps the request shape honest and prevents a latent runaway when it is.
-        var maxTurns = subAgentOptions.ResolveMaxTurns(request.MaxTurns);
+        var maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
         if (request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns)
         {
             _logger.LogWarning(
-                "Sub-agent '{SubAgentId}' spawn budget clamped: timeoutSeconds {RequestedTimeout}->{ClampedTimeout}, maxTurns {RequestedMaxTurns}->{ClampedMaxTurns}.",
+                "Sub-agent '{SubAgentId}' spawn budget clamped: ParentAgentId={ParentAgentId}, PolicyTier={PolicyTier}, timeoutSeconds {RequestedTimeout}->{ClampedTimeout}, maxTurns {RequestedMaxTurns}->{ClampedMaxTurns}.",
                 subAgentId,
+                request.ParentAgentId.Value,
+                budgetPolicy.Tier,
                 request.TimeoutSeconds,
                 timeoutSeconds,
                 request.MaxTurns,
@@ -279,6 +280,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Selects a fresh policy snapshot from the current options using only the trusted parent ID.
+    /// Reading <see cref="IOptionsMonitor{TOptions}.CurrentValue"/> per spawn makes configuration
+    /// reloads effective without mutating policies already assigned to running children.
+    /// </summary>
+    internal SubAgentBudgetPolicy ResolveBudgetPolicy(SubAgentSpawnRequest request)
+        => _options.CurrentValue.SubAgents.ResolveBudgetPolicy(request.ParentAgentId);
+
+    /// <summary>
     /// Enforces the configured spawn depth and per-session concurrency ceilings for
     /// <paramref name="request"/>. Pure guard — throws <see cref="InvalidOperationException"/>
     /// when a limit is breached and is otherwise a no-op. Extracted from
@@ -291,6 +300,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// maximum number of running sub-agents.
     /// </exception>
     internal void EnforceSpawnLimits(SubAgentSpawnRequest request)
+        => EnforceSpawnLimits(request, ResolveBudgetPolicy(request));
+
+    private void EnforceSpawnLimits(SubAgentSpawnRequest request, SubAgentBudgetPolicy budgetPolicy)
     {
         var maxDepth = _options.CurrentValue.SubAgents.MaxDepth;
         if (maxDepth > 0)
@@ -301,7 +313,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
         }
 
-        var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
+        var maxConcurrent = budgetPolicy.MaxConcurrentPerSession;
         if (maxConcurrent > 0)
         {
             var activeCount = _records.Values.Count(record =>
