@@ -344,13 +344,40 @@ public sealed class SqliteSessionStore : SessionStoreBase
             ORDER BY updated_at DESC
             """;
 
-        var sessions = new List<GatewaySession>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        // Read all ids first so the data reader is released before we hydrate rows
+        // (hydration touches the conversation store, which must not run while this
+        // reader holds the connection).
+        var ids = new List<SessionId>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
-            var sessionId = SessionId.From(reader.GetString(0));
-            var session = (_cache.TryGet(sessionId, out var c1) ? c1 : null)
-                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                ids.Add(SessionId.From(reader.GetString(0)));
+        }
+
+        var sessions = new List<GatewaySession>(ids.Count);
+        foreach (var sessionId in ids)
+        {
+            // #2188: one unrecoverable row (e.g. a non-null conversation_id whose
+            // conversation was deleted) must never poison the whole enumeration. The
+            // startup self-heal removes such rows, but external DB edits or a heal that
+            // has not yet run can still surface one - skip-and-log it here so bulk reads
+            // (including CronSessionStartupReconciler during host startup) degrade
+            // gracefully instead of throwing.
+            GatewaySession? session;
+            try
+            {
+                session = (_cache.TryGet(sessionId, out var c1) ? c1 : null)
+                    ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UnrecoverableSessionException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Skipping unrecoverable session '{SessionId}' during enumeration; it will be quarantined on next startup self-heal.",
+                    sessionId.Value);
+                continue;
+            }
+
             if (session is not null)
             {
                 _cache.Set(sessionId, session);
@@ -588,6 +615,14 @@ public sealed class SqliteSessionStore : SessionStoreBase
             // AddParticipantsAsync). Runs on every startup; cheap when the legacy column
             // has aged out across deployments.
             await BackfillParticipantsToConversationsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+
+            // #2188: self-heal sessions whose non-null conversation_id references a
+            // conversation that no longer exists. Left in place, each such row throws
+            // on every load and (via CronSessionStartupReconciler) can crash gateway
+            // startup. Runs on every startup regardless of the legacy agent_id column,
+            // since a dangling reference can be created at any time by deleting a
+            // conversation while a session row survives.
+            await QuarantineDanglingConversationSessionsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
 
             // P9-I (#674): drop the legacy agent_id column and its indexes once orphan
             // migration has completed. The column is no longer the source of truth —
@@ -887,6 +922,88 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <summary>
+    /// #2188 self-heal: finds sessions whose non-null <c>conversation_id</c> has no
+    /// matching row in the conversation store and deletes them (row + history) with a
+    /// logged summary. Such a row is unrecoverable - its owning agent can only be
+    /// resolved from <see cref="Conversation.AgentId"/>, which is gone - so quarantining
+    /// it prevents the fatal enumeration/startup crash described in the issue. Safe to
+    /// run on every startup: a no-op when every conversation_id resolves.
+    /// </summary>
+    private async Task QuarantineDanglingConversationSessionsAsync(
+        SqliteConnection connection,
+        IConversationStore conversationStore,
+        CancellationToken cancellationToken)
+    {
+        // Collect distinct non-null conversation ids referenced by session rows.
+        await using var scanCmd = connection.CreateCommand();
+        scanCmd.CommandText = """
+            SELECT id, conversation_id
+            FROM sessions
+            WHERE conversation_id IS NOT NULL
+              AND conversation_id != ''
+            """;
+
+        var rows = new List<(string SessionId, string ConversationId)>();
+        await using (var reader = await scanCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                rows.Add((reader.GetString(0), reader.GetString(1)));
+        }
+
+        if (rows.Count == 0)
+            return;
+
+        // Resolve each distinct conversation once; a conversation that returns null is
+        // deleted, so every session referencing it is unrecoverable.
+        var resolution = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var danglingSessionIds = new List<string>();
+        foreach (var (sessionId, convIdValue) in rows)
+        {
+            if (!resolution.TryGetValue(convIdValue, out var exists))
+            {
+                var conversation = await conversationStore
+                    .GetAsync(ConversationId.From(convIdValue), cancellationToken)
+                    .ConfigureAwait(false);
+                exists = conversation is not null;
+                resolution[convIdValue] = exists;
+            }
+
+            if (!exists)
+                danglingSessionIds.Add(sessionId);
+        }
+
+        if (danglingSessionIds.Count == 0)
+            return;
+
+        // Delete each dangling session and its history in a single transaction.
+        await using var transaction = connection.BeginTransaction();
+        foreach (var sessionId in danglingSessionIds)
+        {
+            await using var deleteHistory = connection.CreateCommand();
+            deleteHistory.Transaction = transaction;
+            deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $id";
+            deleteHistory.Parameters.AddWithValue("$id", sessionId);
+            await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var deleteSession = connection.CreateCommand();
+            deleteSession.Transaction = transaction;
+            deleteSession.CommandText = "DELETE FROM sessions WHERE id = $id";
+            deleteSession.Parameters.AddWithValue("$id", sessionId);
+            await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            // Evict any cached copy so a later read cannot resurrect the healed row.
+            _cache.Remove(SessionId.From(sessionId));
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        _logger.LogWarning(
+            "Dangling-conversation self-heal (#2188): quarantined {Count} unrecoverable session(s) whose conversation no longer exists: {SessionIds}.",
+            danglingSessionIds.Count,
+            string.Join(", ", danglingSessionIds));
+    }
+
+    /// <summary>
     /// P9-F (#657): one-shot startup backfill that forwards legacy
     /// <c>sessions.participants_json</c> entries into the conversation store's normalised
     /// participant set. Sessions are grouped by <c>conversation_id</c> and each group is
@@ -1025,7 +1142,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
     {
         if (!session.ConversationId.IsInitialized())
         {
-            throw new InvalidOperationException(
+            throw new UnrecoverableSessionException(
+                session.SessionId.Value,
                 $"Session '{session.SessionId.Value}' has an unset ConversationId after load. " +
                 "Post-P9-I, every session row is guaranteed to carry a non-null conversation_id " +
                 "(the orphan migration runs on every startup before this load could be served). " +
@@ -1042,7 +1160,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         var conversation = await _conversationStore.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
         if (conversation is null)
         {
-            throw new InvalidOperationException(
+            throw new UnrecoverableSessionException(
+                session.SessionId.Value,
                 $"Session '{session.SessionId.Value}' references conversation '{session.ConversationId.Value}' " +
                 "which does not exist in the conversation store. AgentId cannot be hydrated. " +
                 "This indicates that the conversation was deleted while the session row remained — " +

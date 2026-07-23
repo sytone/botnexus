@@ -1107,12 +1107,13 @@ public sealed class SqliteSessionStoreTests
     }
 
     [Fact]
-    public async Task GetStatsAsync_OrphanedSession_CountsTowardTotalsButNoAgentBucket()
+    public async Task GetStatsAsync_OrphanedSession_IsQuarantinedByStartupSelfHeal()
     {
         using var fixture = new StoreFixture();
-        // Seed a normal session for agent-a, then write a session whose conversation
-        // does not exist in the conversation store (an orphan). Stats must not throw
-        // and must count the orphan toward totals/status but contribute no agent bucket.
+        // #2188: a session whose non-null conversation_id references a deleted
+        // conversation is unrecoverable. The startup self-heal (which runs in
+        // EnsureCreatedAsync before any read) quarantines it, so stats must not throw
+        // and must see only the healthy session - the dangling row is gone.
         await SeedSessionAsync(fixture, "a1", "agent-a", "conv-a", SessionStatus.Active);
 
         // Write the orphan row directly with a conversation_id that was never created.
@@ -1133,11 +1134,18 @@ public sealed class SqliteSessionStoreTests
         var stats = await fixture.CreateStore().GetStatsAsync();
 
         stats.ShouldNotBeNull();
-        stats!.TotalSessions.ShouldBe(2);          // both the real and the orphan are counted
-        stats.ByStatus["Active"].ShouldBe(2);
-        stats.ByAgent.ShouldHaveSingleItem();        // only agent-a gets a bucket
+        stats!.TotalSessions.ShouldBe(1);          // the dangling orphan was quarantined
+        stats.ByStatus["Active"].ShouldBe(1);
+        stats.ByAgent.ShouldHaveSingleItem();        // only agent-a remains
         stats.ByAgent[0].AgentId.ShouldBe("agent-a");
         stats.ByAgent[0].Count.ShouldBe(1);
+
+        // The orphan row itself must be gone from the sessions table.
+        await using var verify = new SqliteConnection(fixture.ConnectionString);
+        await verify.OpenAsync();
+        await using var check = verify.CreateCommand();
+        check.CommandText = "SELECT COUNT(*) FROM sessions WHERE id = 'orphan-1'";
+        ((long)(await check.ExecuteScalarAsync())!).ShouldBe(0);
     }
 
     private static async Task SeedSessionAsync(
