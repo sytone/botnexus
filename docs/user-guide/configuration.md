@@ -798,6 +798,28 @@ Sessions are persisted to a SQLite database by default.
 }
 ```
 
+### Liveness Watchdog
+
+The gateway warns after prolonged inactivity and verifies the runtime scheduler before escalating to a fatal alert.
+
+```json
+{
+  "gateway": {
+    "livenessWatchdog": {
+      "checkInterval": "00:00:30",
+      "warningThreshold": "00:15:00",
+      "criticalThreshold": "00:30:00",
+      "criticalProbeTimeout": "00:00:05"
+    }
+  }
+}
+```
+
+- `checkInterval`: How often inactivity is evaluated (default `00:00:30`).
+- `warningThreshold`: Idle duration before the first warning (default `00:15:00`).
+- `criticalThreshold`: Idle duration that triggers a scheduler responsiveness probe (default `00:30:00`).
+- `criticalProbeTimeout`: Maximum time for queued scheduler work to run before one fatal event is emitted for the inactivity episode (default `00:00:05`, i.e. 5 seconds). A successful probe logs a warning instead of a fatal event.
+
 **Session Store Types:**
 
 1. **Sqlite** (default): SQLite database
