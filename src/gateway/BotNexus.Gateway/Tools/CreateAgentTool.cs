@@ -112,6 +112,11 @@ public sealed class CreateAgentTool(
         if (id.Length < 2 || id.Length > 64 || !IdPattern.IsMatch(id))
             return Error($"Invalid agent ID '{id}'. Must match ^[a-z0-9][a-z0-9-]*[a-z0-9]$, 2-64 chars.");
 
+        // #2136: the six worker archetype ids are reserved for spawn_subagent(archetype:...) and may
+        // not be created as real named agents.
+        if (BotNexus.Gateway.Agents.BuiltInArchetypes.IsReserved(id))
+            return Error($"Agent ID '{id}' is a reserved sub-agent archetype and cannot be created as a named agent. Use spawn_subagent(archetype: \"{id}\") instead.");
+
         if (string.IsNullOrWhiteSpace(displayName))
             return Error("Parameter 'displayName' is required.");
 

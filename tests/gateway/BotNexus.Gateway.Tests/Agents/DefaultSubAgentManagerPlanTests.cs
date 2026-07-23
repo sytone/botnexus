@@ -60,6 +60,51 @@ public sealed class DefaultSubAgentManagerPlanTests
         plan.SystemPromptOverride.ShouldBe("Review only.");
     }
 
+    [Fact]
+    public void ResolveSpawnPlan_Embody_AppliesArchetypeToolRestriction_WhenNoExplicitTools()
+    {
+        // #2136: archetypes are resolved from the built-in catalog, not a registered named agent.
+        // With no explicit tool override, the archetype's tool restriction is applied to the plan
+        // while model/provider still come from the parent descriptor.
+        var parent = Descriptor("nova", "gpt-4o", "openai", "You are Nova.");
+        var manager = BuildManager(parent);
+        var request = Request("nova", new Embody(SubAgentArchetype.Coder));
+
+        var plan = manager.ResolveSpawnPlan(request, parent, Uid);
+
+        plan.BaseDescriptor.ModelId.ShouldBe("gpt-4o");
+        plan.ToolIds.ShouldNotBeNull();
+        plan.ToolIds!.ShouldContain("shell");
+        plan.ToolIds.ShouldContain("edit");
+    }
+
+    [Fact]
+    public void ResolveSpawnPlan_Embody_ExplicitTools_OverrideArchetypeRestriction()
+    {
+        var parent = Descriptor("nova", "gpt-4o", "openai");
+        var manager = BuildManager(parent);
+        var request = Request("nova", new Embody(
+            SubAgentArchetype.Coder,
+            new EmbodyCustomizations { ToolIds = ["read"] }));
+
+        var plan = manager.ResolveSpawnPlan(request, parent, Uid);
+
+        plan.ToolIds.ShouldBe(["read"]);
+    }
+
+    [Fact]
+    public void ResolveSpawnPlan_Embody_GeneralArchetype_InheritsParentTools()
+    {
+        // 'general' has no built-in restriction, so ToolIds stays null (inherit parent's tools).
+        var parent = Descriptor("nova", "gpt-4o", "openai");
+        var manager = BuildManager(parent);
+        var request = Request("nova", new Embody(SubAgentArchetype.General));
+
+        var plan = manager.ResolveSpawnPlan(request, parent, Uid);
+
+        plan.ToolIds.ShouldBeNull();
+    }
+
     // ---------------- ResolveSpawnPlan: Mirror ----------------
 
     [Fact]

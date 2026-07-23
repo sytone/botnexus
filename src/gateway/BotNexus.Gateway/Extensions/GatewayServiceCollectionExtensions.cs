@@ -406,7 +406,9 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
 
-        services.AddHostedService<BuiltInAgentRegistrationService>();
+        // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
+        // are no longer registered as named conversational agents. They are resolved at spawn time
+        // from BuiltInArchetypes, cloning the parent descriptor and applying the archetype tool set.
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;

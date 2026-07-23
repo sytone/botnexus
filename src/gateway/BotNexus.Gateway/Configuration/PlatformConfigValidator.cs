@@ -339,6 +339,16 @@ public static class PlatformConfigValidator
             if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            // #2136: the six built-in worker archetype ids are reserved for
+            // spawn_subagent(archetype:...) and may not be defined/overridden as named agents.
+            if (Agents.BuiltInArchetypes.IsReserved(agentId))
+            {
+                errors.Add(
+                    $"agents.{agentId} uses a reserved sub-agent archetype id and cannot be defined as a named agent. " +
+                    "Use spawn_subagent(archetype: ...) to delegate work to it.");
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(agentConfig.Provider))
                 errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");
 

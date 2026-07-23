@@ -169,6 +169,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 AgentId = childAgentId,
                 DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
                 Kind = AgentKind.SubAgent,
+                // #2136: apply the archetype/customisation tool restriction and any system-prompt
+                // override onto the parent clone. A null toolIds means "inherit the parent's tools".
+                ToolIds = toolIds is { Count: > 0 } ? toolIds : baseDescriptor.ToolIds,
+                SystemPrompt = string.IsNullOrWhiteSpace(plan.SystemPromptOverride)
+                    ? baseDescriptor.SystemPrompt
+                    : plan.SystemPromptOverride,
                 FileAccess = childFileAccess ?? baseDescriptor.FileAccess
             });
         }
@@ -341,6 +347,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         switch (request.Mode)
         {
             case Embody embody:
+                // #2136: worker archetypes are resolved from the built-in catalog rather than a
+                // registered named agent. When the caller supplies no explicit tool allowlist, apply
+                // the archetype's tool restriction so the role's tool boundary is preserved; the
+                // model/provider/system prompt are still inherited from the parent descriptor.
+                var archetypeProfile = BuiltInArchetypes.GetProfile(embody.Role);
+                var resolvedToolIds = embody.Customizations.ToolIds is { Count: > 0 }
+                    ? embody.Customizations.ToolIds
+                    : archetypeProfile?.ToolIds;
                 return new SubAgentSpawnPlan(
                     Archetype: embody.Role,
                     BaseDescriptor: parentDescriptor,
@@ -348,7 +362,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     Name: embody.Customizations.Name,
                     ModelOverride: embody.Customizations.ModelOverride,
                     ApiProviderOverride: embody.Customizations.ApiProviderOverride,
-                    ToolIds: embody.Customizations.ToolIds,
+                    ToolIds: resolvedToolIds,
                     SystemPromptOverride: embody.Customizations.SystemPromptOverride);
 
             case Mirror mirror:

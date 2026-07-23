@@ -74,6 +74,16 @@ public sealed class PlatformConfigAgentSource(
             if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            // #2136: never materialise a reserved sub-agent archetype id as a named agent, even if a
+            // user config file slips one past validation - archetypes are spawn-time roles only.
+            if (BuiltInArchetypes.IsReserved(agentId))
+            {
+                _logger.LogWarning(
+                    "Ignoring platform-config agent '{AgentId}': it is a reserved sub-agent archetype id and cannot be a named agent.",
+                    agentId);
+                continue;
+            }
+
             if (!agentConfig.Enabled)
                 continue;
 

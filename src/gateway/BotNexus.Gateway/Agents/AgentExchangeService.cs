@@ -102,6 +102,19 @@ public sealed class AgentExchangeService : IAgentExchangeService
         if (request.MaxTurns <= 0)
             throw new ArgumentOutOfRangeException(nameof(request.MaxTurns), "MaxTurns must be greater than zero.");
 
+        // #2136: sub-agent worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
+        // are implementation-only roles, not conversational peers. Reject them deterministically here
+        // - BEFORE any session or conversation is created - so a stale conversation/session targeting
+        // an archetype id fails fast with actionable guidance instead of reaching descriptor creation,
+        // hitting "ModelId is required; ApiProvider is required", and surfacing as a fatal
+        // UnobservedTaskException breadcrumb.
+        if (BuiltInArchetypes.IsReserved(request.TargetId.Value))
+            throw new ArgumentException(
+                $"'{request.TargetId.Value}' is a built-in sub-agent archetype, not a conversational agent. "
+                + $"Use spawn_subagent(archetype: \"{request.TargetId.Value}\") to delegate work to it, or "
+                + "agent_converse only with a genuine registered named agent (see list_agents).",
+                nameof(request));
+
         var initiatorDescriptor = _registry.Get(request.InitiatorId)
             ?? throw new KeyNotFoundException($"Initiator agent '{request.InitiatorId}' is not registered.");
         var isLocalTarget = _registry.Contains(request.TargetId);

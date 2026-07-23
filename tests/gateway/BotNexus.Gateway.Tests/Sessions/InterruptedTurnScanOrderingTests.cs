@@ -25,7 +25,7 @@ public sealed class InterruptedTurnScanOrderingTests
 {
     /// <summary>
     /// A hosted service that registers an agent during its own StartAsync - modelling
-    /// BuiltInAgentRegistrationService / AgentConfigurationHostedService, which populate the
+    /// AgentConfigurationHostedService, which populate the
     /// registry only once the host starts hosted services.
     /// </summary>
     private sealed class LateAgentRegistrationService(IAgentRegistry registry, string agentId) : IHostedService
