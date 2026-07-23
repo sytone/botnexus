@@ -290,4 +290,29 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.Find("[data-testid='activity-summary-scheduled']").Click();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
     }
+
+    [Fact]
+    public void Agents_stat_card_is_an_interactive_button_tied_to_the_agent_filter()
+    {
+        SetupConversations(
+            Conv("c1", agentId: "alpha", title: "Alpha chat"),
+            Conv("c2", agentId: "beta", title: "Beta chat"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+
+        // The agents card is a button (navigation affordance), not inert display text.
+        var card = cut.Find("[data-testid='activity-summary-agents']");
+        Assert.Equal("button", card.NodeName, ignoreCase: true);
+        Assert.DoesNotContain("active", card.GetAttribute("class"));
+
+        // Selecting an agent lights up the card's active treatment (single source of truth = the picker).
+        cut.Find("[data-testid='activity-filter-agent']").Change("beta");
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        Assert.Contains("active", cut.Find("[data-testid='activity-summary-agents']").GetAttribute("class"));
+
+        // Clicking the card is a no-throw focus affordance that leaves the filter untouched.
+        cut.Find("[data-testid='activity-summary-agents']").Click();
+        Assert.Equal("beta", cut.Find("[data-testid='activity-filter-agent']").GetAttribute("value"));
+    }
 }
