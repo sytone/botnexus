@@ -85,8 +85,8 @@ public sealed class PlatformConfigAgentSource(
                     rawElement = rawEl;
                 var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
                 var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
-                if (effectiveConfig.ToolTimeoutSeconds is int toolTimeoutSeconds)
-                    metadata["toolTimeoutSeconds"] = toolTimeoutSeconds;
+                metadata["toolTimeoutSeconds"] = effectiveConfig.ToolTimeoutSeconds
+                    ?? AgentDefaultsConfig.DefaultToolTimeoutSeconds;
 
                 var descriptor = new AgentDescriptor
                 {
