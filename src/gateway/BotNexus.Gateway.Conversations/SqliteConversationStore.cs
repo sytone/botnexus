@@ -958,10 +958,23 @@ public sealed class SqliteConversationStore : IConversationStore
 
         // Split cache hits from misses up front; only the misses hit the database, and they do
         // so in one batched pass rather than a per-row LoadConversationAsync fan-out.
+        //
+        // The materialised result is assembled into a LOCAL map (`resolved`) that is independent of
+        // the LRU cache's capacity — NOT re-read out of `_cache` after warming it (issue #2226). The
+        // cache (BoundedLruCache, DefaultConversationCacheCapacity = 1000) is a warm read-through, not
+        // a buffer sized to hold an entire result set. When `orderedIds.Count` exceeds the cache
+        // capacity (or the LRU churns under concurrent reads), each `_cache.Set` for a later id can
+        // evict an earlier id; a subsequent `_cache.TryGet(id)` rebuild loop then misses those
+        // evicted ids and silently drops them, so conversations past the ~1000th position flickered
+        // in and out of GET /api/conversations non-deterministically. Keeping the loaded rows in a
+        // local map decouples result membership from cache survival while still warming the cache.
+        var resolved = new Dictionary<string, Conversation>(orderedIds.Count, StringComparer.Ordinal);
         var missing = new List<string>();
         foreach (var id in orderedIds)
         {
-            if (!_cache.TryGet(id, out _))
+            if (_cache.TryGet(id, out var cached))
+                resolved[id] = cached;
+            else
                 missing.Add(id);
         }
 
@@ -969,14 +982,17 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var loaded = await LoadConversationsByIdsAsync(connection, missing, ct).ConfigureAwait(false);
             foreach (var (id, conversation) in loaded)
+            {
                 _cache.Set(id, CloneConversation(conversation));
+                resolved[id] = conversation;
+            }
         }
 
         // An id present in the ordered set can legitimately vanish between the id-select in the
         // caller (ListAsync / ListForCitizenAsync) and this hydrate pass: a concurrent deleter —
         // notably the noop cron-session prune (issue #1754) or any DeleteAsync racing a live portal
         // poller — can remove the row after we captured its id but before LoadConversationsByIdsAsync
-        // ran. That row is simply absent from the batch load and never enters the cache. Treat it as
+        // ran. That row is simply absent from the batch load and never enters `resolved`. Treat it as
         // a concurrent delete and omit it from the list rather than throwing: a hard throw here turns
         // the whole GET /api/conversations request into a 500 (issue #1642 originally introduced the
         // throw). Omitting the deleted conversation is the correct read-side semantics for a delete
@@ -984,9 +1000,9 @@ public sealed class SqliteConversationStore : IConversationStore
         var result = new List<Conversation>(orderedIds.Count);
         foreach (var id in orderedIds)
         {
-            if (!_cache.TryGet(id, out var cached))
+            if (!resolved.TryGetValue(id, out var conversation))
                 continue;
-            result.Add(BackfillWorldId(CloneConversation(cached))!);
+            result.Add(BackfillWorldId(CloneConversation(conversation))!);
         }
 
         return result;
