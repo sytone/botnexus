@@ -98,6 +98,10 @@ public sealed class SoulTrigger(
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+        // #2127: persist the tool timeline this blocking run executed before the assistant text so
+        // the soul session records a durable, auditable tool trail rather than final text only.
+        foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(response))
+            session.AddEntry(toolEntry);
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
 
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
@@ -134,6 +138,9 @@ public sealed class SoulTrigger(
                 previousSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = reflectionPrompt });
                 var reflectionHandle = await supervisor.GetOrCreateAsync(agentId, previousSession.SessionId, ct).ConfigureAwait(false);
                 var reflectionResponse = await reflectionHandle.PromptAsync(reflectionPrompt, ct).ConfigureAwait(false);
+                // #2127: reflection-on-seal is a blocking run too - record its tool timeline durably.
+                foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(reflectionResponse))
+                    previousSession.AddEntry(toolEntry);
                 previousSession.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = reflectionResponse.Content });
             }
 

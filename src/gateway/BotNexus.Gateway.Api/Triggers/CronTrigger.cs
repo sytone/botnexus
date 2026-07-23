@@ -236,25 +236,7 @@ public sealed class CronTrigger(
     /// consistent with the streaming orphan-synthesis behaviour.
     /// </summary>
     private static IEnumerable<SessionEntry> ProjectToolEntries(AgentResponse response)
-    {
-        foreach (var call in response.ToolCalls)
-        {
-            var content = call.IsIncomplete
-                ? $"Tool '{call.ToolName}' did not complete - result synthesized for transcript consistency."
-                : call.ResultContent
-                    ?? (call.IsError ? "Tool execution failed." : "Tool execution completed.");
-
-            yield return new SessionEntry
-            {
-                Role = MessageRole.Tool,
-                Content = content,
-                ToolName = call.ToolName,
-                ToolCallId = call.ToolCallId,
-                ToolArgs = call.Arguments,
-                ToolIsError = call.IsError
-            };
-        }
-    }
+        => TriggerToolAuditProjector.ProjectToolEntries(response);
 
     /// <summary>
     /// True only for a throwaway per-run conversation the trigger created this run: a transient

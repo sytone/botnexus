@@ -202,6 +202,66 @@ public sealed class SoulTriggerTests
         sessions.Verify(s => s.GetOrCreateAsync(expectedSessionId, agentId, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    [Fact]
+    public async Task CreateSessionAsync_DailyTurnWithToolCalls_PersistsOrderedToolRows()
+    {
+        var agentId = AgentId.From("agent-a");
+        var now = new DateTimeOffset(2026, 1, 10, 0, 30, 0, TimeSpan.Zero);
+        var expectedSessionId = SessionId.ForSoul(agentId, new DateOnly(2026, 1, 10));
+
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(agentId)).Returns(CreateDescriptor(agentId, new SoulAgentConfig()));
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        GatewaySession? saved = null;
+        sessions.Setup(s => s.GetOrCreateAsync(expectedSessionId, agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession { SessionId = expectedSessionId, AgentId = agentId });
+        sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((session, _) => saved = session)
+            .Returns(Task.CompletedTask);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync("reflect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse
+            {
+                Content = "done",
+                ToolCalls =
+                [
+                    new AgentToolCallInfo("call-1", "read", false, "{\"path\":\"a.txt\"}", "file body"),
+                    new AgentToolCallInfo("call-2", "write", true, "{\"path\":\"b.txt\"}", "boom")
+                ]
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(agentId, expectedSessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var trigger = new SoulTrigger(
+            supervisor.Object,
+            registry.Object,
+            sessions.Object,
+            NullLogger<SoulTrigger>.Instance,
+            new FixedTimeProvider(now));
+
+        await trigger.CreateSessionAsync(agentId, "reflect");
+
+        saved.ShouldNotBeNull();
+        var history = saved!.GetHistorySnapshot();
+        var toolRows = history.Where(e => e.Role == MessageRole.Tool).ToArray();
+        toolRows.Length.ShouldBe(2);
+        toolRows[0].ToolCallId.ShouldBe("call-1");
+        toolRows[0].ToolName.ShouldBe("read");
+        toolRows[0].ToolArgs.ShouldNotBeNull().ShouldContain("a.txt");
+        toolRows[0].Content.ShouldBe("file body");
+        toolRows[0].ToolIsError.ShouldBeFalse();
+        toolRows[1].ToolCallId.ShouldBe("call-2");
+        toolRows[1].ToolIsError.ShouldBeTrue();
+        // Tool rows precede the assistant text, mirroring the streaming timeline.
+        var assistantIndex = Array.FindIndex(history.ToArray(), e => e.Role == MessageRole.Assistant);
+        var lastToolIndex = Array.FindLastIndex(history.ToArray(), e => e.Role == MessageRole.Tool);
+        lastToolIndex.ShouldBeLessThan(assistantIndex);
+    }
+
     private static AgentDescriptor CreateDescriptor(AgentId agentId, SoulAgentConfig soul)
         => new()
         {
