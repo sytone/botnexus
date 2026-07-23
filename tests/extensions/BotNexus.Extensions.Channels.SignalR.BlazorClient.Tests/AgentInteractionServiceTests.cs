@@ -924,5 +924,45 @@ public sealed class AgentInteractionServiceTests
         await _restClient.DidNotReceive().GetConversationPendingAskUserAsync("agent-1", "conv-live");
         _store.GetPendingAskUser("conv-live")!.RequestId.ShouldBe("live-req");
     }
+
+    // ---- #2195: Stop force-clears local turn state (escape hatch) ----
+
+    [Fact]
+    public async Task AbortAsync_force_clears_local_turn_state_even_when_hub_call_fails()
+    {
+        // #2195: if a RunEnded is missed/misrouted the conversation is stuck turn-active and the
+        // user cannot reply. Stop must always force-clear the local run bracket so the input
+        // recovers without a page reload -- even though the (disconnected) hub Abort throws.
+        var agent = _store.GetAgent("agent-1")!;
+        agent.ActiveConversationId = "conv-1";
+        agent.IsStreaming = true;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Test conv",
+            ActiveSessionId = "sess-1"
+        };
+        var conv = agent.Conversations["conv-1"];
+        conv.StreamState.IsRunActive = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.ActiveToolCalls["tool-1"] = new ActiveToolCall
+        {
+            ToolCallId = "tool-1",
+            ToolName = "read",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "msg-1"
+        };
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        await _service.AbortAsync("agent-1");
+
+        // The turn-active bracket is cleared locally regardless of the hub result, so the portal
+        // swaps back to the normal Send control.
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+    }
 }
 
