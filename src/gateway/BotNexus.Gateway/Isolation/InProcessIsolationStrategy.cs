@@ -1049,19 +1049,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
-            var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
-
-            var response = new AgentResponse
-            {
-                Content = lastAssistant?.Content ?? string.Empty,
-                Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
-                ToolCalls = messages.OfType<ToolResultAgentMessage>()
-                    .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
-                    .ToList()
-            };
+            var response = BuildResponse(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            throw BuildInterruptedException(oce);
         }
         catch (Exception ex)
         {
@@ -1083,25 +1079,141 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
-            var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
-
-            var response = new AgentResponse
-            {
-                Content = lastAssistant?.Content ?? string.Empty,
-                Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
-                ToolCalls = messages.OfType<ToolResultAgentMessage>()
-                    .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
-                    .ToList()
-            };
+            var response = BuildResponse(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            throw BuildInterruptedException(oce);
         }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Projects the messages a completed blocking run produced into a gateway <see cref="AgentResponse"/>,
+    /// carrying full tool-call metadata (id, name, arguments, result content, error) so a blocking caller
+    /// such as the cron trigger can persist a tool timeline with parity to the interactive streaming path
+    /// (issue #2118). Tool calls are surfaced in execution order.
+    /// </summary>
+    private static AgentResponse BuildResponse(IReadOnlyList<AgentMessage> messages)
+    {
+        var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
+        return new AgentResponse
+        {
+            Content = lastAssistant?.Content ?? string.Empty,
+            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null)
+        };
+    }
+
+    /// <summary>
+    /// Builds the interruption exception carried out of a cancelled/timed-out blocking run. Reads the
+    /// live agent timeline (<see cref="AgentState.Messages"/>) to capture every tool call that completed
+    /// before cancellation, plus any tool still in-flight (<see cref="AgentState.PendingToolCalls"/>),
+    /// which is marked <see cref="AgentToolCallInfo.IsIncomplete"/> so the transcript represents the
+    /// interrupted tool consistently (issue #2118).
+    /// </summary>
+    private AgentPromptInterruptedException BuildInterruptedException(OperationCanceledException oce)
+    {
+        var snapshot = _agent.State.Messages;
+        var lastAssistant = snapshot.OfType<AssistantAgentMessage>().LastOrDefault();
+        var partial = new AgentResponse
+        {
+            Content = lastAssistant?.Content ?? string.Empty,
+            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls)
+        };
+        return new AgentPromptInterruptedException(partial, oce.CancellationToken);
+    }
+
+    /// <summary>
+    /// Correlates the assistant tool-call requests (which carry arguments) with the tool-result messages
+    /// (which carry result content and error state) in a run timeline, producing one
+    /// <see cref="AgentToolCallInfo"/> per requested call in execution order. A call whose id appears in
+    /// <paramref name="pendingToolCallIds"/> but has no matching result was interrupted mid-flight and is
+    /// flagged <see cref="AgentToolCallInfo.IsIncomplete"/>. Shared by the completed and interrupted paths
+    /// so both persist the same tool-timeline shape (issue #2118).
+    /// </summary>
+    internal static IReadOnlyList<AgentToolCallInfo> BuildToolCalls(
+        IReadOnlyList<AgentMessage> messages,
+        IReadOnlySet<string>? pendingToolCallIds)
+    {
+        // Result rows are keyed by tool call id; first result wins for a given id.
+        var resultsById = new Dictionary<string, ToolResultAgentMessage>(StringComparer.Ordinal);
+        foreach (var result in messages.OfType<ToolResultAgentMessage>())
+        {
+            resultsById.TryAdd(result.ToolCallId, result);
+        }
+
+        var toolCalls = new List<AgentToolCallInfo>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        // Walk the timeline in order. Assistant messages carry the tool-call requests (with the
+        // arguments the model supplied); each request is matched to its result to form a full row.
+        foreach (var message in messages)
+        {
+            if (message is not AssistantAgentMessage assistant || assistant.ToolCalls is null)
+                continue;
+
+            foreach (var call in assistant.ToolCalls)
+            {
+                if (!seen.Add(call.Id))
+                    continue;
+
+                var arguments = call.Arguments is { Count: > 0 }
+                    ? JsonSerializer.Serialize(call.Arguments)
+                    : null;
+
+                if (resultsById.TryGetValue(call.Id, out var result))
+                {
+                    toolCalls.Add(new AgentToolCallInfo(
+                        call.Id,
+                        call.Name,
+                        result.IsError,
+                        arguments,
+                        result.Result.Content.FirstOrDefault()?.Value,
+                        IsIncomplete: false));
+                }
+                else
+                {
+                    // No result row: the call is either still in-flight at cancellation (pending) or
+                    // otherwise never completed. Either way it is an incomplete/interrupted call.
+                    var incomplete = pendingToolCallIds?.Contains(call.Id) ?? true;
+                    toolCalls.Add(new AgentToolCallInfo(
+                        call.Id,
+                        call.Name,
+                        IsError: incomplete,
+                        arguments,
+                        ResultContent: null,
+                        IsIncomplete: incomplete));
+                }
+            }
+        }
+
+        // Defensive: surface any orphan result whose request was never captured on an assistant
+        // message (should not happen in normal runs, but keeps the timeline lossless).
+        foreach (var result in messages.OfType<ToolResultAgentMessage>())
+        {
+            if (seen.Add(result.ToolCallId))
+            {
+                toolCalls.Add(new AgentToolCallInfo(
+                    result.ToolCallId,
+                    result.ToolName,
+                    result.IsError,
+                    Arguments: null,
+                    result.Result.Content.FirstOrDefault()?.Value,
+                    IsIncomplete: false));
+            }
+        }
+
+        return toolCalls;
     }
 
     /// <inheritdoc />
