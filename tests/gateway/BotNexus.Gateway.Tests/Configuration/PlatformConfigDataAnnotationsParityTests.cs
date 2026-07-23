@@ -399,24 +399,30 @@ public sealed class PlatformConfigDataAnnotationsParityTests
     [Fact]
     public void OptionsValidator_InvalidConfig_FailsThroughAnnotatedPath()
     {
-        // An agent missing both provider and model is rejected by the cross-field escape hatch
-        // surfaced through Validator.TryValidateObject.
+        // A non-quarantinable cross-field error (here: the reserved agents.defaults pseudo-agent,
+        // whose values seed every agent) is rejected by the cross-field escape hatch surfaced
+        // through Validator.TryValidateObject. Note: per #2102 an error scoped to a specific named
+        // agent (e.g. a broken 'agents.broken' missing provider/model) is quarantined instead of
+        // failing global options, so it is deliberately NOT used here.
         var config = new PlatformConfig
         {
             Providers = new Dictionary<string, ProviderConfig>
             {
                 ["copilot"] = new() { ApiKey = "provider-key" },
             },
-            Agents = new Dictionary<string, AgentDefinitionConfig>
+            AgentDefaults = new AgentDefaultsConfig
             {
-                ["broken"] = new() { Enabled = true },
+                Heartbeat = new BotNexus.Gateway.Abstractions.Models.HeartbeatAgentConfig
+                {
+                    IntervalMinutes = 0,
+                },
             },
         };
 
         var validator = new PlatformConfigOptionsValidator();
         var result = validator.Validate(name: null, config);
 
-        result.Succeeded.ShouldBeFalse("an agent missing provider and model must fail validation");
+        result.Succeeded.ShouldBeFalse("a non-agent-scoped cross-field error must fail validation");
     }
 
     private static async Task<PlatformConfig> LoadAsync(string json)
