@@ -91,6 +91,28 @@ public sealed class AgentManagementToolTests
         notifier.Verify(n => n.NotifyAgentsChangedAsync("added", "my-new-agent", It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData("coder")]
+    [InlineData("reviewer")]
+    [InlineData("researcher")]
+    public async Task CreateAgent_ReservedArchetypeId_ReturnsError(string archetypeId)
+    {
+        // #2136: reserved worker-archetype ids cannot be created as named agents.
+        var (registry, writer, home, notifier) = MakeDeps();
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", archetypeId),
+            ("displayName", "Should Fail"),
+            ("modelId", "m"),
+            ("apiProvider", "p")));
+
+        var text = result.Content[0].Value;
+        text.ShouldContain("error");
+        text.ShouldContain("reserved");
+        registry.Verify(r => r.Register(It.IsAny<AgentDescriptor>()), Times.Never);
+    }
+
     [Fact]
     public async Task CreateAgent_DuplicateId_ReturnsError()
     {
@@ -198,6 +220,25 @@ public sealed class AgentManagementToolTests
         var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object]);
         tool.Name.ShouldBe("update_agent");
         tool.Label.ShouldBe("Update Agent");
+    }
+
+    [Theory]
+    [InlineData("coder")]
+    [InlineData("writer")]
+    public async Task UpdateAgent_ReservedArchetypeId_ReturnsError(string archetypeId)
+    {
+        // #2136: reserved worker-archetype ids are not real named agents and cannot be updated.
+        var (registry, writer, _, notifier) = MakeDeps();
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object]);
+
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", archetypeId),
+            ("displayName", "Should Fail")));
+
+        var text = result.Content[0].Value;
+        text.ShouldContain("error");
+        text.ShouldContain("reserved");
+        registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
     }
 
     [Fact]

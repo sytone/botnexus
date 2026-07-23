@@ -13,6 +13,30 @@ namespace BotNexus.Gateway.Tests.Configuration;
 /// </summary>
 public sealed class PlatformConfigValidatorTests
 {
+    [Theory]
+    [InlineData("coder")]
+    [InlineData("reviewer")]
+    [InlineData("researcher")]
+    public void Validate_ReservedArchetypeAgentId_ReturnsError(string archetypeId)
+    {
+        // #2136: reserved worker-archetype ids cannot be defined as named agents in config.
+        var config = new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["copilot"] = new() { ApiKey = "test-key" }
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                [archetypeId] = new() { Provider = "copilot", Model = "gpt-4.1" }
+            }
+        };
+
+        var errors = PlatformConfigValidator.Validate(config);
+
+        errors.ShouldContain(e => e.Contains(archetypeId) && e.Contains("reserved"));
+    }
+
     [Fact]
     public void Validate_MinimalValidInMemoryConfig_NoErrors()
     {

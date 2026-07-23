@@ -96,6 +96,10 @@ public sealed class UpdateAgentTool(
         if (string.IsNullOrWhiteSpace(id))
             return Error("Parameter 'id' is required.");
 
+        // #2136: reserved sub-agent archetype ids are not real named agents and cannot be updated.
+        if (BotNexus.Gateway.Agents.BuiltInArchetypes.IsReserved(id))
+            return Error($"Agent ID '{id}' is a reserved sub-agent archetype and cannot be updated as a named agent.");
+
         var agentId = AgentId.From(id);
         var existing = agentRegistry.Get(agentId);
         if (existing is null)

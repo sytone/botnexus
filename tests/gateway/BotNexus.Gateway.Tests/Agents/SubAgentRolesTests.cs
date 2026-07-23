@@ -28,7 +28,7 @@ public sealed class SubAgentRolesTests
     public async Task ConverseAsync_WithMatchingSubAgentRole_Succeeds()
     {
         var initiator = AgentId.From("orchestrator");
-        var target = AgentId.From("researcher");
+        var target = AgentId.From("specialist-agent");
 
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
@@ -81,7 +81,7 @@ public sealed class SubAgentRolesTests
     public async Task ConverseAsync_WithNonMatchingSubAgentRole_ThrowsUnauthorized()
     {
         var initiator = AgentId.From("orchestrator");
-        var target = AgentId.From("researcher");
+        var target = AgentId.From("specialist-agent");
 
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
@@ -127,7 +127,7 @@ public sealed class SubAgentRolesTests
     public async Task ConverseAsync_RoleMatchIsCaseInsensitive()
     {
         var initiator = AgentId.From("orchestrator");
-        var target = AgentId.From("researcher");
+        var target = AgentId.From("specialist-agent");
 
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
@@ -180,7 +180,7 @@ public sealed class SubAgentRolesTests
     public async Task ConverseAsync_TargetWithNoRole_RoleGrantDoesNotApply()
     {
         var initiator = AgentId.From("orchestrator");
-        var target = AgentId.From("researcher");
+        var target = AgentId.From("specialist-agent");
 
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor

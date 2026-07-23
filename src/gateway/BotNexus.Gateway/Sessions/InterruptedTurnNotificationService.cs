@@ -86,7 +86,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     /// <summary>
     /// No-op at StartAsync: the interrupted-turn scan is deferred to <see cref="StartedAsync"/>.
     /// The scan iterates <see cref="IAgentRegistry.GetAll"/>, but agents are registered by other
-    /// hosted services (e.g. BuiltInAgentRegistrationService, AgentConfigurationHostedService)
+    /// hosted services (e.g. AgentConfigurationHostedService, ConfigHydrationService (formerly BuiltInAgentRegistrationService)/AgentConfigurationHostedService)
     /// during their own StartAsync. Running the scan here races that registration and historically
     /// always observed an empty registry, so the scan silently no-opped and orphaned sentinels
     /// survived every restart (#2030). StartedAsync runs only after every hosted service's
