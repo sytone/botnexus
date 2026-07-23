@@ -1,4 +1,4 @@
-﻿# Agent Guidelines for BotNexus
+# Agent Guidelines for BotNexus
 
 ## Platform / Runtime
 
@@ -6,22 +6,20 @@ BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentat
 
 ## Validation
 
-Azure Container Apps is the default authoritative validation path for every candidate:
+The authoritative repository gate is selectable and defaults to strict local validation:
 
 ```powershell
 scripts/repo/Validate-PreCommit.ps1
 ```
 
-The command reuses a qualifying receipt only when it matches the exact candidate tree and base commit. Otherwise it runs strict remote validation: full solution build, impacted tests (including architecture and scenario safety nets), and Playwright. Do not repeat those build/tests locally after a qualifying receipt.
-
-When Azure is unavailable, opt into the serialized local equivalent explicitly:
+Set `BOTNEXUS_VALIDATION_MODE` to `local` or `remote`. Resolution checks process, user, then machine environment so user/machine settings work in spawned processes. The operational default is `local`; it performs one full solution build, impacted tests including architecture and scenario safety nets, and Playwright under a global host lock. Remote Azure validation and exact-content receipts remain available when explicitly selected:
 
 ```powershell
-scripts/repo/Validate-PreCommit.ps1 -LocalFallback
+$env:BOTNEXUS_VALIDATION_MODE = 'remote'
+scripts/repo/Validate-PreCommit.ps1
 ```
 
-The lower-level `build.ps1`, `test.ps1`, and `test-impacted.ps1` scripts remain available for focused diagnosis, but they are not the standard pre-commit or pre-push gate.
-
+`-LocalFallback` remains a backward-compatible alias for local mode. The lower-level scripts remain focused diagnostic tools, not substitutes for the strict gate.
 
 ## Document Ownership
 
@@ -76,7 +74,7 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    scripts/repo/Validate-PreCommit.ps1
    ```
 
-   By default this invokes Azure Container Apps strict validation. A qualifying exact-content receipt bypasses redundant validation. Strict mode builds the full solution, runs impacted tests plus mandatory `Architecture.Tests` and `Scenarios.Tests` safety nets, and runs Playwright. Use `-LocalFallback` only when Azure is unavailable; the fallback is serialized per worktree.
+   By default this invokes globally serialized local strict validation. Set `BOTNEXUS_VALIDATION_MODE=remote` to select Azure Container Apps; a qualifying exact-content receipt then bypasses redundant remote validation. Both modes build the full solution and run impacted tests plus mandatory architecture/scenario and Playwright safety nets.
 
    The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
@@ -118,9 +116,9 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 
 Before every `git push` on a PR branch:
 
-1. `scripts/repo/Validate-PreCommit.ps1` passes, or a qualifying receipt proves the exact candidate already passed strict Azure validation.
-2. Do not rerun local build/tests when that receipt qualifies.
-3. If Azure is unavailable, use the explicit serialized `-LocalFallback` path and report that evidence.
+1. `scripts/repo/Validate-PreCommit.ps1` passes in the selected mode, or remote mode finds a qualifying exact-content strict Azure receipt.
+2. Do not rerun build/tests when a qualifying remote receipt applies.
+3. Record the chosen validation mode and strict gate evidence.
 4. No `--no-verify` used on commits containing code changes.
 
 ### Worktree Policy
@@ -175,16 +173,17 @@ chore(deps): bump Microsoft.Extensions.* to 10.0.1
 
 ## Build and test validation
 
-Use the remote container gate for normal candidate validation:
+Use the selected strict repository gate for normal candidate validation:
 
 ```shell
 scripts/repo/Validate-PreCommit.ps1
 ```
 
-A local `dotnet build` is diagnostic-only. Do not run local builds concurrently in the same worktree. When Azure is unavailable, use the explicit serialized fallback instead of hand-running build and test commands:
+A hand-run `dotnet build` is diagnostic-only. Local strict validation is globally serialized; select remote mode explicitly when required:
 
 ```shell
-scripts/repo/Validate-PreCommit.ps1 -LocalFallback
+$env:BOTNEXUS_VALIDATION_MODE = 'remote'
+scripts/repo/Validate-PreCommit.ps1
 ```
 
 ### Build Warnings

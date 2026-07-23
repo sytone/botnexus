@@ -79,6 +79,8 @@ $remoteActive = [int](Get-PropertyValue $remote 'active' 0)
 $remoteMax = [int](Get-PropertyValue $remote 'maxConcurrent' 0)
 $committedCost = [double](Get-PropertyValue $remote 'committedCost' 0)
 $maxCost = [double](Get-PropertyValue $remote 'maxCost' 0)
+$validationMode = ([string](Get-PropertyValue $state 'validationMode' 'local')).ToLowerInvariant()
+if ($validationMode -notin @('local', 'remote')) { throw 'Maintenance validationMode must be local or remote.' }
 
 foreach ($candidate in $candidates) {
     $id = [string](Get-PropertyValue $candidate 'id' '')
@@ -119,10 +121,10 @@ foreach ($candidate in $candidates) {
          [string]::IsNullOrWhiteSpace([string](Get-PropertyValue $candidate 'existingWorktree' '')))) {
         $reason = 'recovery-worktree-gate'
     }
-    elseif (([bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')) -and $remoteActive -ge $remoteMax) {
+    elseif ($validationMode -eq 'remote' -and ([bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')) -and $remoteActive -ge $remoteMax) {
         $reason = 'remote-validation-concurrency'
     }
-    elseif (([bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')) -and ($committedCost + $cost) -gt $maxCost) {
+    elseif ($validationMode -eq 'remote' -and ([bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')) -and ($committedCost + $cost) -gt $maxCost) {
         $reason = 'remote-validation-cost'
     }
 
@@ -131,14 +133,15 @@ foreach ($candidate in $candidates) {
         continue
     }
 
-    $reserveValidation = [bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')
+    $validationRequired = [bool](Get-PropertyValue $candidate 'validationRequired' $false) -or ($lane -eq 'recovery' -and (Get-PropertyValue $candidate 'phase' '') -eq 'validation')
+    $reserveValidation = $validationMode -eq 'remote' -and $validationRequired
     $worktree = if ($lane -eq 'recovery') { [string](Get-PropertyValue $candidate 'existingWorktree' '') } else { $null }
     $dispatch.Add([pscustomobject]@{
         id = $id
         lane = $lane
         worktree = $worktree
         files = $files
-        validation = [pscustomobject]@{ plane = 'remote'; reserved = $reserveValidation; reservedCost = if ($reserveValidation) { $cost } else { 0 } }
+        validation = [pscustomobject]@{ plane = $validationMode; reserved = $reserveValidation; reservedCost = if ($reserveValidation) { $cost } else { 0 } }
     })
 
     $laneRemaining[$lane]--

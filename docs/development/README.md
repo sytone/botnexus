@@ -31,7 +31,7 @@ This directory contains detailed documentation for developers working on or exte
 ### Tooling & repo
 
 - **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
-- **[azure-build-test-runner.md](azure-build-test-runner.md)** — Remote worktree build, impacted-test, and Playwright execution on Azure Container Apps Jobs
+- **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
 - **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene
 
 ---

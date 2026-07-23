@@ -803,6 +803,222 @@ public sealed class CronTriggerTests
         statuses.Last().ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
     }
 
+    // ── #2118 tool-call history projection ───────────────────────────────────
+
+    /// <summary>
+    /// #2118: a blocking cron turn that executed tools must persist ordered tool rows between the
+    /// user and assistant entries, each carrying tool call id, name, arguments, result content and
+    /// error state - matching the interactive streaming history semantics.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_ToolCalls_PersistsOrderedToolRows_WithFullMetadata()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse
+            {
+                Content = "done",
+                ToolCalls =
+                [
+                    new AgentToolCallInfo("call-1", "read", false, "{\"path\":\"a.txt\"}", "file body"),
+                    new AgentToolCallInfo("call-2", "write", false, "{\"path\":\"b.txt\"}", "ok")
+                ]
+            });
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "do work",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-tools"), JobName = "Tools" });
+
+        lastSavedSession.ShouldNotBeNull();
+        var history = lastSavedSession!.History;
+
+        // user, tool(call-1), tool(call-2), assistant - tools in execution order between the two.
+        history.Count.ShouldBe(4);
+        history[0].Role.ShouldBe(MessageRole.User);
+        history[3].Role.ShouldBe(MessageRole.Assistant);
+
+        var toolRows = history.Where(e => e.Role == MessageRole.Tool).ToList();
+        toolRows.Count.ShouldBe(2);
+
+        toolRows[0].ToolCallId.ShouldBe("call-1");
+        toolRows[0].ToolName.ShouldBe("read");
+        toolRows[0].ToolArgs.ShouldBe("{\"path\":\"a.txt\"}");
+        toolRows[0].Content.ShouldBe("file body");
+        toolRows[0].ToolIsError.ShouldBeFalse();
+
+        toolRows[1].ToolCallId.ShouldBe("call-2");
+        toolRows[1].ToolName.ShouldBe("write");
+        toolRows[1].Content.ShouldBe("ok");
+    }
+
+    /// <summary>
+    /// #2118: a failed tool call must persist a tool row flagged as an error, carrying the tool
+    /// result content when present.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_FailedToolCall_PersistsErrorToolRow()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse
+            {
+                Content = "handled the failure",
+                ToolCalls = [new AgentToolCallInfo("call-err", "web_fetch", true, "{\"url\":\"x\"}", "boom: timeout")]
+            });
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "fetch it",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-err"), JobName = "Err" });
+
+        lastSavedSession.ShouldNotBeNull();
+        var toolRow = lastSavedSession!.History.Single(e => e.Role == MessageRole.Tool);
+        toolRow.ToolCallId.ShouldBe("call-err");
+        toolRow.ToolName.ShouldBe("web_fetch");
+        toolRow.ToolIsError.ShouldBeTrue();
+        toolRow.Content.ShouldBe("boom: timeout");
+    }
+
+    /// <summary>
+    /// #2118: a text-only control turn (no tools) persists exactly the user + assistant rows and no
+    /// tool rows - the projection must not synthesize spurious tool activity.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_TextOnlyControl_PersistsNoToolRows()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "just text" });
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "say something",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-text"), JobName = "Text" });
+
+        lastSavedSession.ShouldNotBeNull();
+        lastSavedSession!.History.Count(e => e.Role == MessageRole.Tool).ShouldBe(0);
+        lastSavedSession.History.Count.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// #2118: a NO_REPLY turn that executed a tool is not a no-op - the tool row must still be
+    /// persisted (existing suppression guard preserved) in addition to the user/assistant rows.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NoReplyWithTool_PersistsToolRow()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse
+            {
+                Content = "NO_REPLY",
+                ToolCalls = [new AgentToolCallInfo("call-mem", "memory_save", false, "{\"note\":\"x\"}", "saved")]
+            });
+
+        GatewaySession? lastSavedSession = null;
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => lastSavedSession = s)
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "quietly save",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-noreply-tool"), JobName = "Quiet" });
+
+        lastSavedSession.ShouldNotBeNull();
+        var toolRow = lastSavedSession!.History.Single(e => e.Role == MessageRole.Tool);
+        toolRow.ToolCallId.ShouldBe("call-mem");
+        toolRow.ToolName.ShouldBe("memory_save");
+        toolRow.Content.ShouldBe("saved");
+    }
+
+    /// <summary>
+    /// #2118: when the run is interrupted (cancel/timeout) mid-flight, the trigger must persist the
+    /// completed tool activity plus an interrupted-tool row for the in-flight call, seal the session,
+    /// and re-surface the cancellation. The assistant text row is omitted (no final answer).
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_InterruptedMidTool_PersistsCompletedAndInterruptedToolRows_ThenRethrows()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var partial = new AgentResponse
+        {
+            Content = string.Empty,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("call-done", "read", false, "{\"path\":\"a\"}", "content"),
+                new AgentToolCallInfo("call-inflight", "web_fetch", true, "{\"url\":\"x\"}", null, IsIncomplete: true)
+            ]
+        };
+        // Hand-written stub throws the interruption synchronously from the async method so the derived
+        // AgentPromptInterruptedException type (and its PartialResponse payload) is preserved on await.
+        // Moq special-cases OperationCanceledException-derived exceptions into a plain canceled task,
+        // which would strip the payload the cron trigger needs to persist the interrupted tool timeline.
+        var handle = new InterruptingHandle(partial);
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle);
+
+        var statuses = new List<BotNexus.Gateway.Abstractions.Models.SessionStatus>();
+        GatewaySession? lastSavedSession = null;
+        sessionStore.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) => { statuses.Add(s.Status); lastSavedSession = s; })
+            .Returns(Task.CompletedTask);
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        // The trigger persists the partial tool timeline then re-surfaces cancellation. Throwing an
+        // OperationCanceledException-derived type out of an async method transitions its Task to the
+        // Canceled state, so the caller observes an OperationCanceledException (TaskCanceledException) -
+        // the derived type is not preserved across the async boundary, which is expected .NET behaviour.
+        // What matters for #2118 is that the completed + interrupted tool rows were persisted first.
+        await Should.ThrowAsync<OperationCanceledException>(() => trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "long task",
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-interrupt"), JobName = "Interrupt" }));
+
+        lastSavedSession.ShouldNotBeNull();
+        var toolRows = lastSavedSession!.History.Where(e => e.Role == MessageRole.Tool).ToList();
+        toolRows.Count.ShouldBe(2);
+
+        var done = toolRows.Single(r => r.ToolCallId == "call-done");
+        done.ToolIsError.ShouldBeFalse();
+        done.Content.ShouldBe("content");
+
+        var inflight = toolRows.Single(r => r.ToolCallId == "call-inflight");
+        inflight.ToolIsError.ShouldBeTrue();
+        inflight.Content.ShouldContain("did not complete");
+
+        // No assistant row - the turn never produced a final answer.
+        lastSavedSession.History.Count(e => e.Role == MessageRole.Assistant).ShouldBe(0);
+
+        // Session is still sealed exactly once on the terminal path.
+        statuses.Count(status => status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed).ShouldBe(1);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     // -- #1722 Part A: near-empty wake sessions are not persisted --
@@ -903,7 +1119,10 @@ public sealed class CronTriggerTests
             request: new InternalTriggerRequest { CronJobId = JobId.From("job-tools"), JobName = "Tools" });
 
         lastSavedSession.ShouldNotBeNull();
-        lastSavedSession!.History.Count.ShouldBe(2, "tool activity is real work: persist both entries");
+        // #2118: user + tool row + assistant. The tool call is now projected into its own history
+        // row between the user and assistant entries (previously only the two text rows persisted).
+        lastSavedSession!.History.Count.ShouldBe(3, "tool activity is real work: persist user + tool + assistant entries");
+        lastSavedSession.History.Count(e => e.Role == MessageRole.Tool).ShouldBe(1);
         sessionStore.Verify(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -976,6 +1195,38 @@ public sealed class CronTriggerTests
         lastSavedSession!.History.Count.ShouldBe(2);
         sessionStore.Verify(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Minimal <see cref="IAgentHandle"/> stub whose blocking <c>PromptAsync</c> throws an
+    /// <see cref="AgentPromptInterruptedException"/> carrying a fixed partial response. Used to exercise
+    /// the cron trigger's mid-flight interruption path without Moq collapsing the OCE-derived exception
+    /// into a canceled task (#2118).
+    /// </summary>
+    private sealed class InterruptingHandle(AgentResponse partial) : IAgentHandle
+    {
+        public AgentId AgentId => AgentId.From("agent-a");
+        public SessionId SessionId => SessionId.From("cron:stub");
+        public bool IsRunning => false;
+
+        public Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
+            => throw new AgentPromptInterruptedException(partial, cancellationToken);
+
+        public Task<AgentResponse> PromptAsync(BotNexus.Agent.Core.Types.UserMessage message, CancellationToken cancellationToken = default)
+            => throw new AgentPromptInterruptedException(partial, cancellationToken);
+
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Agent.Core.Types.UserMessage message, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task FollowUpAsync(BotNexus.Agent.Core.Types.AgentMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildMocksWithResponse(AgentResponse response)

@@ -1,5 +1,7 @@
 using System.Text.Json;
+using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Cli.Commands;
+using BotNexus.Cli.Wizard;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
@@ -303,5 +305,40 @@ public class ProviderCommandTests : IDisposable
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
         }
+    }
+
+    [Fact]
+    public async Task OAuthFlowStep_on_success_jumps_to_pick_model_not_ollama_setup()
+    {
+        // Regression: the OAuth path used to return Continue(), falling through
+        // into the Ollama setup step which overwrote baseUrl/api with local
+        // Ollama values. It must jump straight to model selection instead.
+        var step = new ProviderCommand.OAuthFlowStep(
+            (_, _, _) => Task.FromResult<OAuthCredentials?>(
+                new OAuthCredentials("access", "refresh", 1700000000)));
+
+        var context = new WizardContext();
+        context.Set("provider", "github-copilot");
+        context.Set("home", Path.GetTempPath());
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Outcome.ShouldBe(StepOutcome.GoTo);
+        result.GoToStep.ShouldBe("pick-model");
+    }
+
+    [Fact]
+    public async Task OAuthFlowStep_on_failure_aborts()
+    {
+        var step = new ProviderCommand.OAuthFlowStep(
+            (_, _, _) => Task.FromResult<OAuthCredentials?>(null));
+
+        var context = new WizardContext();
+        context.Set("provider", "github-copilot");
+        context.Set("home", Path.GetTempPath());
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Outcome.ShouldBe(StepOutcome.Abort);
     }
 }

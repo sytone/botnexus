@@ -5,6 +5,189 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - 2026-07-22
+
+### 🐛 Bug Fixes
+
+- **validation:** Add selectable local validation mode (#2183)
+
+### 🧪 Testing
+
+- **maintenance:** Prove throughput orchestration (#2182)
+
+## [0.30.0] - 2026-07-22
+
+### ✨ Features
+
+- **maintenance:** Decouple autonomous worker capacity (#2172)
+
+### 🐛 Bug Fixes
+
+- **agents:** Preserve sub-agent timeout terminal reason (#2156)
+- **agents:** Make sub-agent tool execution write-ahead durable (#2160)
+- **validation:** Reject incomplete playwright runs (#2162)
+- **providers:** Normalize mistral-family tool-call ids (#2166)
+- **channels:** Preserve copilot messages deltas (#2171)
+- **cli:** Extend gateway startup readiness timeout (#2175)
+
+### 📖 Documentation
+
+- **cli:** Correct agent creation quick start (#2176)
+
+### 🧪 Testing
+
+- **channels:** Cover service bus stream consolidation (#2165)
+
+### ⚙️ Miscellaneous
+
+- **validation:** Make remote validation authoritative (#2161)
+
+## [0.29.0] - 2026-07-21
+
+### ✨ Features
+
+- **portal:** Make conversations stat clear activity filters (#2098)
+- **portal:** Add conversation actions to chat header (#2129)
+- **build:** Add Azure worktree validation runner (#2146)
+- **agents:** Add bounded agent converse timeout (#2151)
+
+### 🐛 Bug Fixes
+
+- **deps:** Pin AngleSharp past security advisory (#2095)
+- **tests:** Lease and clean up testhost firewall rules (#2142)
+- **webhooks:** Preserve pinned conversations across deliveries (#2144)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-18 (#2096)
+- **getting-started:** Use copilot in agent example (#2153)
+
+## [0.28.0] - 2026-07-18
+
+### ✨ Features
+
+- **config:** Drive secret redaction from [ConfigField] annotations (#2018)
+- **portal:** Add Cron Jobs management page under Agents nav (#2024)
+- **#1888:** Make Activity scheduled stat card toggle cron visibility (#2027)
+- **cron:** Promote Cron Jobs to top-level nav with detail view, history, and provider/model pickers (#2031)
+- **cron:** Use single-page job editor and history (#2044)
+- **signalr:** Add desktop chat attachments (#2053)
+- **channels:** Add opt-in service bus streaming replies (#2054)
+- **portal:** Expose configured default agent (#2068)
+- **portal:** Pretty-print structured JSON tool results (#2081)
+- **providers:** Add capability-aware Copilot WebSocket transport (#2082)
+
+### 🐛 Bug Fixes
+
+- **cli:** Prune stale extension files on deploy (#2017)
+- **providers:** Treat blank env api keys as unconfigured (#2023)
+- **#2025:** Route auto-title and compaction LLM calls through shared GatewayAuthManager credential seam (#2026)
+- **gateway:** Recover orphaned crash sentinels via post-registration scan and write-time self-heal (#2033)
+- **config:** Quarantine invalid agent definitions (#2050)
+- **copilot:** Normalize gpt-5.6 response delta CRLF (#2052)
+- **auto-title:** Preserve streamed title token boundaries (#2051)
+- **cron:** Terminalize completed sessions (#2067)
+- **gateway:** Keep auth available during invalid config reloads (#2070)
+- **portal:** Prevent doubled mobile markdown spacing (#2080)
+
+### 📖 Documentation
+
+- Document servicebus FullyQualifiedNamespace managed-identity option (#2020)
+
+### 🔨 Refactor
+
+- **blazor-client:** Collapse duplicated best-effort hydration into one helper (#2028)
+
+### 🧪 Testing
+
+- **portal:** Eliminate received-call race in pin-button bUnit tests (#2019)
+- **config:** Add fitness function for secret-shaped config properties (#2029)
+
+## [0.27.0] - 2026-07-15
+
+### ✨ Features
+
+- **servicebus:** Managed-identity auth and deploy NuGet dependencies (#2003)
+- **signalr:** Attach channel identity to user across connection lifecycle (#2004)
+- **config:** Complete [ConfigField] annotation coverage across config POCOs (#2016)
+
+### 🐛 Bug Fixes
+
+- **copilot:** Validate advertised endpoints.api host before routing bearer token (#2007)
+- **portal:** Stop prior reply flashing as raw markdown on send (#2008)
+- **servicebus:** Self-bind channel options from config on late load (#2011)
+- **extensions:** Share configuration assemblies with dynamically-loaded extensions (#2015)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-15 (sub-agent observability endpoint + v0.26.0 release page) (#2005)
+
+### ⚡ Performance
+
+- **conversations:** Rewrite ListForCitizen OR-join as sargable UNION (#2009)
+
+### 🧪 Testing
+
+- **e2e:** Add channel e2e test structure with portal playwright and stubs (#1998)
+
+## [0.26.0] - 2026-07-15
+
+### ✨ Features
+
+- **api:** Sparse fieldsets via ?fields= (#1782) (#1974)
+- **tools:** Add field-selection to conversation tool (#1783) (#1975)
+- **cli:** Add agent template import (#1978)
+- **channels:** Add per-command approval hook to shared slash-command core (#1980)
+- **api:** Add read-only sub-agent observability endpoint (#1986)
+- **agent365:** Route OTel telemetry to Agent 365 observability via direct OTLP (#1991)
+- **mobile:** Mirror desktop slash-command palette on mobile chat (#1993)
+- **prompts:** Add cross-agent fabrication trip-wire to tool-use enforcement (#1996)
+
+### 🐛 Bug Fixes
+
+- **portal:** Replace placeholder PWA icons and fix favicon glyph (#1973)
+- **portal:** Populate session debug system prompt from live handle (#1981)
+- **auto-title:** Log the silent no-persist guards in GenerateAndSaveAsync (#1979) (#1982)
+- **signalr:** Enforce per-method least-privilege scope on hub control methods (#1987)
+- **exectool:** Block endpoint-redirection env vars in ValidateEnvKey (#1990)
+- **gateway:** Enforce browser-origin allow-list on dev-mode auth path (#1943)
+- **gateway:** Default titling model to gpt-5.6-luna and extract title from reasoning blocks (#1995)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-14 (skill-review cron + v0.25.0 release page) (#1988)
+- **agent365:** Fix 3 dead links in observability page (#2000)
+
+### 🔨 Refactor
+
+- **agents:** Make AGENTS.md discovery pull-based via get_agent_files tool (#1977)
+
+### 🧪 Testing
+
+- **arch:** Enforce src-tests mirror and no root-level test projects (#1976)
+- **portal:** Dispatch pin-button clicks via InvokeAsync to fix CI flake (#1984)
+- **integration:** Define seam-test convention and adopt config-save round-trip (#1985)
+- **gateway:** Backfill unit-test mirror gaps for src projects (#1997)
+
+### ⚙️ Miscellaneous
+
+- **tests:** Delete ghost dirs and register solution orphans (#1992)
+
+## [0.25.0] - 2026-07-14
+
+### ✨ Features
+
+- **portal:** Add pin/unpin conversation button to sidebar (#1970)
+- **skills:** Self-sourcing periodic skill-review cron, on by default per user agent (#1882)
+- **channels:** Lift slash-command registry and dispatcher into shared core (#1972)
+
+### 🐛 Bug Fixes
+
+- **portal:** Use agent emoji in panel header with robot fallback (#1968)
+- **portal:** Exclude sub-agents and built-ins from SignalR agent list (#1966)
+- **config-ui:** Preserve secrets and channel subtrees on config save (#1954 #1955 #1956) (#1957)
+- **#1969:** Widen workspace tree, fix edit textarea height, align truncation cap (#1971)
+
 ## [0.24.0] - 2026-07-13
 
 ### ✨ Features
@@ -3023,6 +3206,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.31.0]: https://github.com/sytone/botnexus/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/sytone/botnexus/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/sytone/botnexus/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/sytone/botnexus/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/sytone/botnexus/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/sytone/botnexus/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/sytone/botnexus/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/sytone/botnexus/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/sytone/botnexus/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/sytone/botnexus/compare/v0.21.0...v0.22.0

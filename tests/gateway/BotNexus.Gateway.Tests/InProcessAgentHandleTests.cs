@@ -172,6 +172,108 @@ public sealed class InProcessAgentHandleTests
         tracker.LastActivityUtc.ShouldBeGreaterThan(before);
     }
 
+    // ── #2118 BuildToolCalls correlation ─────────────────────────────────────
+
+    /// <summary>
+    /// #2118: BuildToolCalls must correlate each assistant tool-call request (which carries the
+    /// arguments) with its tool-result message (which carries result content + error), producing one
+    /// full row per call in execution order.
+    /// </summary>
+    [Fact]
+    public void BuildToolCalls_CompletedRun_CorrelatesArgsAndResults_InOrder()
+    {
+        var messages = new List<AgentMessage>
+        {
+            new BotNexus.Agent.Core.Types.UserMessage("go"),
+            new AssistantAgentMessage(
+                "calling",
+                ToolCalls:
+                [
+                    new ToolCallContent("call-1", "read", new Dictionary<string, object?> { ["path"] = "a.txt" }),
+                    new ToolCallContent("call-2", "write", new Dictionary<string, object?> { ["path"] = "b.txt" })
+                ]),
+            new ToolResultAgentMessage("call-1", "read",
+                new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "file body")]), IsError: false),
+            new ToolResultAgentMessage("call-2", "write",
+                new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]), IsError: false),
+            new AssistantAgentMessage("done")
+        };
+
+        var toolCalls = InProcessAgentHandle.BuildToolCalls(messages, pendingToolCallIds: null);
+
+        toolCalls.Count.ShouldBe(2);
+        toolCalls[0].ToolCallId.ShouldBe("call-1");
+        toolCalls[0].ToolName.ShouldBe("read");
+        toolCalls[0].Arguments.ShouldNotBeNull();
+        toolCalls[0].Arguments!.ShouldContain("a.txt");
+        toolCalls[0].ResultContent.ShouldBe("file body");
+        toolCalls[0].IsError.ShouldBeFalse();
+        toolCalls[0].IsIncomplete.ShouldBeFalse();
+
+        toolCalls[1].ToolCallId.ShouldBe("call-2");
+        toolCalls[1].ResultContent.ShouldBe("ok");
+    }
+
+    /// <summary>
+    /// #2118: a tool error result must surface IsError = true with the error content preserved.
+    /// </summary>
+    [Fact]
+    public void BuildToolCalls_ErrorResult_FlagsIsError()
+    {
+        var messages = new List<AgentMessage>
+        {
+            new AssistantAgentMessage(
+                "calling",
+                ToolCalls: [new ToolCallContent("call-err", "web_fetch", new Dictionary<string, object?> { ["url"] = "x" })]),
+            new ToolResultAgentMessage("call-err", "web_fetch",
+                new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "boom")]), IsError: true)
+        };
+
+        var toolCalls = InProcessAgentHandle.BuildToolCalls(messages, pendingToolCallIds: null);
+
+        toolCalls.ShouldHaveSingleItem();
+        toolCalls[0].IsError.ShouldBeTrue();
+        toolCalls[0].ResultContent.ShouldBe("boom");
+        toolCalls[0].IsIncomplete.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// #2118: a tool call requested but never resulted, whose id is still pending at cancellation, is
+    /// flagged IsIncomplete (interrupted mid-flight) with no result content and an error state, so the
+    /// interrupted tool is represented consistently in history.
+    /// </summary>
+    [Fact]
+    public void BuildToolCalls_PendingCallWithNoResult_IsInterrupted()
+    {
+        var messages = new List<AgentMessage>
+        {
+            new AssistantAgentMessage(
+                "calling",
+                ToolCalls:
+                [
+                    new ToolCallContent("call-done", "read", new Dictionary<string, object?> { ["path"] = "a" }),
+                    new ToolCallContent("call-inflight", "web_fetch", new Dictionary<string, object?> { ["url"] = "x" })
+                ]),
+            new ToolResultAgentMessage("call-done", "read",
+                new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "content")]), IsError: false)
+        };
+        var pending = new HashSet<string>(StringComparer.Ordinal) { "call-inflight" };
+
+        var toolCalls = InProcessAgentHandle.BuildToolCalls(messages, pending);
+
+        toolCalls.Count.ShouldBe(2);
+        var done = toolCalls.Single(c => c.ToolCallId == "call-done");
+        done.IsIncomplete.ShouldBeFalse();
+        done.ResultContent.ShouldBe("content");
+
+        var inflight = toolCalls.Single(c => c.ToolCallId == "call-inflight");
+        inflight.IsIncomplete.ShouldBeTrue();
+        inflight.IsError.ShouldBeTrue();
+        inflight.ResultContent.ShouldBeNull();
+        inflight.Arguments.ShouldNotBeNull();
+        inflight.Arguments!.ShouldContain("x");
+    }
+
     private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
         IApiProvider? provider = null)
         => CreateHandle(provider, activityTracker: null);
