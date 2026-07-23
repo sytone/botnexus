@@ -135,12 +135,14 @@ public sealed class EditToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenEditProducesNoChange_Throws()
+    public async Task ExecuteAsync_WhenSingleEditIsIdentical_ReturnsIdempotentNoOp()
     {
+        // Issue #2100: a replacement whose newText already matches the target is a
+        // successful idempotent no-op, not a hard failure.
         var filePath = Path.Combine(_tempDirectory, "no-change.txt");
         await _fileSystem.File.WriteAllTextAsync(filePath, "same");
 
-        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "no-change.txt",
             ["edits"] = new object[]
@@ -153,8 +155,71 @@ public sealed class EditToolTests
             }
         });
 
-        (await action.ShouldThrowAsync<InvalidOperationException>())
-            .Message.ShouldStartWith("Edit produced no change");
+        result.Content[0].Value.ShouldContain("No changes needed");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).ShouldBe("same");
+        result.Details.ShouldBeOfType<EditResultDetails>().Changed.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAllEditsAreIdentical_ReturnsIdempotentNoOp()
+    {
+        var filePath = Path.Combine(_tempDirectory, "all-noop.txt");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "alpha beta gamma");
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "all-noop.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "alpha",
+                    ["newText"] = "alpha"
+                },
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "gamma",
+                    ["newText"] = "gamma"
+                }
+            }
+        });
+
+        result.Content[0].Value.ShouldContain("No changes needed");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).ShouldBe("alpha beta gamma");
+        result.Details.ShouldBeOfType<EditResultDetails>().Changed.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMixedNoOpAndRealEdit_AppliesRealEditAndReportsSatisfied()
+    {
+        // Issue #2100: a mixed batch must not fail just because one entry is already
+        // satisfied; the real edit applies and the no-op index is reported.
+        var filePath = Path.Combine(_tempDirectory, "mixed.txt");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "alpha beta gamma");
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "mixed.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "alpha",
+                    ["newText"] = "alpha"
+                },
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "gamma",
+                    ["newText"] = "GAMMA"
+                }
+            }
+        });
+
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).ShouldBe("alpha beta GAMMA");
+        var details = result.Details.ShouldBeOfType<EditResultDetails>();
+        details.Changed.ShouldBeTrue();
+        details.AlreadySatisfiedIndices.ShouldContain(0);
+        result.Content[0].Value.ShouldContain("already present");
     }
 
     [Fact]
