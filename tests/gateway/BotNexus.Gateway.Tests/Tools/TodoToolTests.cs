@@ -30,6 +30,20 @@ public sealed class TodoToolTests
         tool.Label.ShouldBe("Todo");
     }
 
+    [Fact]
+    public void Tool_DescriptionDistinguishesExecutionChecklistFromTaskNexus()
+    {
+        var description = new TodoTool(null, null).Definition.Description;
+
+        description.ShouldContain("per-conversation execution checklist", Case.Insensitive);
+        description.ShouldContain("one TaskNexus task may map to many todo items", Case.Insensitive);
+        description.ShouldContain("durable system of record", Case.Insensitive);
+        description.ShouldContain("ownership", Case.Insensitive);
+        description.ShouldContain("do not use todo instead of TaskNexus", Case.Insensitive);
+        description.ShouldContain("do not create a TaskNexus task for every implementation step", Case.Insensitive);
+        description.ShouldContain("verified by a tool result", Case.Insensitive);
+    }
+
     // ── write happy path ────────────────────────────────────────────────
 
     [Fact]

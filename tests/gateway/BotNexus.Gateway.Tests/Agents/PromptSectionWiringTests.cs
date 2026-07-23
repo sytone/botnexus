@@ -43,6 +43,18 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
+    public void ToolEnforcementSection_IncludesTodoTaskNexusBoundaryGuidance()
+    {
+        var prompt = BuildFullPrompt();
+
+        // Guards the todo-vs-TaskNexus boundary guidance (#2071): the todo tool is a
+        // per-conversation execution checklist, TaskNexus is the durable system of record.
+        prompt.ShouldContain("per-conversation execution checklist");
+        prompt.ShouldContain("One TaskNexus task may map to many todo items");
+        prompt.ShouldContain("durable system of record");
+    }
+
+    [Fact]
     public void ShellEfficiencySection_AppearsInFullPrompt()
     {
         var prompt = BuildFullPrompt();

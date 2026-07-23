@@ -43,7 +43,15 @@ completing, and the warning never appears for an empty list or a list whose item
 
 ## Todo Tool
 
-Agents manage the list through the built-in `todo` tool.
+Agents manage the list through the built-in `todo` tool. It is a per-conversation execution checklist
+for the current agent loop, not a durable task system of record. Use it for detailed sequencing,
+checkpoints, retries, validation, deployment, and handoff steps so work can resume accurately after
+context compaction, interruption, or session continuation.
+
+TaskNexus owns higher-level outcomes, ownership, priority, due dates, provenance, history, and
+cross-agent reporting. One TaskNexus task may map to many `todo` items. Do not substitute `todo` for
+durable, assigned, cross-session, or user-visible TaskNexus work, and do not create a TaskNexus task
+for every implementation step unless that step independently needs long-term ownership or tracking.
 
 | Action   | Description                                                                          |
 | -------- | ------------------------------------------------------------------------------------ |

@@ -88,11 +88,17 @@ public sealed class TodoTool(
 
     public Tool Definition => new(
         Name,
-        "Manage a per-conversation todo list so a multi-step plan lives as structured, persisted state rather than prose. "
-        + "Use action='write' to replace the whole list, 'update' to change one item by id (text and/or status), "
-        + "'list' to read the current items, and 'clear' to empty it. Item status is one of pending|in_progress|done|cancelled. "
-        + "A todo item is only legitimately marked 'done' when the work was actually accomplished by a tool result this turn -- "
-        + "narration does not flip a checkbox. The list persists on the conversation across sessions and survives compaction.",
+        "Manage a per-conversation execution checklist for the current agent loop. "
+        + "Use it to decompose a higher-level TaskNexus task or direct user request into detailed, resumable steps "
+        + "for sequencing, checkpoints, retries, validation, deployment, and handoff. "
+        + "The checklist survives context compaction, interruption, and session continuation. "
+        + "One TaskNexus task may map to many todo items. "
+        + "TaskNexus remains the durable system of record for higher-level outcomes, ownership, priority, due dates, provenance, history, and cross-agent reporting. "
+        + "Do not use todo instead of TaskNexus for durable, assigned, cross-session, or user-visible work. "
+        + "Do not create a TaskNexus task for every implementation step unless that step independently needs long-term ownership or tracking. "
+        + "Use action='write' to replace the whole list, 'update' to change one item by id, 'list' to read it, and 'clear' to empty it. "
+        + "Status is pending|in_progress|done|cancelled. "
+        + "Mark an item done only after the corresponding work is verified by a tool result this turn; narration does not flip a checkbox.",
         ToolSchema);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
