@@ -1034,6 +1034,32 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithoutConfiguredToolTimeout_UsesGlobalFiveMinuteDefault()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        ReadToolTimeoutSeconds(descriptor).ShouldBe(300);
+    }
+
+    [Fact]
     public async Task LoadAsync_WithAgentToolTimeoutSeconds_PreservesTimeoutForRuntimeWiring()
     {
         var config = JsonSerializer.Deserialize<PlatformConfig>(

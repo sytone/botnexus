@@ -1626,6 +1626,22 @@ html, body, #app {
     flex: 1;
 }
 
+/* #2141: the intermediate title stack must be shrinkable too, otherwise the
+   flex column keeps its content width and the long title paints beneath the
+   fixed-width header action group. */
+.chat-title-stack {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 1 auto;
+    overflow: hidden;
+}
+
+.chat-title-stack .conversation-title-input {
+    min-width: 0;
+}
+
 /* ── Session controls ───────────────────────────────────────────────── */
 
 .session-controls {
@@ -4274,6 +4290,10 @@ details[open] > .thinking-summary::before {
     flex-direction: row;
     align-items: baseline;
     gap: 0.4rem;
+    /* #2141: establish a shrinkable width so the title region yields space to
+       the fixed-width header action group instead of painting beneath it. */
+    min-width: 0;
+    overflow: hidden;
 }
 
 h3.conversation-title {
@@ -4284,6 +4304,11 @@ h3.conversation-title {
     overflow: hidden;
     text-overflow: ellipsis;
     cursor: default;
+    /* #2141: allow the title to shrink below its content width inside the flex
+       row so text-overflow: ellipsis gains an effective overflow boundary. */
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
 }
 
 h3.conversation-title.editable {
