@@ -97,7 +97,10 @@ public static class StreamingSessionHelper
                     // survives browser refresh or session stall (#1052).
                     session.AddEntries(streamedHistory.ToList());
                     streamedHistory.Clear();
-                    session.RemoveCrashSentinels();
+                    // Do NOT remove the crash sentinel on this mid-run tool-start write-ahead
+                    // (#2135). The sentinel is a durable lease for the entire agent run; a tool
+                    // turn is a continuation, not a terminal boundary. It is removed only at the
+                    // final authoritative completion save below.
                     try
                     {
                         await sessionStore.SaveAsync(session, cancellationToken);
@@ -148,8 +151,13 @@ public static class StreamingSessionHelper
                         streamedContent.Clear();
                     }
                     session.AddEntries(turnSnapshot);
-                    // Remove crash sentinel before flushing partial turn state.
-                    session.RemoveCrashSentinels();
+                    // Do NOT remove the crash sentinel here (#2135). A streamed agent run can
+                    // emit another MessageStart/tool turn after this intermediate TurnEnd; the
+                    // sentinel is a durable lease for the ENTIRE run, not one streamed model turn.
+                    // Clearing it at each intermediate TurnEnd left in-flight work with no
+                    // replayable marker if the process died before the run reached its final,
+                    // authoritative completion save (which is the only place the sentinel is
+                    // removed - see below).
                     try
                     {
                         await sessionStore.SaveAsync(session, cancellationToken);

@@ -670,6 +670,134 @@ public sealed class StreamingSessionHelperTests
         }
     }
 
+    // ── Crash-sentinel lease across multi-turn streams (#2135) ────────────
+
+    private static SessionEntry NewCrashSentinel() => new()
+    {
+        Role = MessageRole.System,
+        Content = "[agent turn in progress - gateway restarted if visible]",
+        IsCrashSentinel = true
+    };
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MultiTurnStream_RetainsCrashSentinelAfterIntermediateTurnEnd()
+    {
+        // A crash sentinel written before the run must survive an intermediate TurnEnd
+        // snapshot so a process death during a following tool/model turn still leaves a
+        // replayable marker (#2135).
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel-mid"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(NewCrashSentinel());
+
+        var sentinelPresentAtTurnEndSave = (bool?)null;
+        var store = new Mock<ISessionStore>();
+        var saveCount = 0;
+        store
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+            {
+                saveCount++;
+                // Capture sentinel presence at the FIRST (intermediate TurnEnd) save only.
+                if (saveCount == 1)
+                    sentinelPresentAtTurnEndSave = s.History.Any(e => e.IsCrashSentinel);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Stream: first turn ends (intermediate TurnEnd), then a second model turn starts.
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "first ", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "second", MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m2" }
+            ]),
+            session,
+            store.Object);
+
+        // The intermediate TurnEnd save must have retained the sentinel.
+        sentinelPresentAtTurnEndSave.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_CleanFinalCompletion_RemovesCrashSentinel()
+    {
+        // The sentinel is removed only when the whole run reaches its authoritative final save.
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel-final"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(NewCrashSentinel());
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "first ", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "second", MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m2" }
+            ]),
+            session,
+            store.Object);
+
+        // After the run completes cleanly, no sentinel may remain.
+        session.History.Any(e => e.IsCrashSentinel).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_ToolStartWriteAhead_RetainsCrashSentinel()
+    {
+        // A mid-run tool-start write-ahead is a continuation, not a terminal boundary; it must
+        // preserve the sentinel so a crash during tool execution still leaves a replayable marker.
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel-tool"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(NewCrashSentinel());
+
+        var sentinelPresentAtToolStartSave = (bool?)null;
+        var store = new Mock<ISessionStore>();
+        var saveCount = 0;
+        store
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+            {
+                saveCount++;
+                if (saveCount == 1)
+                    sentinelPresentAtToolStartSave = s.History.Any(e => e.IsCrashSentinel);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Simulate a hard death: enumerate only up to the tool-start write-ahead by stopping
+        // the stream after ToolStart. Since there is no ToolEnd/final, the sentinel written at
+        // the tool-start save is the durable replay marker.
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            DeathAfterToolStart(),
+            session,
+            store.Object);
+
+        // The first (tool-start write-ahead) save must have retained the sentinel.
+        sentinelPresentAtToolStartSave.ShouldBe(true);
+    }
+
+    private static async IAsyncEnumerable<AgentStreamEvent> DeathAfterToolStart()
+    {
+        yield return new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" };
+        yield return new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolCallId = "tc1", ToolName = "shell", MessageId = "m1" };
+        await Task.Yield();
+    }
     private static async IAsyncEnumerable<AgentStreamEvent> StallAfterFirst()
     {
         yield return new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "partial" };
