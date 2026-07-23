@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "environment": "production",
+  "description": "Empty until observed production cycles are collected. Proof and preproduction artifacts never satisfy this criterion.",
+  "productionCycles": [],
+  "minimumProductionCycles": 3,
+  "productionCriterionMet": false
+}

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Runs the explicit serialized local fallback for repository validation.
+    Runs the strict, globally serialized local repository validation gate.
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +31,7 @@ try {
         throw "Another BotNexus local validation is already running. Wait for it to finish: $lockPath"
     }
 
-    Write-Host "Running serialized local validation fallback ($Mode)." -ForegroundColor Yellow
+    Write-Host "Running globally serialized local validation ($Mode)." -ForegroundColor Yellow
     & dotnet build (Join-Path $repoRoot 'BotNexus.slnx') --nologo --verbosity minimal --tl:off
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

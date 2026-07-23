@@ -1,3 +1,4 @@
+using System.IO;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -1537,5 +1538,123 @@ public sealed class ChatPanelTests : IDisposable
         await cut.Find(".command-palette .command-item").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         await _interaction.Received(1).ResetSessionAsync("agent-1");
+    }
+
+    // --- #2141: long conversation title must not overlap header actions -------
+
+    private const string LongTitle =
+        "This is an extremely long conversation title that would otherwise overflow the chat header and paint on top of the thinking, tools, pin, archive, config and new-session action controls";
+
+    [Fact]
+    public void Long_readonly_conversation_title_is_fully_preserved_in_dom_for_accessibility()
+    {
+        // Read-only conversations render a non-editable <h3>. Even when the
+        // visible text is clipped with an ellipsis, the full title must remain
+        // available to assistive tech and on hover.
+        CreateAndSeedAgent("sub-1");
+        _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
+        _store.SeedConversations("sub-1",
+            [MakeConvDto("subagent-session:sub-1", "sub-1", title: LongTitle)]);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
+
+        var title = cut.Find("h3.conversation-title");
+        Assert.Equal(LongTitle, title.TextContent.Trim());
+        // Full identifier/title exposed via the title attribute (hover + a11y).
+        Assert.False(string.IsNullOrEmpty(title.GetAttribute("title")));
+    }
+
+    [Fact]
+    public void Long_editable_conversation_title_is_fully_preserved_in_dom_for_accessibility()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", title: LongTitle)]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var title = cut.Find("h3.conversation-title.editable");
+        Assert.Equal(LongTitle, title.TextContent.Trim());
+        var titleAttr = title.GetAttribute("title") ?? "";
+        Assert.Contains("click to rename", titleAttr);
+    }
+
+    [Fact]
+    public void Title_region_containers_are_shrinkable_so_header_actions_stay_visible()
+    {
+        // Regression guard for #2141: the intermediate flex containers between
+        // the shrinkable .chat-header-left and the ellipsis-clipped title must
+        // themselves establish a shrinkable width (min-width: 0). Without this
+        // the title keeps its intrinsic content width and paints beneath the
+        // fixed-width .chat-header-actions group instead of showing an ellipsis.
+        var css = ReadAppCss();
+
+        AssertRuleHasDeclaration(css, ".chat-title-stack", "min-width: 0");
+        AssertRuleHasDeclaration(css, ".chat-title-heading-row", "min-width: 0");
+        AssertRuleHasDeclaration(css, "h3.conversation-title", "min-width: 0");
+        AssertRuleHasDeclaration(css, "h3.conversation-title", "text-overflow: ellipsis");
+        // The action group stays a fixed-width, non-shrinking column.
+        AssertRuleHasDeclaration(css, ".chat-header-actions", "flex-shrink: 0");
+    }
+
+    private static string ReadAppCss()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName,
+                "src", "extensions",
+                "BotNexus.Extensions.Channels.SignalR.BlazorClient",
+                "wwwroot", "css", "app.css");
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate);
+            }
+            dir = dir.Parent;
+        }
+        throw new FileNotFoundException("Could not locate app.css from test output directory.");
+    }
+
+    private static void AssertRuleHasDeclaration(string css, string selector, string declaration)
+    {
+        // A selector may appear more than once (e.g. a base rule plus responsive
+        // @media overrides). The contract is satisfied if ANY matching block
+        // declares the required property, so scan every occurrence.
+        var found = false;
+        var seenAnyBlock = false;
+        var searchFrom = 0;
+        while (true)
+        {
+            var start = css.IndexOf(selector, searchFrom, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                break;
+            }
+            // Only accept an exact selector match immediately followed by
+            // optional whitespace and an opening brace (avoids partial matches).
+            var cursor = start + selector.Length;
+            while (cursor < css.Length && (css[cursor] == ' ' || css[cursor] == '\n' || css[cursor] == '\r' || css[cursor] == '\t'))
+            {
+                cursor++;
+            }
+            if (cursor < css.Length && css[cursor] == '{')
+            {
+                seenAnyBlock = true;
+                var close = css.IndexOf('}', cursor);
+                if (close > cursor)
+                {
+                    var body = css.Substring(cursor + 1, close - cursor - 1);
+                    if (body.Contains(declaration, StringComparison.Ordinal))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            searchFrom = start + selector.Length;
+        }
+
+        Assert.True(seenAnyBlock, $"CSS rule for selector '{selector}' was not found.");
+        Assert.True(found, $"No '{selector}' rule declares '{declaration}'.");
     }
 }

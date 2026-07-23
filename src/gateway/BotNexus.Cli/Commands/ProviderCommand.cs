@@ -408,19 +408,30 @@ internal sealed class ProviderCommand
     /// Wizard step that runs the GitHub Copilot OAuth device code flow and saves
     /// credentials to auth.json.
     /// </summary>
-    private sealed class OAuthFlowStep : IWizardStep
+    internal sealed class OAuthFlowStep : IWizardStep
     {
+        private readonly Func<string, string, CancellationToken, Task<OAuthCredentials?>> _runOAuthFlow;
+
+        public OAuthFlowStep(Func<string, string, CancellationToken, Task<OAuthCredentials?>>? runOAuthFlow = null)
+        {
+            _runOAuthFlow = runOAuthFlow ?? RunOAuthFlowAsync;
+        }
+
         public string Name => "oauth-flow";
 
         public async Task<StepResult> ExecuteAsync(WizardContext context, CancellationToken cancellationToken)
         {
             var providerName = context.Get<string>("provider");
             var homePath = context.TryGet<string>("home", out var h) ? h : PlatformConfigLoader.DefaultHomePath;
-            var credentials = await RunOAuthFlowAsync(providerName, homePath, cancellationToken);
+            var credentials = await _runOAuthFlow(providerName, homePath, cancellationToken);
             if (credentials is null)
                 return StepResult.Abort();
 
-            return StepResult.Continue();
+            // OAuth providers (e.g. GitHub Copilot) get their endpoint and API
+            // from the built-in model registry, so jump straight to model
+            // selection. Falling through to the next step would run the Ollama
+            // setup, which overwrites baseUrl/api with local Ollama values.
+            return StepResult.GoTo("pick-model");
         }
     }
 

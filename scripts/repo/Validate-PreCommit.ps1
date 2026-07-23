@@ -2,7 +2,9 @@
 param(
     [string]$BaseRef = 'origin/main',
     [string]$WorktreePath = (Get-Location).Path,
+    [string]$ValidationMode,
     [switch]$LocalFallback,
+    [System.Collections.IDictionary]$ValidationModeEnvironment,
     [string]$AzureValidationScript = (Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'),
     [string]$LocalValidationScript = (Join-Path $PSScriptRoot 'Invoke-LocalValidation.ps1')
 )
@@ -10,18 +12,30 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not $LocalFallback -and $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK -eq '1') { $LocalFallback = $true }
+. (Join-Path $PSScriptRoot 'Get-ValidationMode.ps1')
+$selectorParameters = @{
+    RequestedMode = $ValidationMode
+    LocalFallback = $LocalFallback
+}
+if ($null -ne $ValidationModeEnvironment) { $selectorParameters.EnvironmentValues = $ValidationModeEnvironment }
+$selectedMode = Resolve-BotNexusValidationMode @selectorParameters
+Write-Host "Validation mode: $selectedMode (strict gate)." -ForegroundColor Cyan
 
 $repoRoot = (& git -C $WorktreePath rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
     throw "WorktreePath is not inside a git repository: $WorktreePath"
 }
 
+if ($selectedMode -eq 'local') {
+    Write-Host 'Using globally serialized local validation.' -ForegroundColor Yellow
+    & $LocalValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
+    exit $LASTEXITCODE
+}
+
 $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
 $gitDirectory = (& git -C $repoRoot rev-parse --absolute-git-dir).Trim()
 $receiptPath = Join-Path $gitDirectory 'botnexus-validation/azure-buildtest.json'
-
-if (-not $LocalFallback -and (Test-Path $receiptPath)) {
+if (Test-Path $receiptPath) {
     try {
         $receipt = Get-Content $receiptPath -Raw | ConvertFrom-Json
         $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
@@ -32,7 +46,7 @@ if (-not $LocalFallback -and (Test-Path $receiptPath)) {
             $receipt.baseCommit -eq $current.baseCommit -and
             $receipt.tree -eq $current.tree -and
             $receipt.mode -eq 'strict') {
-            Write-Host "Authoritative Azure validation receipt matches the exact candidate ($($receipt.runId)); skipping redundant validation." -ForegroundColor Green
+            Write-Host "Authoritative Azure validation receipt matches the exact candidate ($($receipt.runId)); skipping redundant remote validation." -ForegroundColor Green
             exit 0
         }
         Write-Host 'Azure validation receipt does not match the exact candidate tree and base commit.' -ForegroundColor Yellow
@@ -42,13 +56,6 @@ if (-not $LocalFallback -and (Test-Path $receiptPath)) {
     }
 }
 
-if ($LocalFallback) {
-    Write-Warning 'Explicit local validation fallback selected. Validation is globally serialized on this host.'
-    & $LocalValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
-    exit $LASTEXITCODE
-}
-
-Write-Host 'No qualifying exact-content receipt; Azure Container Apps validation is authoritative.' -ForegroundColor Cyan
-Write-Host 'If Azure is unavailable, rerun with -LocalFallback to use the explicit globally serialized local gate.' -ForegroundColor DarkGray
+Write-Host 'No qualifying exact-content receipt; selected remote Azure Container Apps validation.' -ForegroundColor Cyan
 & $AzureValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
 exit $LASTEXITCODE
