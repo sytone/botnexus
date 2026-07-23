@@ -182,6 +182,7 @@ export default defineConfig({
         text: 'Guides',
         items: [
           { text: 'Audio Recording', link: '/guides/audio-recording' },
+          { text: 'Gateway Recovery', link: '/guides/gateway-recovery' },
           { text: 'Observability', link: '/observability' },
           { text: 'Watchdog Setup', link: '/guides/watchdog-setup' },
           { text: 'Webhooks', link: '/guides/webhooks' },
