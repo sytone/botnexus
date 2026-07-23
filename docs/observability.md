@@ -477,3 +477,63 @@ logger.LogInformation("Processing started");  // This log is correlated with the
 - [Serilog Documentation](https://github.com/serilog/serilog/wiki)
 - [Jaeger Getting Started](https://www.jaegertracing.io/docs/getting-started/)
 - [BotNexus Architecture](architecture/overview.md)
+
+## Provider HTTP Request/Response Auditing
+
+When a provider returns an unexpected response (empty content, refusal, or transport error),
+BotNexus can log the full HTTP-level exchange with each model provider (Anthropic, OpenAI,
+Copilot, and every adapter that flows through the shared provider `HttpClient`). This is
+implemented by `ProviderLoggingHandler`, a `DelegatingHandler` registered on the shared
+`"BotNexus"` typed `HttpClient` (see issue #453).
+
+### Enabling
+
+Auditing is **off by default**. Enable it with the gateway config flag:
+
+```json
+{
+  "Gateway": {
+    "EnableProviderRequestLogging": true
+  }
+}
+```
+
+or via the CLI:
+
+```bash
+botnexus config set gateway.enableProviderRequestLogging true
+```
+
+The handler also self-gates on `LogLevel.Debug`: even when the flag is on, nothing is emitted
+unless the `BotNexus.Agent.Providers.Core.Logging.ProviderLoggingHandler` category is at
+`Debug` (or lower). This keeps bodies out of `Info`-level production logs by construction.
+
+### What is logged
+
+| Direction | Fields |
+|-----------|--------|
+| Outbound request | HTTP method, URL, headers (auth headers redacted by name), request body |
+| Inbound response (non-streamed) | Status code, elapsed ms, best-effort token `usage` object, response body |
+| Inbound response (streamed, `text/event-stream`) | Status code, headers, elapsed ms only — the SSE body is **never** buffered |
+| On transport error | Elapsed ms, method, URL, error message |
+
+### Redaction (always applied)
+
+Two independent layers protect secrets and both run unconditionally whenever the handler logs:
+
+1. **Header-name redaction** — `x-api-key`, `Authorization`, and `Proxy-Authorization` are
+   replaced with `[REDACTED]` before their values are ever formatted.
+2. **Body/text redaction** — request bodies, response bodies, and the rendered header string
+   are passed through the gateway's shared `SecretRedactor` (the same redactor expanded in
+   #2222), so any API key, bearer token, or provider key shape that leaks into a body is
+   scrubbed too.
+
+Bodies are truncated to 4 KB in the log to keep entries manageable.
+
+### Streaming safety
+
+Streaming responses are detected by `text/event-stream` content type and are **never**
+buffered — the provider reads the live stream, so buffering the body would break streaming.
+For streamed calls only the status, headers, and duration are logged; per-token `usage` for
+streamed responses arrives inside SSE events and is a documented follow-up (the handler does
+not parse provider-specific SSE frames).
