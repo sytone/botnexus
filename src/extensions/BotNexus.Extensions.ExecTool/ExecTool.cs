@@ -169,6 +169,17 @@ public sealed class ExecTool : IAgentTool
 
         var (fileName, processArgs) = ResolveCommand(command, _fileSystem);
 
+        // Preflight inline pwsh/powershell -Command scripts: reject syntax errors (empty pipe
+        // elements, malformed ${...} references, unbalanced braces) BEFORE spawning a process so the
+        // agent gets an immediate, actionable rejection instead of a late runtime ParserError. Only
+        // inline -Command invocations are checked; -File invocations and non-PowerShell commands pass
+        // through untouched, and valid one-liners are never altered.
+        if (PowerShellPreflight.IsPowerShellExecutable(command[0])
+            && PowerShellPreflight.TryGetInlineScript(processArgs, inlineScript: null, out var inlinePwshScript))
+        {
+            PowerShellPreflight.ThrowIfInvalid(inlinePwshScript);
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
