@@ -271,4 +271,46 @@ public sealed class SecretRedactorTests
         const string safe = "commit abcdefghij0123456789ABCDEFGHIJ0123456789 landed";
         _sut.Redact(safe).ShouldBe(safe);
     }
+
+    // GitLab token prefixes (#2285)
+
+    [Theory]
+    // Personal access token: glpat- + 20 chars
+    [InlineData("glpat-AbCdEfGhIjKlMnOpQrSt")]
+    // Routable token family: gl(dt|cbt|ptt|ft|imt|agent|wt|soat|ffct|rt|rtr)- + 20 chars
+    [InlineData("gldt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glcbt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glptt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glft-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glimt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glagent-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glwt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glsoat-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glffct-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glrt-AbCdEfGhIjKlMnOpQrSt")]
+    [InlineData("glrtr-AbCdEfGhIjKlMnOpQrSt")]
+    // Runner registration token: GR1348941 + 20 chars
+    [InlineData("GR1348941AbCdEfGhIjKlMnOpQrSt")]
+    // Session cookie: _gitlab_session= + 20 chars
+    [InlineData("_gitlab_session=AbCdEfGh12._-%34567890")]
+    public void Redact_GitLabToken_IsRedacted(string token)
+    {
+        var input = $"token: {token}";
+        _sut.Redact(input).ShouldNotContain(token);
+        _sut.Redact(input).ShouldContain("[REDACTED]");
+    }
+
+    [Theory]
+    // Too short (only 19 chars after prefix) - must not match.
+    [InlineData("glpat-AbCdEfGhIjKlMnOpQrS")]
+    // Unknown gl-prefix that is not in the routable family.
+    [InlineData("glxyz-AbCdEfGhIjKlMnOpQrSt")]
+    // Runner-token prefix with too-short suffix.
+    [InlineData("GR1348941AbCdEfGhIjKlMnOpQr")]
+    // Session cookie name without a long-enough value.
+    [InlineData("_gitlab_session=short")]
+    public void Redact_GitLabTokenLikeButInvalid_IsNotRedacted(string safe)
+    {
+        _sut.Redact(safe).ShouldBe(safe);
+    }
 }
