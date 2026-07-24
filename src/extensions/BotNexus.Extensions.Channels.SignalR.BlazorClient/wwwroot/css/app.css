@@ -5764,3 +5764,114 @@ h3.conversation-title.editable:hover {
 .tool-host-open-external:hover {
     filter: brightness(1.1);
 }
+
+/* ------------------------------------------------------------------
+   Tools management UI (#2235, slice 4 of #2231)
+   CRUD surface for user-defined portal tools at /tools. Reuses the
+   agents/cron page shell so the surface matches existing portal UX.
+   ------------------------------------------------------------------ */
+.tools-manage-page .tools-editor {
+    margin-bottom: 1rem;
+}
+
+.tools-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    padding: 0.5rem 0 0.75rem 0;
+}
+
+.tools-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1 1 18rem;
+    min-width: 0;
+}
+
+.tools-form-field-narrow {
+    flex: 0 1 8rem;
+}
+
+.tools-form-field-check {
+    flex: 1 1 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tools-form-label {
+    font-size: 0.8rem;
+    opacity: 0.75;
+}
+
+.tools-form-input {
+    padding: 0.4rem 0.55rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--input-bg, #1b1b1b);
+    color: inherit;
+    font: inherit;
+    min-width: 0;
+}
+
+.tools-form-errors {
+    margin: 0 0 0.5rem 0;
+    padding-left: 1.1rem;
+    color: var(--error-color, #e06c75);
+    font-size: 0.85rem;
+}
+
+.tools-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.tools-list-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 6px;
+}
+
+.tools-list-icon {
+    font-size: 1.15rem;
+    flex: 0 0 auto;
+}
+
+.tools-list-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.tools-list-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tools-list-meta {
+    display: flex;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
+.tools-list-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+    .tools-list-item {
+        flex-wrap: wrap;
+    }
+}

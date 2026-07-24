@@ -1,0 +1,323 @@
+@page "/tools"
+@namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject ToolsApiClient Tools
+
+<PageTitle>BotNexus &mdash; Tools</PageTitle>
+
+<div class="agents-page tools-manage-page" data-testid="tools-manage-page">
+    <header class="agents-toolbar">
+        <h2>&#x1F9F0; Tools</h2>
+        <div class="agents-toolbar-actions">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="agents-status @_statusClass" role="status" data-testid="tools-status">@_statusMessage</span>
+            }
+            <button class="toolbar-btn" data-testid="tools-reload-btn" @onclick="LoadAsync" disabled="@_loading"
+                    title="Reload the tool list">&#x21BB; Reload</button>
+            <button class="toolbar-btn primary" data-testid="tools-add-btn" @onclick="StartCreate" disabled="@_loading"
+                    title="Add a new tool">+ Add Tool</button>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="config-loading" aria-live="polite" data-testid="tools-loading">
+            <div class="loading-spinner small"></div>
+            <span>Loading tools&hellip;</span>
+        </div>
+    }
+    else
+    {
+        @if (_confirmDeleteId is not null)
+        {
+            <div class="agents-confirm-overlay" @onclick="CancelDelete">
+                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+                     aria-labelledby="tools-delete-confirm-title" data-testid="tools-delete-confirm">
+                    <h4 id="tools-delete-confirm-title">Remove Tool</h4>
+                    <p>Remove <strong>@_confirmDeleteName</strong> from your tools? This cannot be undone.</p>
+                    <div class="agents-confirm-actions">
+                        <button class="toolbar-btn danger" data-testid="tools-delete-confirm-btn"
+                                @onclick="ConfirmDeleteAsync" disabled="@_busy">@(_busy ? "Removing\u2026" : "Remove")</button>
+                        <button class="toolbar-btn" data-testid="tools-delete-cancel-btn"
+                                @onclick="CancelDelete" disabled="@_busy">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_editing is not null)
+        {
+            <section class="cron-page-card tools-editor" data-testid="tools-editor">
+                <header class="cron-page-card-header">
+                    <h3>@(_isNew ? "Add Tool" : "Edit Tool")</h3>
+                </header>
+
+                <div class="tools-form">
+                    <label class="tools-form-field">
+                        <span class="tools-form-label">Name</span>
+                        <input class="tools-form-input" data-testid="tools-form-name" type="text"
+                               placeholder="Grafana" value="@_editing.Name"
+                               @oninput="e => _editing.Name = e.Value?.ToString() ?? string.Empty" />
+                    </label>
+
+                    <label class="tools-form-field">
+                        <span class="tools-form-label">URL</span>
+                        <input class="tools-form-input" data-testid="tools-form-url" type="url"
+                               placeholder="https://grafana.example/dashboard" value="@_editing.Url"
+                               @oninput="e => _editing.Url = e.Value?.ToString() ?? string.Empty" />
+                    </label>
+
+                    <label class="tools-form-field tools-form-field-narrow">
+                        <span class="tools-form-label">Icon</span>
+                        <input class="tools-form-input" data-testid="tools-form-icon" type="text"
+                               placeholder="&#x1F4C8;" maxlength="8" value="@_editing.Icon"
+                               @oninput="e => _editing.Icon = e.Value?.ToString() ?? string.Empty" />
+                    </label>
+
+                    <label class="tools-form-field tools-form-field-narrow">
+                        <span class="tools-form-label">Order</span>
+                        <input class="tools-form-input" data-testid="tools-form-order" type="number"
+                               value="@_editing.Order"
+                               @oninput="OnOrderInput" />
+                    </label>
+
+                    <label class="tools-form-field tools-form-field-check">
+                        <input class="tools-form-check" data-testid="tools-form-sandbox" type="checkbox"
+                               checked="@_editing.SandboxEnabled"
+                               @onchange="e => _editing.SandboxEnabled = e.Value is true" />
+                        <span class="tools-form-label">Sandbox the embedded frame (recommended)</span>
+                    </label>
+                </div>
+
+                @if (_validationErrors.Count > 0)
+                {
+                    <ul class="tools-form-errors" role="alert" data-testid="tools-form-errors">
+                        @foreach (var error in _validationErrors)
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                }
+
+                <div class="cron-page-actions">
+                    <button class="toolbar-btn primary" data-testid="tools-form-save" @onclick="SaveAsync"
+                            disabled="@_busy">@(_busy ? "Saving\u2026" : "Save")</button>
+                    <button class="toolbar-btn" data-testid="tools-form-cancel" @onclick="CancelEdit"
+                            disabled="@_busy">Cancel</button>
+                </div>
+            </section>
+        }
+
+        @if (_tools.Count == 0)
+        {
+            <div class="agents-empty" data-testid="tools-manage-empty">
+                <p>No tools configured yet. Add one to pin an external site into the portal nav.</p>
+            </div>
+        }
+        else
+        {
+            <ul class="tools-list" data-testid="tools-list">
+                @foreach (var tool in _tools)
+                {
+                    <li class="tools-list-item" data-testid="tools-list-item" data-tool-id="@tool.Id">
+                        <span class="tools-list-icon">@(string.IsNullOrWhiteSpace(tool.Icon) ? "\uD83D\uDD17" : tool.Icon)</span>
+                        <span class="tools-list-main">
+                            <strong class="tools-list-name">@tool.Name</strong>
+                            <span class="agents-id tools-list-url">@tool.Url</span>
+                        </span>
+                        <span class="tools-list-meta">
+                            <span class="badge" title="Sort order">#@tool.Order</span>
+                            @if (tool.SandboxEnabled)
+                            {
+                                <span class="badge badge-enabled" title="Rendered in a sandboxed frame">Sandboxed</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-disabled" title="Sandbox opted out">Unsandboxed</span>
+                            }
+                        </span>
+                        <span class="tools-list-actions">
+                            <button class="toolbar-btn" data-testid="tools-edit-btn"
+                                    @onclick="() => StartEdit(tool)" title="Edit this tool">Edit</button>
+                            <button class="toolbar-btn danger" data-testid="tools-remove-btn"
+                                    @onclick="() => RequestDelete(tool)" title="Remove this tool">Remove</button>
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    private List<ToolDto> _tools = [];
+    private bool _loading = true;
+    private bool _busy;
+    private bool _isNew;
+    private ToolDto? _editing;
+    private string? _editingOriginalId;
+    private List<string> _validationErrors = [];
+    private string? _confirmDeleteId;
+    private string? _confirmDeleteName;
+    private string? _statusMessage;
+    private string _statusClass = "";
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _tools = (await Tools.ListAsync()).OrderBy(t => t.Order).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        _loading = false;
+    }
+
+    private void StartCreate()
+    {
+        _isNew = true;
+        _editingOriginalId = null;
+        _validationErrors = [];
+        // New tools land at the end of the list by default so adding never reshuffles existing nav.
+        var nextOrder = _tools.Count == 0 ? 0 : _tools.Max(t => t.Order) + 1;
+        _editing = new ToolDto { Order = nextOrder, SandboxEnabled = true };
+    }
+
+    private void StartEdit(ToolDto tool)
+    {
+        _isNew = false;
+        _editingOriginalId = tool.Id;
+        _validationErrors = [];
+        // Edit a copy so cancelling leaves the rendered list untouched.
+        _editing = new ToolDto
+        {
+            Id = tool.Id,
+            Name = tool.Name,
+            Url = tool.Url,
+            Icon = tool.Icon,
+            Order = tool.Order,
+            SandboxEnabled = tool.SandboxEnabled,
+        };
+    }
+
+    private void CancelEdit()
+    {
+        _editing = null;
+        _editingOriginalId = null;
+        _validationErrors = [];
+    }
+
+    private void OnOrderInput(ChangeEventArgs e)
+    {
+        if (_editing is null)
+            return;
+        // A blank or non-numeric order is treated as 0 rather than rejected, matching the
+        // number input's own "empty means unset" behaviour.
+        _editing.Order = int.TryParse(e.Value?.ToString(), out var parsed) ? parsed : 0;
+    }
+
+    /// <summary>
+    /// Validates the in-progress tool. Name is required, and the URL must be an absolute http/https
+    /// URL because the value is used verbatim as an iframe <c>src</c> by the host route (#2234) -
+    /// a relative or javascript: URL would either silently fail or be an injection vector.
+    /// </summary>
+    private static List<string> Validate(ToolDto tool)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(tool.Name))
+            errors.Add("Name is required.");
+
+        if (string.IsNullOrWhiteSpace(tool.Url))
+        {
+            errors.Add("URL is required.");
+        }
+        else if (!Uri.TryCreate(tool.Url.Trim(), UriKind.Absolute, out var uri) ||
+                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            errors.Add("URL must be an absolute http:// or https:// address.");
+        }
+
+        return errors;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_editing is null)
+            return;
+
+        _validationErrors = Validate(_editing);
+        if (_validationErrors.Count > 0)
+            return;
+
+        _busy = true;
+        _editing.Name = _editing.Name.Trim();
+        _editing.Url = _editing.Url.Trim();
+        _editing.Icon = _editing.Icon.Trim();
+
+        ToolDto? saved;
+        if (_isNew)
+        {
+            // Tool ids are client-generated per the Slice 1 contract (#2232); a GUID keeps them
+            // unique without a server round-trip and safe in the /tools/{id} route.
+            _editing.Id = Guid.NewGuid().ToString("N");
+            saved = await Tools.CreateAsync(_editing);
+        }
+        else
+        {
+            _editing.Id = _editingOriginalId ?? _editing.Id;
+            saved = await Tools.UpdateAsync(_editing);
+        }
+
+        _busy = false;
+
+        if (saved is null)
+        {
+            SetStatus(_isNew ? "Could not create the tool." : "Could not save the tool.", "error");
+            return;
+        }
+
+        SetStatus(_isNew ? "Tool added." : "Tool saved.", "success");
+        _editing = null;
+        _editingOriginalId = null;
+        await LoadAsync();
+    }
+
+    private void RequestDelete(ToolDto tool)
+    {
+        _confirmDeleteId = tool.Id;
+        _confirmDeleteName = tool.Name;
+    }
+
+    private void CancelDelete()
+    {
+        _confirmDeleteId = null;
+        _confirmDeleteName = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_confirmDeleteId is null)
+            return;
+
+        _busy = true;
+        var ok = await Tools.DeleteAsync(_confirmDeleteId);
+        _busy = false;
+        _confirmDeleteId = null;
+        _confirmDeleteName = null;
+
+        if (!ok)
+        {
+            SetStatus("Could not remove the tool.", "error");
+            return;
+        }
+
+        SetStatus("Tool removed.", "success");
+        await LoadAsync();
+    }
+
+    private void SetStatus(string message, string cls)
+    {
+        _statusMessage = message;
+        _statusClass = cls;
+    }
+}
