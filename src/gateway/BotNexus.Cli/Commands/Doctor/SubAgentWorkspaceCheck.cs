@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -32,9 +33,9 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
     public Task<DoctorCheckResult> RunAsync(DoctorCheckContext context, CancellationToken cancellationToken)
     {
         var sessionsDbPath = Path.Combine(context.HomePath, "sessions.db");
-        var workspaceRoot = _fileSystem.Path.Combine(
-            _fileSystem.Path.GetTempPath(),
-            SubAgentCommand.SubAgentWorkspaceDirectoryName);
+        var workspaceRoot = SubAgentWorkspaceRootResolver.Resolve(
+            LoadConfiguredWorkspaceRoot(context.HomePath),
+            _fileSystem);
 
         var reaper = new SubAgentWorkspaceReaper(_fileSystem);
         var statuses = SubAgentCommand.LoadStatusesByAgentDirectory(sessionsDbPath);
@@ -70,5 +71,27 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
             DoctorOutcome.Warning,
             $"{prunable} stale workspace(s) reclaimable, {running} running (retained)",
             details));
+    }
+
+    /// <summary>
+    /// Reads the optional <c>gateway.subAgents.workspaceRoot</c> override from the platform config
+    /// under <paramref name="homePath"/>. A missing or unreadable config yields <c>null</c> so the
+    /// resolver falls back to the historical temp-root default.
+    /// </summary>
+    private string? LoadConfiguredWorkspaceRoot(string homePath)
+    {
+        try
+        {
+            var configPath = _fileSystem.Path.Combine(homePath, "config.json");
+            if (!_fileSystem.File.Exists(configPath))
+                return null;
+
+            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            return config.Gateway?.SubAgents?.WorkspaceRoot;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

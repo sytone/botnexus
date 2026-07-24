@@ -761,6 +761,7 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxTurnsCeiling` | int | 30 | Global turn ceiling. |
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
+| `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
 
 #### SignalR Hub Limits
 

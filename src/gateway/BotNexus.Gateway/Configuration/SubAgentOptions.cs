@@ -142,6 +142,24 @@ public sealed class SubAgentOptions
     public int MaxRetainedCompletedRecords { get; set; } = 200;
 
     /// <summary>
+    /// Gets or sets the temporary workspace root directory under which each sub-agent's isolated
+    /// workspace is created (and later reclaimed). Empty preserves the historical default of
+    /// <c>&lt;OS temp&gt;/botnexus-subagent-workspaces</c>, so existing installs are unchanged. A
+    /// configured value has <c>~</c> and environment variables expanded and is normalized to an
+    /// absolute path, consistent with other BotNexus path settings. The gateway
+    /// (<c>FileAgentWorkspaceManager</c>) and the CLI (<c>subagent workspace list|prune</c> plus the
+    /// <c>doctor</c> check) both resolve this through <c>SubAgentWorkspaceRootResolver</c> so they can
+    /// never target different directories.
+    /// </summary>
+    [Display(
+        Name = "Workspace root",
+        Description = "Temporary root directory for sub-agent workspaces. Empty uses <OS temp>/botnexus-subagent-workspaces. Supports ~ and environment-variable expansion.",
+        GroupName = "Sub-agents",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "sub-agents", Order = 10)]
+    public string WorkspaceRoot { get; set; } = "";
+
+    /// <summary>
     /// Gets or sets trusted budget overrides keyed by the spawning parent agent ID.
     /// Keys are matched case-insensitively; request display names, archetypes, and mirror targets
     /// are never consulted when selecting an override.

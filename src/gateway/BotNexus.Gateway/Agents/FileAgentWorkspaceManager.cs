@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.Options;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -8,14 +9,18 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
 {
     private const string MemoryDirectoryName = "memory";
     private const string SubAgentMarker = "--subagent--";
-    private const string SubAgentWorkspaceDirectoryName = "botnexus-subagent-workspaces";
     private readonly BotNexusHome _botNexusHome;
     private readonly IFileSystem _fileSystem;
+    private readonly string? _configuredWorkspaceRoot;
 
-    public FileAgentWorkspaceManager(BotNexusHome botNexusHome, IFileSystem fileSystem)
+    public FileAgentWorkspaceManager(
+        BotNexusHome botNexusHome,
+        IFileSystem fileSystem,
+        IOptions<SubAgentOptions>? subAgentOptions = null)
     {
         _botNexusHome = botNexusHome;
         _fileSystem = fileSystem;
+        _configuredWorkspaceRoot = subAgentOptions?.Value?.WorkspaceRoot;
     }
 
     public async Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken cancellationToken = default)
@@ -168,7 +173,7 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         => agentName.Contains(SubAgentMarker, StringComparison.OrdinalIgnoreCase);
 
     private string GetSubAgentWorkspaceRoot()
-        => _fileSystem.Path.Combine(_fileSystem.Path.GetTempPath(), SubAgentWorkspaceDirectoryName);
+        => SubAgentWorkspaceRootResolver.Resolve(_configuredWorkspaceRoot, _fileSystem);
 
     private static string SanitizePathSegment(string value)
     {

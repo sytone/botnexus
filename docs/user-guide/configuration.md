@@ -175,6 +175,22 @@ Agents are defined in the `agents` section, keyed by agent ID.
 }
 ```
 
+### Sub-agent Workspace Root
+
+Each background sub-agent runs in an isolated temporary workspace. By default these are created under `<OS temp>/botnexus-subagent-workspaces`. Set `gateway.subAgents.workspaceRoot` to relocate them - for example to a larger or faster volume:
+
+```json
+{
+  "gateway": {
+    "subAgents": {
+      "workspaceRoot": "~/botnexus-scratch/subagents"
+    }
+  }
+}
+```
+
+The value supports `~` (home directory) and environment-variable expansion and is normalized to an absolute path. Leave it empty (the default) to keep the historical temp-root location. The gateway and the `botnexus subagent workspace list|prune` / `doctor` commands resolve this setting through a single shared resolver, so they always target the same directory.
+
 ### Agent Settings Reference
 
 | Setting | Type | Default | Description |

@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Data.Sqlite;
 using Spectre.Console;
 
@@ -22,7 +23,9 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal sealed class SubAgentCommand
 {
-    internal const string SubAgentWorkspaceDirectoryName = "botnexus-subagent-workspaces";
+    // Kept for back-compat call sites; the literal now lives once in the shared resolver so the
+    // gateway and CLI can never drift.
+    internal const string SubAgentWorkspaceDirectoryName = SubAgentWorkspaceRootResolver.DefaultDirectoryName;
 
     private readonly IFileSystem _fileSystem;
 
@@ -51,7 +54,7 @@ internal sealed class SubAgentCommand
         listCommand.SetHandler(context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
-            context.ExitCode = ExecuteList(ResolveSessionsDb(target), ResolveWorkspaceRoot());
+            context.ExitCode = ExecuteList(ResolveSessionsDb(target), ResolveWorkspaceRoot(target));
             return Task.CompletedTask;
         });
 
@@ -65,7 +68,7 @@ internal sealed class SubAgentCommand
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            context.ExitCode = ExecutePrune(ResolveSessionsDb(target), ResolveWorkspaceRoot(), dryRun);
+            context.ExitCode = ExecutePrune(ResolveSessionsDb(target), ResolveWorkspaceRoot(target), dryRun);
             return Task.CompletedTask;
         });
 
@@ -87,8 +90,31 @@ internal sealed class SubAgentCommand
     /// <c>FileAgentWorkspaceManager.GetSubAgentWorkspaceRoot</c> so the CLI reaper targets exactly the
     /// directories the gateway creates.
     /// </summary>
-    internal string ResolveWorkspaceRoot()
-        => _fileSystem.Path.Combine(_fileSystem.Path.GetTempPath(), SubAgentWorkspaceDirectoryName);
+    internal string ResolveWorkspaceRoot(string? target = null)
+        => SubAgentWorkspaceRootResolver.Resolve(LoadConfiguredWorkspaceRoot(target), _fileSystem);
+
+    /// <summary>
+    /// Reads the optional <c>gateway.subAgents.workspaceRoot</c> override from the platform config
+    /// under the resolved home directory. A missing or unreadable config yields <c>null</c> so the
+    /// resolver falls back to the historical temp-root default - the CLI must never fail to list or
+    /// prune just because config could not be loaded.
+    /// </summary>
+    private string? LoadConfiguredWorkspaceRoot(string? target)
+    {
+        try
+        {
+            var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+            if (!_fileSystem.File.Exists(configPath))
+                return null;
+
+            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            return config.Gateway?.SubAgents?.WorkspaceRoot;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Lists every workspace directory found under the root, tagged with its disposition. Prints a
