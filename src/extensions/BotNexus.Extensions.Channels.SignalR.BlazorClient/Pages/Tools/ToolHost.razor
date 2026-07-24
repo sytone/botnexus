@@ -1,0 +1,165 @@
+@page "/tools/{Id}"
+@namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject ToolsApiClient Tools
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>BotNexus &mdash; @(_tool?.Name ?? "Tool")</PageTitle>
+
+<div class="tool-host-page" data-testid="tool-host-page">
+    @switch (_state)
+    {
+        case HostState.Loading:
+            <div class="tool-host-status" data-testid="tool-host-loading">
+                <div class="loading-spinner"></div>
+                <p>Loading tool&hellip;</p>
+            </div>
+            break;
+
+        case HostState.NotFound:
+            <div class="tool-host-status tool-host-notfound" data-testid="tool-host-notfound">
+                <h2>Tool not found</h2>
+                <p>No tool exists for id <code>@Id</code>.</p>
+            </div>
+            break;
+
+        case HostState.Refused:
+            <div class="tool-host-status tool-host-refused" data-testid="tool-host-refused">
+                <h2>This site can't be embedded</h2>
+                <p>
+                    <strong>@_tool!.Name</strong> refused to load inside BotNexus
+                    (the site sends <code>X-Frame-Options</code> / <code>frame-ancestors</code>,
+                    which the browser enforces and we cannot override).
+                </p>
+                <a class="tool-host-open-external"
+                   data-testid="tool-host-open-external"
+                   href="@_tool!.Url"
+                   target="_blank"
+                   rel="noopener noreferrer">
+                    Open in new tab &rarr;
+                </a>
+            </div>
+            break;
+
+        case HostState.Ready:
+        case HostState.Framing:
+            <div class="tool-host-frame-wrapper" data-testid="tool-host-frame-wrapper">
+                @if (_state == HostState.Framing)
+                {
+                    <div class="tool-host-frame-overlay" data-testid="tool-host-frame-overlay">
+                        <div class="loading-spinner"></div>
+                    </div>
+                }
+                @if (_sandbox)
+                {
+                    <iframe @ref="_iframeRef"
+                            class="tool-host-frame"
+                            data-testid="tool-host-iframe"
+                            title="@_tool!.Name"
+                            src="@_tool!.Url"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            @onload="OnFrameLoad"></iframe>
+                }
+                else
+                {
+                    <iframe @ref="_iframeRef"
+                            class="tool-host-frame"
+                            data-testid="tool-host-iframe"
+                            title="@_tool!.Name"
+                            src="@_tool!.Url"
+                            @onload="OnFrameLoad"></iframe>
+                }
+            </div>
+            break;
+    }
+</div>
+
+@code {
+    /// <summary>The tool identifier taken from the route <c>/tools/{id}</c>.</summary>
+    [Parameter]
+    public string Id { get; set; } = string.Empty;
+
+    private enum HostState { Loading, Framing, Ready, Refused, NotFound }
+
+    private HostState _state = HostState.Loading;
+    private ToolDto? _tool;
+    private bool _sandbox = true;
+    private ElementReference _iframeRef;
+    private DotNetObjectReference<ToolHost>? _dotNetRef;
+    private bool _watching;
+
+    // How long we wait for the iframe to load before assuming the site refused framing.
+    // Browser-enforced X-Frame-Options / CSP frame-ancestors blocks give no reliable event,
+    // so a timeout is the pragmatic signal that the frame will never paint.
+    private const int RefusalTimeoutMs = 4000;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Re-fetch whenever the route id changes (e.g. navigating tool -> tool).
+        _state = HostState.Loading;
+        _watching = false;
+        _tool = await Tools.GetAsync(Id);
+
+        if (_tool is null)
+        {
+            _state = HostState.NotFound;
+            return;
+        }
+
+        _sandbox = _tool.SandboxEnabled;
+        // Show the frame immediately with an overlay; the load / timeout race decides the outcome.
+        _state = HostState.Framing;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Arm the refusal watchdog once per framing attempt. If the frame does not raise a
+        // usable load within RefusalTimeoutMs, MarkRefused fires and we show the fallback.
+        if (_state == HostState.Framing && !_watching)
+        {
+            _watching = true;
+            _dotNetRef ??= DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("toolFrame.watch", _dotNetRef, RefusalTimeoutMs);
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit gone; nothing to watch.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fires when the iframe raises its <c>load</c> event. An embeddable site paints and we
+    /// promote to <see cref="HostState.Ready"/>, cancelling the refusal watchdog.
+    /// </summary>
+    private void OnFrameLoad()
+    {
+        // A load after we already gave up (Refused) is ignored - the fallback stays put so the
+        // user is never bounced back into a half-broken frame.
+        if (_state == HostState.Framing)
+            _state = HostState.Ready;
+    }
+
+    /// <summary>
+    /// Called by the JS watchdog (or directly in tests) when the frame never produced a usable
+    /// load. Shows the graceful "open in new tab" fallback instead of a broken blank frame.
+    /// </summary>
+    [JSInvokable]
+    public void MarkRefused()
+    {
+        if (_state == HostState.Framing)
+        {
+            _state = HostState.Refused;
+            StateHasChanged();
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
