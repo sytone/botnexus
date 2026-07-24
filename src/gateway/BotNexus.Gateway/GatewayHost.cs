@@ -515,8 +515,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // When the originating channel is not SignalR (e.g. Telegram), any SignalR
                     // bindings on the conversation receive stream events so connected web
                     // clients update in real-time without a page reload.
+                    //
+                    // #2073: deduplicate by the primary destination's *resolved delivery identity*,
+                    // not by the inbound message.ChannelType. Internal/sub-agent completion turns
+                    // arrive as `internal` but the primary streaming channel resolves to the
+                    // originating session's channel - which is itself SignalR whenever the parent
+                    // session was a portal/web session. In that case the primary path already
+                    // streams into the SignalR conversation group, so fanning the same deltas out
+                    // to the SignalR observer binding would deliver every delta twice to the same
+                    // group ("TheThe independent independent..."). The terminal channel the primary
+                    // path delivers to is the session's own channel: the direct path streams via
+                    // message.ChannelType, and the internal adapter resolves the target adapter from
+                    // session.ChannelType (falling back to signalr). We therefore suppress SignalR
+                    // observer fan-out whenever that terminal channel is SignalR, regardless of the
+                    // model or the inbound channel type.
+                    var primaryTerminalChannel = message.ChannelType.Value == "internal"
+                        ? (session.ChannelType?.Value ?? "signalr")
+                        : message.ChannelType.Value;
+                    var primaryDeliversToSignalR = string.Equals(
+                        primaryTerminalChannel, "signalr", StringComparison.Ordinal);
+
                     IReadOnlyList<(IStreamEventChannelAdapter Adapter, ChannelStreamTarget Target)> signalRObservers = [];
-                    if (_conversationRouter is not null && message.ChannelType.Value != "signalr")
+                    if (_conversationRouter is not null && !primaryDeliversToSignalR)
                     {
                         try
                         {
