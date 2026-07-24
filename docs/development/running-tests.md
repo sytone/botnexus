@@ -84,5 +84,6 @@ scripts/repo/Ensure-TesthostFirewallRules.ps1 -ProjectPath (Get-ChildItem -Recur
 
 ## Related Documentation
 
-- **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — worktree config hygiene
+- **[validation-receipts.md](validation-receipts.md)** - content-addressed receipt reuse in pre-commit
+- **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** - worktree config hygiene
 - **[../getting-started-dev.md](../getting-started-dev.md)** — building and debugging BotNexus

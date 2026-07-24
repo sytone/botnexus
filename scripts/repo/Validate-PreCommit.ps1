@@ -27,7 +27,17 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
 }
 
 if ($selectedMode -eq 'local') {
-    Write-Host 'Using globally serialized local validation.' -ForegroundColor Yellow
+    # Content-addressed receipt fast path (issue #2143): if the exact staged candidate has
+    # already passed the current required strict policy, skip redundant build/test. Any
+    # missing, malformed, failed, stale, expired, or mismatched receipt fails closed by
+    # running the normal local gate below.
+    Import-Module (Join-Path $PSScriptRoot 'ValidationReceipt.psm1') -Force
+    $verification = Test-BotNexusValidationReceipt -WorktreePath $repoRoot -BaseRef $BaseRef -RequiredScopes @('strict')
+    if ($verification.Match) {
+        Write-Host "Content-addressed validation receipt matches the exact staged candidate; skipping redundant local validation. $($verification.Reason)" -ForegroundColor Green
+        exit 0
+    }
+    Write-Host "No qualifying exact-content receipt ($($verification.Reason)); running globally serialized local validation." -ForegroundColor Yellow
     & $LocalValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
     exit $LASTEXITCODE
 }
