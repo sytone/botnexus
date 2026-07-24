@@ -85,7 +85,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
             AgentId = "test-agent",
             DisplayName = "Test Agent"
         });
-        _store.ActiveAgentId = "test-agent";
+        _store.SelectView("test-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         cut.Find("[data-testid='agent-select']");
@@ -101,7 +101,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
             DisplayName = "Test Agent"
         };
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "test-agent";
+        _store.SelectView("test-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         cut.Find("[data-testid='new-conversation-btn']");
@@ -125,7 +125,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "test-agent";
+        _store.SelectView("test-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         cut.Find("[data-testid='conversation-archive-btn']");
@@ -145,7 +145,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
             IsStreaming = isStreaming
         };
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = agentId;
+        _store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
 
         return _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, agentId));
     }
@@ -196,7 +196,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "stream-agent";
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
 
         // Mark the conversation as streaming via IsStreaming (IsTurnActive is computed)
         var streamState = _store.GetStreamState("conv-1");
@@ -223,7 +223,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "stream-agent";
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
 
         var streamState = _store.GetStreamState("conv-1");
         streamState.IsStreaming = true;
@@ -249,7 +249,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "stream-agent";
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
 
         var streamState = _store.GetStreamState("conv-1");
         streamState.IsStreaming = true;
@@ -278,7 +278,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "stream-agent";
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
 
         var streamState = _store.GetStreamState("conv-1");
         streamState.IsRunActive = true;   // RunStarted seen, RunEnded not yet
@@ -311,7 +311,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         };
         agent.ActiveConversationId = "conv-1";
         _store.UpsertAgent(agent);
-        _store.ActiveAgentId = "stream-agent";
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
 
         var streamState = _store.GetStreamState("conv-1");
         streamState.IsStreaming = true;
@@ -394,7 +394,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
             DisplayName = "Tab Agent",
             IsConnected = true
         });
-        _store.ActiveAgentId = "tab-agent";
+        _store.SelectView("tab-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "tab-agent"));
 

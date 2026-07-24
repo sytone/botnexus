@@ -52,7 +52,7 @@ public sealed class SteeringQueueTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow)
         });
-        _store.ActiveAgentId = agentId;
+        _store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
         var conv = _store.GetConversation(convId)!;
         return (agent, conv);
     }
@@ -116,7 +116,7 @@ public sealed class SteeringQueueTests : IDisposable
             new ConversationSummaryDto("conv-1", "agent-1", "Conv 1", true, "Active", "session-1", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("conv-2", "agent-1", "Conv 2", false, "Active", "session-2", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         });
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         // Add entries to different conversations
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "First conv steer", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));

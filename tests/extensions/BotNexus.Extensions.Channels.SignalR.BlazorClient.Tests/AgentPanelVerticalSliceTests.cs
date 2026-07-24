@@ -34,7 +34,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_portalLoad);

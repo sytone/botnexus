@@ -73,7 +73,7 @@ public sealed class VerticalSliceDataFlowTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow),
         ]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         _interactionService.SelectConversationAsync("agent-1", "conv-2")
             .Returns(Task.CompletedTask);
@@ -108,7 +108,7 @@ public sealed class VerticalSliceDataFlowTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow),
         ]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1")
@@ -142,7 +142,7 @@ public sealed class VerticalSliceDataFlowTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow),
         ]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1")
@@ -203,7 +203,7 @@ public sealed class VerticalSliceDataFlowTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow),
         ]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1"));

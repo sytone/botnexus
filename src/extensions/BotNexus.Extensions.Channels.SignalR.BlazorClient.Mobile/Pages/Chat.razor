@@ -552,7 +552,7 @@ else
             // Unknown agent -- fall back to first known agent if nothing is selected yet.
             if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
             {
-                Store.ActiveAgentId = fallback;
+                Store.SelectView(fallback, string.Empty, SelectionSource.RouteNavigation);
                 Store.NotifyChanged();
             }
 
@@ -561,7 +561,7 @@ else
 
         if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
         {
-            Store.ActiveAgentId = routeAgentId;
+            Store.SelectView(routeAgentId, string.Empty, SelectionSource.RouteNavigation);
             Store.NotifyChanged();
         }
 
@@ -585,7 +585,7 @@ else
     {
         var agentId = e.Value?.ToString();
         if (string.IsNullOrEmpty(agentId) || agentId == Store.ActiveAgentId) return;
-        Store.ActiveAgentId = agentId;
+        Store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
         Store.NotifyChanged();
         _menuOpen = false;
         var agent = Store.GetAgent(agentId);

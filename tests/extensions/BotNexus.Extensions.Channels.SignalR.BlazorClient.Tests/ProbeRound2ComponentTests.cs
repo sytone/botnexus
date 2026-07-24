@@ -223,7 +223,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Click Me", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));
@@ -259,7 +259,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
 
         _store.SeedAgents([new AgentSummary("a-1", "Agent One")]);
         _store.SeedConversations("a-1", []);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));

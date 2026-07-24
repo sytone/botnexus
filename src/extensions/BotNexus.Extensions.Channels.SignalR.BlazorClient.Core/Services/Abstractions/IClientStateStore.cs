@@ -28,24 +28,43 @@ public interface IClientStateStore
     /// <summary>All known agents keyed by agent ID.</summary>
     IReadOnlyDictionary<string, AgentState> Agents { get; }
 
-    /// <summary>The currently visible/active agent tab.</summary>
-    string? ActiveAgentId { get; set; }
+    /// <summary>The currently visible/active agent tab. Read-only projection of the single
+    /// <see cref="ViewSelection"/> the store holds; mutate it only via <see cref="SelectView"/> (#2246).</summary>
+    string? ActiveAgentId { get; }
 
     /// <summary>
-    /// Promotes a sub-agent read-only virtual session to the active view. This is the ONLY
-    /// path allowed to switch <see cref="ActiveAgentId"/> onto a read-only agent — the setter
-    /// itself rejects read-only targets so a concurrent <c>SubAgentSpawned</c> or streaming event
-    /// can never hijack the active view onto a sub-agent session (#2243). Call this from the
-    /// explicit user "view sub-agent" interaction only.
+    /// True when the last active selection was invalidated by an inbound event (the active agent was
+    /// removed, or its active conversation 404'd server-side) and no replacement has been chosen yet.
+    /// Inbound handlers set this instead of mutating the active view themselves; the UI observes it on
+    /// the next render and resolves a fresh selection via <see cref="SelectView"/> (#2246).
     /// </summary>
-    /// <param name="subAgentId">The sub-agent whose session should become the active view.</param>
-    void SetActiveSubAgent(string subAgentId);
+    bool PendingSelectionInvalid { get; }
 
     /// <summary>
-    /// Records <paramref name="subAgentId"/> as a sub-agent session so the anti-hijack guard on
-    /// <see cref="AgentState.ActiveAgentId"/> rejects any non-user-initiated switch onto it, even
-    /// before its <see cref="AgentState"/> exists or its SessionType has been stamped read-only.
-    /// Call this at sub-agent spawn time. Idempotent (#2243).
+    /// Signals that the current active selection has been invalidated by an inbound event (e.g. its
+    /// active conversation 404'd server-side) without choosing a replacement view. Sets
+    /// <see cref="PendingSelectionInvalid"/>; the UI resolves a fresh selection on next render (#2246).
+    /// </summary>
+    void MarkSelectionInvalid();
+
+    /// <summary>
+    /// The single mutation path for the active view. Sets the active agent and (when supplied) the
+    /// active conversation atomically, tagged with the <see cref="SelectionSource"/> that requested it.
+    /// Only <see cref="SelectionSource.SubAgentView"/> may switch the active view onto a read-only
+    /// sub-agent session — every other source is rejected when the target is read-only, so a concurrent
+    /// <c>SubAgentSpawned</c> or streaming event can never hijack the active view onto a sub-agent
+    /// session (#2243). Pass an empty <paramref name="conversationId"/> when only the agent is known.
+    /// </summary>
+    /// <param name="agentId">The agent to make active, or empty to clear the active view.</param>
+    /// <param name="conversationId">The conversation to activate, or empty when unspecified.</param>
+    /// <param name="source">Which interaction requested this selection.</param>
+    void SelectView(string agentId, string conversationId, SelectionSource source);
+
+    /// <summary>
+    /// Records <paramref name="subAgentId"/> as a sub-agent session so the anti-hijack guard in
+    /// <see cref="SelectView"/> rejects any non-<see cref="SelectionSource.SubAgentView"/> switch onto
+    /// it, even before its <see cref="AgentState"/> exists or its SessionType has been stamped
+    /// read-only. Call this at sub-agent spawn time. Idempotent (#2243, folded via #2246).
     /// </summary>
     /// <param name="subAgentId">The spawned sub-agent id to mark read-only for navigation.</param>
     void MarkSubAgent(string subAgentId);

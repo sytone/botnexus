@@ -148,7 +148,7 @@ public sealed class MainLayoutTests : IDisposable
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", []);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -162,7 +162,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -176,7 +176,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Default Chat", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -190,7 +190,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Active Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         var conv = _store.GetAgent("a-1")!.Conversations["c-1"];
         conv.UnreadCount = 3;
 
@@ -207,7 +207,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-1", "a-1", "Active Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
         _store.SetActiveConversation("a-1", "c-1");
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -222,7 +222,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         var conv = _store.GetAgent("a-1")!.Conversations["c-1"];
         conv.IsVirtualSession = true;
         conv.VirtualSessionKind = "cron";
@@ -246,7 +246,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("c-2", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var internalConversation = _store.GetAgent("a-1")!.Conversations["c-2"];
         internalConversation.IsVirtualSession = true;
@@ -266,7 +266,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -282,7 +282,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -296,7 +296,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         _store.GetAgent("a-1")!.SubAgents["sub-1"] = new SubAgentInfo
         {
             SubAgentId = "sub-1",
@@ -322,7 +322,7 @@ public sealed class MainLayoutTests : IDisposable
     {
         _store.SeedAgents([new AgentSummary("sub-1", "Subagent")]);
         _store.SeedConversations("sub-1", []);
-        _store.ActiveAgentId = "sub-1";
+        _store.SelectView("sub-1", string.Empty, SelectionSource.UserClick);
         _store.GetAgent("sub-1")!.SessionType = "agent-subagent";
 
         var cut = RenderLayout();
@@ -337,7 +337,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -353,7 +353,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -364,7 +364,7 @@ public sealed class MainLayoutTests : IDisposable
     public void Sidebar_scroll_region_exists_within_nav()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -376,7 +376,7 @@ public sealed class MainLayoutTests : IDisposable
     public void Configuration_and_agents_links_are_outside_scroll_region()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -398,7 +398,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -424,7 +424,7 @@ public sealed class MainLayoutTests : IDisposable
                     DateTimeOffset.UtcNow.AddMinutes(-i),
                     DateTimeOffset.UtcNow.AddMinutes(-i)))
                 .ToList());
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -482,7 +482,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-1", "a-1", "First", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("c-2", "a-1", "Second", false, "Active", null, 0, DateTimeOffset.UtcNow.AddMinutes(1), DateTimeOffset.UtcNow.AddMinutes(1))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var nav = _ctx.Services.GetRequiredService<NavigationManager>();
         nav.NavigateTo("http://localhost/chat/a-1/c-1");
@@ -533,7 +533,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-2", [
             new ConversationSummaryDto("c-2", "a-2", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -631,7 +631,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -651,7 +651,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations(agentId, [
             new ConversationSummaryDto(convId, agentId, "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = agentId;
+        _store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -691,7 +691,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -710,7 +710,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -728,7 +728,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -745,7 +745,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -763,7 +763,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-today", "a-1", "Today Chat", false, "Active", null, 0, DateTimeOffset.Now, DateTimeOffset.Now),
             new ConversationSummaryDto("c-yesterday", "a-1", "Yesterday Chat", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-2), DateTimeOffset.Now.AddDays(-2))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
@@ -781,7 +781,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-3), DateTimeOffset.UtcNow.AddDays(-3)),
             new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-week']").Click());
@@ -798,7 +798,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());
@@ -817,7 +817,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-normal-old", "a-1", "Normal Old", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30)),
             new ConversationSummaryDto("c-pinned-old", "a-1", "Pinned Old", false, "Active", null, 0, DateTimeOffset.Now.AddDays(-30), DateTimeOffset.Now.AddDays(-30))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         _store.GetAgent("a-1")!.Conversations["c-pinned-old"].IsPinned = true;
 
         var cut = RenderLayout();
@@ -841,7 +841,7 @@ public sealed class MainLayoutTests : IDisposable
             new ConversationSummaryDto("c-recent", "a-1", "Recent Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-3), DateTimeOffset.UtcNow.AddDays(-3)),
             new ConversationSummaryDto("c-old", "a-1", "Old Chat", false, "Active", null, 0, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(-30))
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
@@ -857,7 +857,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
         await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-filter-today']").Click());

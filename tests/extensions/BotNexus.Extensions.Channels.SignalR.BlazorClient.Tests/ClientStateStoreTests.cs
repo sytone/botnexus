@@ -265,7 +265,7 @@ public sealed class ClientStateStoreTests
     {
         var store = CreateSeededStore();
         store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "One")]);
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         store.SetActiveConversation("a-1", "c-1");
 
         Assert.Equal("c-1", store.ActiveConversationId);
@@ -286,7 +286,7 @@ public sealed class ClientStateStoreTests
     public void RemoveAgent_resets_active_agent_if_removed()
     {
         var store = CreateSeededStore();
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         store.RemoveAgent("a-1");
 
@@ -418,14 +418,14 @@ public sealed class ClientStateStoreTests
     // ── #2243 active-view anti-hijack guard ────────────────────────────────────
 
     [Fact]
-    public void ActiveAgentId_setter_rejects_switching_onto_a_read_only_sub_agent()
+    public void SelectView_rejects_switching_onto_a_read_only_sub_agent()
     {
         // #2243: a SubAgentSpawned or streaming event that lands around send time must never be
         // able to promote the sub-agent's read-only virtual session to the active view. The store
         // setter is the single choke point every non-user-click assignment flows through, so it
         // silently rejects a switch onto a read-only agent.
         var store = CreateSeededStore();
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         store.UpsertAgent(new AgentState
         {
             AgentId = "sub-1",
@@ -434,7 +434,7 @@ public sealed class ClientStateStoreTests
             IsConnected = true
         });
 
-        store.ActiveAgentId = "sub-1";
+        store.SelectView("sub-1", string.Empty, SelectionSource.UserClick);
 
         store.ActiveAgentId.ShouldBe("a-1",
             customMessage: "A concurrent event must not hijack the active view onto a read-only " +
@@ -442,25 +442,28 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
-    public void ActiveAgentId_setter_rejects_marked_sub_agent_before_its_state_or_session_type_exists()
+    public void SelectView_rejects_marked_sub_agent_before_its_state_or_session_type_exists()
     {
-        // #2243 race hardening: the original guard only rejected a switch when target.IsReadOnly was
-        // ALREADY derived true (SessionType == "agent-subagent"). But HandleSubAgentSpawned registers
-        // the sub-agent asynchronously, so around send time there is often NO AgentState for the
-        // sub-agent yet (or one still carrying the default "user-agent" SessionType) when a concurrent
-        // assignment lands. MarkSubAgent records the id at spawn so the guard rejects the switch
-        // independent of that ordering. Here we deliberately do NOT create an AgentState for "sub-1".
+        // #2243 race hardening, PORTED from the #2254 quick-patch to the #2246 SelectView seam.
+        // The derived-IsReadOnly half of the guard only rejects a switch when the target's
+        // SessionType is ALREADY stamped "agent-subagent". But HandleSubAgentSpawned registers the
+        // sub-agent asynchronously, so around send time there is often NO AgentState for the
+        // sub-agent yet (or one still carrying the default "user-agent" SessionType) when a
+        // concurrent, non-user-initiated selection lands. MarkSubAgent records the id at spawn so the
+        // SelectView guard rejects the switch independent of that SessionType-stamp ordering. Here we
+        // deliberately do NOT create an AgentState for "sub-1", and drive the selection with a
+        // NON-SubAgentView source (RouteNavigation) to model the background assignment.
         var store = CreateSeededStore();
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         store.MarkSubAgent("sub-1"); // spawn-time marking, before any AgentState/SessionType exists
-        store.ActiveAgentId = "sub-1"; // concurrent background assignment during the spawn window
+        store.SelectView("sub-1", string.Empty, SelectionSource.RouteNavigation); // background switch
 
         store.ActiveAgentId.ShouldBe("a-1",
             customMessage: "A sub-agent marked at spawn time must be rejected by the guard even before " +
                 "its AgentState exists or its SessionType has been stamped read-only.");
 
-        // And once its AgentState is later registered (still not user-initiated), it stays rejected.
+        // And once its AgentState is later registered (still not via SubAgentView), it stays rejected.
         store.UpsertAgent(new AgentState
         {
             AgentId = "sub-1",
@@ -468,33 +471,33 @@ public sealed class ClientStateStoreTests
             SessionType = "agent-subagent",
             IsConnected = true
         });
-        store.ActiveAgentId = "sub-1";
+        store.SelectView("sub-1", string.Empty, SelectionSource.Bootstrap);
         store.ActiveAgentId.ShouldBe("a-1");
 
-        // The explicit user "view sub-agent" click still promotes it.
-        store.SetActiveSubAgent("sub-1");
+        // The explicit user "view sub-agent" interaction (SubAgentView source) still promotes it.
+        store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
         store.ActiveAgentId.ShouldBe("sub-1");
     }
 
     [Fact]
-    public void ActiveAgentId_setter_allows_switching_between_user_agents()
+    public void SelectView_allows_switching_between_user_agents()
     {
         var store = CreateSeededStore();
 
-        store.ActiveAgentId = "a-1";
-        store.ActiveAgentId = "a-2";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+        store.SelectView("a-2", string.Empty, SelectionSource.UserClick);
 
         store.ActiveAgentId.ShouldBe("a-2");
     }
 
     [Fact]
-    public void SetActiveSubAgent_promotes_read_only_sub_agent_on_explicit_user_view()
+    public void SelectView_promotes_read_only_sub_agent_on_explicit_SubAgentView_source()
     {
-        // The explicit "view sub-agent" user click is the ONE path allowed to switch the active
-        // view onto a read-only session. It routes through SetActiveSubAgent, which bypasses the
-        // anti-hijack guard.
+        // The explicit "view sub-agent" user click is the ONE source allowed to switch the active
+        // view onto a read-only session. It calls SelectView with SelectionSource.SubAgentView, which
+        // bypasses the anti-hijack guard.
         var store = CreateSeededStore();
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
         store.UpsertAgent(new AgentState
         {
             AgentId = "sub-1",
@@ -503,26 +506,125 @@ public sealed class ClientStateStoreTests
             IsConnected = true
         });
 
-        store.SetActiveSubAgent("sub-1");
+        store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
 
         store.ActiveAgentId.ShouldBe("sub-1");
     }
 
     [Fact]
-    public void SetActiveSubAgent_does_not_leave_the_guard_open_for_later_events()
+    public void SubAgentView_selection_does_not_leave_the_guard_open_for_later_events()
     {
-        // The allow-flag must be scoped to the single SetActiveSubAgent call: a subsequent
+        // The SubAgentView allowance must be scoped to the single SelectView call: a subsequent
         // background event switching onto another read-only sub-agent must still be rejected.
         var store = CreateSeededStore();
         store.UpsertAgent(new AgentState { AgentId = "sub-1", DisplayName = "Sub 1", SessionType = "agent-subagent", IsConnected = true });
         store.UpsertAgent(new AgentState { AgentId = "sub-2", DisplayName = "Sub 2", SessionType = "agent-subagent", IsConnected = true });
 
-        store.SetActiveSubAgent("sub-1");
-        store.ActiveAgentId = "sub-2"; // simulates a background SubAgentSpawned assignment
+        store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
+        store.SelectView("sub-2", string.Empty, SelectionSource.UserClick); // simulates a background SubAgentSpawned assignment
 
         store.ActiveAgentId.ShouldBe("sub-1",
             customMessage: "The sub-agent activation allowance must not persist past the explicit " +
-                "SetActiveSubAgent call.");
+                "SelectView(SubAgentView) call.");
+    }
+
+    // ── #2246 single SelectView seam ───────────────────────────────────────────
+
+    [Fact]
+    public void SelectView_sets_agent_and_conversation_atomically()
+    {
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "One", activeSessionId: "sess-1")]);
+
+        store.SelectView("a-1", "c-1", SelectionSource.UserClick);
+
+        store.ActiveAgentId.ShouldBe("a-1");
+        store.ActiveConversationId.ShouldBe("c-1",
+            customMessage: "SelectView must set the active agent and its conversation in one atomic step.");
+        store.GetAgent("a-1")!.SessionId.ShouldBe("sess-1");
+    }
+
+    [Fact]
+    public void SelectView_with_empty_agent_clears_the_active_view()
+    {
+        var store = CreateSeededStore();
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+
+        store.SelectView(string.Empty, string.Empty, SelectionSource.Bootstrap);
+
+        store.ActiveAgentId.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ActiveAgentId_has_no_public_setter()
+    {
+        // Compile-time contract made explicit: the projection is read-only. Reflection asserts the
+        // interface exposes no setter so a future edit cannot silently reintroduce the mutable seam.
+        var prop = typeof(IClientStateStore).GetProperty(nameof(IClientStateStore.ActiveAgentId));
+        prop.ShouldNotBeNull();
+        prop!.CanWrite.ShouldBeFalse(
+            customMessage: "ActiveAgentId must have NO public setter; the sole mutation path is SelectView (#2246).");
+    }
+
+    [Fact]
+    public void Inbound_SubAgentSpawned_style_mutation_leaves_selection_unchanged()
+    {
+        // Inbound event handlers mutate data + NotifyChanged only; they never call SelectView. This
+        // asserts that the kind of state churn a SubAgentSpawned handler performs (adding a read-only
+        // sub-agent, registering its session, notifying) leaves the active-view selection byte-for-byte
+        // unchanged — an event can never make a sub-agent the active view (#2243/#2246).
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "One")]);
+        store.SelectView("a-1", "c-1", SelectionSource.UserClick);
+
+        var agentBefore = store.ActiveAgentId;
+        var convBefore = store.ActiveConversationId;
+
+        // Simulate the data-only mutations an inbound SubAgentSpawned handler performs.
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub-agent",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+        store.RegisterSession("sub-1", "sub-1");
+        store.NotifyChanged();
+
+        store.ActiveAgentId.ShouldBe(agentBefore,
+            customMessage: "An inbound event must not change the active agent.");
+        store.ActiveConversationId.ShouldBe(convBefore,
+            customMessage: "An inbound event must not change the active conversation.");
+    }
+
+    [Fact]
+    public void RemoveAgent_of_active_agent_flags_pending_selection_invalid_without_auto_selecting()
+    {
+        // #2246: RemoveAgent is a data mutation. Removing the active agent must NOT auto-pick a
+        // replacement view (that would be a second writer); it clears the selection and raises
+        // PendingSelectionInvalid so the UI resolves a fresh selection on next render.
+        var store = CreateSeededStore();
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+
+        store.RemoveAgent("a-1");
+
+        store.ActiveAgentId.ShouldBeNull();
+        store.PendingSelectionInvalid.ShouldBeTrue(
+            customMessage: "Removing the active agent must flag the selection invalid for UI resolution.");
+    }
+
+    [Fact]
+    public void MarkSelectionInvalid_sets_pending_flag_and_next_SelectView_clears_it()
+    {
+        var store = CreateSeededStore();
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+
+        store.MarkSelectionInvalid();
+        store.PendingSelectionInvalid.ShouldBeTrue();
+
+        store.SelectView("a-2", string.Empty, SelectionSource.RouteNavigation);
+        store.PendingSelectionInvalid.ShouldBeFalse(
+            customMessage: "Resolving the selection via SelectView must clear the pending-invalid flag.");
     }
 
     private static ClientStateStore CreateSeededStore()

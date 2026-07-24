@@ -661,9 +661,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
 
         // #2243: this is the sole user-initiated path allowed to promote a read-only sub-agent
-        // session to the active view. Route through SetActiveSubAgent, which bypasses the store's
-        // anti-hijack guard that otherwise rejects switching ActiveAgentId onto a read-only agent.
-        _store.SetActiveSubAgent(subAgentId);
+        // session to the active view. Pass SelectionSource.SubAgentView, the one source the store's
+        // anti-hijack guard lets through onto a read-only agent.
+        _store.SelectView(subAgentId, string.Empty, SelectionSource.SubAgentView);
         _store.NotifyChanged();
 
         // Load history if needed
@@ -843,9 +843,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     /// <summary>
     /// Recovers from a 404 on history load: the conversation no longer exists server-side,
-    /// so it is dropped locally and - when it was the active conversation - the most recent
-    /// remaining conversation (default first, then newest) is selected, or the active
-    /// pointer cleared when none remain.
+    /// so it is dropped locally. When it was the active conversation, the store is asked to
+    /// re-select the most recent remaining conversation (default first, then newest) as a
+    /// route-navigation-equivalent selection, or — when none remain — the active conversation
+    /// pointer is cleared and the selection flagged invalid so the UI resolves it on next render.
+    /// This handler mutates data + selection-invalid signalling only; it never promotes a view
+    /// onto a read-only session (#2246).
     /// </summary>
     private void HandleHistoryNotFound(AgentState agent, string agentId, string conversationId, HttpRequestException ex)
     {
@@ -865,6 +868,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             else
             {
                 agent.ActiveConversationId = null;
+                _store.MarkSelectionInvalid();
                 _store.NotifyChanged();
             }
         }
