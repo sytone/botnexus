@@ -16,6 +16,17 @@ public abstract class ConversationStoreContractTests
     /// <summary>Creates a fresh store instance for a single test.</summary>
     protected abstract IConversationStore CreateStore();
 
+    /// <summary>
+    /// Creates a store whose internal entity cache (if the implementation has one) is capped
+    /// at <paramref name="capacity"/> entries — smaller than the datasets used by the
+    /// capacity-stress contract test. Implementations backed by a bounded cache MUST override
+    /// this so the parity suite exercises list materialisation under eviction pressure; the
+    /// default returns <c>null</c> for cache-free implementations, and the test falls back to
+    /// <see cref="CreateStore"/>. This is the generalised guard for #2226: list completeness
+    /// must never depend on cache survival.
+    /// </summary>
+    protected virtual IConversationStore? CreateCapacityConstrainedStore(int capacity) => null;
+
     /// <summary>Disposes any resources used by the store fixture (e.g. temp DB).</summary>
     protected virtual void DisposeStore() { }
 
@@ -128,6 +139,34 @@ public abstract class ConversationStoreContractTests
 
         var result = await store.ListAsync();
         result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ListAsync_ReturnsEveryRow_WhenCountFarExceedsCacheCapacity()
+    {
+        // Generalised parity guard for #2226: no store implementation may gate the membership
+        // of a list result on a bounded read-through cache surviving materialisation. With far
+        // more conversations than the cache capacity, warming id N can evict an earlier id; a
+        // materialiser that rebuilds the result by re-reading from the cache then silently drops
+        // the evicted rows (the flicker bug). For cache-free stores this asserts plain
+        // completeness. Runs against every IConversationStore implementation.
+        const int capacity = 8;
+        const int total = 50;
+        var store = CreateCapacityConstrainedStore(capacity) ?? CreateStore();
+
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < total; i++)
+        {
+            var conv = MakeConversation(title: $"conv-{i:D3}");
+            await store.CreateAsync(conv);
+            expected.Add(conv.ConversationId.Value);
+        }
+
+        var list = await store.ListAsync();
+
+        list.Count.ShouldBe(total);
+        var returnedIds = list.Select(c => c.ConversationId.Value).ToHashSet(StringComparer.Ordinal);
+        returnedIds.SetEquals(expected).ShouldBeTrue();
     }
 
     [Fact]
