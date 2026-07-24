@@ -49,6 +49,7 @@ public sealed class UpdateBadgeTests : IDisposable
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
+        _ctx.Services.AddStubNavOrderApiClient();
         var _mockPrefs = Substitute.For<IPortalPreferencesService>(); _mockPrefs.Current.Returns(new PortalPreferences()); _ctx.Services.AddSingleton(_mockPrefs);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }

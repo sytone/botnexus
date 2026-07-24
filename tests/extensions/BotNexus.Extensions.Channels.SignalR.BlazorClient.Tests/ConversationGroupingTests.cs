@@ -49,6 +49,7 @@ public sealed class ConversationGroupingTests : IDisposable
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
+        _ctx.Services.AddStubNavOrderApiClient();
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -303,6 +304,7 @@ public sealed class ConversationGroupingTests : IDisposable
         ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
         ctx.Services.AddSingleton(new SectionsApiClient(httpWithMock));
         ctx.Services.AddSingleton(new ToolsApiClient(httpWithMock));
+        ctx.Services.AddStubNavOrderApiClient();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
         // Render the Scheduled group expanded by default so the assertion does not depend on a
         // toggle click racing the async OnAfterRenderAsync localStorage read (see the

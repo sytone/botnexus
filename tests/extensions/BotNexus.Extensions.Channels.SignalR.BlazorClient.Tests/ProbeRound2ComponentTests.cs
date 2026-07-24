@@ -37,6 +37,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
+        _ctx.Services.AddStubNavOrderApiClient();
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         var _mockPrefs = Substitute.For<IPortalPreferencesService>(); _mockPrefs.Current.Returns(new PortalPreferences()); _ctx.Services.AddSingleton(_mockPrefs);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -219,6 +220,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(new CronApiClient(http));
         ctx.Services.AddSingleton(new SectionsApiClient(http));
         ctx.Services.AddSingleton(new ToolsApiClient(http));
+        ctx.Services.AddStubNavOrderApiClient();
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());

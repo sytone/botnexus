@@ -43,6 +43,7 @@ public sealed class DebugModeTests : IDisposable
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
+        _ctx.Services.AddStubNavOrderApiClient();
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
