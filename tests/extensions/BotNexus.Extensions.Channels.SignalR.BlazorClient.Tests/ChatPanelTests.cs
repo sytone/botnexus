@@ -1668,7 +1668,7 @@ public sealed class ChatPanelTests : IDisposable
         CreateAndSeedAgent("agent-1", "Farnsworth", isConnected: true);
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", isDefault: true)]);
         _store.SetActiveConversation("agent-1", "conv-1");
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
         _store.RegisterSession("agent-1", "sess-1", conversationId: "conv-1");
         _store.GetConversation("conv-1")!.ActiveSessionId = "sess-1";
 

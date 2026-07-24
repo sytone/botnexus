@@ -130,7 +130,7 @@ else
         {
             if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
             {
-                Store.ActiveAgentId = fallback;
+                Store.SelectView(fallback, string.Empty, SelectionSource.RouteNavigation);
                 Store.NotifyChanged();
             }
 
@@ -139,7 +139,7 @@ else
 
         if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
         {
-            Store.ActiveAgentId = routeAgentId;
+            Store.SelectView(routeAgentId, string.Empty, SelectionSource.RouteNavigation);
             Store.NotifyChanged();
         }
 

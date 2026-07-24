@@ -96,7 +96,7 @@ public sealed class PortalLoadService : IPortalLoadService
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
             {
-                _store.ActiveAgentId = selectedAgentId;
+                _store.SelectView(selectedAgentId, string.Empty, SelectionSource.Bootstrap);
 
                 var selectedAgent = _store.GetAgent(selectedAgentId);
                 while (selectedAgent is not null)

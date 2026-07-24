@@ -53,7 +53,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Description = "Handles widget triage",
             IsConnected = true
         });
-        _store.ActiveAgentId = "desc-agent";
+        _store.SelectView("desc-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "desc-agent"));
 
@@ -71,7 +71,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Description = "Handles widget triage",
             IsConnected = true
         });
-        _store.ActiveAgentId = "desc-agent";
+        _store.SelectView("desc-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "desc-agent"));
 
@@ -91,7 +91,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Description = "Handles widget triage",
             IsConnected = true
         });
-        _store.ActiveAgentId = "desc-agent";
+        _store.SelectView("desc-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "desc-agent"));
 
@@ -109,7 +109,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Description = null,
             IsConnected = true
         });
-        _store.ActiveAgentId = "no-desc-agent";
+        _store.SelectView("no-desc-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "no-desc-agent"));
 
@@ -129,7 +129,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Emoji = "🔬",
             IsConnected = true
         });
-        _store.ActiveAgentId = "emoji-agent";
+        _store.SelectView("emoji-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "emoji-agent"));
 
@@ -147,7 +147,7 @@ public sealed class AgentPanelHeaderTests : IDisposable
             Emoji = null,
             IsConnected = true
         });
-        _store.ActiveAgentId = "no-emoji-agent";
+        _store.SelectView("no-emoji-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = _ctx.Render<AgentPanel>(p => p.Add(c => c.AgentId, "no-emoji-agent"));
 

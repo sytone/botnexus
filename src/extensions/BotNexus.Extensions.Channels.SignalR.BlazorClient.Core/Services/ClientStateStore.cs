@@ -10,17 +10,26 @@ public sealed class ClientStateStore : IClientStateStore
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
     private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
-    // #2243 hardening: sub-agent ids marked read-only-for-navigation at SPAWN time, before any
-    // AgentState exists or its SessionType has been stamped. The original guard only rejected a
-    // switch when target.IsReadOnly was ALREADY derived true (SessionType == "agent-subagent"),
-    // but HandleSubAgentSpawned registers the sub-agent asynchronously — during the spawn-during-send
-    // window there is often no AgentState yet, or one still carrying the default "user-agent"
-    // SessionType, so the derived flag reads false and the guard leaks. Tracking the id at spawn
-    // makes the rejection independent of that ordering race. Explicit user "view sub-agent" clicks
-    // still bypass via SetActiveSubAgent.
+    // #2243 hardening (folded from #2254): sub-agent ids marked read-only-for-navigation at SPAWN
+    // time, before any AgentState exists or its SessionType has been stamped. HandleSubAgentSpawned
+    // registers the sub-agent asynchronously — during the spawn-during-send window there is often no
+    // AgentState yet, or one still carrying the default "user-agent" SessionType, so a derived
+    // IsReadOnly flag reads false. Tracking the id at spawn makes the SelectView guard reject the
+    // switch independent of that SessionType-stamp ordering race. Explicit user "view sub-agent"
+    // interactions still bypass via SelectionSource.SubAgentView. This is defense-in-depth alongside
+    // the derived-IsReadOnly check in SelectView.
     private readonly HashSet<string> _knownSubAgentIds = new(StringComparer.Ordinal);
 
-    private string? _activeAgentId;
+    // #2246: the SINGLE writable field describing the active view. Every read of the active agent /
+    // conversation is a projection of this; the sole mutation path is SelectView(...). There is no
+    // public setter, so an inbound event can no longer assign the active view out from under the user.
+    private ViewSelection _selection = ViewSelection.None;
+
+    // Set by inbound-event paths (history-404 drop, active-agent removal) when the current selection
+    // no longer points at a live target. The store does NOT auto-pick a replacement — the UI resolves
+    // a valid selection on its next render (#2246). This keeps inbound events data-only: they never
+    // mutate the active view themselves.
+    private bool _pendingSelectionInvalid;
 
     // High-frequency streaming deltas (content/thinking) route through NotifyChangedThrottled,
     // which coalesces a burst into at most one render per window so a long streamed response
@@ -46,47 +55,60 @@ public sealed class ClientStateStore : IClientStateStore
     public IReadOnlyDictionary<string, AgentState> Agents => _agents;
 
     /// <inheritdoc />
-    /// <remarks>
-    /// #2243 anti-hijack guard: a sub-agent read-only virtual session (<see cref="AgentState.IsReadOnly"/>)
-    /// must never become the active view except through an explicit user "view sub-agent" click, which
-    /// routes through <see cref="SetActiveSubAgent"/>. Every other assignment path — SubAgentSpawned and
-    /// other streaming events, route/state refreshes, reconnect recovery — flows through this setter, so
-    /// silently rejecting a switch onto a read-only agent here keeps the composer, the new-conversation
-    /// button, and the user's own conversation in place. This mirrors the existing SeedConversations guard
-    /// that already stops virtual sessions from auto-hijacking the active conversation tab.
-    /// </remarks>
-    public string? ActiveAgentId
-    {
-        get => _activeAgentId;
-        set
-        {
-            if (value is not null
-                && !_allowSubAgentActivation
-                && (_knownSubAgentIds.Contains(value)
-                    || (_agents.TryGetValue(value, out var target) && target.IsReadOnly)))
-            {
-                return;
-            }
-
-            _activeAgentId = value;
-        }
-    }
-
-    // Set only for the duration of an explicit user-initiated sub-agent view (SetActiveSubAgent),
-    // which is the one path allowed to promote a read-only sub-agent session to the active view.
-    private bool _allowSubAgentActivation;
+    public string? ActiveAgentId =>
+        _selection.AgentId is { Length: > 0 } id ? id : null;
 
     /// <inheritdoc />
-    public void SetActiveSubAgent(string subAgentId)
+    public bool PendingSelectionInvalid => _pendingSelectionInvalid;
+
+    /// <inheritdoc />
+    public void MarkSelectionInvalid() => _pendingSelectionInvalid = true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// #2243 anti-hijack guard: a sub-agent read-only virtual session (<see cref="AgentState.IsReadOnly"/>)
+    /// must never become the active view except through an explicit user "view sub-agent" interaction,
+    /// which passes <see cref="SelectionSource.SubAgentView"/>. Every other source — SubAgentSpawned and
+    /// other streaming events routed here indirectly, route/state refreshes, reconnect recovery, bootstrap —
+    /// is rejected when the target is read-only, so the composer, the new-conversation button, and the
+    /// user's own conversation stay in place. This mirrors the SeedConversations guard that already stops
+    /// virtual sessions from auto-hijacking the active conversation tab.
+    /// #2246: this is the SOLE mutation path for the active view; there is no public setter.
+    /// </remarks>
+    public void SelectView(string agentId, string conversationId, SelectionSource source)
     {
-        _allowSubAgentActivation = true;
-        try
+        agentId ??= string.Empty;
+        conversationId ??= string.Empty;
+
+        // #2243/#2246 fold: a single, source-keyed anti-hijack guard. Reject the selection when it
+        // targets a sub-agent view UNLESS the caller explicitly asked for it via
+        // SelectionSource.SubAgentView. "Targets a sub-agent" is true when EITHER the id was marked
+        // at spawn time (_knownSubAgentIds, folded from #2254 — covers the race where no AgentState
+        // exists yet or its SessionType is not yet stamped read-only) OR the agent's derived
+        // IsReadOnly is already true. Keying on intent source (the point of #2246) plus the spawn
+        // marker (the point of #2254) makes the guard independent of SessionType-stamp ordering.
+        if (source != SelectionSource.SubAgentView
+            && agentId.Length > 0
+            && (_knownSubAgentIds.Contains(agentId)
+                || (_agents.TryGetValue(agentId, out var target) && target.IsReadOnly)))
         {
-            ActiveAgentId = subAgentId;
+            return;
         }
-        finally
+
+        _selection = new ViewSelection(agentId, conversationId, source);
+        _pendingSelectionInvalid = false;
+
+        // When the caller carries an explicit conversation, bind it on the agent so the derived
+        // ActiveConversationId projection and session routing follow immediately.
+        if (agentId.Length > 0 && conversationId.Length > 0
+            && _agents.TryGetValue(agentId, out var agent))
         {
-            _allowSubAgentActivation = false;
+            agent.ActiveConversationId = conversationId;
+            if (agent.Conversations.TryGetValue(conversationId, out var conv))
+            {
+                conv.UnreadCount = 0;
+                agent.SessionId = conv.ActiveSessionId;
+            }
         }
     }
 
@@ -154,8 +176,14 @@ public sealed class ClientStateStore : IClientStateStore
     public void RemoveAgent(string agentId)
     {
         _agents.Remove(agentId);
+        // #2246: inbound removal is data-only. Rather than auto-selecting a replacement (a view
+        // mutation), flag the selection invalid so the UI resolves a new active agent on its next
+        // render. This keeps the store's single view-writer contract intact.
         if (ActiveAgentId == agentId)
-            ActiveAgentId = _agents.Keys.FirstOrDefault();
+        {
+            _selection = ViewSelection.None;
+            _pendingSelectionInvalid = true;
+        }
         NotifyChanged();
     }
 
@@ -254,6 +282,11 @@ public sealed class ClientStateStore : IClientStateStore
             conv.UnreadCount = 0;
             agent.SessionId = conv.ActiveSessionId;
         }
+
+        // Keep the single view-selection value's conversation projection in step when this is the
+        // active agent, so ActiveConversationId (derived) and the stored selection never disagree.
+        if (string.Equals(_selection.AgentId, agentId, StringComparison.Ordinal))
+            _selection = _selection with { ConversationId = conversationId };
 
         NotifyChanged();
     }

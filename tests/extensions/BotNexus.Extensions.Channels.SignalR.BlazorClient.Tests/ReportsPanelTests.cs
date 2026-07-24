@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -214,7 +214,7 @@ public sealed class ReportsPanelTests : IDisposable
         // Arrange: store with active streaming agent
         var store = new ClientStateStore();
         store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = true });
-        store.ActiveAgentId = "agent-1";
+        store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var callCount = 0;
         _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
@@ -245,7 +245,7 @@ public sealed class ReportsPanelTests : IDisposable
         var store = new ClientStateStore();
         store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = false });
         store.UpsertAgent(new AgentState { AgentId = "agent-2", IsStreaming = true });
-        store.ActiveAgentId = "agent-1";
+        store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var callCount = 0;
         _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())

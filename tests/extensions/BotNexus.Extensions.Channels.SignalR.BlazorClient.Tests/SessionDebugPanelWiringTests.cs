@@ -113,7 +113,7 @@ public sealed class SessionDebugPanelWiringTests : IDisposable
     private void SetupAgentWithSession()
     {
         _store.SeedAgents([new AgentSummary("agent-1", "TestAgent")]);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
         var agent = _store.GetAgent("agent-1")!;
         agent.ActiveConversationId = "conv-1";
         agent.Conversations["conv-1"] = new ConversationState

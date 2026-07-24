@@ -417,7 +417,24 @@
         await ExtensionFeatures.LoadAsync();
     }
 
-    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+    private void HandleStateChanged() => InvokeAsync(() =>
+    {
+        ResolvePendingSelection();
+        StateHasChanged();
+    });
+
+    // #2246: inbound events never mutate the active view themselves. When one invalidates the current
+    // selection (active agent removed, or its active conversation 404'd) the store raises
+    // PendingSelectionInvalid; the UI is the single place that resolves a replacement, re-establishing
+    // the one-writer contract by routing the fallback through SelectView as a route-navigation switch.
+    private void ResolvePendingSelection()
+    {
+        if (!Store.PendingSelectionInvalid)
+            return;
+
+        if (Store.Agents.Keys.FirstOrDefault() is { } fallback)
+            Store.SelectView(fallback, string.Empty, SelectionSource.RouteNavigation);
+    }
 
     private async Task ToggleSidebar()
     {
@@ -487,7 +504,7 @@
         if (!string.IsNullOrEmpty(agentId))
         {
             await Interaction.RefreshConversationsAsync(agentId);
-            Store.ActiveAgentId = agentId;
+            Store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
             if (Store.GetAgent(agentId) is { } agent)
             {
                 if (agent.UnreadCount > 0)

@@ -60,7 +60,7 @@ public sealed class ConversationGroupingTests : IDisposable
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", conversations);
-        _store.ActiveAgentId = "a-1";
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
     }
 
     // Seeds the persisted "Scheduled" group collapse state to expanded ("false").
@@ -310,7 +310,7 @@ public sealed class ConversationGroupingTests : IDisposable
             new ConversationSummaryDto("conv:assigned-to-cron", "a-1", "Digest Conv", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new ConversationSummaryDto("conv:normal", "a-1", "Normal Conv", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        store.ActiveAgentId = "a-1";
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (RenderFragment)(_ => { })));

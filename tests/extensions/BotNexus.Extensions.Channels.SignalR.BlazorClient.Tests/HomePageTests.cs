@@ -26,6 +26,14 @@ public sealed class HomePageTests : IDisposable
         _portalLoad.InitializeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
         _store.Agents.Returns(new Dictionary<string, AgentState>().AsReadOnly());
         _store.ActiveAgentId.Returns((string?)null);
+        // The real store derives ActiveAgentId from the single ViewSelection SelectView writes.
+        // Mirror that on the substitute so route/bootstrap assertions observe the selected agent.
+        _store.When(s => s.SelectView(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SelectionSource>()))
+            .Do(ci =>
+            {
+                var agentId = ci.ArgAt<string>(0);
+                _store.ActiveAgentId.Returns(string.IsNullOrEmpty(agentId) ? null : agentId);
+            });
         _store.GetStreamState(Arg.Any<string>()).Returns(new ConversationStreamState());
 
         _ctx.Services.AddSingleton(_store);
@@ -282,7 +290,7 @@ public sealed class HomePageTests : IDisposable
     public void Direct_route_with_stale_ids_falls_back_without_crashing()
     {
         _portalLoad.IsReady.Returns(true);
-        _store.ActiveAgentId = "agent-1";
+        _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var knownAgent = new AgentState
         {

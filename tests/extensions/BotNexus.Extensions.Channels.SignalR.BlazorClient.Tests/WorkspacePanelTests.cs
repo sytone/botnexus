@@ -1,4 +1,4 @@
-﻿using Bunit;
+using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -250,7 +250,7 @@ public sealed class WorkspacePanelTests : IDisposable
         // Arrange: set up store with active agent that starts streaming
         var store = new ClientStateStore();
         store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = true });
-        store.ActiveAgentId = "agent-1";
+        store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var callCount = 0;
         _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
@@ -282,7 +282,7 @@ public sealed class WorkspacePanelTests : IDisposable
         var store = new ClientStateStore();
         store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = false });
         store.UpsertAgent(new AgentState { AgentId = "agent-2", IsStreaming = true });
-        store.ActiveAgentId = "agent-1";
+        store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
 
         var callCount = 0;
         _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
