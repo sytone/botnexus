@@ -1,6 +1,8 @@
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.FeatureManagement;
@@ -319,6 +321,140 @@ public sealed class ApiKeyGatewayAuthHandlerTests
 
         result.IsAuthenticated.ShouldBeFalse();
         result.FailureReason.ShouldStartWith("Origin not allowed");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagUnspecified_DisallowedBrowserOrigin_ReturnsFailure()
+    {
+        // #1946: the dev-origin guard is now ON by default. When the operator has not specified
+        // the GatewayDevOriginEnforcement flag at all, a disallowed browser Origin must be rejected
+        // out-of-the-box for keyless gateways.
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        using var provider = BuildFeatureServices(configuredValue: null);
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: provider.GetRequiredService<IFeatureManager>(),
+            configuration: provider.GetRequiredService<IConfiguration>());
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldStartWith("Origin not allowed");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagUnspecified_WithoutOrigin_ReturnsDevelopmentIdentity()
+    {
+        // Default-ON guard must still allow non-browser clients (no Origin header).
+        using var provider = BuildFeatureServices(configuredValue: null);
+        var handler = new ApiKeyGatewayAuthHandler(
+            apiKey: null,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: provider.GetRequiredService<IFeatureManager>(),
+            configuration: provider.GetRequiredService<IConfiguration>());
+
+        var result = await handler.AuthenticateAsync(CreateContext());
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagExplicitlyFalse_DisallowedOrigin_StillSucceeds()
+    {
+        // Operators must retain the escape hatch: FeatureManagement.GatewayDevOriginEnforcement: false
+        // explicitly disables the guard even though the new default is ON.
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        using var provider = BuildFeatureServices(configuredValue: false);
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: provider.GetRequiredService<IFeatureManager>(),
+            configuration: provider.GetRequiredService<IConfiguration>());
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_DevMode_FlagEvaluationThrows_FailsOpen_DisallowedOrigin_StillSucceeds()
+    {
+        // Fail-open contract: a feature-flag evaluation fault must never lock the operator out.
+        // Even with a disallowed Origin and the new default-ON policy, an evaluation error leaves
+        // the guard inert.
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Cors = new CorsConfig { AllowedOrigins = ["http://localhost:5005"] }
+            }
+        };
+        using var provider = BuildFeatureServices(configuredValue: null);
+        var handler = new ApiKeyGatewayAuthHandler(
+            config,
+            NullLogger<ApiKeyGatewayAuthHandler>.Instance,
+            securityEvents: null,
+            featureManager: new ThrowingFeatureManager(),
+            configuration: provider.GetRequiredService<IConfiguration>());
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["Origin"] = "http://evil.example.com" }));
+
+        result.IsAuthenticated.ShouldBeTrue();
+        result.Identity!.CallerId.ShouldBe("gateway-dev");
+    }
+
+    // Builds a real Microsoft.FeatureManagement pipeline over an in-memory configuration so the
+    // "unspecified vs explicit false" distinction is exercised through the production code path.
+    private static ServiceProvider BuildFeatureServices(bool? configuredValue)
+    {
+        var settings = new Dictionary<string, string?>();
+        if (configuredValue is { } value)
+            settings["FeatureManagement:GatewayDevOriginEnforcement"] = value ? "true" : "false";
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(settings)
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddFeatureManagement();
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class ThrowingFeatureManager : IFeatureManager
+    {
+        public async IAsyncEnumerable<string> GetFeatureNamesAsync()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public Task<bool> IsEnabledAsync(string feature) =>
+            throw new InvalidOperationException("feature evaluation failed");
+
+        public Task<bool> IsEnabledAsync<TContext>(string feature, TContext context) =>
+            throw new InvalidOperationException("feature evaluation failed");
     }
 
     private static GatewayAuthContext CreateContext(IReadOnlyDictionary<string, string>? headers = null)
