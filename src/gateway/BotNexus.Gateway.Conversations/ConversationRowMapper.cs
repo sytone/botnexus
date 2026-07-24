@@ -92,7 +92,7 @@ internal static class ConversationRowMapper
             ParseTimestamp(reader.GetString(reader.GetOrdinal("updated_at"))),
             GetNullableString(reader, "purpose"),
             GetNullableString(reader, "kind") ?? ConversationKind.HumanAgent.ToString(),
-            GetNullableString(reader, "source") ?? ConversationSource.Channel.ToString(),
+            GetOptionalString(reader, "source") ?? ConversationSource.Channel.ToString(),
             !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             GetNullableTimestamp(reader, "pinned_at"),
             roster);
