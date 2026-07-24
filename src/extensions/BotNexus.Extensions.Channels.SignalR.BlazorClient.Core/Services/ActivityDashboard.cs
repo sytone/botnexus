@@ -114,14 +114,18 @@ public sealed record ActivitySummary(
 public static class ActivityDashboardProjection
 {
     /// <summary>
-    /// Determines whether a conversation summary is a cron/scheduled conversation using the same
-    /// predicate as the cron-noop-retention work (#1754/#1869): a <c>cron:</c>-prefixed active
-    /// session id (the <see cref="SessionId.IsCron"/> convention). This is the single place the
-    /// dashboard decides cron-ness so the default-exclude and the toggle stay consistent.
+    /// Determines whether a conversation summary is a cron/scheduled conversation from the
+    /// authoritative, server-stamped <see cref="ConversationSummaryDto.Source"/> (#2305, epic
+    /// #2300). This replaced the previous <c>cron:</c>-prefixed active-session-id probe: origin is
+    /// a modelled field, never inferred from an id substring. Parsing is tolerant, so an unknown
+    /// source from a newer server degrades to <see cref="ConversationSource.Channel"/> (not cron)
+    /// rather than throwing.
     /// </summary>
-    public static bool IsCronConversation(ConversationSummaryDto conversation) =>
-        conversation.ActiveSessionId is { Length: > 0 } sid &&
-        sid.StartsWith("cron:", StringComparison.OrdinalIgnoreCase);
+    public static bool IsCronConversation(ConversationSummaryDto conversation)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        return ConversationOrigin.ParseSource(conversation.Source) == ConversationSource.Cron;
+    }
 
     /// <summary>
     /// Derives the full set of agents involved in a conversation. Unions the owning agent with every

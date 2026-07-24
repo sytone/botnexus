@@ -355,11 +355,21 @@ public sealed class ConversationState
     public ConversationRenderProjection Project(SelectionSource selectionSource) =>
         ConversationRenderProjection.For(this, selectionSource);
 
-    /// <summary>True when this is a virtual read-only session row (for example, cron).</summary>
-    public bool IsVirtualSession { get; set; }
-
-    /// <summary>Virtual session kind label (for example, "cron"). Null for normal conversations.</summary>
-    public string? VirtualSessionKind { get; set; }
+    /// <summary>
+    /// True for a row the CLIENT minted locally rather than one the server enumerated - today only
+    /// the sub-agent observer transcript row created by "view sub-agent". Such a row has no server
+    /// conversation behind it, so it reads the raw session transcript instead of merged conversation
+    /// history, is never back-paged, is never bound to an inbound session, and survives a
+    /// server-driven conversation-list reconciliation.
+    /// </summary>
+    /// <remarks>
+    /// <b>Write-once (#2305).</b> <c>init</c>-only, replacing the mutable virtual-session flag/kind
+    /// pair that epic #2300 deleted. It is deliberately a statement about
+    /// row PROVENANCE ("who created this row object"), not about conversation ORIGIN ("why does this
+    /// conversation exist") - origin is answered solely by the immutable <see cref="Source"/> /
+    /// <see cref="Kind"/> pair and never by a flag or an id substring.
+    /// </remarks>
+    public bool IsLocallySynthesised { get; init; }
 
 
     // ── Canvas ──────────────────────────────────────────────────────────────────

@@ -11,6 +11,38 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- #2305 (epic #2300): the client consumes the SINGLE canonical declaration of
+         ConversationKind / ConversationSource from the domain assembly instead of hand-mirroring
+         the wire enums. A duplicated enum is a contract that can silently drift: a value added
+         server-side would not fail any client build, it would quietly degrade to the tolerant-parse
+         fallback and render wrong. BotNexus.Domain is a pure model assembly (its only package
+         reference is the compile-time Vogen source generator) so this dependency does not pull the
+         gateway host graph into the WASM payload. -->
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- #2305 (epic #2300): the conversation-origin enums have a SINGLE canonical declaration in
+         BotNexus.Gateway.Abstractions.Models; the client no longer re-declares them. Imported as
+         type ALIASES rather than a whole-namespace using so unrelated same-named types in that
+         namespace (e.g. SubAgentInfo) do not collide with the client's own models. -->
+    <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
+    <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- #2305 (epic #2300): the client consumes the SINGLE canonical declaration of
+         ConversationKind / ConversationSource from the domain assembly instead of hand-mirroring
+         the wire enums. A duplicated enum is a contract that can silently drift: a value added
+         server-side would not fail any client build, it would quietly degrade to the tolerant-parse
+         fallback and render wrong. BotNexus.Domain is a pure model assembly (its only package
+         reference is the compile-time Vogen source generator) so this dependency does not pull the
+         gateway host graph into the WASM payload. -->
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
   </ItemGroup>
 

@@ -48,7 +48,9 @@ public sealed class ChatPanelTests : IDisposable
         return agent;
     }
 
-    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false, bool isPinned = false) =>
+    // #2305: `source`/`kind` are the IMMUTABLE server-supplied origin. Tests seed them through the
+    // DTO (the only legitimate way in) because ConversationState.Source/Kind are init-only.
+    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false, bool isPinned = false, string kind = "HumanAgent", string source = "Channel") =>
         new ConversationSummaryDto(
             ConversationId: convId,
             AgentId: agentId,
@@ -59,6 +61,8 @@ public sealed class ChatPanelTests : IDisposable
             BindingCount: 0,
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow,
+            Kind: kind,
+            Source: source,
             IsPinned: isPinned);
 
     [Fact]
@@ -165,14 +169,14 @@ public sealed class ChatPanelTests : IDisposable
             IsObserverAgent = true,
             IsConnected = true
         });
-        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session", source: "Agent")]);
         _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
         _store.SelectView("sub-1", "subagent-session:sub-1", SelectionSource.SubAgentView);
 
         var agent = _store.GetAgent("sub-1")!;
         var conversation = agent.Conversations["subagent-session:sub-1"];
-        conversation.IsVirtualSession = true;
-        conversation.VirtualSessionKind = "subagent";
+        // #2305: read-only now comes from the IMMUTABLE (Kind, Source) pair, not a mutable flag.
+        Assert.Equal(ConversationSource.Agent, conversation.Source);
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
 
@@ -250,14 +254,11 @@ public sealed class ChatPanelTests : IDisposable
     public void Read_only_sub_agent_view_does_not_bind_prevent_enter_submit()
     {
         CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
-        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session", source: "Agent")]);
         _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
 
         var agent = _store.GetAgent("sub-1")!;
         agent.SessionType = "agent-subagent";
-        var conversation = agent.Conversations["subagent-session:sub-1"];
-        conversation.IsVirtualSession = true;
-        conversation.VirtualSessionKind = "subagent";
 
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
@@ -892,9 +893,10 @@ public sealed class ChatPanelTests : IDisposable
     public void Read_only_conversation_hides_pin_and_archive_header_actions()
     {
         CreateAndSeedAgent("agent-1");
-        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", source: "Cron")]);
         _store.SetActiveConversation("agent-1", "conv-1");
-        _store.GetAgent("agent-1")!.Conversations["conv-1"].IsVirtualSession = true;
+        // #2305: read-only comes from the immutable server-stamped Source == Cron.
+        Assert.Equal(ConversationSource.Cron, _store.GetAgent("agent-1")!.Conversations["conv-1"].Source);
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 

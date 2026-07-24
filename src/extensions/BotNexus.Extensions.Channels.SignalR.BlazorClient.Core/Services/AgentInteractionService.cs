@@ -453,10 +453,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (conv is null)
             return 0;
 
-        // Nothing older to fetch, a fetch is already in flight, or this is a virtual
-        // (cron/sub-agent) transcript that is not paged backwards. Treat as a no-op so a
-        // repeated scroll-to-top never double-fetches or pages a virtual session (#1691).
-        if (!conv.HasMoreHistory || conv.IsLoadingHistory || conv.IsVirtualSession)
+        // Nothing older to fetch, a fetch is already in flight, or this is a locally-synthesised
+        // observer transcript row that is not paged backwards. Treat as a no-op so a repeated
+        // scroll-to-top never double-fetches or pages a synthesised row (#1691, #2305).
+        if (!conv.HasMoreHistory || conv.IsLoadingHistory || conv.IsLocallySynthesised)
             return 0;
 
         conv.IsLoadingHistory = true;
@@ -747,9 +747,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            // Virtual sessions (cron/soul projections) read the raw session transcript;
-            // regular conversations read the merged conversation history with boundaries.
-            if (conv.IsVirtualSession && conv.ActiveSessionId is { Length: > 0 } sessionId)
+            // Locally-synthesised observer rows (sub-agent transcripts) read the raw session
+            // transcript; server-backed conversations read merged conversation history with
+            // boundaries (#2305).
+            if (conv.IsLocallySynthesised && conv.ActiveSessionId is { Length: > 0 } sessionId)
             {
                 await LoadVirtualHistoryAsync(conv, sessionId);
             }
@@ -911,8 +912,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 // without a server payload and is stamped once, immutably (#2304).
                 Source = ConversationSource.Agent,
                 Kind = ConversationKind.AgentSubAgent,
-                IsVirtualSession = true,
-                VirtualSessionKind = "subagent",
+                IsLocallySynthesised = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
                 HistoryLoaded = false

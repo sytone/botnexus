@@ -224,17 +224,19 @@ public sealed class MainLayoutTests : IDisposable
         Assert.NotNull(activeConv);
     }
 
+    /// <summary>
+    /// #2305 (epic #2300): a cron conversation is badged "Cron" and offers CLOSE (not archive)
+    /// purely because the SERVER stamped <c>source="Cron"</c>. No mutable flag, no id prefix.
+    /// </summary>
     [Fact]
-    public async Task Virtual_cron_conversation_shows_badge_and_close_button()
+    public async Task Cron_source_conversation_shows_badge_and_close_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
-            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron")
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
-        var conv = _store.GetAgent("a-1")!.Conversations["c-1"];
-        conv.IsVirtualSession = true;
-        conv.VirtualSessionKind = "cron";
+        Assert.Equal(ConversationSource.Cron, _store.GetAgent("a-1")!.Conversations["c-1"].Source);
 
         var cut = RenderLayout();
 
@@ -247,19 +249,21 @@ public sealed class MainLayoutTests : IDisposable
         Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
     }
 
+    /// <summary>
+    /// #2305: hiding runtime-internal threads is an explicit <c>internal:</c> id-NAMESPACE rule, not
+    /// origin inference. The mutable virtual-session-kind "internal" path that used to also
+    /// hide rows is deleted with the flag; this asserts the surviving namespace rule still hides an
+    /// internal thread while a normal conversation stays visible.
+    /// </summary>
     [Fact]
-    public void Virtual_internal_conversation_is_hidden_from_user_conversation_list()
+    public void Internal_namespaced_conversation_is_hidden_from_user_conversation_list()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("c-2", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("internal:sub-agent-thread", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
-
-        var internalConversation = _store.GetAgent("a-1")!.Conversations["c-2"];
-        internalConversation.IsVirtualSession = true;
-        internalConversation.VirtualSessionKind = "internal";
 
         var cut = RenderLayout();
 

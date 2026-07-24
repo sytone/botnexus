@@ -15,6 +15,12 @@
     <Using Include="Xunit" />
     <Using Include="Bunit" />
     <Using Include="NSubstitute" />
+    <!-- #2305 (epic #2300): the conversation-origin enums have a SINGLE canonical declaration in
+         BotNexus.Gateway.Abstractions.Models; the client no longer re-declares them. Imported as
+         type ALIASES rather than a whole-namespace using so unrelated same-named types in that
+         namespace (e.g. SubAgentInfo) do not collide with the client's own models. -->
+    <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
+    <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile\BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.csproj" />

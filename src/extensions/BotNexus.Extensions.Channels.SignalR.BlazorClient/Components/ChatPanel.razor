@@ -579,17 +579,17 @@ private bool IsStreaming =>
     // #2248: read-only is a VIEW concern, not a session-type-data concern. It is true when EITHER
     // the agent is an IMMUTABLE observer/sub-agent (Agent.IsReadOnly now derives from the immutable
     // IsObserverAgent, NOT the mutable SessionType), OR the active conversation's typed render
-    // projection says so. #2304: that projection is computed from the conversation's immutable,
+    // projection says so. #2305: that projection is computed ONLY from the conversation's immutable,
     // init-only (Kind, Source) origin plus the store's ActiveSelectionSource - it subsumes the old
-    // SelectionSource.SubAgentView check. Crucially none of its inputs are mutable, so a concurrent
-    // RegisterSession(agent-subagent) or any inbound sub-agent/cron event can never flip this true
-    // and hide the user's composer / new-session / send controls. The legacy IsVirtualSession probe
-    // remains only as a transitional fallback for locally-synthesised rows; child E deletes it.
+    // SelectionSource.SubAgentView check AND the deleted mutable virtual-session probe. Every input
+    // is immutable, so a concurrent RegisterSession(agent-subagent) or any inbound sub-agent/cron
+    // event can never flip this true and hide the user's composer / new-session / send controls.
+    // Cron conversations stay read-only because the server stamps Source == ConversationSource.Cron,
+    // which the projection maps to IsUnattended => IsReadOnly.
     private bool IsReadOnly =>
         (Agent?.IsReadOnly ?? false)
         || (ActiveConversation?.Project(Store.ActiveSelectionSource).IsReadOnly
-            ?? Store.ActiveSelectionSource == SelectionSource.SubAgentView)
-        || (ActiveConversation?.IsVirtualSession ?? false);
+            ?? Store.ActiveSelectionSource == SelectionSource.SubAgentView);
     private bool CanManageActiveConversation =>
         HasActiveConversation && !IsReadOnly && ActiveConversation?.IsDefault != true;
     private bool IsConnected => Agent?.IsConnected ?? false;

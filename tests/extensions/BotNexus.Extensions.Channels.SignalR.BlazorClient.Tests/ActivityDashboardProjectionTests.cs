@@ -19,7 +19,10 @@ public sealed class ActivityDashboardProjectionTests
         string? activeSessionId = null,
         int bindingCount = 0,
         DateTimeOffset? updatedAt = null,
-        IReadOnlyList<ParticipantDto>? participants = null) =>
+        IReadOnlyList<ParticipantDto>? participants = null,
+        // #2305 (epic #2300): cron-ness comes from the SERVER-stamped source field, never from a
+        // `cron:`-prefixed session id. Fixtures set it explicitly.
+        string source = "Channel") =>
         new(
             ConversationId: id,
             AgentId: agentId,
@@ -30,28 +33,46 @@ public sealed class ActivityDashboardProjectionTests
             BindingCount: bindingCount,
             CreatedAt: (updatedAt ?? Now).AddMinutes(-5),
             UpdatedAt: updatedAt ?? Now,
+            Source: source,
             Participants: participants);
 
     // ── Cron detection ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// #2305: cron-ness is read from the authoritative server-stamped source, on any conversation id.
+    /// </summary>
     [Fact]
-    public void IsCronConversation_true_for_cron_session_prefix()
+    public void IsCronConversation_true_for_server_stamped_cron_source()
     {
-        var conv = Conv("c1", activeSessionId: "cron:job-1:20260710");
+        var conv = Conv("c1", source: "Cron");
         Assert.True(ActivityDashboardProjection.IsCronConversation(conv));
     }
 
+    /// <summary>
+    /// #2305 regression guard: a `cron:`-prefixed SESSION id is no longer evidence about the
+    /// CONVERSATION. Only the typed source decides. This is the inference that was deleted.
+    /// </summary>
     [Fact]
-    public void IsCronConversation_true_for_cron_session_on_any_conversation_id()
+    public void IsCronConversation_false_for_cron_session_prefix_without_cron_source()
     {
         var conv = Conv("c1", activeSessionId: "cron:job-1:20260710");
-        Assert.True(ActivityDashboardProjection.IsCronConversation(conv));
+        Assert.False(ActivityDashboardProjection.IsCronConversation(conv));
     }
 
     [Fact]
     public void IsCronConversation_false_for_normal_conversation()
     {
         var conv = Conv("c1", activeSessionId: "signal:+123");
+        Assert.False(ActivityDashboardProjection.IsCronConversation(conv));
+    }
+
+    /// <summary>
+    /// Tolerant parsing: an unknown source from a newer server degrades to Channel, not cron.
+    /// </summary>
+    [Fact]
+    public void IsCronConversation_false_for_unknown_future_source()
+    {
+        var conv = Conv("c1", source: "SomethingNewerServerSent");
         Assert.False(ActivityDashboardProjection.IsCronConversation(conv));
     }
 
@@ -63,7 +84,7 @@ public sealed class ActivityDashboardProjectionTests
         var conversations = new[]
         {
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710")
+            Conv("c2", title: "Scheduled", source: "Cron")
         };
 
         var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
@@ -78,7 +99,7 @@ public sealed class ActivityDashboardProjectionTests
         var conversations = new[]
         {
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710")
+            Conv("c2", title: "Scheduled", source: "Cron")
         };
 
         var rows = ActivityDashboardProjection.Project(
@@ -355,7 +376,7 @@ public sealed class ActivityDashboardProjectionTests
             new[]
             {
                 Conv("a"),
-                Conv("b", activeSessionId: "cron:job-1:20260710")
+                Conv("b", source: "Cron")
             },
             new ActivityDashboardFilter(IncludeCron: true),
             Now);

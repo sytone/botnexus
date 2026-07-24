@@ -97,7 +97,7 @@ else
                         @if (ActiveConversation(activeAgent) is { } activeConv)
                         {
                             <button class="menu-action menu-action-archive" data-testid="archive-conversation-btn" @onclick="() => Archive(activeConv)">
-                                @(activeConv.IsVirtualSession ? "Close conversation" : "Archive conversation")
+                                @(IsUnattended(activeConv) ? "Close conversation" : "Archive conversation")
                             </button>
                         }
                     </div>
@@ -239,7 +239,7 @@ else
         <div class="reset-confirm-overlay" @onclick="CancelArchive">
             <div class="reset-confirm-box" @onclick:stopPropagation="true">
                 <p>
-                    @if (archiveTarget.IsVirtualSession)
+                    @if (IsUnattended(archiveTarget))
                     {
                         @($"Close “{archiveTarget.Title}”? It will reopen when the next cron trigger fires.")
                     }
@@ -251,7 +251,7 @@ else
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" data-testid="archive-cancel-btn" @onclick="CancelArchive">Cancel</button>
                     <button class="confirm-btn" data-testid="archive-confirm-btn" @onclick="DoArchive">
-                        @(archiveTarget.IsVirtualSession ? "Close" : "Archive")
+                        @(IsUnattended(archiveTarget) ? "Close" : "Archive")
                     </button>
                 </div>
             </div>
@@ -869,6 +869,13 @@ else
             return null;
         return agent.Conversations.TryGetValue(convId, out var conv) ? conv : null;
     }
+
+    // #2305 (epic #2300): "close" vs "archive" wording is a pure projection of the conversation's
+    // IMMUTABLE server-stamped (Kind, Source) origin, replacing the deleted mutable
+    // virtual-session flag. Cron/webhook/agent-originated runs are unattended and are closed
+    // (they reopen on the next trigger); human/channel conversations are archived.
+    private static bool IsUnattended(ConversationState conversation) =>
+        conversation.Project(SelectionSource.UserClick).IsUnattended;
 
     private void Archive(ConversationState conversation)
     {

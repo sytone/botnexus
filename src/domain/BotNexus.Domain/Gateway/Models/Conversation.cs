@@ -140,7 +140,7 @@ public sealed record Conversation
     /// inbound webhook, a human on a channel, or an agent). Stamped once by the origin path that
     /// mints the conversation and never afterwards: this is <c>init</c>-only by design, mirroring
     /// <see cref="AgentId"/>, so an inbound event can never poison it the way the mutable
-    /// client-side <c>IsVirtualSession</c> flag could (epic #2300, following #2248).
+    /// client-side virtual-session flag could (epic #2300, following #2248; that flag is now deleted).
     /// </summary>
     /// <remarks>
     /// <para>

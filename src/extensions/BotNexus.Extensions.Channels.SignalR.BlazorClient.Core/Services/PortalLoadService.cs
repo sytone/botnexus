@@ -164,7 +164,7 @@ public sealed class PortalLoadService : IPortalLoadService
 
         try
         {
-            if (conversation.IsVirtualSession && conversation.ActiveSessionId is { Length: > 0 } sessionId)
+            if (conversation.IsLocallySynthesised && conversation.ActiveSessionId is { Length: > 0 } sessionId)
             {
                 var sessionHistory = await _restClient.GetSessionHistoryAsync(sessionId, historyLimit, 0, cancellationToken);
                 if (sessionHistory?.Entries is { Count: > 0 })

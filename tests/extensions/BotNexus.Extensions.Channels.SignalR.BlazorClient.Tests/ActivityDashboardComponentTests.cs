@@ -42,9 +42,12 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         string status = "Active",
         string? activeSessionId = null,
         int bindingCount = 0,
-        IReadOnlyList<ParticipantDto>? participants = null) =>
+        IReadOnlyList<ParticipantDto>? participants = null,
+        // #2305 (epic #2300): cron-ness is the SERVER-stamped source, never a `cron:` session-id
+        // prefix. Fixtures set it explicitly.
+        string source = "Channel") =>
         new(id, agentId, title, false, status, activeSessionId, bindingCount,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Participants: participants);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Source: source, Participants: participants);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
@@ -95,7 +98,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     {
         SetupConversations(
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+            Conv("c2", title: "Scheduled", source: "Cron"));
 
         var cut = _ctx.Render<ActivityDashboard>();
 
@@ -109,7 +112,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     {
         SetupConversations(
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+            Conv("c2", title: "Scheduled", source: "Cron"));
 
         var cut = _ctx.Render<ActivityDashboard>();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
@@ -225,7 +228,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     {
         SetupConversations(
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+            Conv("c2", title: "Scheduled", source: "Cron"));
 
         var cut = _ctx.Render<ActivityDashboard>();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
@@ -245,8 +248,8 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     {
         SetupConversations(
             Conv("c1", agentId: "alpha", title: "Active normal"),
-            Conv("c2", agentId: "beta", title: "Active scheduled", activeSessionId: "cron:job:20260719"),
-            Conv("c3", agentId: "beta", title: "Archived scheduled", status: "Archived", activeSessionId: "cron:job:20260718"));
+            Conv("c2", agentId: "beta", title: "Active scheduled", source: "Cron"),
+            Conv("c3", agentId: "beta", title: "Archived scheduled", status: "Archived", source: "Cron"));
 
         var cut = _ctx.Render<ActivityDashboard>();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
@@ -274,7 +277,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     {
         SetupConversations(
             Conv("c1", title: "Normal"),
-            Conv("c2", title: "Scheduled", activeSessionId: "cron:job:20260710"));
+            Conv("c2", title: "Scheduled", source: "Cron"));
 
         var cut = _ctx.Render<ActivityDashboard>();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);

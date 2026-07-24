@@ -668,30 +668,21 @@
 
     private static bool IsUserFacingConversation(ConversationState conversation)
     {
-        // Current contracts expose only conversationId + virtual kind. To hide internal runtime
-        // threads safely we filter known internal IDs ("internal:*") and internal virtual kinds.
-        // Backend contract needed for full fidelity: explicit conversation visibility
+        // Hides the runtime's internal "internal:*" bookkeeping threads. This is an explicit
+        // NAMESPACE reservation on the conversation id, not origin inference: it answers "is this
+        // row a runtime-internal artefact?", never "why does this conversation exist?". The origin
+        // question is answered solely by the immutable server-supplied Source/Kind (#2305).
+        // Backend contract still wanted for full fidelity: explicit conversation visibility
         // (e.g., user-facing | inspectable-readonly | internal-hidden).
-        if (conversation.ConversationId.StartsWith("internal:", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (conversation.IsVirtualSession &&
-            string.Equals(conversation.VirtualSessionKind, "internal", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return true;
+        return !conversation.ConversationId.StartsWith("internal:", StringComparison.OrdinalIgnoreCase);
     }
 
-    // #2304: grouping now derives from the immutable server-supplied origin signal via the typed
-    // projection. The legacy id-prefix / IsVirtualSession probes are retained only as a transitional
-    // fallback for rows a pre-#2300 server (or a locally-synthesised row) left without a Source;
-    // child E deletes them as a pure deletion once IsVirtualSession is gone.
+    // #2305 (epic #2300): grouping derives ONLY from the immutable server-supplied origin signal via
+    // the typed projection, plus the authoritative cron-job -> conversation-id mapping returned by
+    // the cron API. The transitional conversation-id prefix probe and the mutable virtual-session
+    // flag are both deleted; no string sniffing of origin remains here.
     private bool IsCronConversation(ConversationState c) =>
         c.Project(Store.ActiveSelectionSource).Group == ConversationListGroup.Scheduled ||
-        c.ConversationId.StartsWith("cronconv:", StringComparison.OrdinalIgnoreCase) ||
-        (c.IsVirtualSession && string.Equals(c.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase)) ||
         _cronConversationIds.Contains(c.ConversationId);
 
     private static bool IsPinnedConversation(ConversationState c) => c.IsPinned;
@@ -777,10 +768,10 @@
                     &#x1F4CC;
                 </button>
                 <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
-                        title="@(conversation.IsVirtualSession ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
+                        title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
                         @onclick:stopPropagation="true"
-                        @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
-                    @(conversation.IsVirtualSession ? "\u2715" : "\uD83D\uDDD1\uFE0F")
+                        @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, IsUnattendedConversation(conversation))">
+                    @(IsUnattendedConversation(conversation) ? "\u2715" : "\uD83D\uDDD1\uFE0F")
                 </button>
             }
         </div>
@@ -793,22 +784,16 @@
 
     private static string? GetVirtualConversationBadge(ConversationState conversation)
     {
-        // #2304: the badge is a projection of the immutable (Kind, Source) origin. Only when the
-        // server supplied no distinguishing origin (Channel/HumanAgent) do we fall back to the
-        // legacy mutable flag, which child E deletes.
-        if (conversation.Project(SelectionSource.UserClick).Badge is { } typedBadge)
-            return typedBadge;
-
-        if (!conversation.IsVirtualSession)
-            return null;
-
-        return conversation.VirtualSessionKind?.ToLowerInvariant() switch
-        {
-            "cron" => "Cron",
-            "subagent" => "Read-only",
-            _ => "Virtual"
-        };
+        // #2305: the badge is a PURE projection of the immutable (Kind, Source) origin. A normal
+        // human/channel conversation carries no badge and there is no fallback path - the mutable
+        // virtual-session flag/kind probe is deleted.
+        return conversation.Project(SelectionSource.UserClick).Badge;
     }
+
+    // #2305: "is this conversation unattended?" (drives close-vs-archive wording) is a projection of
+    // the immutable origin, never of a mutable client flag.
+    private static bool IsUnattendedConversation(ConversationState conversation) =>
+        conversation.Project(SelectionSource.UserClick).IsUnattended;
 
     private async Task ViewSubAgentAsync(SubAgentInfo sub)
     {

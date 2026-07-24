@@ -1,68 +1,33 @@
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
-/// Client-side mirror of the server's write-once conversation origination trigger (epic #2300,
-/// slice A shipped the domain enum). This is the answer to "why does this conversation exist?"
-/// and it is supplied by the server on every conversation payload.
+/// Parses the server-supplied conversation origin strings into the <b>canonical</b>
+/// <see cref="ConversationSource"/> / <see cref="ConversationKind"/> enums declared once in
+/// <c>BotNexus.Gateway.Abstractions.Models</c> (epic #2300).
 /// </summary>
 /// <remarks>
 /// <para>
-/// The client deliberately re-declares the enum rather than referencing the domain assembly: the
-/// Blazor client is a separate deployment unit and must not take a dependency on gateway domain
-/// types. The wire contract is the JSON string emitted by the server, parsed by
-/// <see cref="ConversationOrigin.ParseSource"/>.
+/// <b>Single declaration, not a mirror (#2305).</b> An earlier slice re-declared both enums
+/// client-side on the reasoning that the Blazor client is a separate deployment unit. That is a
+/// duplicated contract that can silently drift: adding a value server-side fails no client build,
+/// it just degrades to the tolerant-parse fallback and renders wrong. The client now references the
+/// canonical declaration directly. <c>BotNexus.Domain</c> is a pure model assembly, so this is a
+/// model dependency, not a gateway-host dependency.
 /// </para>
 /// <para>
-/// <b>Immutable on the client.</b> <see cref="ConversationState.Source"/> is <c>init</c>-only and is
-/// seeded straight from the server payload. No inbound SignalR event may write it. That is the
-/// exact mutable-flag defect class fixed for agents in #2248 and it is structurally prevented here.
+/// <b>Tolerant parsing is still correct.</b> Sharing the enum removes <em>drift</em>, but a
+/// deployed client can still be older than the server it talks to. Parsing therefore remains total:
+/// an unknown, empty or absent wire value falls back to the back-compat default rather than
+/// throwing, so a newer server introducing a value this client build does not know never breaks
+/// rendering. Forward-compat and a shared contract are complementary, not alternatives.
+/// </para>
+/// <para>
+/// <b>Immutable on the client.</b> <see cref="ConversationState.Source"/> and
+/// <see cref="ConversationState.Kind"/> are <c>init</c>-only and seeded straight from the server
+/// payload. No inbound SignalR event may write either. That is the exact mutable-flag defect class
+/// fixed for agents in #2248, structurally prevented here.
 /// </para>
 /// </remarks>
-public enum ConversationSource
-{
-    /// <summary>
-    /// User/channel-driven: a human sent the first inbound message on a channel binding, or
-    /// explicitly created the conversation. First so it is the back-compat default for any payload
-    /// from a server that predates the field.
-    /// </summary>
-    Channel = 0,
-
-    /// <summary>Schedule-driven: a cron job or heartbeat tick minted the conversation for its run.</summary>
-    Cron = 1,
-
-    /// <summary>Inbound-webhook driven: an external system POSTed to a webhook registration.</summary>
-    Webhook = 2,
-
-    /// <summary>
-    /// Agent-initiated: an agent minted the conversation itself, via the <c>conversation_new</c>
-    /// tool, an agent-to-agent converse handshake, or sub-agent supervision. Use
-    /// <see cref="ConversationKind"/> to tell those three apart.
-    /// </summary>
-    Agent = 3
-}
-
-/// <summary>
-/// Client-side mirror of the server's conversation citizen-pairing discriminator. Orthogonal to
-/// <see cref="ConversationSource"/>: <c>Kind</c> is "who is talking to whom", <c>Source</c> is
-/// "why does this exist". Together they fully determine every render decision the portal makes.
-/// </summary>
-public enum ConversationKind
-{
-    /// <summary>A human talking to one or more named agents. The historical default.</summary>
-    HumanAgent = 0,
-
-    /// <summary>Two named agents in a peer exchange. No human is in the loop.</summary>
-    AgentAgent = 1,
-
-    /// <summary>A named agent supervising a spawned sub-agent. No human is in the loop.</summary>
-    AgentSubAgent = 2
-}
-
-/// <summary>
-/// Parses the server-supplied conversation origin strings into the client's typed enums. Parsing is
-/// tolerant and total: an unknown, empty or absent value falls back to the back-compat default so a
-/// newer server introducing a value this client does not know never breaks rendering.
-/// </summary>
 public static class ConversationOrigin
 {
     /// <summary>

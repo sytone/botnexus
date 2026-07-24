@@ -247,7 +247,7 @@ public sealed class ClientStateStore : IClientStateStore
         // Remove conversations no longer in the list
         var incomingIds = incoming.Select(d => d.ConversationId).ToHashSet();
         foreach (var id in agent.Conversations
-                     .Where(kv => !incomingIds.Contains(kv.Key) && !kv.Value.IsVirtualSession)
+                     .Where(kv => !incomingIds.Contains(kv.Key) && !kv.Value.IsLocallySynthesised)
                      .Select(kv => kv.Key)
                      .ToList())
         {
@@ -513,13 +513,17 @@ public sealed class ClientStateStore : IClientStateStore
 
         // Cron sessions must not overwrite the active user-facing session or the active
         // conversation's ActiveSessionId. Doing so caused new user conversations to receive
-        // a cron: session ID prefix, because RefreshConversationsForAgentAsync iterates all
+        // a cron session ID, because RefreshConversationsForAgentAsync iterates all
         // sessions (including cron) and the last one processed would stamp agent.SessionId.
-        var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase)
-            || (!string.IsNullOrWhiteSpace(sessionId) && sessionId.StartsWith("cron:", StringComparison.Ordinal));
+        //
+        // #2305: this is the SESSION's declared type as reported by the server on the
+        // RegisterSession call - not an inference of the CONVERSATION's origin from an id
+        // substring. The `cron:` session-id prefix probe that used to back this up is deleted;
+        // conversation origin comes only from the immutable server-stamped ConversationSource.
+        var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase);
         if (isCron)
         {
-            // For cron sessions, only update the virtual conversation projection if it exists.
+            // For cron sessions, only update the locally-synthesised projection if it exists.
             // Never touch agent.SessionId or a real user conversation.
             if (channelType is not null)
                 agent.ChannelType ??= channelType;
@@ -543,7 +547,7 @@ public sealed class ClientStateStore : IClientStateStore
         // target a different conversation's (often idle) session. See steer-routing fix.
         if (conversationId is not null)
         {
-            if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsVirtualSession)
+            if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsLocallySynthesised)
                 ownerConv.ActiveSessionId = sessionId;
 
             // Only the active conversation's session should drive the agent-global fallback.
@@ -559,7 +563,7 @@ public sealed class ClientStateStore : IClientStateStore
         agent.SessionId = sessionId;
         if (agent.ActiveConversationId is not null &&
             agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
-            !activeConv.IsVirtualSession)
+            !activeConv.IsLocallySynthesised)
         {
             activeConv.ActiveSessionId = sessionId;
         }
