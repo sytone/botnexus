@@ -15,9 +15,14 @@
          ConversationKind / ConversationSource from the domain assembly instead of hand-mirroring
          the wire enums. A duplicated enum is a contract that can silently drift: a value added
          server-side would not fail any client build, it would quietly degrade to the tolerant-parse
-         fallback and render wrong. BotNexus.Domain is a pure model assembly (its only package
-         reference is the compile-time Vogen source generator) so this dependency does not pull the
-         gateway host graph into the WASM payload. -->
+         fallback and render wrong.
+
+         WASM PAYLOAD NOTE (#2329): this project feeds a Microsoft.NET.Sdk.BlazorWebAssembly app,
+         so every assembly reachable from here is DOWNLOADED BY THE BROWSER. BotNexus.Domain is a
+         pure model assembly, but its Vogen PackageReference is only compile-time-only because
+         BotNexus.Domain.csproj pins it with PrivateAssets="all". Without that, Vogen.SharedTypes.dll
+         flows transitively into the WASM output. Do not add references here without checking what
+         they drag in transitively. -->
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
 
@@ -29,18 +34,6 @@
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- #2305 (epic #2300): the client consumes the SINGLE canonical declaration of
-         ConversationKind / ConversationSource from the domain assembly instead of hand-mirroring
-         the wire enums. A duplicated enum is a contract that can silently drift: a value added
-         server-side would not fail any client build, it would quietly degrade to the tolerant-parse
-         fallback and render wrong. BotNexus.Domain is a pure model assembly (its only package
-         reference is the compile-time Vogen source generator) so this dependency does not pull the
-         gateway host graph into the WASM payload. -->
-    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
-  </ItemGroup>
-
 
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
