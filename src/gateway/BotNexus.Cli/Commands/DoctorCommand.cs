@@ -10,9 +10,11 @@ namespace BotNexus.Cli.Commands;
 /// <c>botnexus doctor</c> - CLI diagnostics. Running the bare command executes every registered
 /// <see cref="IDoctorCheck"/> in a deterministic order and prints a section per check plus a final
 /// healthy/warning/error summary with a script-friendly aggregate exit code (issue #2041). Focused
-/// subcommands (<c>doctor locations</c>, <c>doctor config</c>) remain for targeted runs. New checks
-/// are added only to <see cref="DoctorCheckRegistry"/>, so the aggregate suite can never silently
-/// omit one.
+/// subcommands (<c>doctor locations</c>, <c>doctor config</c>, <c>doctor agents</c>) remain for
+/// targeted runs. The read-only reconciliation check runs as part of the aggregate suite; the
+/// destructive orphan cleanup is opt-in via <c>--cleanup-orphans</c> (issue #2039) and, in a
+/// non-interactive terminal, never deletes without that explicit flag. New checks are added only to
+/// <see cref="DoctorCheckRegistry"/>, so the aggregate suite can never silently omit one.
 /// </summary>
 internal sealed class DoctorCommand
 {
@@ -20,18 +22,60 @@ internal sealed class DoctorCommand
     {
         var command = new Command("doctor", "Run the complete CLI diagnostic suite (or a focused check).");
 
+        // Opt-in destructive reconciliation of orphaned persistent agent workspaces (issue #2039).
+        // Absent this flag the bare run stays non-destructive: the read-only check still reports drift.
+        var cleanupOption = new Option<bool>(
+            "--cleanup-orphans",
+            "After the diagnostic suite, reconcile persistent agent workspaces and delete orphaned directories (prompts when interactive).");
+        command.AddOption(cleanupOption);
+
         // Bare `doctor`: run every registered check and return an aggregate exit code.
         command.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
+            var cleanup = context.ParseResult.GetValueForOption(cleanupOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
-            context.ExitCode = await RunAggregateAsync(
+            var exitCode = await RunAggregateAsync(
                 DoctorCheckRegistry.CreateDefault(),
                 new DoctorCheckContext(configPath, home, verbose),
                 CancellationToken.None);
+
+            if (cleanup)
+            {
+                AnsiConsole.WriteLine();
+                var reconcileExit = await ExecuteAgentsAsync(
+                    home,
+                    cleanupOrphans: true,
+                    AnsiConsole.Profile.Capabilities.Interactive,
+                    CancellationToken.None);
+                exitCode = Math.Max(exitCode, reconcileExit);
+            }
+
+            context.ExitCode = exitCode;
         });
+
+        // Dedicated `doctor agents` subcommand for a focused reconciliation run.
+        var agentsCleanupOption = new Option<bool>(
+            "--cleanup-orphans",
+            "Delete orphaned persistent agent workspaces (prompts when interactive, no-op without this flag when non-interactive).");
+        var agentsCommand = new Command("agents", "Reconcile persistent agent workspaces with configured agents.")
+        {
+            agentsCleanupOption
+        };
+        agentsCommand.SetHandler(async context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var cleanup = context.ParseResult.GetValueForOption(agentsCleanupOption);
+            var home = CliPaths.ResolveTarget(target);
+            context.ExitCode = await ExecuteAgentsAsync(
+                home,
+                cleanup,
+                AnsiConsole.Profile.Capabilities.Interactive,
+                CancellationToken.None);
+        });
+        command.AddCommand(agentsCommand);
 
         var locationsCommand = new Command("locations", "Check location accessibility.");
         locationsCommand.SetHandler(async context =>
@@ -46,6 +90,97 @@ internal sealed class DoctorCommand
         command.AddCommand(locationsCommand);
         command.AddCommand(new DoctorConfigCommand().Build(verboseOption, targetOption));
         return command;
+    }
+
+    /// <summary>
+    /// Reconciles the persistent agent workspaces under the resolved agents root against the enabled
+    /// agents declared in <c>config.json</c>, prints the plan, and (only when approved) deletes
+    /// orphaned directories. Approval comes either from <paramref name="cleanupOrphans"/> (the explicit
+    /// opt-in flag) or, in an interactive terminal, from the <paramref name="confirm"/> prompt. In a
+    /// non-interactive terminal without the flag the method is strictly non-destructive. Returns 0 when
+    /// no orphans remain (nothing found, or all deleted), 1 when orphans remain unresolved (findings),
+    /// and 2 for an execution error (missing/unreadable config, unsafe symlink, or a failed deletion) -
+    /// distinguishing findings from errors as the issue requires.
+    /// </summary>
+    /// <param name="home">The resolved BotNexus home whose <c>config.json</c> and agents root are used.</param>
+    /// <param name="cleanupOrphans">Explicit opt-in to delete orphaned directories without prompting.</param>
+    /// <param name="interactive">Whether the current terminal can prompt the user.</param>
+    /// <param name="cancellationToken">Cancellation for config loading.</param>
+    /// <param name="confirm">Test/override seam for the interactive confirmation prompt.</param>
+    /// <returns>0 = healthy/resolved, 1 = orphans remain, 2 = execution error.</returns>
+    internal async Task<int> ExecuteAgentsAsync(
+        string home,
+        bool cleanupOrphans,
+        bool interactive,
+        CancellationToken cancellationToken,
+        Func<string, bool>? confirm = null)
+    {
+        var configPath = Path.Combine(home, "config.json");
+        var config = await LoadConfigRequiredAsync(configPath, cancellationToken);
+        if (config is null)
+            return 2;
+
+        var reconciler = new PersistentAgentWorkspaceReconciler();
+        var agentsRoot = PersistentAgentWorkspaceReconciler.ResolveAgentsRoot(home, config.Gateway?.AgentsDirectory);
+        IReadOnlyList<PersistentAgentWorkspaceEntry> plan;
+        try
+        {
+            plan = reconciler.BuildPlan(agentsRoot, config);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to inspect agent workspaces: {Markup.Escape(ex.Message)}");
+            return 2;
+        }
+
+        AnsiConsole.MarkupLine($"Agent workspace reconciliation plan for [dim]{Markup.Escape(agentsRoot)}[/]:");
+        foreach (var entry in plan)
+        {
+            var state = entry.IsOrphaned
+                ? (entry.IsUnsafeLink ? "[red]unsafe orphan[/]" : "[yellow]orphaned[/]")
+                : "[green]registered[/]";
+            AnsiConsole.MarkupLine($"  {state}  {Markup.Escape(entry.DirectoryName)}");
+        }
+
+        var orphans = plan.Where(entry => entry.IsOrphaned).ToArray();
+        if (orphans.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[green]No orphaned persistent agent workspaces found.[/]");
+            return 0;
+        }
+
+        if (orphans.Any(entry => entry.IsUnsafeLink))
+        {
+            AnsiConsole.MarkupLine("[red]Unsafe symlink/reparse-point orphan detected; no directories were deleted.[/]");
+            return 2;
+        }
+
+        var approved = cleanupOrphans;
+        if (!approved && interactive)
+        {
+            approved = (confirm ?? (message => AnsiConsole.Confirm(message, defaultValue: false)))(
+                $"Delete the {orphans.Length} enumerated orphaned workspace(s)?");
+        }
+
+        if (!approved)
+        {
+            AnsiConsole.MarkupLine(interactive
+                ? "[yellow]Cleanup declined; orphaned workspaces remain.[/]"
+                : "[yellow]Non-interactive mode is non-destructive. Re-run with --cleanup-orphans to delete the listed workspaces.[/]");
+            return 1;
+        }
+
+        try
+        {
+            var deleted = reconciler.DeleteOrphans(agentsRoot, orphans);
+            AnsiConsole.MarkupLine($"[green]Deleted {deleted} orphaned persistent agent workspace(s).[/]");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Cleanup failed: {Markup.Escape(ex.Message)}");
+            return 2;
+        }
     }
 
     /// <summary>
