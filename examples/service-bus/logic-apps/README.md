@@ -33,20 +33,20 @@ are two matching modes, tried in order:
 1. **`operatorAadObjectId` (primary, robust).** Matches the operator's **AAD
    object id** inside the message's `mentions` array. This is stable no matter
    how the mention *renders* — Teams shows the mention as whatever display text
-   the sender's client chose (`Jon`, `Jon Bullen`, a nickname), but the
+   the sender's client chose (`@username`, a full display name, a nickname), but the
    underlying `mentions[].mentioned.user.id` is always the same GUID. Get it
    with:
    ```bash
-   az ad user show --id jobullen@microsoft.com --query id -o tsv
+   az ad user show --id <operator-upn> --query id -o tsv
    ```
 2. **`requiredMention` (fallback, text substring).** Used only when a message
    has no `mentions` array. Matches the literal string against the rendered
    plaintext and raw HTML.
 
-> **Why the object id matters:** an early test message that mentioned `@Jon`
-> (rendered as just `Jon`, not `@Jon Bullen`) was correctly *dropped* by the
+> **Why the object id matters:** an early test message that mentioned `@username`
+> (rendered as just the short name, not `@username`) was correctly *dropped* by the
 > old text-only filter — the display text didn't contain the literal
-> `@Jon Bullen`. The `mentions` array still carried the right object id, so the
+> `@username`. The `mentions` array still carried the right object id, so the
 > object-id match forwards it regardless of display text. Prefer object-id
 > targeting; keep the text fallback for clients that omit `mentions`.
 

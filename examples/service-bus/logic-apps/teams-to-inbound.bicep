@@ -36,11 +36,11 @@ param inboundQueueName string = 'botnexus-inbound'
 @description('Target BotNexus agent id. Defaults to the sandbox \'assistant\' agent to avoid generating noise on a live agent while validating the bridge.')
 param agentId string = 'assistant'
 
-@description('AAD object id (GUID) of the operator to target. This is the ROBUST mention filter: only Teams messages whose `mentions` array targets this user id are forwarded, regardless of how the mention renders (\'Jon\', \'Jon Bullen\', a nickname). Find it via: az ad user show --id <upn> --query id -o tsv. Set to empty to fall back to requiredMention text matching.')
+@description('AAD object id (GUID) of the operator to target. This is the ROBUST mention filter: only Teams messages whose `mentions` array targets this user id are forwarded, regardless of how the mention renders (\'@username\', a full display name, a nickname). Find it via: az ad user show --id <upn> --query id -o tsv. Set to empty to fall back to requiredMention text matching.')
 param operatorAadObjectId string = ''
 
 @description('Text-substring fallback mention filter, used only when a message has no `mentions` array or operatorAadObjectId is empty. Matched against the rendered plaintext and raw HTML. Set BOTH this and operatorAadObjectId to empty to forward all messages.')
-param requiredMention string = '@Jon Bullen'
+param requiredMention string = '@username'
 
 // Azure Service Bus Data Sender role.
 var dataSenderRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39')
@@ -188,7 +188,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               // Initial-validation targeting: only forward messages that mention
               // the operator. The ROBUST signal is the mentioned user's AAD
               // object id in the message's `mentions` array -- it is stable no
-              // matter how the mention renders ("Jon", "Jon Bullen", a nickname,
+              // matter how the mention renders ("@username", a full display name, a nickname,
               // etc.), unlike the display text which varies per client. We
               // stringify the mentions array and check it contains the operator
               // object id. A text-substring fallback (requiredMention) is kept

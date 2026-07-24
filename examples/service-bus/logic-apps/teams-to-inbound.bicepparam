@@ -11,13 +11,13 @@ param agentId = 'assistant'
 // operator so the existing busy chats don't flood the agent.
 //
 // PRIMARY (robust): match the operator's AAD object id in the message's
-// `mentions` array -- stable no matter how the mention renders ("Jon",
-// "Jon Bullen", a nickname). This is Jon's object id
-// (az ad user show --id jobullen@microsoft.com --query id -o tsv).
-param operatorAadObjectId = 'c9ece486-f597-488a-8612-d9d55daeeb02'
+// `mentions` array -- stable no matter how the mention renders ("@username",
+// a full display name, a nickname). This is the operator object id
+// (az ad user show --id <operator-upn> --query id -o tsv).
+param operatorAadObjectId = '00000000-0000-0000-0000-000000000000'
 // FALLBACK: text-substring match, used only when a message has no `mentions`
 // array. Set BOTH to '' later to open up once we design per-channel handling.
-param requiredMention = '@Jon Bullen'
+param requiredMention = '@username'
 
 // NOTE: the "new message added to a chat or channel" webhook trigger is global
 // (any chat/channel the authorizing user can see) -- there are no team/channel
