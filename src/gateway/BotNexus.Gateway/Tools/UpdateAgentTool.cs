@@ -142,8 +142,17 @@ public sealed class UpdateAgentTool(
         if (capabilityErrors.Count > 0)
             return Error(string.Join(" ", capabilityErrors));
 
+        // #2065: persist the candidate config BEFORE mutating the runtime registry so a disk
+        // failure cannot leave runtime state inconsistent with config.json.
+        try
+        {
+            await configurationWriter.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return Error($"Failed to persist agent configuration; agent was not updated: {ex.Message}");
+        }
         agentRegistry.Update(agentId, updated);
-        await configurationWriter.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
 
         foreach (var notifier in changeNotifiers)
         {
