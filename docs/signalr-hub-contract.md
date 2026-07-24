@@ -61,8 +61,22 @@ responds directly (most stream their results back as server events instead).
 > `GET /api/agents/{agentId}/conversations/{conversationId}/pending-ask-user`, which returns the
 > serialized prompt as JSON, `204 No Content` when nothing is pending, or `404` when the
 > conversation is unknown. The portal hydrates this automatically when a conversation is selected
-> (mirroring canvas and todo hydration); the durable copy is cleared once the prompt is answered,
-> times out, or is cancelled.
+> (mirroring canvas and todo hydration); the durable copy is cleared only when the prompt reaches an
+> explicit terminal state -- the user answers, the user cancels, or an optional caller-supplied
+> reminder-style limit elapses.
+
+> **Durable resumable checkpoint (#2047).** A pending `ask_user` prompt is a durable, resumable
+> checkpoint with **no hard timeout by default**. It survives graceful and unclean gateway restarts,
+> page reloads, conversation switches, and newly-opened clients, and stays pending until the user
+> answers or cancels. `RespondToAskUser` resolves through the durable checkpoint even when the
+> original in-memory waiter, provider stream, and `TaskCompletionSource` no longer exist: on the
+> first restart-safe response the gateway atomically claims and clears the persisted checkpoint and
+> dispatches a continuation turn to resume the conversation. Resolution is **idempotent** -- duplicate
+> responses, stale request ids, and competing clients cannot resume the conversation twice; a stale
+> request id (a client that missed a newer prompt) is rejected with a `HubException`, while an
+> already-answered or already-cancelled prompt resolves as a silent no-op. The former mandatory
+> 300-second default timeout has been removed; `timeout_seconds` on the `ask_user` tool is now an
+> optional, non-terminal reminder-style limit rather than an expiry that cancels the prompt.
 
 > `OnConnectedAsync` / `OnDisconnectedAsync` are SignalR lifecycle hooks, not client-callable methods.
 

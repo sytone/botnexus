@@ -187,6 +187,13 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
+        // #2047: durable ask_user checkpoint resolution + restart resume. The resumer dispatches a
+        // continuation turn through the router/orchestrator; the checkpoint service is the single
+        // source of truth for resolving a response against persisted state; the hosted reconciliation
+        // service rehydrates the in-memory interception map from durable checkpoints on startup.
+        services.TryAddSingleton<IAskUserCheckpointResumer, AskUserCheckpointResumer>();
+        services.TryAddSingleton<IAskUserCheckpointService, AskUserCheckpointService>();
+        services.AddHostedService<AskUserCheckpointReconciliationService>();
         services.TryAddSingleton<PendingAskUserInterceptor>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());

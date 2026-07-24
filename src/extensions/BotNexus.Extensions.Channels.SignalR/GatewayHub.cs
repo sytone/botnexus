@@ -53,6 +53,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IConversationRouter _conversationRouter;
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
+    private readonly IAskUserCheckpointService? _askUserCheckpointService;
     private readonly IGatewayHubApplicationService _app;
     private readonly ILogger<GatewayHub> _logger;
     // Phase 2 (#568): optional so existing test hubs and any host that has not yet wired the
@@ -72,6 +73,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
         IWorldContext? worldContext = null)
     {
@@ -84,6 +86,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
+        _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
     }
@@ -226,6 +229,21 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 : null,
             WasCancelled = cancelled
         };
+
+        // #2047: resolve through the durable checkpoint service so a response or cancellation
+        // resumes the conversation even after a gateway restart destroyed the in-memory waiter.
+        // The resolution is idempotent - a duplicate or cross-client submission for an
+        // already-resolved prompt is a no-op that must not throw or double-resume.
+        if (_askUserCheckpointService is not null)
+        {
+            var outcome = await _askUserCheckpointService.ResolveAsync(
+                normalizedConversationId, response.RequestId, response, Context.ConnectionAborted);
+            if (outcome == AskUserResolveOutcome.RequestIdMismatch)
+                throw new HubException("This ask_user prompt is no longer the active prompt for the conversation.");
+            // LiveCompleted / ResumedFromCheckpoint / NoPendingCheckpoint all resolve without error:
+            // NoPendingCheckpoint means the prompt was already answered or cancelled (idempotent).
+            return;
+        }
 
         if (!_askUserResponseRegistry.TryComplete(normalizedConversationId, response.RequestId, response))
             throw new HubException("No matching ask_user request is pending for this conversation.");
