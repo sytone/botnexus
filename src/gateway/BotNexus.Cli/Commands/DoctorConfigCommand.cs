@@ -13,8 +13,9 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal sealed class DoctorConfigCommand
 {
-    /// <summary>All registered checks, evaluated in order.</summary>
-    private static readonly IReadOnlyList<IConfigCheck> Checks =
+    /// <summary>All registered checks, evaluated in order. Internal so the aggregate doctor suite
+    /// (ConfigHealthCheck) can reuse the exact same set for its read-only assessment.</summary>
+    internal static readonly IReadOnlyList<IConfigCheck> Checks =
     [
         new ExtensionsBlockCheck(),
         new SkillsWorldDefaultCheck(),
