@@ -32,6 +32,15 @@ try {
     }
 
     Write-Host "Running globally serialized local validation ($Mode)." -ForegroundColor Yellow
+
+    # Invalidate any prior receipt before producing new evidence. A failed or interrupted
+    # run must never leave a stale-but-matching receipt behind (issue #2143 fail-closed).
+    try {
+        Import-Module (Join-Path $PSScriptRoot 'ValidationReceipt.psm1') -Force
+        Remove-BotNexusValidationReceipt -WorktreePath $repoRoot
+    }
+    catch { Write-Warning "Could not clear prior validation receipt: $($_.Exception.Message)" }
+
     & dotnet build (Join-Path $repoRoot 'BotNexus.slnx') --nologo --verbosity minimal --tl:off
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -49,7 +58,27 @@ try {
             }
         }
     }
-    exit $LASTEXITCODE
+    $validationExit = $LASTEXITCODE
+
+    # Emit a content-addressed validation receipt only after every required command has
+    # succeeded (issue #2143). The exact-content rule means this certifies precisely the
+    # staged tree; the pre-commit hook reuses it to skip redundant work. A failed run
+    # falls through without emitting, so the hook fails closed.
+    if ($validationExit -eq 0) {
+        try {
+            Import-Module (Join-Path $PSScriptRoot 'ValidationReceipt.psm1') -Force
+            $emitted = New-BotNexusValidationReceipt -Scope $Mode -TestProjects @('impacted+safety-nets') -WorktreePath $repoRoot -BaseRef $BaseRef
+            if ($null -ne $emitted) {
+                Write-Host "Validation receipt written: $($emitted.Path)" -ForegroundColor DarkGray
+            }
+        }
+        catch {
+            # Receipt emission is a best-effort optimization; never fail a passing run because
+            # of it. Absence of a receipt simply means the next commit revalidates.
+            Write-Warning "Could not write validation receipt: $($_.Exception.Message)"
+        }
+    }
+    exit $validationExit
 }
 finally {
     if ($null -ne $lock) { $lock.Dispose() }

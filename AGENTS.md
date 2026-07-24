@@ -21,6 +21,8 @@ scripts/repo/Validate-PreCommit.ps1
 
 `-LocalFallback` remains a backward-compatible alias for local mode. The lower-level scripts remain focused diagnostic tools, not substitutes for the strict gate.
 
+**Stage → validate → commit.** Stage the exact snapshot you intend to commit, then run the strict gate, then commit. A successful run emits a content-addressed validation receipt keyed to the staged Git tree hash plus the validation-policy and toolchain identities. The pre-commit hook reuses that receipt to skip redundant build/test only when the exact staged content still matches; any missing, malformed, failed, stale, expired, or mismatched receipt fails closed and reruns validation. See `docs/development/validation-receipts.md`.
+
 ## Document Ownership
 
 Some docs have a YAML front-matter header indicating ownership:
