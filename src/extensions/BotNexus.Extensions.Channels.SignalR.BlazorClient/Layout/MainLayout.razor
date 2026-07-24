@@ -13,6 +13,7 @@
 @inject CronApiClient CronApi
 @inject SectionsApiClient SectionsApi
 @inject ToolsApiClient ToolsApi
+@inject NavOrderApiClient NavOrderApi
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -35,7 +36,7 @@
         </div>
     </header>
 
-    @* Announcements bar — hidden when empty *@
+    @* Announcements bar - hidden when empty *@
     @if (_announcements.Count > 0)
     {
         <div class="announcement-bar has-announcements">
@@ -51,7 +52,7 @@
 
     @* Two-column body *@
     <div class="app-body">
-        @* Mobile overlay — tap to close sidebar *@
+        @* Mobile overlay - tap to close sidebar *@
         @if (_sidebarOpen)
         {
             <div class="sidebar-overlay" @onclick="CloseSidebar"></div>
@@ -63,223 +64,14 @@
                 <ConnectionStatus Hub="@Hub" />
             </div>
 
-            @* Nav links *@
+            @* Nav links -- rendered in the user's configured order (#2236). The whole nav is driven
+               by a single ordering model: every built-in item has a default order number and the
+               user can override any of them; overrides persist server-side and roam with the user. *@
             <nav class="sidebar-nav">
-                <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
-                @* Tools section -- rendered above Chat. Tools load from GET /api/tools and roam
-                   with the user server-side (#2233). Sub-items link to /tools/{id}; the host route
-                   itself lands in a later slice. *@
-                <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
-                <div class="sidebar-subnav" data-testid="tools-subnav">
-                    @if (_tools.Count == 0)
-                    {
-                        <div class="sidebar-subnav-empty" data-testid="tools-empty">No tools configured</div>
-                    }
-                    else
-                    {
-                        @foreach (var tool in _tools)
-                        {
-                            <a href="tools/@tool.Id" class="sidebar-subnav-item @(IsToolActive(tool.Id) ? "active" : "")" data-testid="tools-subnav-item" @onclick="CloseSidebar">
-                                @if (!string.IsNullOrWhiteSpace(tool.Icon))
-                                {
-                                    <span class="tools-subnav-item-icon">@tool.Icon</span>
-                                }
-                                <span class="tools-subnav-item-label">@tool.Name</span>
-                            </a>
-                        }
-                    }
-                </div>
-                <a href="chat" class="sidebar-nav-item @NavClass("chat")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
-
-                @* Scrollable agent/conversation section *@
-                <div class="sidebar-scroll-region">
-                @* Agent dropdown + session list nested under Chat *@
-                @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
+                @foreach (var key in OrderedNavKeys())
                 {
-                    <div class="agent-dropdown-container">
-                        <select class="agent-dropdown-select" data-testid="agent-select"
-                                value="@Store.ActiveAgentId"
-                                @onchange="OnAgentSelected">
-                            <option value="">— select agent —</option>
-                            @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly).OrderBy(kv => kv.Value.IsBuiltIn).ThenBy(kv => kv.Value.DisplayName))
-                            {
-                                <option value="@agentId">
-                                    @FormatAgentName(agent)
-                                    @if (agent.IsStreaming) { <text> &#x25CF;</text> }
-                                    @if (agent.UnreadCount > 0) { <text> (@agent.UnreadCount)</text> }
-                                </option>
-                            }
-                        </select>
-                    </div>
-
-                    @if (Store.ActiveAgentId is not null &&
-                         Store.Agents.TryGetValue(Store.ActiveAgentId, out var activeAgent))
-                    {
-                        <div class="agent-conversation-list">
-                            <div class="agent-conversation-list-header">
-                                <span class="agent-conversation-list-title">Conversations</span>
-                                @if (!activeAgent.IsReadOnly)
-                                {
-                                    <button class="conversation-new-btn"
-                                            data-testid="new-conversation-btn"
-                                            data-agent-id="@activeAgent.AgentId"
-                                            @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
-                                            title="Start a new conversation">
-                                        <span class="conversation-new-btn-icon">+</span>
-                                        <span class="conversation-new-btn-label">New</span>
-                                    </button>
-                                }
-                            </div>
-
-                            <div class="conversation-list-scroll">
-                                @if (activeAgent.IsLoadingConversations)
-                                {
-                                    <div class="conversation-list-loading">Loading conversations&#x2026;</div>
-                                }
-                                else if (activeAgent.Conversations.Count == 0)
-                                {
-                                    <div class="conversation-list-empty">No conversations yet.</div>
-                                }
-                                else
-                                {
-                                    var allUserConversations = activeAgent.Conversations.Values
-                                        .Where(IsUserFacingConversation)
-                                        .OrderByDescending(c => c.IsDefault)
-                                        .ThenByDescending(c => c.UpdatedAt)
-                                        .ToList();
-                                    var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
-                                    var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
-                                    var normalConversations = allUserConversations
-                                        .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c))
-                                        .Where(MatchesActivityFilter)
-                                        .ToList();
-
-                                    @if (pinnedConversations.Count > 0)
-                                    {
-                                        <div class="conversation-group conversation-group-pinned" data-testid="conversation-group-pinned">
-                                            <div class="conversation-group-header">
-                                                <span class="conversation-group-label">&#x1F4CC; Pinned</span>
-                                            </div>
-                                            @foreach (var conversation in pinnedConversations)
-                                            {
-                                                @RenderConversationItem(activeAgent, conversation)
-                                            }
-                                        </div>
-                                    }
-
-                                    <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
-                                        <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
-                                            <button type="button"
-                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
-                                                    data-testid="conversation-filter-none"
-                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
-                                                    title="Show all conversations"
-                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
-                                            <button type="button"
-                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
-                                                    data-testid="conversation-filter-today"
-                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
-                                                    title="Conversations updated today"
-                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
-                                            <button type="button"
-                                                    class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
-                                                    data-testid="conversation-filter-week"
-                                                    aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
-                                                    title="Conversations updated in the last 7 days"
-                                                    @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
-                                        </div>
-                                        @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
-                                        {
-                                            <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
-                                        }
-                                        @foreach (var conversation in normalConversations)
-                                        {
-                                            @RenderConversationItem(activeAgent, conversation)
-                                        }
-                                    </div>
-
-                                    @if (cronConversations.Count > 0)
-                                    {
-                                        <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
-                                            <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
-                                                <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                                <span class="conversation-group-label">&#x23F0; Scheduled</span>
-                                                <span class="conversation-group-count">@cronConversations.Count</span>
-                                            </button>
-                                            @if (!_cronGroupCollapsed)
-                                            {
-                                                @foreach (var conversation in cronConversations)
-                                                {
-                                                    @RenderConversationItem(activeAgent, conversation)
-                                                }
-                                            }
-                                        </div>
-                                    }
-                                }
-
-                                @* Sub-agent sessions *@
-                                @foreach (var sub in activeAgent.SubAgents.Values
-                                    .Where(s => s.Status is "Running" or "Completed"))
-                                {
-                                    <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
-                                          @onclick="() => ViewSubAgentAsync(sub)"
-                                          style="cursor: pointer;"
-                                          title="@($"{sub.Task} (read-only)")">
-                                        <span>@SubAgentIcon(sub.Status)</span>
-                                        <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
-                                        <span class="conversation-default-badge">Read-only</span>
-                                        @if (sub.Archetype is not null)
-                                        {
-                                            <span class="sub-agent-archetype">@sub.Archetype</span>
-                                        }
-                                    </div>
-                                }
-                            </div>
-                        </div>
-                    }
+                    @RenderNavSection(key)
                 }
-
-                @if (Store.ActiveAgentId is not null &&
-                     Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
-                     !sectionsAgent.IsReadOnly)
-                {
-                    <ConversationSectionsPanel @ref="_sectionsPanel"
-                                               AgentId="@sectionsAgent.AgentId"
-                                               TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
-                                               OnChanged="HandleSectionsChanged" />
-                }
-                </div>@* end sidebar-scroll-region *@
-
-                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
-
-                @if (ExtensionFeatures.SkillsEnabled)
-                {
-                    <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">&#x1F9E0; Skills</a>
-
-                    @* Skills sub-nav -- shown when on the skills page *@
-                    @if (IsOnPage("skills"))
-                    {
-                        <div class="sidebar-subnav">
-                            <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F5C2;&#xFE0F; Explorer</a>
-                        </div>
-                    }
-                }
-
-                <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">&#x1F916; Agents</a>
-
-                @* Agents sub-nav -- only shown when on the agents page *@
-                @if (IsOnPage("agents"))
-                {
-                    <div class="sidebar-subnav">
-                        @foreach (var agent in _sidebarAgents)
-                        {
-                            <a href="agents/@agent.AgentId" class="sidebar-subnav-item @(IsAgentActive(agent.AgentId) ? "active" : "")" @onclick="CloseSidebar">@agent.DisplayLabel</a>
-                        }
-                        <a href="agents/new" class="sidebar-subnav-item sidebar-subnav-add" @onclick="CloseSidebar">+ Add Agent</a>
-                    </div>
-                }
-
-                <a href="cron" class="sidebar-nav-item @NavClass("cron")" data-testid="nav-cron-jobs" @onclick="OnNavClick">&#x23F0; Cron Jobs</a>
             </nav>
 
             @* Build info at bottom *@
@@ -336,7 +128,7 @@
             </div>
         }
 
-        @* Main canvas — @Body renders here *@
+        @* Main canvas - @Body renders here *@
         <main class="main-canvas">
             <GlobalErrorBoundary>
             @Body
@@ -346,7 +138,7 @@
 
 </div>
 
-@* Modal overlays — rendered outside app-shell to avoid flex/overflow containment *@
+@* Modal overlays - rendered outside app-shell to avoid flex/overflow containment *@
 <PortalSettingsPanel @ref="_settingsPanel" />
 @if (_showDebugPanel)
 {
@@ -363,6 +155,11 @@
     private ConversationActivityFilter _activityFilter = ConversationActivityFilter.None;
     private const string ActivityFilterKey = "botnexus-conversation-activity-filter";
 
+    // Effective nav order (built-in defaults layered with server-side user overrides, #2236).
+    // Populated from GET /api/nav-order; on any failure it falls back to the built-in defaults so
+    // the nav always renders in a sensible, consistent order.
+    private IReadOnlyList<string> _navOrder = NavOrderKeys.DefaultOrder;
+
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
     private List<Announcement> _announcements = [];
@@ -373,6 +170,296 @@
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
     private const string SidebarKey = "botnexus-sidebar-open";
+
+    /// <summary>
+    /// Canonical set of built-in nav keys and their default rendering order. The layout renders the
+    /// nav by iterating this order (as adjusted by server-side overrides), so every built-in item
+    /// participates in one ordering model. Tools intentionally precedes Chat by default (#2236).
+    /// </summary>
+    private static class NavOrderKeys
+    {
+        public const string Activity = "activity";
+        public const string Tools = "tools";
+        public const string Chat = "chat";
+        public const string Configuration = "configuration";
+        public const string Skills = "skills";
+        public const string Agents = "agents";
+        public const string Cron = "cron";
+
+        public static readonly IReadOnlyList<string> DefaultOrder =
+            [Activity, Tools, Chat, Configuration, Skills, Agents, Cron];
+    }
+
+    /// <summary>
+    /// Returns the nav keys in the order they should render: the server-provided effective order,
+    /// with any built-in key missing from the server response appended in its default position so a
+    /// newly-added built-in can never silently vanish from the nav.
+    /// </summary>
+    private IEnumerable<string> OrderedNavKeys()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _navOrder)
+        {
+            if (NavOrderKeys.DefaultOrder.Contains(key, StringComparer.OrdinalIgnoreCase) && seen.Add(key))
+                yield return key;
+        }
+
+        foreach (var key in NavOrderKeys.DefaultOrder)
+        {
+            if (seen.Add(key))
+                yield return key;
+        }
+    }
+
+    private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch
+    {
+        NavOrderKeys.Activity => RenderActivityNav(),
+        NavOrderKeys.Tools => RenderToolsNav(),
+        NavOrderKeys.Chat => RenderChatNav(),
+        NavOrderKeys.Configuration => RenderConfigurationNav(),
+        NavOrderKeys.Skills => RenderSkillsNav(),
+        NavOrderKeys.Agents => RenderAgentsNav(),
+        NavOrderKeys.Cron => RenderCronNav(),
+        _ => _ => { }
+    };
+
+    private RenderFragment RenderActivityNav() => __builder =>
+    {
+        <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+    };
+
+    private RenderFragment RenderToolsNav() => __builder =>
+    {
+        @* Tools section. Tools load from GET /api/tools and roam with the user server-side (#2233).
+           Sub-items link to /tools/{id}. Default order sits above Chat (#2236). *@
+        <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
+        <div class="sidebar-subnav" data-testid="tools-subnav">
+            @if (_tools.Count == 0)
+            {
+                <div class="sidebar-subnav-empty" data-testid="tools-empty">No tools configured</div>
+            }
+            else
+            {
+                @foreach (var tool in _tools)
+                {
+                    <a href="tools/@tool.Id" class="sidebar-subnav-item @(IsToolActive(tool.Id) ? "active" : "")" data-testid="tools-subnav-item" @onclick="CloseSidebar">
+                        @if (!string.IsNullOrWhiteSpace(tool.Icon))
+                        {
+                            <span class="tools-subnav-item-icon">@tool.Icon</span>
+                        }
+                        <span class="tools-subnav-item-label">@tool.Name</span>
+                    </a>
+                }
+            }
+        </div>
+    };
+
+    private RenderFragment RenderChatNav() => __builder =>
+    {
+        <a href="chat" class="sidebar-nav-item @NavClass("chat")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
+
+        @* Scrollable agent/conversation section *@
+        <div class="sidebar-scroll-region">
+        @* Agent dropdown + session list nested under Chat *@
+        @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
+        {
+            <div class="agent-dropdown-container">
+                <select class="agent-dropdown-select" data-testid="agent-select"
+                        value="@Store.ActiveAgentId"
+                        @onchange="OnAgentSelected">
+                    <option value="">- select agent -</option>
+                    @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly).OrderBy(kv => kv.Value.IsBuiltIn).ThenBy(kv => kv.Value.DisplayName))
+                    {
+                        <option value="@agentId">
+                            @FormatAgentName(agent)
+                            @if (agent.IsStreaming) { <text> &#x25CF;</text> }
+                            @if (agent.UnreadCount > 0) { <text> (@agent.UnreadCount)</text> }
+                        </option>
+                    }
+                </select>
+            </div>
+
+            @if (Store.ActiveAgentId is not null &&
+                 Store.Agents.TryGetValue(Store.ActiveAgentId, out var activeAgent))
+            {
+                <div class="agent-conversation-list">
+                    <div class="agent-conversation-list-header">
+                        <span class="agent-conversation-list-title">Conversations</span>
+                        @if (!activeAgent.IsReadOnly)
+                        {
+                            <button class="conversation-new-btn"
+                                    data-testid="new-conversation-btn"
+                                    data-agent-id="@activeAgent.AgentId"
+                                    @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
+                                    title="Start a new conversation">
+                                <span class="conversation-new-btn-icon">+</span>
+                                <span class="conversation-new-btn-label">New</span>
+                            </button>
+                        }
+                    </div>
+
+                    <div class="conversation-list-scroll">
+                        @if (activeAgent.IsLoadingConversations)
+                        {
+                            <div class="conversation-list-loading">Loading conversations&#x2026;</div>
+                        }
+                        else if (activeAgent.Conversations.Count == 0)
+                        {
+                            <div class="conversation-list-empty">No conversations yet.</div>
+                        }
+                        else
+                        {
+                            var allUserConversations = activeAgent.Conversations.Values
+                                .Where(IsUserFacingConversation)
+                                .OrderByDescending(c => c.IsDefault)
+                                .ThenByDescending(c => c.UpdatedAt)
+                                .ToList();
+                            var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
+                            var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
+                            var normalConversations = allUserConversations
+                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c))
+                                .Where(MatchesActivityFilter)
+                                .ToList();
+
+                            @if (pinnedConversations.Count > 0)
+                            {
+                                <div class="conversation-group conversation-group-pinned" data-testid="conversation-group-pinned">
+                                    <div class="conversation-group-header">
+                                        <span class="conversation-group-label">&#x1F4CC; Pinned</span>
+                                    </div>
+                                    @foreach (var conversation in pinnedConversations)
+                                    {
+                                        @RenderConversationItem(activeAgent, conversation)
+                                    }
+                                </div>
+                            }
+
+                            <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
+                                <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
+                                            data-testid="conversation-filter-none"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
+                                            title="Show all conversations"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
+                                            data-testid="conversation-filter-today"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
+                                            title="Conversations updated today"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
+                                            data-testid="conversation-filter-week"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
+                                            title="Conversations updated in the last 7 days"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
+                                </div>
+                                @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
+                                {
+                                    <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
+                                }
+                                @foreach (var conversation in normalConversations)
+                                {
+                                    @RenderConversationItem(activeAgent, conversation)
+                                }
+                            </div>
+
+                            @if (cronConversations.Count > 0)
+                            {
+                                <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
+                                    <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
+                                        <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                        <span class="conversation-group-label">&#x23F0; Scheduled</span>
+                                        <span class="conversation-group-count">@cronConversations.Count</span>
+                                    </button>
+                                    @if (!_cronGroupCollapsed)
+                                    {
+                                        @foreach (var conversation in cronConversations)
+                                        {
+                                            @RenderConversationItem(activeAgent, conversation)
+                                        }
+                                    }
+                                </div>
+                            }
+                        }
+
+                        @* Sub-agent sessions *@
+                        @foreach (var sub in activeAgent.SubAgents.Values
+                            .Where(s => s.Status is "Running" or "Completed"))
+                        {
+                            <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
+                                  @onclick="() => ViewSubAgentAsync(sub)"
+                                  style="cursor: pointer;"
+                                  title="@($"{sub.Task} (read-only)")">
+                                <span>@SubAgentIcon(sub.Status)</span>
+                                <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
+                                <span class="conversation-default-badge">Read-only</span>
+                                @if (sub.Archetype is not null)
+                                {
+                                    <span class="sub-agent-archetype">@sub.Archetype</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        @if (Store.ActiveAgentId is not null &&
+             Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
+             !sectionsAgent.IsReadOnly)
+        {
+            <ConversationSectionsPanel @ref="_sectionsPanel"
+                                       AgentId="@sectionsAgent.AgentId"
+                                       TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
+                                       OnChanged="HandleSectionsChanged" />
+        }
+        </div>@* end sidebar-scroll-region *@
+    };
+
+    private RenderFragment RenderConfigurationNav() => __builder =>
+    {
+        <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
+    };
+
+    private RenderFragment RenderSkillsNav() => __builder =>
+    {
+        @if (ExtensionFeatures.SkillsEnabled)
+        {
+            <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">&#x1F9E0; Skills</a>
+
+            @* Skills sub-nav -- shown when on the skills page *@
+            @if (IsOnPage("skills"))
+            {
+                <div class="sidebar-subnav">
+                    <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F5C2;&#xFE0F; Explorer</a>
+                </div>
+            }
+        }
+    };
+
+    private RenderFragment RenderAgentsNav() => __builder =>
+    {
+        <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">&#x1F916; Agents</a>
+
+        @* Agents sub-nav -- only shown when on the agents page *@
+        @if (IsOnPage("agents"))
+        {
+            <div class="sidebar-subnav">
+                @foreach (var agent in _sidebarAgents)
+                {
+                    <a href="agents/@agent.AgentId" class="sidebar-subnav-item @(IsAgentActive(agent.AgentId) ? "active" : "")" @onclick="CloseSidebar">@agent.DisplayLabel</a>
+                }
+                <a href="agents/new" class="sidebar-subnav-item sidebar-subnav-add" @onclick="CloseSidebar">+ Add Agent</a>
+            </div>
+        }
+    };
+
+    private RenderFragment RenderCronNav() => __builder =>
+    {
+        <a href="cron" class="sidebar-nav-item @NavClass("cron")" data-testid="nav-cron-jobs" @onclick="OnNavClick">&#x23F0; Cron Jobs</a>
+    };
 
     protected override void OnInitialized()
     {
@@ -385,11 +472,12 @@
         Prefs.OnChanged += HandleStateChanged;
     }
 
-    // Tools load independently of the JS-driven first-render pipeline so the Tools nav section
-    // populates deterministically as soon as the gateway responds (#2233). The client never throws.
+    // Tools and nav order load independently of the JS-driven first-render pipeline so the nav
+    // populates deterministically as soon as the gateway responds (#2233, #2236). Never throws.
     protected override async Task OnInitializedAsync()
     {
         await LoadToolsAsync();
+        await LoadNavOrderAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -887,6 +975,21 @@
         _tools = (await ToolsApi.ListAsync())
             .OrderBy(t => t.Order)
             .ToList();
+    }
+
+    // Loads the effective nav order from GET /api/nav-order for the whole-sidebar ordering model
+    // (#2236). On any failure the client returns an empty list, so we keep the built-in default
+    // order rather than rendering a broken or empty nav.
+    private async Task LoadNavOrderAsync()
+    {
+        var items = await NavOrderApi.ListAsync();
+        if (items.Count > 0)
+        {
+            _navOrder = items
+                .OrderBy(i => i.Order)
+                .Select(i => i.Key)
+                .ToList();
+        }
     }
 
     private bool IsToolActive(string toolId)
