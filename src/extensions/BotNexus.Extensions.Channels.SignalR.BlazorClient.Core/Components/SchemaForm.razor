@@ -1,5 +1,6 @@
 @using System.Text.Json.Nodes
 @using System.Globalization
+@using System.Text.RegularExpressions
 @using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
 @inject IModelOptionsProvider ModelOptions
 
@@ -241,14 +242,39 @@ else
         else if (IsDictionary(node))
         {
             var valueSchema = node["additionalProperties"]!.AsObject();
+            var immutableKeys = node["x-ui-immutable-keys"]?.GetValue<bool>() == true;
+            var dict = Resolve(path) as JsonObject;
             <fieldset class="schema-dict" data-testid="@($"dict-{path}")">
                 <legend>@Label(name, node)</legend>
-                @foreach (var entry in (Resolve(path) as JsonObject)?.ToList() ?? [])
+                @foreach (var entry in dict?.ToList() ?? [])
                 {
-                    <div class="schema-dict-entry" data-key="@entry.Key">
-                        <span class="schema-dict-key">@entry.Key</span>
-                        @RenderNode(entry.Key, valueSchema, $"{path}.{entry.Key}")
+                    var key = entry.Key;
+                    var renameStateKey = $"{path}::{key}";
+                    <div class="schema-dict-entry" data-key="@key">
+                        <span class="schema-dict-key">@key</span>
+                        @if (!immutableKeys)
+                        {
+                            <input class="dict-rename-input" data-testid="@($"dict-rename-input-{path}-{key}")"
+                                   value="@(_renameKeys.TryGetValue(renameStateKey, out var rn) ? rn : key)"
+                                   @onchange="e => _renameKeys[renameStateKey] = e.Value?.ToString() ?? string.Empty" />
+                            <button type="button" class="dict-rename" data-testid="@($"dict-rename-{path}-{key}")"
+                                    @onclick="() => RenameDictEntry(path, node, key)">Rename</button>
+                        }
+                        @RenderNode(key, valueSchema, $"{path}.{key}")
+                        <button type="button" class="dict-entry-delete" data-testid="@($"dict-delete-{path}-{key}")"
+                                @onclick="() => RemoveDictEntry(path, key)">Delete</button>
                     </div>
+                }
+                <div class="schema-dict-add">
+                    <input class="dict-newkey" data-testid="@($"dict-newkey-{path}")"
+                           value="@(_newKeys.TryGetValue(path, out var nk) ? nk : string.Empty)"
+                           @onchange="e => _newKeys[path] = e.Value?.ToString() ?? string.Empty" />
+                    <button type="button" class="dict-add" data-testid="@($"dict-add-{path}")"
+                            @onclick="() => AddDictEntry(path, node, valueSchema)">Add</button>
+                </div>
+                @if (_collectionErrors.TryGetValue(path, out var derr) && derr is not null)
+                {
+                    <span class="schema-dict-error" data-testid="@($"dict-error-{path}")">@derr</span>
                 }
             </fieldset>
         }
@@ -260,7 +286,22 @@ else
                 <legend>@Label(name, node)</legend>
                 @for (var i = 0; i < arr.Count; i++)
                 {
-                    @RenderNode($"[{i}]", itemSchema, $"{path}[{i}]")
+                    var index = i;
+                    <div class="schema-array-item" data-index="@index">
+                        @RenderNode($"[{index}]", itemSchema, $"{path}[{index}]")
+                        <button type="button" class="array-item-up" data-testid="@($"array-up-{path}-{index}")"
+                                disabled="@(index == 0)" @onclick="() => MoveListItem(path, index, -1)">Up</button>
+                        <button type="button" class="array-item-down" data-testid="@($"array-down-{path}-{index}")"
+                                disabled="@(index == arr.Count - 1)" @onclick="() => MoveListItem(path, index, 1)">Down</button>
+                        <button type="button" class="array-item-remove" data-testid="@($"array-remove-{path}-{index}")"
+                                @onclick="() => RemoveListItem(path, index)">Remove</button>
+                    </div>
+                }
+                <button type="button" class="array-add" data-testid="@($"array-add-{path}")"
+                        @onclick="() => AddListItem(path, itemSchema)">Add</button>
+                @if (_collectionErrors.TryGetValue(path, out var aerr) && aerr is not null)
+                {
+                    <span class="schema-array-error" data-testid="@($"array-error-{path}")">@aerr</span>
                 }
             </fieldset>
         }
@@ -348,17 +389,225 @@ else
         return cur;
     }
 
+    // Collection-lifecycle UI state. Keyed by the collection's JSON path so multiple
+    // dictionaries/arrays on one form keep independent draft keys and error messages.
+    private readonly Dictionary<string, string> _newKeys = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _renameKeys = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _collectionErrors = new(StringComparer.Ordinal);
+
+    // Writes a value at an arbitrary object-or-array path, creating intermediate objects as needed
+    // and traversing existing arrays by index. The previous implementation only walked JsonObject
+    // intermediates, so any path passing through a JsonArray element (e.g. models[0].id or a
+    // dictionary-of-objects entry) silently wrote into a fresh object graph and lost the edit
+    // (#2062). Traversal now mirrors Resolve(): a "[i]" token indexes the current JsonArray, every
+    // other token indexes the current JsonObject.
     private void Set(string path, JsonNode? value)
     {
         var segs = Tokenize(path).ToList();
-        JsonObject obj = Value;
+        JsonNode? cur = Value;
         for (var i = 0; i < segs.Count - 1; i++)
         {
-            if (obj[segs[i]] is not JsonObject next) { next = []; obj[segs[i]] = next; }
-            obj = next;
+            var seg = segs[i];
+            if (seg.StartsWith('['))
+            {
+                var idx = int.Parse(seg.Trim('[', ']'), CultureInfo.InvariantCulture);
+                var array = cur as JsonArray ?? throw new InvalidOperationException($"Path segment '{seg}' expects an array at '{path}'.");
+                cur = array[idx];
+            }
+            else
+            {
+                var obj = cur as JsonObject ?? throw new InvalidOperationException($"Path segment '{seg}' expects an object at '{path}'.");
+                // Look ahead: if the next token indexes an array, the intermediate must be an array,
+                // otherwise create/keep an object.
+                var nextIsIndex = segs[i + 1].StartsWith('[');
+                if (nextIsIndex)
+                {
+                    if (obj[seg] is not JsonArray arr) { arr = []; obj[seg] = arr; }
+                    cur = arr;
+                }
+                else
+                {
+                    if (obj[seg] is not JsonObject next) { next = []; obj[seg] = next; }
+                    cur = next;
+                }
+            }
         }
-        obj[segs[^1]] = value;
+
+        var last = segs[^1];
+        if (last.StartsWith('['))
+        {
+            var idx = int.Parse(last.Trim('[', ']'), CultureInfo.InvariantCulture);
+            var array = cur as JsonArray ?? throw new InvalidOperationException($"Path segment '{last}' expects an array at '{path}'.");
+            array[idx] = value;
+        }
+        else
+        {
+            var obj = cur as JsonObject ?? throw new InvalidOperationException($"Path segment '{last}' expects an object at '{path}'.");
+            obj[last] = value;
+        }
         ValueChanged.InvokeAsync(Value);
+    }
+
+    // ── List lifecycle (#2062) ──────────────────────────────────────────────
+
+    // Ensures the array at path exists (creating it in place without disturbing siblings) and
+    // returns it. Uses Set's exact-path traversal so a nested/array-embedded collection is created
+    // at the right spot rather than replacing an unrelated sibling.
+    private JsonArray EnsureArray(string path)
+    {
+        if (Resolve(path) is JsonArray existing)
+            return existing;
+        var created = new JsonArray();
+        Set(path, created);
+        return (Resolve(path) as JsonArray)!;
+    }
+
+    private JsonObject EnsureObject(string path)
+    {
+        if (Resolve(path) is JsonObject existing)
+            return existing;
+        var created = new JsonObject();
+        Set(path, created);
+        return (Resolve(path) as JsonObject)!;
+    }
+
+    private void AddListItem(string path, JsonObject itemSchema)
+    {
+        var arr = EnsureArray(path);
+        arr.Add(DefaultForSchema(itemSchema));
+        _collectionErrors[path] = null;
+        ValueChanged.InvokeAsync(Value);
+    }
+
+    private void RemoveListItem(string path, int index)
+    {
+        if (Resolve(path) is JsonArray arr && index >= 0 && index < arr.Count)
+        {
+            arr.RemoveAt(index);
+            ValueChanged.InvokeAsync(Value);
+        }
+    }
+
+    // Moves an item by a signed delta (-1 up, +1 down). Reorders in place by detaching and
+    // re-inserting the node so unrelated siblings are untouched.
+    private void MoveListItem(string path, int index, int delta)
+    {
+        if (Resolve(path) is not JsonArray arr)
+            return;
+        var target = index + delta;
+        if (index < 0 || index >= arr.Count || target < 0 || target >= arr.Count)
+            return;
+        var node = arr[index];
+        arr.RemoveAt(index);
+        var clone = node?.DeepClone();
+        arr.Insert(target, clone);
+        ValueChanged.InvokeAsync(Value);
+    }
+
+    // ── Dictionary lifecycle (#2062) ────────────────────────────────────────
+
+    private void AddDictEntry(string path, JsonObject dictNode, JsonObject valueSchema)
+    {
+        var key = (_newKeys.TryGetValue(path, out var k) ? k : string.Empty).Trim();
+        var dict = Resolve(path) as JsonObject;
+        var error = ValidateKey(dictNode, key, dict, originalKey: null);
+        if (error is not null) { _collectionErrors[path] = error; return; }
+
+        var target = EnsureObject(path);
+        target[key] = DefaultForSchema(valueSchema);
+        _newKeys[path] = string.Empty;
+        _collectionErrors[path] = null;
+        ValueChanged.InvokeAsync(Value);
+    }
+
+    private void RemoveDictEntry(string path, string key)
+    {
+        if (Resolve(path) is JsonObject dict && dict.ContainsKey(key))
+        {
+            dict.Remove(key);
+            _collectionErrors[path] = null;
+            ValueChanged.InvokeAsync(Value);
+        }
+    }
+
+    // Renames a dictionary key while preserving the entry's value and its position among siblings.
+    // Rebuilds the object in order so a rename does not reorder unrelated entries (JsonObject has no
+    // in-place rename). Immutable-key dictionaries never render a rename control, so this is a no-op
+    // guard for them.
+    private void RenameDictEntry(string path, JsonObject dictNode, string originalKey)
+    {
+        if (dictNode["x-ui-immutable-keys"]?.GetValue<bool>() == true)
+            return;
+        var renameStateKey = $"{path}::{originalKey}";
+        var newKey = (_renameKeys.TryGetValue(renameStateKey, out var nk) ? nk : originalKey).Trim();
+        if (Resolve(path) is not JsonObject dict)
+            return;
+        if (string.Equals(newKey, originalKey, StringComparison.Ordinal))
+        {
+            _collectionErrors[path] = null;
+            return;
+        }
+        var error = ValidateKey(dictNode, newKey, dict, originalKey);
+        if (error is not null) { _collectionErrors[path] = error; return; }
+
+        // Rebuild preserving order: swap the key in place.
+        var entries = dict.ToList();
+        foreach (var e in entries)
+            dict.Remove(e.Key);
+        foreach (var e in entries)
+        {
+            var emitKey = string.Equals(e.Key, originalKey, StringComparison.Ordinal) ? newKey : e.Key;
+            dict[emitKey] = e.Value?.DeepClone();
+        }
+        _renameKeys.Remove(renameStateKey);
+        _collectionErrors[path] = null;
+        ValueChanged.InvokeAsync(Value);
+    }
+
+    // Validates a proposed dictionary key against schema metadata: non-empty, unique (ignoring the
+    // entry being renamed), and matching any x-ui-key-pattern regex the schema supplies.
+    private static string? ValidateKey(JsonObject dictNode, string key, JsonObject? dict, string? originalKey)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return "Key must not be empty.";
+        if (dict is not null && dict.ContainsKey(key) && !string.Equals(key, originalKey, StringComparison.Ordinal))
+            return $"Key '{key}' already exists.";
+        var pattern = dictNode["x-ui-key-pattern"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(pattern) && !Regex.IsMatch(key, pattern))
+            return $"Key '{key}' does not match required pattern.";
+        return null;
+    }
+
+    // Builds an empty-but-valid default value for a freshly added collection item/entry from its
+    // schema node: objects get their declared child scalars defaulted, arrays start empty, scalars
+    // use their schema default or a type-appropriate empty value.
+    private static JsonNode? DefaultForSchema(JsonObject schema)
+    {
+        if (IsObject(schema))
+        {
+            var obj = new JsonObject();
+            if (schema["properties"] is JsonObject props)
+            {
+                foreach (var (childName, childNode) in props)
+                {
+                    if (childNode is JsonObject childObj)
+                        obj[childName] = DefaultForSchema(childObj);
+                }
+            }
+            return obj;
+        }
+        if (IsDictionary(schema))
+            return new JsonObject();
+        if (IsArray(schema))
+            return new JsonArray();
+        if (schema["default"] is JsonNode def)
+            return def.DeepClone();
+        return NodeType(schema) switch
+        {
+            "boolean" => JsonValue.Create(false),
+            "integer" or "number" => JsonValue.Create(0),
+            _ => JsonValue.Create(string.Empty),
+        };
     }
 
     private void SetNumber(string path, string? raw)
