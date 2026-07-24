@@ -1,6 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- #2329: NOTE - Vogen must NOT be marked PrivateAssets="all".
+         Issue #2329 proposed neutralising it as "a source generator; no consumer needs it at
+         runtime". That is FALSE for this codebase: Vogen ships a real runtime type,
+         Vogen.ValueObjectValidationException, which BotNexus.Domain itself catches in
+         CitizenId.TryParse and which three test projects reference directly. Setting
+         PrivateAssets="all" was tried and empirically removes Vogen.SharedTypes.dll from
+         BotNexus.Gateway.Api's build output, which would fault that catch clause at runtime.
+         The WASM payload is instead fenced at the boundary that actually matters, by
+         WasmPayloadDependencyArchitectureTests: BlazorClient.Core must not reference this
+         project at all, so Vogen never reaches the browser. -->
     <PackageReference Include="Vogen" />
   </ItemGroup>
 

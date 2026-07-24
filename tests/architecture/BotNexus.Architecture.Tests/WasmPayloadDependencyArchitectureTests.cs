@@ -1,0 +1,507 @@
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
+using Shouldly;
+
+namespace BotNexus.Architecture.Tests;
+
+/// <summary>
+/// Architecture fitness function fencing what may enter the Blazor WebAssembly payload (#2329).
+///
+/// <para>
+/// <b>Every managed assembly referenced by a Blazor WASM app is downloaded by the browser.</b> The
+/// two WASM entry points (<c>...SignalR.BlazorClient</c> and <c>...SignalR.BlazorClient.Mobile</c>,
+/// both <c>Microsoft.NET.Sdk.BlazorWebAssembly</c>) therefore have a hard cost per reference that no
+/// build error, warning, or test previously surfaced. The failure mode is invisible: the build
+/// succeeds, tests pass, and the only symptom is a slower first load for every user.
+/// </para>
+///
+/// <para>
+/// This is not hypothetical. PR #2328 added
+/// <c>&lt;ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" /&gt;</c> to
+/// <c>BlazorClient.Core</c> for a genuinely good reason (share the canonical
+/// <c>ConversationSource</c>/<c>ConversationKind</c> enums instead of hand-mirroring them, because a
+/// duplicated enum silently drifts). It was justified as safe on the grounds that
+/// <c>BotNexus.Domain</c>'s only package reference is the <c>Vogen</c> compile-time source
+/// generator. The "not the gateway host graph" half of that reasoning was correct; the
+/// "compile-time only" half was not, because <c>Vogen</c> was declared as a bare
+/// <c>&lt;PackageReference&gt;</c> with no <c>PrivateAssets</c>/<c>ExcludeAssets</c> and so flowed
+/// transitively as a normal runtime reference, putting <c>Vogen.SharedTypes.dll</c> into the
+/// browser download.
+/// </para>
+///
+/// <para>
+/// <b>Correction to the issue's proposal 2.</b> #2329 proposed fixing this by marking <c>Vogen</c>
+/// <c>PrivateAssets="all"</c> on the grounds that "it is a source generator; no consumer needs it
+/// at runtime". That is <b>false for this codebase</b> and was verified empirically rather than
+/// assumed: Vogen ships a real runtime type, <c>Vogen.ValueObjectValidationException</c>, which
+/// <c>BotNexus.Domain</c> itself catches in <c>CitizenId.TryParse</c>, and which
+/// <c>BotNexus.Domain.Tests</c>, <c>BotNexus.Gateway.Tests</c>, and
+/// <c>BotNexus.Gateway.Webhooks.Tests</c> reference by name. Applying
+/// <c>PrivateAssets="all"</c> produced 11 compile errors across those projects and removed
+/// <c>Vogen.SharedTypes.dll</c> from <c>BotNexus.Gateway.Api</c>'s output, i.e. it would have
+/// faulted a live catch clause on the server to shrink a client payload. The correct boundary is
+/// the one enforced here: <c>BlazorClient.Core</c> must not reference <c>BotNexus.Domain</c> at
+/// all, so Vogen never reaches the browser while remaining fully available on the server.
+/// </para>
+///
+/// <para>
+/// The fence is deliberately layered, because a direct-reference allowlist alone would have missed
+/// exactly the leak above (the offender was two hops away and came in as a NuGet asset):
+/// </para>
+/// <list type="number">
+///   <item><description>
+///     <b>Static graph fence</b> - walk the transitive <c>ProjectReference</c> closure of each WASM
+///     entry point from the csproj XML and assert every project in it is on an explicit allowlist
+///     with a written justification.
+///   </description></item>
+///   <item><description>
+///     <b>Static package fence</b> - for every project in that closure, assert every
+///     runtime-flowing <c>PackageReference</c> (i.e. one not neutralised by
+///     <c>PrivateAssets="all"</c> / <c>ExcludeAssets="runtime;..."</c>) is on an explicit
+///     allowlist. This is the layer that catches the #2328 class of leak <i>statically</i>, and it
+///     names the offending package and the project that dragged it in.
+///   </description></item>
+///   <item><description>
+///     <b>Build-output closure fence</b> - scan the WASM app's actual build output for
+///     non-framework, non-BotNexus-client assemblies. This is the backstop that cannot be reasoned
+///     around: whatever NuGet and the SDK actually decided to emit is what the browser downloads.
+///   </description></item>
+/// </list>
+///
+/// <para>
+/// House style follows <c>ExtensionManagedDependencyClosureArchitectureTests</c> and
+/// <c>ConversationCreationSeamArchitectureTests</c>: a static scan, offenders named in the failure
+/// message, and explicit vacuity guards so the fence cannot rot into a test that can never fail.
+/// </para>
+/// </summary>
+public sealed class WasmPayloadDependencyArchitectureTests
+{
+    /// <summary>
+    /// The Blazor WebAssembly entry-point projects, relative to <c>src/extensions</c>. Anything
+    /// reachable from these is downloaded by the browser.
+    /// </summary>
+    private static readonly string[] WasmEntryPoints =
+    [
+        "BotNexus.Extensions.Channels.SignalR.BlazorClient",
+        "BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile",
+    ];
+
+    /// <summary>
+    /// Projects permitted inside the WASM transitive project-reference closure. EVERY entry must
+    /// carry a written justification - adding a project here is a deliberate decision to grow the
+    /// browser download for every user.
+    /// </summary>
+    private static readonly Dictionary<string, string> AllowedProjectsInWasmClosure = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // The two WASM entry points themselves.
+        ["BotNexus.Extensions.Channels.SignalR.BlazorClient"] =
+            "The desktop WASM entry point itself.",
+        ["BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile"] =
+            "The mobile WASM entry point itself.",
+
+        // The single shared library.
+        ["BotNexus.Extensions.Channels.SignalR.BlazorClient.Core"] =
+            "Shared services, contracts, and state models for both Blazor clients. This is the ONLY " +
+            "shared library in the payload and it is deliberately dependency-free: it must not gain " +
+            "project references. If the client needs to share a server-owned contract type, extract " +
+            "a tiny zero-dependency wire assembly rather than referencing the server assembly " +
+            "(see #2329 proposal 3).",
+    };
+
+    /// <summary>
+    /// NuGet packages permitted to flow as RUNTIME assets into the WASM payload. A package absent
+    /// from this list either must not be referenced from the WASM closure at all, or must be
+    /// neutralised with <c>PrivateAssets="all"</c> (correct for source generators and analysers).
+    /// </summary>
+    private static readonly Dictionary<string, string> AllowedRuntimePackagesInWasmClosure = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Microsoft.AspNetCore.Components.WebAssembly"] =
+            "The Blazor WebAssembly runtime. Non-negotiable - it IS the client.",
+        ["Microsoft.AspNetCore.SignalR.Client"] =
+            "The SignalR transport the client uses to talk to the gateway. Non-negotiable - it is " +
+            "the client's only channel to the server.",
+    };
+
+    /// <summary>
+    /// Assembly-name prefixes that belong to the .NET / ASP.NET Core framework or to the allowed
+    /// packages above, and are therefore expected in the WASM output. Everything else in the output
+    /// is a leak.
+    /// </summary>
+    private static readonly string[] FrameworkAssemblyPrefixes =
+    [
+        "System.",
+        "System,",
+        "Microsoft.AspNetCore.",
+        "Microsoft.Extensions.",
+        "Microsoft.JSInterop",
+        "Microsoft.DotNet.",
+        "Microsoft.VisualBasic",
+        "Microsoft.Win32.",
+        "Microsoft.CSharp",
+        "Microsoft.NET.",
+    ];
+
+    private static readonly string[] FrameworkAssemblyExactNames =
+    [
+        "System",
+        "mscorlib",
+        "netstandard",
+        "WindowsBase",
+        "Microsoft.CSharp",
+    ];
+
+    private static string RepoRoot => FindRepoRoot();
+
+    private static string ExtensionsRoot => Path.Combine(RepoRoot, "src", "extensions");
+
+    [Fact]
+    public void WasmEntryPoints_Exist()
+    {
+        foreach (var entry in WasmEntryPoints)
+        {
+            var csproj = Path.Combine(ExtensionsRoot, entry, entry + ".csproj");
+            File.Exists(csproj).ShouldBeTrue(
+                $"WASM entry point project not found at {csproj}. If a Blazor WebAssembly project " +
+                "was renamed or removed, update WasmEntryPoints in this fence - do not let the " +
+                "fence silently stop guarding a live payload.");
+
+            var sdk = (XDocument.Load(csproj).Root?.Attribute("Sdk")?.Value) ?? string.Empty;
+            sdk.ShouldBe("Microsoft.NET.Sdk.BlazorWebAssembly",
+                $"{entry} is listed as a WASM entry point but no longer uses the BlazorWebAssembly " +
+                "SDK. Re-check whether this fence still points at the right projects.");
+        }
+    }
+
+    [Fact]
+    public void WasmProjectClosure_ContainsOnlyAllowlistedProjects()
+    {
+        var offenders = new List<string>();
+
+        foreach (var entry in WasmEntryPoints)
+        {
+            var root = Path.Combine(ExtensionsRoot, entry, entry + ".csproj");
+            foreach (var reached in TransitiveProjectClosure(root))
+            {
+                if (!AllowedProjectsInWasmClosure.ContainsKey(reached.Name))
+                {
+                    offenders.Add($"{reached.Name} (reached from {entry} via {reached.Via})");
+                }
+            }
+        }
+
+        offenders.ShouldBeEmpty(
+            "The following project(s) are reachable from a Blazor WebAssembly entry point but are " +
+            "NOT on the WASM payload allowlist. Every assembly referenced by a WASM app is " +
+            "downloaded by the browser, so each of these grows first-load time for every user. " +
+            "Either remove the reference, or extract the small piece you actually need into a " +
+            "zero-dependency assembly, or - if the reference is genuinely warranted - add it to " +
+            "AllowedProjectsInWasmClosure WITH a written justification. See #2329.\nOffenders: " +
+            string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void WasmProjectClosure_ContainsOnlyAllowlistedRuntimePackages()
+    {
+        var offenders = new List<string>();
+
+        foreach (var entry in WasmEntryPoints)
+        {
+            var root = Path.Combine(ExtensionsRoot, entry, entry + ".csproj");
+
+            var projects = new List<string> { root };
+            projects.AddRange(TransitiveProjectClosure(root).Select(p => p.Path));
+
+            foreach (var csproj in projects.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var owner = Path.GetFileNameWithoutExtension(csproj);
+                foreach (var package in RuntimeFlowingPackageReferences(File.ReadAllText(csproj)))
+                {
+                    if (!AllowedRuntimePackagesInWasmClosure.ContainsKey(package))
+                    {
+                        offenders.Add($"{package} (runtime asset of {owner}, in the {entry} payload)");
+                    }
+                }
+            }
+        }
+
+        offenders.ShouldBeEmpty(
+            "The following NuGet package(s) flow as RUNTIME assets into a Blazor WebAssembly " +
+            "payload without being on the allowlist. This is exactly how Vogen.SharedTypes.dll " +
+            "reached the browser in PR #2328: a source generator declared as a bare " +
+            "<PackageReference> is NOT compile-time only - it flows transitively like any other " +
+            "reference. If the package is a source generator or analyser, mark it " +
+            "PrivateAssets=\"all\". Otherwise remove it, or add it to " +
+            "AllowedRuntimePackagesInWasmClosure WITH a written justification. See #2329.\nOffenders: " +
+            string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void WasmBuildOutput_ContainsNoNonFrameworkLeakedAssemblies()
+    {
+        var offenders = new List<string>();
+        var scannedAny = false;
+
+        foreach (var entry in WasmEntryPoints)
+        {
+            var binRoot = Path.Combine(ExtensionsRoot, entry, "bin");
+            if (!Directory.Exists(binRoot))
+            {
+                continue;
+            }
+
+            foreach (var dll in Directory.GetFiles(binRoot, "*.dll", SearchOption.AllDirectories))
+            {
+                // Only the flat framework/app output matters; nested publish + staging folders
+                // repeat the same set.
+                scannedAny = true;
+                var name = Path.GetFileNameWithoutExtension(dll);
+                if (IsExpectedWasmOutputAssembly(name))
+                {
+                    continue;
+                }
+
+                var relative = Path.GetRelativePath(RepoRoot, dll);
+                offenders.Add($"{name}.dll ({relative})");
+            }
+        }
+
+        scannedAny.ShouldBeTrue(
+            "No Blazor WebAssembly build output was found to scan. Build the solution " +
+            "(dotnet build BotNexus.slnx) before running this fence - a payload fence that scans " +
+            "nothing guards nothing. See #2329.");
+
+        offenders.Distinct().ShouldBeEmpty(
+            "The following assemblies are present in Blazor WebAssembly build output but are " +
+            "neither .NET framework assemblies nor the BotNexus client assemblies. The browser " +
+            "downloads every one of them. This is the transitive backstop: it catches leaks the " +
+            "static csproj fences cannot see (a package that pulls another package, or an SDK " +
+            "decision to copy an asset). Track each one back to the reference that introduced it " +
+            "and remove or neutralise it. See #2329.\nOffenders: " +
+            string.Join("; ", offenders.Distinct()));
+    }
+
+    // ---- vacuity guards: the fence must be able to fail ----
+
+    [Fact]
+    public void Fence_IsNotVacuous_DetectsBarePackageReferenceAsRuntimeFlowing()
+    {
+        // This is verbatim the shape of BotNexus.Domain.csproj that leaked Vogen.SharedTypes.dll.
+        const string leaky = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Vogen" />
+              </ItemGroup>
+            </Project>
+            """;
+
+        RuntimeFlowingPackageReferences(leaky).ShouldContain("Vogen",
+            "Vacuity guard: a bare <PackageReference> with no PrivateAssets MUST be detected as " +
+            "flowing at runtime. If this fails, the package fence passes vacuously.");
+        AllowedRuntimePackagesInWasmClosure.ShouldNotContainKey("Vogen",
+            "Vacuity guard: Vogen must never be allowlisted as a runtime asset of the WASM payload. " +
+            "Note it IS legitimately a runtime dependency on the SERVER (CitizenId.TryParse catches " +
+            "Vogen.ValueObjectValidationException) - which is precisely why the fix is to keep " +
+            "BotNexus.Domain out of the client closure, not to neutralise the package globally.");
+    }
+
+    [Fact]
+    public void Fence_PositivePin_TreatsPrivateAssetsAllAsNotRuntimeFlowing()
+    {
+        const string attributeForm = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Vogen" PrivateAssets="all" />
+              </ItemGroup>
+            </Project>
+            """;
+        const string elementForm = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Vogen">
+                  <PrivateAssets>all</PrivateAssets>
+                </PackageReference>
+              </ItemGroup>
+            </Project>
+            """;
+        const string excludeRuntimeForm = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Vogen" ExcludeAssets="runtime;native" />
+              </ItemGroup>
+            </Project>
+            """;
+
+        RuntimeFlowingPackageReferences(attributeForm).ShouldBeEmpty(
+            "Positive pin: PrivateAssets=\"all\" as an attribute must neutralise the reference.");
+        RuntimeFlowingPackageReferences(elementForm).ShouldBeEmpty(
+            "Positive pin: <PrivateAssets>all</PrivateAssets> as a child element must neutralise " +
+            "the reference.");
+        RuntimeFlowingPackageReferences(excludeRuntimeForm).ShouldBeEmpty(
+            "Positive pin: ExcludeAssets containing 'runtime' must neutralise the reference.");
+    }
+
+    [Fact]
+    public void Fence_IsNotVacuous_ClassifiesALeakedAssemblyNameAsUnexpected()
+    {
+        IsExpectedWasmOutputAssembly("Vogen.SharedTypes").ShouldBeFalse(
+            "Vacuity guard: the assembly that actually leaked in #2328 must be classified as " +
+            "unexpected output. If this fails, the output fence passes vacuously.");
+        IsExpectedWasmOutputAssembly("BotNexus.Domain").ShouldBeFalse(
+            "Vacuity guard: a server-side BotNexus assembly must be classified as unexpected " +
+            "output - the fence must not blanket-allow everything named BotNexus.*.");
+        IsExpectedWasmOutputAssembly("BotNexus.Gateway").ShouldBeFalse(
+            "Vacuity guard: the gateway host assembly must be classified as unexpected output.");
+
+        IsExpectedWasmOutputAssembly("System.Text.Json").ShouldBeTrue(
+            "Positive pin: framework assemblies must be accepted.");
+        IsExpectedWasmOutputAssembly("Microsoft.AspNetCore.SignalR.Client").ShouldBeTrue(
+            "Positive pin: the allowlisted SignalR client must be accepted.");
+        IsExpectedWasmOutputAssembly("BotNexus.Extensions.Channels.SignalR.BlazorClient.Core").ShouldBeTrue(
+            "Positive pin: the shared client library must be accepted.");
+    }
+
+    [Fact]
+    public void EveryAllowlistEntry_CarriesAWrittenJustification()
+    {
+        foreach (var (project, justification) in AllowedProjectsInWasmClosure)
+        {
+            justification.Length.ShouldBeGreaterThan(
+                30,
+                $"Allowlist entry '{project}' has no meaningful written justification. Every entry " +
+                "in the WASM payload allowlist costs every user download time and must say why it " +
+                "is worth it (#2329 acceptance criterion).");
+        }
+
+        foreach (var (package, justification) in AllowedRuntimePackagesInWasmClosure)
+        {
+            justification.Length.ShouldBeGreaterThan(
+                30,
+                $"Allowlist entry '{package}' has no meaningful written justification (#2329).");
+        }
+    }
+
+    // ---- helpers ----
+
+    /// <summary>
+    /// Walks the transitive <c>ProjectReference</c> closure of <paramref name="rootCsproj"/> from
+    /// the csproj XML (no MSBuild evaluation, no build required). Returns each reached project
+    /// together with the immediate parent that referenced it, so failures can name the path.
+    /// </summary>
+    private static List<(string Name, string Path, string Via)> TransitiveProjectClosure(string rootCsproj)
+    {
+        var results = new List<(string, string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>();
+        queue.Enqueue(Path.GetFullPath(rootCsproj));
+        seen.Add(Path.GetFullPath(rootCsproj));
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            var currentName = Path.GetFileNameWithoutExtension(current);
+            var currentDir = Path.GetDirectoryName(current)!;
+
+            foreach (var include in ProjectReferenceIncludes(File.ReadAllText(current)))
+            {
+                var resolved = Path.GetFullPath(Path.Combine(currentDir, include.Replace('\\', Path.DirectorySeparatorChar)));
+                if (!seen.Add(resolved))
+                {
+                    continue;
+                }
+
+                results.Add((Path.GetFileNameWithoutExtension(resolved), resolved, currentName));
+
+                if (File.Exists(resolved))
+                {
+                    queue.Enqueue(resolved);
+                }
+            }
+        }
+
+        return results.Select(r => (r.Item1, r.Item2, r.Item3)).ToList();
+    }
+
+    private static IEnumerable<string> ProjectReferenceIncludes(string csprojXml)
+    {
+        foreach (Match match in Regex.Matches(
+                     csprojXml,
+                     @"<ProjectReference\b[^>]*\bInclude\s*=\s*""(?<inc>[^""]+)""",
+                     RegexOptions.IgnoreCase))
+        {
+            yield return match.Groups["inc"].Value;
+        }
+    }
+
+    /// <summary>
+    /// Returns the <c>PackageReference</c> names in <paramref name="csprojXml"/> that flow as
+    /// runtime assets - i.e. those NOT neutralised by <c>PrivateAssets="all"</c> (attribute or
+    /// child element) or by an <c>ExcludeAssets</c> that excludes <c>runtime</c> / <c>all</c>.
+    /// </summary>
+    private static IReadOnlyList<string> RuntimeFlowingPackageReferences(string csprojXml)
+    {
+        var flowing = new List<string>();
+
+        // Match either the self-closing form or the element form with children, capturing both the
+        // attributes on the open tag and any child metadata.
+        foreach (Match match in Regex.Matches(
+                     csprojXml,
+                     @"<PackageReference\b(?<attrs>[^>]*?)(?:/>|>(?<body>.*?)</PackageReference\s*>)",
+                     RegexOptions.IgnoreCase | RegexOptions.Singleline))
+        {
+            var attrs = match.Groups["attrs"].Value;
+            var body = match.Groups["body"].Success ? match.Groups["body"].Value : string.Empty;
+
+            var includeMatch = Regex.Match(attrs, @"\bInclude\s*=\s*""(?<inc>[^""]+)""", RegexOptions.IgnoreCase);
+            if (!includeMatch.Success)
+            {
+                continue;
+            }
+
+            var combined = attrs + body;
+
+            if (Regex.IsMatch(combined, @"PrivateAssets\s*(?:=\s*""|>\s*)[^""<]*\ball\b", RegexOptions.IgnoreCase))
+            {
+                continue;
+            }
+
+            if (Regex.IsMatch(combined, @"ExcludeAssets\s*(?:=\s*""|>\s*)[^""<]*\b(runtime|all)\b", RegexOptions.IgnoreCase))
+            {
+                continue;
+            }
+
+            flowing.Add(includeMatch.Groups["inc"].Value);
+        }
+
+        return flowing;
+    }
+
+    private static bool IsExpectedWasmOutputAssembly(string assemblyName)
+    {
+        if (FrameworkAssemblyExactNames.Contains(assemblyName, StringComparer.Ordinal))
+        {
+            return true;
+        }
+
+        if (FrameworkAssemblyPrefixes.Any(p => assemblyName.StartsWith(p, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        // The BotNexus client assemblies themselves - and ONLY those, explicitly enumerated. A
+        // blanket "BotNexus.*" allowance would let the gateway host graph in unnoticed, which is
+        // the exact regression this fence exists to stop.
+        return AllowedProjectsInWasmClosure.ContainsKey(assemblyName);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        {
+            current = current.Parent;
+        }
+
+        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
+        return current!.FullName;
+    }
+}
