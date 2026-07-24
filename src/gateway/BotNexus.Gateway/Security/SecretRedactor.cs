@@ -30,6 +30,8 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
         // AWS access key IDs (AKIA...)
         AwsAccessKeyRegex(),
+        // AWS secret access key VALUES via field name (aws_secret_access_key: "..." / SecretAccessKey=...)
+        AwsSecretAccessKeyRegex(),
 
         // Google API keys (AIza...)
         GoogleApiKeyRegex(),
@@ -188,6 +190,15 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
     [GeneratedRegex(@"AKIA[0-9A-Z]{16}", RegexOptions.Compiled)]
     private static partial Regex AwsAccessKeyRegex();
+
+    // AWS secret access key VALUE, keyed off its field name so only the 40-char secret that
+    // follows an aws_secret_access_key / SecretAccessKey label is redacted. The value shape
+    // alone (40 base64-ish chars) is deliberately NOT matched standalone: too many innocent
+    // 40-char hashes/ids would be false positives (#2286). Group 1 = field name + separator +
+    // optional opening quote (preserved as context in RedactForExternalDelivery-style callers);
+    // the base Redact sweep replaces the whole match with [REDACTED].
+    [GeneratedRegex(@"(?i)(aws[-_]?secret[-_]?access[-_]?key|secretaccesskey)[""']?\s*[:=]\s*[""']?([A-Za-z0-9/+=]{40})", RegexOptions.Compiled)]
+    private static partial Regex AwsSecretAccessKeyRegex();
 
     [GeneratedRegex(@"AIza[0-9A-Za-z\-_]{35}", RegexOptions.Compiled)]
     private static partial Regex GoogleApiKeyRegex();

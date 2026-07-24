@@ -245,4 +245,30 @@ public sealed class SecretRedactorTests
         var secondPass = _sut.Redact(firstPass);
         secondPass.ShouldBe(firstPass);
     }
+    [Theory]
+    // JSON form: aws_secret_access_key: "<40-char value>"
+    [InlineData("{\"aws_secret_access_key\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"}")]
+    // key=value form with the compact SecretAccessKey field name
+    [InlineData("SecretAccessKey=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")]
+    // env-assignment form: AWS_SECRET_ACCESS_KEY=<40-char value>
+    [InlineData("AWS_SECRET_ACCESS_KEY=abcdefghij0123456789ABCDEFGHIJ0123456789")]
+    // hyphenated field name variant
+    [InlineData("aws-secret-access-key: 'abcdefghij0123456789ABCDEFGHIJ0123456789'")]
+    public void Redact_AwsSecretAccessKey_IsRedacted(string input)
+    {
+        var result = _sut.Redact(input);
+        result.ShouldNotContain("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+        result.ShouldNotContain("abcdefghij0123456789ABCDEFGHIJ0123456789");
+        result.ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void Redact_BareFortyCharString_IsNotRedactedAsAwsSecret()
+    {
+        // A 40-char alphanumeric string with no aws-secret field name in front must
+        // survive: the field-name form is the required minimum, and the bare
+        // value-shape pattern was deliberately NOT added (false-positive risk, #2286).
+        const string safe = "commit abcdefghij0123456789ABCDEFGHIJ0123456789 landed";
+        _sut.Redact(safe).ShouldBe(safe);
+    }
 }
