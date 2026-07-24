@@ -655,6 +655,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 DisplayName = subAgent.Name ?? $"Sub-agent {subAgentId[..Math.Min(8, subAgentId.Length)]}",
                 SessionId = childSessionId,
                 SessionType = "agent-subagent",
+                // #2248: fix the IMMUTABLE observer classification at creation. This is the ONLY
+                // path that mints a read-only sub-agent virtual entry, so it is the one place that
+                // sets IsObserverAgent=true. Real user agents (SeedAgents / PortalLoadService) leave
+                // it false and can never be poisoned into read-only by a session-type event.
+                IsObserverAgent = true,
                 IsConnected = true
             });
             _store.RegisterSession(subAgentId, childSessionId);

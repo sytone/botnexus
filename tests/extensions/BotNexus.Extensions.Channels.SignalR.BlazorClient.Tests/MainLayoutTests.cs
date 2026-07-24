@@ -325,10 +325,20 @@ public sealed class MainLayoutTests : IDisposable
     [Fact]
     public void Read_only_agent_hides_new_conversation_button()
     {
-        _store.SeedAgents([new AgentSummary("sub-1", "Subagent")]);
+        // A genuine sub-agent observer entry (IMMUTABLE IsObserverAgent kind) can only become the
+        // active view via the explicit SubAgentView source (the store's anti-hijack guard rejects
+        // every other source onto a read-only agent). #2248: read-only is keyed on the immutable
+        // kind, never the mutable SessionType.
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Subagent",
+            SessionType = "agent-subagent",
+            IsObserverAgent = true,
+            IsConnected = true
+        });
         _store.SeedConversations("sub-1", []);
-        _store.SelectView("sub-1", string.Empty, SelectionSource.UserClick);
-        _store.GetAgent("sub-1")!.SessionType = "agent-subagent";
+        _store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
 
         var cut = RenderLayout();
 
@@ -560,13 +570,14 @@ public sealed class MainLayoutTests : IDisposable
     [Fact]
     public void Sub_agents_in_store_are_not_shown_in_top_level_agent_dropdown()
     {
-        // A real agent and a sub-agent (IsReadOnly via SessionType=agent-subagent) are both in the store
+        // A real agent and a sub-agent (read-only via the IMMUTABLE IsObserverAgent kind) are both in the store
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.UpsertAgent(new AgentState
         {
             AgentId = "sub-xyz",
             DisplayName = "SubTask",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
 
@@ -586,12 +597,45 @@ public sealed class MainLayoutTests : IDisposable
             AgentId = "sub-xyz",
             DisplayName = "SubTask",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
 
         var cut = RenderLayout();
 
         Assert.Empty(cut.FindAll(".agent-dropdown-select"));
+    }
+
+    [Fact]
+    public async Task SubAgentSpawned_style_session_poisoning_keeps_user_agent_in_roster_and_selection_unchanged()
+    {
+        // #2248 regression: a real user-agent conversation is active. An inbound sub-agent session
+        // event (RegisterSession agent-subagent, exactly what HandleSubAgentSpawned drives) lands and
+        // stamps the user agent's mutable SessionType. The user agent must STAY in the dropdown
+        // roster and the active-view selection must NOT revert.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.SelectView("a-1", "c-1", SelectionSource.UserClick);
+
+        var cut = RenderLayout();
+        var agentBefore = _store.ActiveAgentId;
+        var convBefore = _store.ActiveConversationId;
+
+        // Simulate the inbound SubAgentSpawned data churn: poison the user agent's SessionType.
+        await cut.InvokeAsync(() =>
+        {
+            _store.RegisterSession("a-1", "sess-poison", sessionType: "agent-subagent");
+            _store.NotifyChanged();
+        });
+
+        var options = cut.FindAll(".agent-dropdown-select option");
+        Assert.Contains(options, o => o.GetAttribute("value") == "a-1");
+        _store.ActiveAgentId.ShouldBe(agentBefore,
+            customMessage: "An inbound sub-agent session event must not revert the active agent (#2248).");
+        _store.ActiveConversationId.ShouldBe(convBefore,
+            customMessage: "An inbound sub-agent session event must not revert the active conversation (#2248).");
     }
 
     [Fact]

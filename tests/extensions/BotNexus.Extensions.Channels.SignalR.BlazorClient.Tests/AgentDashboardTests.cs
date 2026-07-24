@@ -163,7 +163,7 @@ public sealed class AgentDashboardTests : IDisposable
         var agents = new Dictionary<string, AgentState>
         {
             ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha" },
-            ["sub"] = new() { AgentId = "sub", DisplayName = "SubAgent", SessionType = "agent-subagent" }
+            ["sub"] = new() { AgentId = "sub", DisplayName = "SubAgent", SessionType = "agent-subagent", IsObserverAgent = true }
         };
         _store.Agents.Returns(agents.AsReadOnly());
 

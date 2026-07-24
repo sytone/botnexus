@@ -59,6 +59,9 @@ public sealed class ClientStateStore : IClientStateStore
         _selection.AgentId is { Length: > 0 } id ? id : null;
 
     /// <inheritdoc />
+    public SelectionSource ActiveSelectionSource => _selection.Source;
+
+    /// <inheritdoc />
     public bool PendingSelectionInvalid => _pendingSelectionInvalid;
 
     /// <inheritdoc />
@@ -80,13 +83,16 @@ public sealed class ClientStateStore : IClientStateStore
         agentId ??= string.Empty;
         conversationId ??= string.Empty;
 
-        // #2243/#2246 fold: a single, source-keyed anti-hijack guard. Reject the selection when it
-        // targets a sub-agent view UNLESS the caller explicitly asked for it via
+        // #2243/#2246/#2248 fold: a single, source-keyed anti-hijack guard. Reject the selection when
+        // it targets a sub-agent view UNLESS the caller explicitly asked for it via
         // SelectionSource.SubAgentView. "Targets a sub-agent" is true when EITHER the id was marked
         // at spawn time (_knownSubAgentIds, folded from #2254 — covers the race where no AgentState
-        // exists yet or its SessionType is not yet stamped read-only) OR the agent's derived
-        // IsReadOnly is already true. Keying on intent source (the point of #2246) plus the spawn
-        // marker (the point of #2254) makes the guard independent of SessionType-stamp ordering.
+        // exists yet) OR the agent's IMMUTABLE IsReadOnly (IsObserverAgent) is already true. #2248
+        // makes IsReadOnly key on the immutable observer classification rather than the mutable
+        // SessionType, so a RegisterSession(agent-subagent) that poisons a REAL user agent's
+        // SessionType can NEVER cause a UserClick onto that user agent to be rejected here. Keying on
+        // intent source (#2246) + the spawn marker (#2254) + immutable kind (#2248) makes the guard
+        // independent of any SessionType-stamp ordering or poisoning.
         if (source != SelectionSource.SubAgentView
             && agentId.Length > 0
             && (_knownSubAgentIds.Contains(agentId)
