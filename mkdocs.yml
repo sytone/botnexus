@@ -109,6 +109,10 @@ nav:
       - API Reference: api-reference.md
       - WebSocket Protocol: websocket-protocol.md
   - Architecture:
+      - arc42 Overview: architecture/README.md
+      - ADRs: architecture/adr/README.md
+      - ADR-0000 Record Decisions: architecture/adr/0000-record-architecture-decisions.md
+      - ADR Template: architecture/adr/adr-template.md
       - Overview: architecture/overview.md
       - Domain Model: architecture/domain-model.md
       - Extension Guide: architecture/extension-guide.md
