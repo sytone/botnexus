@@ -166,8 +166,18 @@ public sealed class CreateAgentTool(
         if (capabilityErrors.Count > 0)
             return Error(string.Join(" ", capabilityErrors));
 
+        // #2065: persist the candidate config BEFORE mutating the runtime registry so a disk
+        // failure cannot leave runtime state inconsistent with config.json. The descriptor was
+        // fully validated above, so a blank/incomplete descriptor never reaches persistence.
+        try
+        {
+            await configurationWriter.SaveAsync(descriptor, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return Error($"Failed to persist agent configuration; agent was not created: {ex.Message}");
+        }
         agentRegistry.Register(descriptor);
-        await configurationWriter.SaveAsync(descriptor, cancellationToken).ConfigureAwait(false);
         botNexusHome.GetAgentDirectory(id);
 
         foreach (var notifier in changeNotifiers)

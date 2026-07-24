@@ -651,6 +651,41 @@ public sealed class AgentManagementToolTests
         registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
     }
 
+    // --- #2065: persist-before-registry failure atomicity ---
+    [Fact]
+    public async Task CreateAgent_WhenPersistFails_DoesNotRegisterOrScaffold()
+    {
+        var (registry, writer, home, notifier) = MakeDeps();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk full"));
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home);
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "atomic-agent"),
+            ("displayName", "Atomic"),
+            ("modelId", "m"),
+            ("apiProvider", "p")));
+        result.Content[0].Value.ShouldContain("error");
+        // The registry must never have been mutated because persistence failed first.
+        registry.Verify(r => r.Register(It.IsAny<AgentDescriptor>()), Times.Never);
+        notifier.Verify(n => n.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAgent_WhenPersistFails_DoesNotUpdateRegistry()
+    {
+        var existing = MakeDescriptor("atomic-update", "Original");
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "atomic-update", existingDescriptor: existing);
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk full"));
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object]);
+        var result = await tool.ExecuteAsync("t1", Args(
+            ("id", "atomic-update"),
+            ("displayName", "New Name")));
+        result.Content[0].Value.ShouldContain("error");
+        registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
+        notifier.Verify(n => n.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private sealed class FakeProvider(string api) : IApiProvider
     {
         public string Api => api;
