@@ -41,7 +41,7 @@ interactions, executes tools, and manages persistent sessions across multiple ch
 
 - **.NET 10 / C#** with central package management (`Directory.Packages.props`) and
   shared build properties (`Directory.Build.props`). See the repo root
-  [`AGENTS.md`](../../AGENTS.md) for the authoritative conventions.
+  [`AGENTS.md`](https://github.com/sytone/botnexus/blob/main/AGENTS.md) for the authoritative conventions.
 - **Cross-platform**: all paths via `Path.Combine()` / `IFileSystem`; CI runs on
   Windows and Linux.
 - **Warnings-as-errors** is the target quality bar; tests are mandatory (TDD).
@@ -99,7 +99,7 @@ the repository layout).
 
 ### `src/domain/`
 - **BotNexus.Domain** — platform vocabulary. Primitives, value objects, smart enums,
-  domain models. Zero dependencies. See [`src/domain/AGENTS.md`](../../src/domain/AGENTS.md).
+  domain models. Zero dependencies. See [`src/domain/AGENTS.md`](https://github.com/sytone/botnexus/blob/main/src/domain/AGENTS.md).
 
 ### `src/agent/`
 - **BotNexus.Agent.Core** — agent loop runner, tool execution, hooks.
@@ -127,7 +127,7 @@ The platform composition root and host. Notable projects include:
 Dynamically loaded capabilities, including channels and tools:
 - **Channels**: `BotNexus.Extensions.Channels.{SignalR, SignalR.BlazorClient(.Core/.Mobile), Telegram, Tui, ServiceBus, Agent365}`.
 - **Tools/capabilities**: `BotNexus.Extensions.{ExecTool, ProcessTool, WebTools, Mcp, McpInvoke, Skills, Qmd, DataStore, DebugTool, AudioTranscription}`.
-See [`src/extensions/AGENTS.md`](../../src/extensions/AGENTS.md).
+See [`src/extensions/AGENTS.md`](https://github.com/sytone/botnexus/blob/main/src/extensions/AGENTS.md).
 
 ### `src/persistence/`
 - **BotNexus.Persistence.Sqlite** — SQLite-backed persistence.
