@@ -465,7 +465,9 @@ public sealed class FileSessionStore : SessionStoreBase
             cancellationToken.ThrowIfCancellationRequested();
 
             var agentId = group.Key;
-            var legacy = await _legacyResolver.ResolveAsync(agentId, cancellationToken).ConfigureAwait(false);
+            var legacy = await _legacyResolver
+                .ResolveAsync(agentId, LegacyResolveReason.StartupMigration, cancellationToken)
+                .ConfigureAwait(false);
 
             // Bind first: pick the most-recently-updated Active orphan. Sealed/Suspended/
             // Expired orphans are not bound — they're history, not live work. The bind is
@@ -702,7 +704,9 @@ public sealed class FileSessionStore : SessionStoreBase
                     "unrecoverable orphan. Inspect the sidecar manually or delete it.");
             }
 
-            var legacy = await _legacyResolver.ResolveAsync(meta.AgentId.Value, cancellationToken).ConfigureAwait(false);
+            var legacy = await _legacyResolver
+                .ResolveAsync(meta.AgentId.Value, LegacyResolveReason.LoadTimeBackfill, cancellationToken)
+                .ConfigureAwait(false);
             session.ConversationId = legacy.ConversationId;
 
             if (session.Status == SessionStatus.Active)
@@ -736,7 +740,9 @@ public sealed class FileSessionStore : SessionStoreBase
         if (session.ConversationId.IsInitialized())
             return;
 
-        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+        var legacy = await _legacyResolver
+            .ResolveAsync(session.AgentId, LegacyResolveReason.SaveTimeStamp, cancellationToken)
+            .ConfigureAwait(false);
         session.ConversationId = legacy.ConversationId;
 
         // If this is the current active session, also bind it as the conversation's

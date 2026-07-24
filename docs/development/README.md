@@ -19,6 +19,7 @@ This directory contains detailed documentation for developers working on or exte
 - **[message-flow.md](message-flow.md)** — Channel dispatch, routing, session lifecycle
 - **[prompt-pipeline.md](prompt-pipeline.md)** — System prompt construction and caching
 - **[session-stores.md](session-stores.md)** — Session persistence implementations
+- **[compat-shim-lifecycle.md](compat-shim-lifecycle.md)** — Migrate forward, then delete: convention for schema/model compatibility shims
 - **[gateway-crash-diagnostics.md](gateway-crash-diagnostics.md)** — Minidump-on-crash, last-chance fault breadcrumb, and unclean-shutdown detection
 - **[triggers-and-federation.md](triggers-and-federation.md)** — Cron, soul, and cross-world agent communication
 - **[webui-connection.md](webui-connection.md)** — SignalR hub, subscribe-all model, multi-session UI

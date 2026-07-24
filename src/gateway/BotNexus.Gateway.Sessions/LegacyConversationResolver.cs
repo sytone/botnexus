@@ -53,8 +53,23 @@ public sealed class LegacyConversationResolver
     /// <see cref="Conversation.IsDefault"/> set to <c>false</c> so it does not
     /// shadow the agent's real default conversation.
     /// </summary>
-    public async Task<Conversation> ResolveAsync(AgentId agentId, CancellationToken cancellationToken = default)
+    /// <param name="agentId">The agent whose legacy conversation is required.</param>
+    /// <param name="reason">
+    /// #2311 audit gate: identifies the call path so live activations can be attributed.
+    /// Defaults to <see cref="LegacyResolveReason.Unspecified"/> so the total is never
+    /// under-reported by a caller that has not yet been attributed.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<Conversation> ResolveAsync(
+        AgentId agentId,
+        LegacyResolveReason reason = LegacyResolveReason.Unspecified,
+        CancellationToken cancellationToken = default)
     {
+        // #2311: count every activation up front so a resolve that later throws still
+        // appears in the audit snapshot. The shim may only be deleted once this counter
+        // stays at zero across a real environment.
+        LegacyConversationTelemetry.RecordResolve(reason);
+
         var legacyTitle = LegacyTitleFor(agentId);
 
         // Fast path: no lock needed if the conversation already exists.
@@ -81,10 +96,16 @@ public sealed class LegacyConversationResolver
                 title: legacyTitle,
                 initiator: CitizenId.Of(agentId));
             var created = await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
-            _logger?.LogInformation(
-                "Created legacy conversation {ConversationId} for agent {AgentId} to backfill orphan sessions.",
+            LegacyConversationTelemetry.RecordCreate();
+            // #2311: escalated from Information to Warning. A brand-new legacy
+            // conversation minted months after the #615 migration closed means
+            // unmigrated data is still arriving and the shim is genuinely load-bearing.
+            _logger?.LogWarning(
+                "Created legacy conversation {ConversationId} for agent {AgentId} to backfill orphan sessions (reason {Reason}). " +
+                "This indicates the #615 forward migration is not complete - see #2311.",
                 created.ConversationId,
-                agentId);
+                agentId,
+                reason);
             return created;
         }
         finally
@@ -157,6 +178,7 @@ public sealed class LegacyConversationResolver
             fresh.ActiveSessionId = sessionId;
             fresh.UpdatedAt = DateTimeOffset.UtcNow;
             await _conversationStore.SaveAsync(fresh, cancellationToken).ConfigureAwait(false);
+            LegacyConversationTelemetry.RecordBind();
 
             // Mirror the bound pointer back to the caller's reference for consistency.
             conversation.ActiveSessionId = sessionId;

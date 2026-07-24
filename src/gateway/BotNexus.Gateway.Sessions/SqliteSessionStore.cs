@@ -882,7 +882,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         foreach (var agentIdValue in agents)
         {
             var agentId = AgentId.From(agentIdValue);
-            var conversation = await resolver.ResolveAsync(agentId, cancellationToken).ConfigureAwait(false);
+            var conversation = await resolver
+                .ResolveAsync(agentId, LegacyResolveReason.StartupMigration, cancellationToken)
+                .ConfigureAwait(false);
             var convIdValue = conversation.ConversationId.Value;
 
             // Find the most recently updated orphaned session for this agent.
@@ -1113,7 +1115,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (_legacyResolver is null)
             return;
 
-        var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+        var legacy = await _legacyResolver
+            .ResolveAsync(session.AgentId, LegacyResolveReason.SaveTimeStamp, cancellationToken)
+            .ConfigureAwait(false);
         session.ConversationId = legacy.ConversationId;
 
         // If this is the current active session, also bind it as the conversation's
