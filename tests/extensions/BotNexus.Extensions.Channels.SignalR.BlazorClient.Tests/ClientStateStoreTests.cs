@@ -598,6 +598,48 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
+    public void Route_owned_selection_survives_a_storm_of_inbound_events_without_a_navigation_call()
+    {
+        // #2247 seam test: once the view is route-owned via SelectView(RouteNavigation), a burst of
+        // inbound events (new sub-agent, session churn, message append, streaming, notify) must not
+        // move the active agent/conversation. Only a subsequent SelectView call (a navigation) can -
+        // proving an inbound event cannot change the URL-backed selection on its own.
+        var store = CreateSeededStore();
+        store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "One")]);
+        store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
+
+        var agentBefore = store.ActiveAgentId;
+        var convBefore = store.ActiveConversationId;
+
+        // A storm of purely inbound, data-only churn - none of it a navigation call.
+        store.MarkSubAgent("sub-9");
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-9",
+            DisplayName = "Sub 9",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+        store.RegisterSession("sub-9", "sub-9");
+        store.SelectView("sub-9", string.Empty, SelectionSource.RouteNavigation); // rejected: read-only target
+        store.AppendMessage("c-1", new ChatMessage("assistant", "hi", DateTimeOffset.UtcNow));
+        store.SetStreaming("c-1", true);
+        store.AppendStreamBuffer("c-1", "streamed token");
+        store.NotifyChanged();
+
+        store.ActiveAgentId.ShouldBe(agentBefore,
+            customMessage: "Inbound event storm must not change the route-owned active agent.");
+        store.ActiveConversationId.ShouldBe(convBefore,
+            customMessage: "Inbound event storm must not change the route-owned active conversation.");
+
+        // A real navigation (SelectView) is the only thing that can move it.
+        store.SeedConversations("a-2", [CreateConversation("c-2", "a-2", "Two")]);
+        store.SelectView("a-2", "c-2", SelectionSource.RouteNavigation);
+        store.ActiveAgentId.ShouldBe("a-2");
+        store.ActiveConversationId.ShouldBe("c-2");
+    }
+
+    [Fact]
     public void RemoveAgent_of_active_agent_flags_pending_selection_invalid_without_auto_selecting()
     {
         // #2246: RemoveAgent is a data mutation. Removing the active agent must NOT auto-pick a

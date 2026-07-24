@@ -491,11 +491,13 @@
                 : "";
         }
 
-        // The Chat section covers the /chat and /chat/{agent}/{conversation} routes.
+        // The Chat section covers the legacy /chat[/...] routes and the canonical route-owned
+        // /agent/{agent}/conversation/{conversation} shape (#2247).
         if (string.Equals(page, "chat", StringComparison.OrdinalIgnoreCase))
         {
             return uri.Equals("chat", StringComparison.OrdinalIgnoreCase) ||
-                uri.StartsWith("chat/", StringComparison.OrdinalIgnoreCase)
+                uri.StartsWith("chat/", StringComparison.OrdinalIgnoreCase) ||
+                uri.StartsWith("agent/", StringComparison.OrdinalIgnoreCase)
                 ? "active"
                 : "";
         }
@@ -611,7 +613,7 @@
     {
         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
             <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
-               href="chat/@Uri.EscapeDataString(agent.AgentId)/@Uri.EscapeDataString(conversation.ConversationId)"
+               href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
                @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
                @onclick:preventDefault="true">
                 <span class="conversation-list-item-main">
@@ -705,12 +707,15 @@
             _sidebarOpen = false;
     }
 
+    // #2247: the canonical, route-owned shape for the active view is
+    // /agent/{agentId}/conversation/{conversationId}. Every user-driven selection navigates here so
+    // the URL is the single source of truth - deep-link, refresh, and back/forward all restore it.
     private void NavigateToChat(string agentId, string? conversationId = null)
     {
         var encodedAgentId = Uri.EscapeDataString(agentId);
         var relPath = string.IsNullOrWhiteSpace(conversationId)
-            ? $"chat/{encodedAgentId}"
-            : $"chat/{encodedAgentId}/{Uri.EscapeDataString(conversationId)}";
+            ? $"agent/{encodedAgentId}"
+            : $"agent/{encodedAgentId}/conversation/{Uri.EscapeDataString(conversationId)}";
 
         // On mobile, navigate to the mobile app path (/mobile/chat/...).
         // The desktop and mobile portals are separate apps served at "/" and "/mobile/".

@@ -39,6 +39,14 @@ public interface IAgentInteractionService
     Task SetConversationPinnedAsync(string agentId, string conversationId, bool pinned);
     Task RefreshAgentsAsync();
     Task RefreshConversationsAsync(string agentId);
+    /// <summary>
+    /// Opens a read-only sub-agent session as an explicit, NON-navigational overlay (#2247). This
+    /// intentionally does not change the browser URL: the active view is otherwise route-owned, so
+    /// leaving the URL on the user's own agent+conversation means a refresh or back/forward restores
+    /// the user's route rather than the transient sub-agent transcript. Promotes the read-only
+    /// session via <see cref="SelectionSource.SubAgentView"/>, the only source the store's anti-hijack
+    /// guard permits onto a read-only agent.
+    /// </summary>
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
     Task RespondToAskUserAsync(string conversationId, string requestId, string? freeFormText, string[]? selectedValues, bool cancelled);
     void ClearLocalMessages(string agentId);

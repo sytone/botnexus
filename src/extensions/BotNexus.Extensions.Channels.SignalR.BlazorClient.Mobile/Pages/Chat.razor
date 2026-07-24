@@ -1,4 +1,10 @@
+@* #2247: mobile mirrors the desktop route-owned view. /agent/{AgentId}/conversation/{ConversationId}
+   is the canonical shape (default conversation resolves when omitted); the legacy /chat/... routes
+   stay registered so existing deep-links and history entries restore on refresh/back. Both shapes
+   run through ApplyRouteSelectionAsync -> SelectView(..., SelectionSource.RouteNavigation). *@
 @page "/"
+@page "/agent/{AgentId}"
+@page "/agent/{AgentId}/conversation/{ConversationId}"
 @page "/chat/{AgentId}"
 @page "/chat/{AgentId}/{ConversationId}"
 @inject IClientStateStore Store
@@ -596,11 +602,11 @@ else
         if (firstConv is not null)
         {
             await Interaction.SelectConversationAsync(agentId, firstConv.ConversationId);
-            Nav.NavigateTo($"chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(firstConv.ConversationId)}");
+            Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(firstConv.ConversationId)}");
         }
         else
         {
-            Nav.NavigateTo($"chat/{Uri.EscapeDataString(agentId)}");
+            Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}");
         }
     }
 
@@ -609,7 +615,7 @@ else
         var convId = e.Value?.ToString();
         if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
         await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
-        Nav.NavigateTo($"chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(Store.ActiveAgentId)}/conversation/{Uri.EscapeDataString(convId)}");
         // Scroll to the bottom so the selected conversation's latest message is visible.
         await ForceScrollToBottomAsync();
     }
@@ -822,7 +828,7 @@ else
         var convId = await Interaction.CreateConversationAsync(Store.ActiveAgentId);
         if (convId is not null)
         {
-            Nav.NavigateTo($"chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
+            Nav.NavigateTo($"agent/{Uri.EscapeDataString(Store.ActiveAgentId)}/conversation/{Uri.EscapeDataString(convId)}");
             await ForceScrollToBottomAsync();
         }
     }

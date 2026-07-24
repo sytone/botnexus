@@ -660,6 +660,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
             _store.RegisterSession(subAgentId, childSessionId);
         }
 
+        // #2247 decision: viewing a sub-agent is an EXPLICIT NON-NAVIGATIONAL OVERLAY, not a route
+        // segment. It deliberately does NOT call NavigationManager, so it never rewrites the URL and
+        // therefore never clobbers the user's underlying route-owned selection: a refresh or back/
+        // forward returns to the user's own agent+conversation, not the read-only sub-agent transcript.
+        // Because the browser URL stays put, the sub-agent view is a transient inspection layer that
+        // survives only until the next real navigation - exactly the "must not clobber the underlying
+        // user route silently" requirement. Route ownership stays with the user's conversation; the
+        // SubAgentView source is the one seam the store lets promote a read-only session to the active
+        // view (see #2243/#2246), and it is scoped to this single SelectView call.
         // #2243: this is the sole user-initiated path allowed to promote a read-only sub-agent
         // session to the active view. Pass SelectionSource.SubAgentView, the one source the store's
         // anti-hijack guard lets through onto a read-only agent.
