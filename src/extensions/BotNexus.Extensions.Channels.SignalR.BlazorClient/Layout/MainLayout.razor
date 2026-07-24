@@ -11,6 +11,7 @@
 @inject IJSRuntime JS
 @inject IPortalPreferencesService Prefs
 @inject CronApiClient CronApi
+@inject SectionsApiClient SectionsApi
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -214,6 +215,15 @@
                     }
                 }
 
+                @if (Store.ActiveAgentId is not null &&
+                     Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
+                     !sectionsAgent.IsReadOnly)
+                {
+                    <ConversationSectionsPanel @ref="_sectionsPanel"
+                                               AgentId="@sectionsAgent.AgentId"
+                                               TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
+                                               OnChanged="HandleSectionsChanged" />
+                }
                 </div>@* end sidebar-scroll-region *@
 
                 <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
@@ -320,6 +330,8 @@
 }
 
 @code {
+    private ConversationSectionsPanel? _sectionsPanel;
+
     private bool _cronGroupCollapsed = true;
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
@@ -842,6 +854,17 @@
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
         catch { _cronConversationIds = new(StringComparer.OrdinalIgnoreCase); }
+    }
+
+    private static string? ResolveConversationTitle(AgentState agent, string conversationId)
+        => agent.Conversations.TryGetValue(conversationId, out var conv) ? conv.Title : conversationId;
+
+    // Sections changed (create/rename/reorder/delete/assign/remove): re-render so the sidebar reflects
+    // the new custom grouping. The panel owns its own server-persisted state; the layout just repaints.
+    private Task HandleSectionsChanged()
+    {
+        StateHasChanged();
+        return Task.CompletedTask;
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

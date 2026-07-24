@@ -21,6 +21,7 @@ public sealed class CronJobsPageTests : IDisposable
         var httpClient = new HttpClient(_handler) { BaseAddress = new Uri("http://localhost/") };
         _ctx.Services.AddSingleton(httpClient);
         _ctx.Services.AddScoped<CronApiClient>();
+        _ctx.Services.AddScoped<SectionsApiClient>();
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

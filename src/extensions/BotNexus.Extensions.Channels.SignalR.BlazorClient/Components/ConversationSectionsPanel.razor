@@ -1,0 +1,227 @@
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject SectionsApiClient SectionsApi
+@inject IJSRuntime JS
+
+@* User-defined conversation sections (issue #2124): create / rename / reorder / collapse / delete
+   custom sidebar sections and assign conversations into them. All state persists server-side per
+   agent via SectionsApiClient - never in browser local storage. *@
+<div class="conversation-sections" data-testid="conversation-sections">
+    <div class="conversation-sections-header">
+        <span class="conversation-sections-title">My sections</span>
+        <button class="section-add-btn" data-testid="section-add-btn"
+                title="Create a custom section" @onclick="StartCreate">+ Section</button>
+    </div>
+
+    @if (_creating)
+    {
+        <div class="section-create-row" data-testid="section-create-row">
+            <input class="section-name-input" data-testid="section-create-input"
+                   placeholder="Section name" @bind="_draftName" @bind:event="oninput" />
+            <button class="section-save-btn" data-testid="section-create-save" @onclick="ConfirmCreateAsync">Save</button>
+            <button class="section-cancel-btn" data-testid="section-create-cancel" @onclick="CancelCreate">Cancel</button>
+        </div>
+    }
+
+    @foreach (var (section, index) in _sections.Select((s, i) => (s, i)))
+    {
+        <div class="conversation-section" data-testid="conversation-section" data-section-id="@section.SectionId">
+            <div class="conversation-section-header">
+                <button class="section-collapse-toggle" data-testid="section-collapse-toggle"
+                        title="@(section.IsCollapsed ? "Expand" : "Collapse")"
+                        @onclick="() => ToggleCollapseAsync(section)">
+                    <span class="group-chevron @(section.IsCollapsed ? "" : "expanded")">&#x25B6;</span>
+                </button>
+
+                @if (_editingId == section.SectionId)
+                {
+                    <input class="section-name-input" data-testid="section-rename-input"
+                           @bind="_draftName" @bind:event="oninput" />
+                    <button class="section-save-btn" data-testid="section-rename-save" @onclick="() => ConfirmRenameAsync(section)">Save</button>
+                    <button class="section-cancel-btn" data-testid="section-rename-cancel" @onclick="CancelRename">Cancel</button>
+                }
+                else
+                {
+                    <span class="conversation-section-name" data-testid="section-name">@section.Name</span>
+                    <div class="conversation-section-actions">
+                        <button class="section-move-up-btn" data-testid="section-move-up"
+                                disabled="@(index == 0)"
+                                title="Move up" @onclick="() => MoveAsync(index, index - 1)">&#x25B2;</button>
+                        <button class="section-move-down-btn" data-testid="section-move-down"
+                                disabled="@(index == _sections.Count - 1)"
+                                title="Move down" @onclick="() => MoveAsync(index, index + 1)">&#x25BC;</button>
+                        <button class="section-rename-btn" data-testid="section-rename-btn"
+                                title="Rename" @onclick="() => StartRename(section)">&#x270E;</button>
+                        <button class="section-delete-btn" data-testid="section-delete-btn"
+                                title="Delete section (conversations return to their default section)"
+                                @onclick="() => DeleteAsync(section)">&#x1F5D1;</button>
+                    </div>
+                }
+            </div>
+
+            @if (!section.IsCollapsed)
+            {
+                <div class="conversation-section-body" data-testid="conversation-section-body">
+                    @{
+                        var members = ConversationsFor(section.SectionId);
+                    }
+                    @if (members.Count == 0)
+                    {
+                        <div class="conversation-section-empty" data-testid="conversation-section-empty">No conversations. Assign from a conversation's menu.</div>
+                    }
+                    else
+                    {
+                        @foreach (var conversationId in members)
+                        {
+                            @SectionItem(section, conversationId)
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The agent whose sidebar sections are shown and managed.</summary>
+    [Parameter, EditorRequired] public string AgentId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Resolves a conversation id to its display title so section members render with a label. When
+    /// null or when a title is unknown, the conversation id is shown.
+    /// </summary>
+    [Parameter] public Func<string, string?>? TitleResolver { get; set; }
+
+    /// <summary>Raised after any change so the parent can re-render (e.g. to hide reassigned conversations from system groups).</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private List<SectionDto> _sections = [];
+    private Dictionary<string, string> _assignments = new(StringComparer.Ordinal);
+
+    private bool _creating;
+    private string? _editingId;
+    private string _draftName = string.Empty;
+    private string _lastLoadedAgent = string.Empty;
+
+    /// <summary>Read-only view of the loaded sections (test/consumer hook).</summary>
+    public IReadOnlyList<SectionDto> Sections => _sections;
+
+    /// <summary>Conversation-id to section-id assignment map (test/consumer hook).</summary>
+    public IReadOnlyDictionary<string, string> Assignments => _assignments;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.Equals(_lastLoadedAgent, AgentId, StringComparison.Ordinal) && !string.IsNullOrEmpty(AgentId))
+        {
+            _lastLoadedAgent = AgentId;
+            await ReloadAsync();
+        }
+    }
+
+    /// <summary>Reloads sections and assignments from the server.</summary>
+    public async Task ReloadAsync()
+    {
+        var dto = await SectionsApi.ListAsync(AgentId);
+        _sections = dto.Sections.OrderBy(s => s.Order).ToList();
+        _assignments = new Dictionary<string, string>(dto.Assignments, StringComparer.Ordinal);
+        StateHasChanged();
+    }
+
+    private IReadOnlyList<string> ConversationsFor(string sectionId) =>
+        _assignments.Where(a => string.Equals(a.Value, sectionId, StringComparison.Ordinal))
+            .Select(a => a.Key)
+            .ToList();
+
+    private void StartCreate()
+    {
+        _creating = true;
+        _draftName = string.Empty;
+    }
+
+    private void CancelCreate() => _creating = false;
+
+    private async Task ConfirmCreateAsync()
+    {
+        var name = _draftName?.Trim();
+        if (string.IsNullOrEmpty(name))
+            return;
+        var created = await SectionsApi.CreateAsync(AgentId, name);
+        _creating = false;
+        if (created is not null)
+        {
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private void StartRename(SectionDto section)
+    {
+        _editingId = section.SectionId;
+        _draftName = section.Name;
+    }
+
+    private void CancelRename() => _editingId = null;
+
+    private async Task ConfirmRenameAsync(SectionDto section)
+    {
+        var name = _draftName?.Trim();
+        _editingId = null;
+        if (string.IsNullOrEmpty(name) || string.Equals(name, section.Name, StringComparison.Ordinal))
+            return;
+        if (await SectionsApi.UpdateAsync(AgentId, section.SectionId, name, isCollapsed: null))
+        {
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private async Task ToggleCollapseAsync(SectionDto section)
+    {
+        // Optimistic local flip so the chevron responds immediately; server persists the preference.
+        section.IsCollapsed = !section.IsCollapsed;
+        StateHasChanged();
+        await SectionsApi.UpdateAsync(AgentId, section.SectionId, name: null, isCollapsed: section.IsCollapsed);
+    }
+
+    private async Task MoveAsync(int from, int to)
+    {
+        if (to < 0 || to >= _sections.Count || from == to)
+            return;
+        var item = _sections[from];
+        _sections.RemoveAt(from);
+        _sections.Insert(to, item);
+        StateHasChanged();
+        await SectionsApi.ReorderAsync(AgentId, _sections.Select(s => s.SectionId).ToList());
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task DeleteAsync(SectionDto section)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"Delete section '{section.Name}'? Its conversations return to their default section.");
+        if (!confirmed)
+            return;
+        if (await SectionsApi.DeleteAsync(AgentId, section.SectionId))
+        {
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private async Task RemoveConversationAsync(string conversationId)
+    {
+        if (await SectionsApi.UnassignAsync(AgentId, conversationId))
+        {
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private RenderFragment SectionItem(SectionDto section, string conversationId) => __builder =>
+    {
+        <div class="conversation-section-item" data-testid="section-conversation-item" data-conversation-id="@conversationId">
+            <span class="conversation-section-item-title">@(TitleResolver?.Invoke(conversationId) ?? conversationId)</span>
+            <button class="section-remove-conversation-btn" data-testid="section-remove-conversation"
+                    title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)">&#x2715;</button>
+        </div>
+    };
+}
