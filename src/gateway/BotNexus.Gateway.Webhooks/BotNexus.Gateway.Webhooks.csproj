@@ -18,13 +18,19 @@
     <Compile Include="WebhookCallbackValidator.cs" />
     <Compile Include="WebhookRunRetentionHostedService.cs" />
     <Compile Include="WebhookRunRetentionOptions.cs" />
+    <Compile Include="WebhookConversationProvenance.cs" />
+    <Compile Include="WebhookConversationRetentionOptions.cs" />
+    <Compile Include="WebhookConversationRetentionHostedService.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />

@@ -215,7 +215,7 @@ builder.Services.Configure<CronOptions>(options =>
 // when the config directory is mounted read-only; falls back to the config directory locally.
 var webhookDataDir = BotNexusHome.ResolveDataPath() ?? System.IO.Path.GetDirectoryName(resolvedConfigPath)!;
 var webhookDbPath = System.IO.Path.Combine(webhookDataDir, "webhooks.sqlite");
-builder.Services.AddBotNexusWebhooks(webhookDbPath);
+builder.Services.AddBotNexusWebhooks(webhookDbPath, configuration: builder.Configuration);
 
 // Portal Tools store - SQLite placed in the same writable data directory so user-defined
 // tools survive gateway restarts and roam with the user across browsers/devices (#2232).

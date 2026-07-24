@@ -118,6 +118,9 @@ public sealed class WebhookInboundController(
                 UpdatedAt = now,
                 Initiator = CitizenId.Of(typedAgentId)
             };
+            // Stamp authoritative webhook provenance so source-specific retention (#2125) can
+            // identify this conversation by its originating registration id, never by title.
+            WebhookConversationProvenance.Stamp(conversation.Metadata, typedWebhookId);
             var created = await conversationStore.CreateAsync(conversation, cancellationToken);
             var winner = await registrationStore.TryPinConversationAsync(
                 typedWebhookId, created.ConversationId, cancellationToken);
