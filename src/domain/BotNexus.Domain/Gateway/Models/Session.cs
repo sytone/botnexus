@@ -8,9 +8,11 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed record Session
 {
     /// <summary>
-    /// Gets or sets the session id.
+    /// Gets the session id. Write-once on construction — the primary key of the row must never
+    /// be reassignable after the session exists. Pinned by
+    /// <c>ModelImmutabilityArchitectureTests</c> (issue #2316).
     /// </summary>
-    public SessionId SessionId { get; set; }
+    public SessionId SessionId { get; init; }
 
     // P9-H (#662): Session.AgentId was deleted. Agent ownership is durably owned by the
     // parent Conversation (Conversation.AgentId, init-only post P9-H). Resolve the owning
@@ -61,9 +63,9 @@ public sealed record Session
     // that made channel-side "what conversations is this citizen in?" queries quadratic.
 
     /// <summary>
-    /// Gets or sets the created at.
+    /// Gets the created at. Write-once creation-time fact.
     /// </summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>
     /// Gets or sets the updated at.

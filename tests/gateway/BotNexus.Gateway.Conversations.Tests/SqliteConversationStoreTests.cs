@@ -492,10 +492,8 @@ public sealed class SqliteConversationStoreTests
         var helper = CitizenId.Of(Agent("helper"));
 
         var noInit = CreateConversation(Agent("agent-a"), "no-init");
-        var userInit = CreateConversation(Agent("agent-a"), "user-init");
-        userInit.Initiator = alice;
-        var agentInit = CreateConversation(Agent("agent-b"), "agent-init");
-        agentInit.Initiator = helper;
+        var userInit = CreateConversation(Agent("agent-a"), "user-init") with { Initiator = alice };
+        var agentInit = CreateConversation(Agent("agent-b"), "agent-init") with { Initiator = helper };
 
         await store.CreateAsync(noInit);
         await store.CreateAsync(userInit);
@@ -517,12 +515,9 @@ public sealed class SqliteConversationStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        var human = CreateConversation(Agent("agent-a"), "human");
-        human.Kind = ConversationKind.HumanAgent;
-        var agentAgent = CreateConversation(Agent("agent-b"), "agent-agent");
-        agentAgent.Kind = ConversationKind.AgentAgent;
-        var subAgent = CreateConversation(Agent("agent-c"), "sub-agent");
-        subAgent.Kind = ConversationKind.AgentSubAgent;
+        var human = CreateConversation(Agent("agent-a"), "human") with { Kind = ConversationKind.HumanAgent };
+        var agentAgent = CreateConversation(Agent("agent-b"), "agent-agent") with { Kind = ConversationKind.AgentAgent };
+        var subAgent = CreateConversation(Agent("agent-c"), "sub-agent") with { Kind = ConversationKind.AgentSubAgent };
 
         await store.CreateAsync(human);
         await store.CreateAsync(agentAgent);
@@ -560,10 +555,8 @@ public sealed class SqliteConversationStoreTests
         var alice = CitizenId.Of(UserId.From("alice"));
         var bob = CitizenId.Of(UserId.From("bob"));
 
-        var aliceConv = CreateConversation(Agent("a1"), "alice-conv");
-        aliceConv.Initiator = alice;
-        var bobConv = CreateConversation(Agent("a1"), "bob-conv");
-        bobConv.Initiator = bob;
+        var aliceConv = CreateConversation(Agent("a1"), "alice-conv") with { Initiator = alice };
+        var bobConv = CreateConversation(Agent("a1"), "bob-conv") with { Initiator = bob };
         var noInit = CreateConversation(Agent("a1"), "no-init");
 
         await store.CreateAsync(aliceConv);
@@ -585,12 +578,9 @@ public sealed class SqliteConversationStoreTests
         var alice = CitizenId.Of(UserId.From("alice"));
         var helperCitizen = CitizenId.Of(helper);
 
-        var owned = CreateConversation(helper, "owned-by-helper");
-        owned.Initiator = alice;
-        var initiatedByHelper = CreateConversation(other, "initiated-by-helper");
-        initiatedByHelper.Initiator = helperCitizen;
-        var unrelated = CreateConversation(other, "unrelated");
-        unrelated.Initiator = alice;
+        var owned = CreateConversation(helper, "owned-by-helper") with { Initiator = alice };
+        var initiatedByHelper = CreateConversation(other, "initiated-by-helper") with { Initiator = helperCitizen };
+        var unrelated = CreateConversation(other, "unrelated") with { Initiator = alice };
 
         await store.CreateAsync(owned);
         await store.CreateAsync(initiatedByHelper);
@@ -611,8 +601,7 @@ public sealed class SqliteConversationStoreTests
         var store = fixture.CreateStore();
         var alice = CitizenId.Of(UserId.From("alice"));
 
-        var conv = CreateConversation(Agent("a1"), "archived");
-        conv.Initiator = alice;
+        var conv = CreateConversation(Agent("a1"), "archived") with { Initiator = alice };
         await store.CreateAsync(conv);
         await store.ArchiveAsync(conv.ConversationId);
 
@@ -679,7 +668,7 @@ public sealed class SqliteConversationStoreTests
 
         // Save with an Initiator to prove the new column is writable + readable end-to-end.
         var alice = CitizenId.Of(UserId.From("alice"));
-        loaded.Initiator = alice;
+        loaded = loaded with { Initiator = alice };
         await store.SaveAsync(loaded);
 
         var roundTrip = await fixture.CreateStore().GetAsync(ConversationId.From("legacy-1"));

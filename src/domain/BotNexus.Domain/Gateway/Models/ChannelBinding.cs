@@ -7,8 +7,11 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </summary>
 public sealed record ChannelBinding
 {
-    /// <summary>Gets or sets the unique binding identifier.</summary>
-    public BindingId BindingId { get; set; } = BindingId.Create();
+    /// <summary>
+    /// Gets the unique binding identifier. Write-once on construction — pinned by
+    /// <c>ModelImmutabilityArchitectureTests</c> (issue #2316).
+    /// </summary>
+    public BindingId BindingId { get; init; } = BindingId.Create();
 
     /// <summary>Gets or sets the channel type for this binding.</summary>
     public ChannelKey ChannelType { get; set; }

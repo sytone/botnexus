@@ -97,8 +97,7 @@ public sealed class ConversationStoreSharedTests
     public void MatchesCitizen_True_WhenCitizenIsInitiator()
     {
         var user = CitizenId.Of(UserId.From("user-1"));
-        var conv = NewConversation();
-        conv.Initiator = user;
+        var conv = NewConversation() with { Initiator = user };
 
         ConversationStoreShared.MatchesCitizen(conv, user).ShouldBeTrue();
     }

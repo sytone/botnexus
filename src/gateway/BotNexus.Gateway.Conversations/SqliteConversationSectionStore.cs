@@ -112,7 +112,8 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
             nextOrderCommand.CommandText = "SELECT COALESCE(MAX(section_order), -1) + 1 FROM conversation_sections WHERE agent_id = $agentId";
             nextOrderCommand.Parameters.AddWithValue("$agentId", section.AgentId.Value);
             section.Order = Convert.ToInt32(await nextOrderCommand.ExecuteScalarAsync(ct).ConfigureAwait(false));
-            section.CreatedAt = DateTimeOffset.UtcNow;
+            // CreatedAt is write-once (#2316): rebuild the record rather than mutating it.
+            section = section with { CreatedAt = DateTimeOffset.UtcNow };
             section.UpdatedAt = section.CreatedAt;
 
             await using var command = connection.CreateCommand();

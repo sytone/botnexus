@@ -275,8 +275,8 @@ public sealed class SqliteConversationStoreBatchListTests
         var store = fixture.CreateStore();
         var starter = CitizenId.Of(UserId.From("user-starter"));
 
-        var started = CreateConversation(AgentId.From("agent-host"), "started", CreateBinding("telegram", "s-1"));
-        started.Initiator = starter;
+        var started = CreateConversation(AgentId.From("agent-host"), "started", CreateBinding("telegram", "s-1"))
+            with { Initiator = starter };
         await store.CreateAsync(started);
 
         var list = await fixture.CreateStore().ListForCitizenAsync(starter);

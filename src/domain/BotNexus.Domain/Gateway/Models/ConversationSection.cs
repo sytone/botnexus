@@ -54,8 +54,8 @@ public sealed record ConversationSection
     /// <summary>Gets or sets whether the section is rendered collapsed in the sidebar.</summary>
     public bool IsCollapsed { get; set; }
 
-    /// <summary>Gets or sets when this section was created.</summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Gets when this section was created. Write-once creation-time fact.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>Gets or sets when this section was last modified (rename / reorder / collapse).</summary>
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;

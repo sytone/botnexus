@@ -10,8 +10,13 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </summary>
 public sealed record Conversation
 {
-    /// <summary>Gets or sets the unique conversation identifier.</summary>
-    public ConversationId ConversationId { get; set; }
+    /// <summary>
+    /// Gets the unique conversation identifier. Write-once on construction — the primary key of
+    /// the row must never be reassignable after the conversation exists, or every cached lookup,
+    /// binding, and session parent-link keyed on it silently goes stale. Pinned by
+    /// <c>ModelImmutabilityArchitectureTests</c> (issue #2316).
+    /// </summary>
+    public ConversationId ConversationId { get; init; }
 
     /// <summary>
     /// Gets or sets the id of the world this conversation belongs to. Stamped by the
@@ -30,7 +35,8 @@ public sealed record Conversation
 
     /// <summary>
     /// Gets the agent that owns this conversation. Write-once on construction — the
-    /// <c>ConversationAgentIdImmutabilityArchitectureTests</c> fence pins this so a
+    /// <c>ConversationAgentIdImmutabilityArchitectureTests</c> fence (and the broader
+    /// <c>ModelImmutabilityArchitectureTests</c> fence, issue #2316) pins this so a
     /// conversation's owning agent cannot drift after the row is persisted. This is the
     /// invariant that lets <see cref="IAgentIdentityResolver"/> cache the resolved
     /// value for the lifetime of the conversation (P9-H, issue #662, directive W-4).
@@ -49,8 +55,8 @@ public sealed record Conversation
     /// <summary>Gets or sets the lifecycle status of this conversation.</summary>
     public ConversationStatus Status { get; set; } = ConversationStatus.Active;
 
-    /// <summary>Gets or sets when this conversation was created.</summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Gets when this conversation was created. Write-once creation-time fact.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>Gets or sets when this conversation was last modified.</summary>
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -113,7 +119,7 @@ public sealed record Conversation
     /// they are not required to be — e.g. a heartbeat-triggered conversation may be initiated by a
     /// system agent yet owned by the target user-facing agent.
     /// </remarks>
-    public CitizenId? Initiator { get; set; }
+    public CitizenId? Initiator { get; init; }
 
     /// <summary>
     /// Gets or sets the citizen-pairing discriminator for this conversation. Defaults to
@@ -127,7 +133,7 @@ public sealed record Conversation
     /// shape (see F-3). Read by the portal/list/permission layers without having to walk session
     /// ids.
     /// </remarks>
-    public ConversationKind Kind { get; set; } = ConversationKind.HumanAgent;
+    public ConversationKind Kind { get; init; } = ConversationKind.HumanAgent;
 
     /// <summary>
     /// Gets the origination trigger for this conversation - what caused it to exist (a schedule, an

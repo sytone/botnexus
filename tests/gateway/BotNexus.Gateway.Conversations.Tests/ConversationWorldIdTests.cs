@@ -241,8 +241,7 @@ public sealed class ConversationWorldIdTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        var conv = NewConversation("kind-bug");
-        conv.Kind = ConversationKind.AgentAgent;
+        var conv = NewConversation("kind-bug") with { Kind = ConversationKind.AgentAgent };
         await store.CreateAsync(conv);
 
         // The Save path that previously demoted Kind: title-only mutation triggers the UPSERT.
