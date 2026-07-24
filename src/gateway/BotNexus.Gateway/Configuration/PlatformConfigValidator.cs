@@ -1,4 +1,7 @@
+using System.Collections;
 using System.ComponentModel.DataAnnotations;
+using System.Reflection;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Configuration;
@@ -64,19 +67,214 @@ public static class PlatformConfigValidator
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        var results = new List<ValidationResult>();
-        var context = new ValidationContext(config);
+        // #2061: Validator.TryValidateObject only fires attributes declared on the ROOT object
+        // and never recurses into nested POCOs, dictionary values, or list elements. The shared
+        // recursive walker (ValidateGraphAnnotations) descends the whole materialised config graph
+        // and executes the per-field DataAnnotations at every level, returning path-prefixed
+        // messages (for example "gateway.autoUpdate.checkIntervalMinutes: ..."). The root
+        // IValidatableObject cross-field escape hatch is invoked once here (member-less, so its
+        // messages stay verbatim - the platform's exact legacy text) and merged in.
+        var errors = new List<string>();
 
-        // validateAllProperties: true so [Range]/[Required]/etc. on the annotated model run in
-        // addition to the IValidatableObject cross-field rules. The boolean return is ignored;
-        // the collected results carry the messages.
-        _ = Validator.TryValidateObject(config, context, results, validateAllProperties: true);
-
-        return results
+        // Root cross-field rules (IValidatableObject) - verbatim messages, no path prefix.
+        var rootResults = new List<ValidationResult>();
+        var rootContext = new ValidationContext(config);
+        _ = Validator.TryValidateObject(
+            config, rootContext, rootResults, validateAllProperties: false);
+        errors.AddRange(rootResults
             .Select(result => result.ErrorMessage ?? string.Empty)
+            .Where(message => !string.IsNullOrWhiteSpace(message)));
+
+        // Recursive per-field DataAnnotations across the complete object graph.
+        errors.AddRange(ValidateGraphAnnotations(config));
+
+        return errors
             .Where(message => !string.IsNullOrWhiteSpace(message))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Recursively walks the complete config object graph rooted at <paramref name="root"/> and
+    /// executes the per-field <see cref="ValidationAttribute"/> DataAnnotations declared at every
+    /// level - nested POCOs, dictionary values, and list/array elements - which the framework's
+    /// root-only <see cref="Validator.TryValidateObject"/> pass never reaches (#2061). Each
+    /// violation is returned as a single message prefixed with the actionable JSON/member path to
+    /// the offending value (for example <c>gateway.autoUpdate.checkIntervalMinutes: ...</c>,
+    /// <c>providers.copilot.contextWindow: ...</c>, <c>cors.allowedOrigins[2]: ...</c>) so a caller
+    /// can locate the field in <c>config.json</c> without guessing.
+    /// </summary>
+    /// <remarks>
+    /// This is the shared graph walker the platform standardises on: cross-field, conditional, and
+    /// dictionary-key-spanning rules that cannot be expressed as a per-field attribute stay in the
+    /// imperative <see cref="CollectCrossFieldErrors"/> escape hatch; everything expressible as a
+    /// scalar attribute is enforced here at every graph depth. Reference cycles are guarded with an
+    /// identity-based visited set so a self-referential graph cannot stack-overflow, and only types
+    /// in the BotNexus config namespaces (plus their collection element types) are descended into so
+    /// the walk never wanders into framework primitives.
+    /// </remarks>
+    /// <param name="root">The object graph root to validate. Typically a <see cref="PlatformConfig"/>.</param>
+    /// <returns>One path-prefixed message per nested attribute violation; empty when the graph is clean.</returns>
+    public static IReadOnlyList<string> ValidateGraphAnnotations(object? root)
+    {
+        var errors = new List<string>();
+        if (root is null)
+            return errors;
+
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        WalkGraph(root, string.Empty, visited, errors);
+
+        return errors
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Depth-first descent used by <see cref="ValidateGraphAnnotations"/>. Validates the object's
+    /// own annotated properties at <paramref name="path"/>, then recurses into each nested
+    /// config-typed property, dictionary value, and enumerable element, extending the path.
+    /// </summary>
+    private static void WalkGraph(object node, string path, HashSet<object> visited, List<string> errors)
+    {
+        if (node is null || !visited.Add(node))
+            return;
+
+        var type = node.GetType();
+
+        // Validate this node's own DataAnnotations (per-field attributes only; the root
+        // cross-field IValidatableObject rules are handled once by the caller so they are not
+        // re-run here per node). validateAllProperties: true fires all per-property attributes.
+        var results = new List<ValidationResult>();
+        var context = new ValidationContext(node);
+        _ = Validator.TryValidateObject(node, context, results, validateAllProperties: true);
+        foreach (var result in results)
+        {
+            var member = result.MemberNames.FirstOrDefault();
+            var memberPath = string.IsNullOrEmpty(member)
+                ? path
+                : CombinePath(path, ToJsonName(type, member));
+            errors.Add(FormatError(memberPath, result.ErrorMessage));
+        }
+
+        // Recurse into nested config objects, dictionaries, and collections.
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0 || !property.CanRead)
+                continue;
+
+            object? value;
+            try
+            {
+                value = property.GetValue(node);
+            }
+            catch (TargetInvocationException)
+            {
+                continue;
+            }
+
+            if (value is null)
+                continue;
+
+            var jsonName = ToJsonName(type, property.Name);
+            var childPath = CombinePath(path, jsonName);
+            WalkValue(value, childPath, visited, errors);
+        }
+    }
+
+    /// <summary>
+    /// Recurses into a single property value: descends config-typed objects, iterates dictionary
+    /// values (keyed by their string key) and enumerable elements (indexed), and ignores scalars.
+    /// </summary>
+    private static void WalkValue(object value, string path, HashSet<object> visited, List<string> errors)
+    {
+        if (value is string || value.GetType().IsPrimitive || value is decimal || value is DateTime
+            || value is DateTimeOffset || value is TimeSpan || value is Guid || value is Uri
+            || value.GetType().IsEnum)
+        {
+            return;
+        }
+
+        if (value is IDictionary dictionary)
+        {
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                if (entry.Value is null)
+                    continue;
+
+                var keyText = entry.Key?.ToString() ?? string.Empty;
+                WalkValue(entry.Value, CombinePath(path, keyText), visited, errors);
+            }
+
+            return;
+        }
+
+        if (value is IEnumerable enumerable)
+        {
+            var index = 0;
+            foreach (var item in enumerable)
+            {
+                if (item is not null && IsConfigNode(item.GetType()))
+                    WalkGraph(item, $"{path}[{index}]", visited, errors);
+
+                index++;
+            }
+
+            return;
+        }
+
+        if (IsConfigNode(value.GetType()))
+            WalkGraph(value, path, visited, errors);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> for a type the walker should descend into: a class defined
+    /// in a BotNexus config/model namespace. This keeps the walk from wandering into framework
+    /// primitives, <see cref="System.Text.Json"/> element trees, and other non-config types while
+    /// still covering every nested config POCO regardless of which model file declares it.
+    /// </summary>
+    private static bool IsConfigNode(Type type)
+    {
+        if (type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal))
+            return false;
+
+        // JsonElement/JsonDocument and other System.Text.Json opaque payloads are never descended.
+        if (type.Namespace is { } ns && ns.StartsWith("System", StringComparison.Ordinal))
+            return false;
+
+        return type.IsClass;
+    }
+
+    /// <summary>
+    /// Maps a CLR property name to its serialized JSON name for path reporting: honours an explicit
+    /// <see cref="JsonPropertyNameAttribute"/> when present, otherwise camelCases the CLR name so
+    /// the reported path matches what the operator sees in <c>config.json</c>.
+    /// </summary>
+    private static string ToJsonName(Type declaringType, string clrName)
+    {
+        var property = declaringType.GetProperty(clrName, BindingFlags.Public | BindingFlags.Instance);
+        var jsonAttr = property?.GetCustomAttribute<JsonPropertyNameAttribute>();
+        if (jsonAttr is not null && !string.IsNullOrEmpty(jsonAttr.Name))
+            return jsonAttr.Name;
+
+        return ToCamelCase(clrName);
+    }
+
+    private static string ToCamelCase(string name)
+    {
+        if (string.IsNullOrEmpty(name) || char.IsLower(name[0]))
+            return name;
+
+        return char.ToLowerInvariant(name[0]) + name[1..];
+    }
+
+    private static string CombinePath(string prefix, string segment)
+        => string.IsNullOrEmpty(prefix) ? segment : $"{prefix}.{segment}";
+
+    private static string FormatError(string path, string? message)
+    {
+        var text = string.IsNullOrWhiteSpace(message) ? "is invalid." : message.Trim();
+        return string.IsNullOrEmpty(path) ? text : $"{path}: {text}";
     }
 
     /// <summary>
