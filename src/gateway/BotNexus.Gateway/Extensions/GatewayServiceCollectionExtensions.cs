@@ -78,6 +78,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<CompactionOptions>();
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
+        services.AddOptions<SessionConsistencyOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -93,6 +94,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
             services.Configure<SubAgentWorkspaceSweepOptions>(config.GetSection("gateway:subAgentWorkspace"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
+            services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -294,6 +296,9 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>()));
         services.AddHostedService<SessionCleanupService>();
+        // Session/conversation consistency monitor + safe auto-heal path (#2046).
+        services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
+        services.AddHostedService<SessionConsistencyHostedService>();
         services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();

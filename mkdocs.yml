@@ -130,7 +130,7 @@ nav:
       - Audio Recording: guides/audio-recording.md
       - Watchdog Setup: guides/watchdog-setup.md
   - Features:
-      - Sub-Agent Spawning: features/sub-agent-spawning.md
+      - Sub-Agent Spawning: features/sub-agent-spawning.md`n      - Session Consistency Monitor: features/session-consistency.md
   - Extensions:
       - Extension Development: extension-development.md
       - Extension Telemetry: extensions/telemetry.md

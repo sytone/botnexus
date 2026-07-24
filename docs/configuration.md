@@ -805,6 +805,44 @@ The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. 
 
 The section is optional — when absent, the 7-day cron noop retention default applies. Because the predicate requires ≤ 2 messages, any cron session that did real work (multiple turns or tool calls, which add history rows) is never pruned by this branch.
 
+#### Session Consistency Monitor
+
+The gateway runs a periodic `SessionConsistencyHostedService` that detects and safely repairs persisted session/conversation lifecycle discrepancies through the supported store APIs, never raw SQL (issue #2046). It runs a first pass a short delay after startup (so agent registration, store hydration, and interrupted-turn recovery settle first) and then repeats at a bounded cadence.
+
+Detected invariants:
+
+- **active-session-missing** - a conversation's `ActiveSessionId` references a session that no longer exists. Repair: clear the dangling pointer so the router mints a fresh session on the next inbound.
+- **active-session-cron-poison** - a non-cron (human/agent) conversation points at a `cron:` session while a more-recent non-cron session exists in the same conversation. Repair: re-point to the latest non-cron session. Guarded by the live-turn tracker (#2030): if a turn is genuinely executing on the poisoned pointer, the discrepancy is reported but not repaired.
+- **stale-active-cron** - a `cron:` session left `Active` past a conservative threshold with no live turn. Repair: seal it via the session store.
+
+Each pass is idempotent and bounded; running it repeatedly on an already-consistent world detects nothing and mutates nothing. Every discrepancy is emitted as a structured log line (invariant name, entity ids, previous state, chosen disposition) so operators can inspect detected and repaired discrepancies without querying SQLite directly.
+
+```json
+{
+  "gateway": {
+    "sessionConsistency": {
+      "enabled": true,
+      "dryRun": false,
+      "checkInterval": "00:30:00",
+      "startupDelay": "00:01:00",
+      "staleActiveCronThreshold": "06:00:00",
+      "maxConversationsPerRun": 5000
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `sessionConsistency.enabled` | bool | `true` | Master switch. When `false` the monitor does not run and no checks or repairs occur. |
+| `sessionConsistency.dryRun` | bool | `false` | Report discrepancies without mutating anything. Use to validate detection before enabling auto-heal. |
+| `sessionConsistency.checkInterval` | TimeSpan | `00:30:00` (30m) | How often the periodic consistency check runs. |
+| `sessionConsistency.startupDelay` | TimeSpan | `00:01:00` (1m) | Delay after host startup before the first check, allowing registration and recovery to settle. |
+| `sessionConsistency.staleActiveCronThreshold` | TimeSpan | `06:00:00` (6h) | Age after which a cron session still marked `Active` with no live turn is sealed. |
+| `sessionConsistency.maxConversationsPerRun` | int | `5000` | Upper bound on conversations examined per pass. Non-positive disables the cap. |
+
+The section is optional - when absent, the defaults above apply.
+
 #### Sub-agent workspace sweep
 
 Ephemeral sub-agent workers occasionally leave workspace husks under the **persistent** agents root (`<BotNexus home>/agents/<parent>--subagent--<archetype>--<guid>`). Unlike the temp-root pruning and the manual `doctor` reconciliation of top-level registered agents, these husks have no time-based lifecycle and grow without bound. The gateway runs a periodic `SubAgentWorkspaceSweepHostedService` that automatically reclaims them by age.
