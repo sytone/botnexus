@@ -43,7 +43,7 @@ public enum ConversationKind
 /// <summary>
 /// Discriminates the <em>origination trigger</em> of a conversation - the answer to "why does this
 /// conversation exist?" - as a first-class, write-once field rather than something re-derived from
-/// session-id string prefixes (<c>cron:</c>), from <see cref="Conversation.Initiator"/>, or from a
+/// session-id string prefixes (<c>cron:</c>), from <c>Conversation.Initiator</c>, or from a
 /// hand-synthesized client-side flag. Each surface (portal, mobile, chat channels) previously
 /// re-implemented its own bespoke inference to decide how to render, group and gate a conversation;
 /// this enum is the shared typed signal that replaces all of it (epic #2300).
@@ -54,7 +54,7 @@ public enum ConversationKind
 /// (who is talking to whom); <c>Source</c> encodes the trigger (why it exists). A cron run, an
 /// inbound webhook run and a user DM are <em>all</em> <see cref="ConversationKind.HumanAgent"/> and
 /// are indistinguishable by <c>Kind</c> alone. Together <c>(Source, Kind)</c> fully disambiguate
-/// every origination case; <see cref="Conversation.Initiator"/> answers "which citizen" and
+/// every origination case; <c>Conversation.Initiator</c> answers "which citizen" and
 /// <see cref="ConversationStatus"/> answers "what lifecycle stage".
 /// </para>
 /// <para>
@@ -117,7 +117,7 @@ public enum BindingMode
 /// Controls how a conversation is rendered on the wire for channels that don't
 /// natively express multiple conversations on a single address. Native sub-thread
 /// routing (e.g. Telegram forum topics) is handled by the channel adapter via
-/// composite <see cref="ChannelAddress"/> encoding and does not need a mode here.
+/// composite <c>ChannelAddress</c> encoding and does not need a mode here.
 /// </summary>
 public enum ThreadingMode
 {

@@ -54,6 +54,7 @@
   </Folder>
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
+    <Project Path="src/domain/BotNexus.Domain.Wire/BotNexus.Domain.Wire.csproj" />
   </Folder>
   <Folder Name="/tests/examples/">
     <Project Path="tests/examples/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />

@@ -74,6 +74,11 @@ public sealed class SrcTestsMirrorArchitectureTests
             "DTO/contract-only project (records + shapes, no behaviour); validated through consumer tests.",
         ["src/gateway/BotNexus.Gateway.Telemetry.Abstractions/BotNexus.Gateway.Telemetry.Abstractions.csproj"] =
             "Telemetry interface/marker-only project (no logic); covered by BotNexus.Gateway.Telemetry.Tests.",
+        ["src/domain/BotNexus.Domain.Wire/BotNexus.Domain.Wire.csproj"] =
+            "Enum-only wire contract project (#2329): plain enums, zero dependencies, zero behaviour. " +
+            "Its values are exercised by BotNexus.Domain.Tests, Gateway.Conversations.Tests and the " +
+            "BlazorClient projection tests, and its dependency-free invariant is fenced by " +
+            "DomainArchitectureTests.DomainWire_IsCompletelyDependencyFree.",
         ["src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj"] =
             "SignalR channel host/composition project; covered by the BlazorClient test projects and integration suites.",
         ["src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj"] =

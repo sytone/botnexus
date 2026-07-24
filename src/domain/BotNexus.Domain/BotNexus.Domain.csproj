@@ -1,14 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <!-- Vogen is a compile-time SOURCE GENERATOR: it emits the value-object types at build time and
-         nothing needs it at runtime. PrivateAssets="all" stops it flowing transitively to consumers.
+    <PackageReference Include="Vogen" />
+  </ItemGroup>
 
-         This is load-bearing, not tidiness (#2329). BlazorClient.Core references this project to share
-         the canonical conversation wire enums, and it feeds a Microsoft.NET.Sdk.BlazorWebAssembly app,
-         so anything flowing out of here is DOWNLOADED BY THE BROWSER. Without this pin,
-         Vogen.SharedTypes.dll lands in the WASM output. -->
-    <PackageReference Include="Vogen" PrivateAssets="all" />
+  <ItemGroup>
+    <!-- The dependency-free conversation/channel wire enums live in BotNexus.Domain.Wire so the
+         Blazor WebAssembly client can share this exact declaration without referencing this
+         assembly, which pulls Vogen.SharedTypes into the browser payload at runtime. See #2329.
+         Types here keep using them as if they were local: same namespace, no using churn. -->
+    <ProjectReference Include="..\BotNexus.Domain.Wire\BotNexus.Domain.Wire.csproj" />
   </ItemGroup>
 
 </Project>
