@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Configuration.Abstractions supplies IConfiguration + IChangeToken (via its transitive
+         Microsoft.Extensions.Primitives) used by LateBoundChannelOptions to reload late-loaded
+         channel extension options on config.json change. See issue #2010. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>

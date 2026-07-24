@@ -28,8 +28,11 @@ namespace BotNexus.Extensions.Channels.Agent365;
 /// </remarks>
 public sealed class Agent365ChannelAdapter : ChannelAdapterBase
 {
-    private readonly Agent365GatewayOptions _options;
+    private readonly LateBoundChannelOptions<Agent365GatewayOptions> _optionsHolder;
     private readonly IAgent365ConnectorSender _connectorSender;
+
+    // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
+    private Agent365GatewayOptions _options => _optionsHolder.Current;
 
     /// <summary>
     /// Creates the adapter, resolving options from <see cref="IOptions{T}"/> and falling back to the
@@ -43,7 +46,9 @@ public sealed class Agent365ChannelAdapter : ChannelAdapterBase
         IConfiguration? configuration = null)
         : base(logger)
     {
-        _options = ResolveOptions(optionsAccessor, configuration);
+        _optionsHolder = new LateBoundChannelOptions<Agent365GatewayOptions>(
+            () => ResolveOptions(optionsAccessor, configuration),
+            configuration);
         _connectorSender = connectorSender;
     }
 
