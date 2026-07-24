@@ -170,7 +170,7 @@ public sealed class SignalRChannelIdentityLifecycleTests
             app,
             NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry: null,
+            askUserPromptResolver: null,
             userRegistry: userRegistry,
             worldContext: userRegistry is null ? null : world)
         {

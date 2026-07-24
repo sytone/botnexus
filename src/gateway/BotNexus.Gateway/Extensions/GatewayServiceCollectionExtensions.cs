@@ -187,6 +187,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
+        services.TryAddSingleton<IAskUserPromptResolver, AskUserPromptResolver>();
         services.TryAddSingleton<PendingAskUserInterceptor>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());

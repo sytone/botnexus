@@ -38,4 +38,13 @@
     <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
   </ItemGroup>
 
+  <!-- #2322: ask_user prompt reconciliation now lives in the domain (AskUserPromptNormalizer) so
+       every channel shares one implementation. The client references the domain to consume that
+       shared logic rather than owning a copy that other channels cannot reach. BotNexus.Domain
+       carries no framework reference and only a Vogen source-generator package reference, so this
+       does not meaningfully weigh down the WASM payload. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+
 </Project>

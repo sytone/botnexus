@@ -497,7 +497,7 @@ public sealed class SignalRHubTests
         });
 
         var (requestId, task) = registry.Register(conversation.ConversationId, TimeSpan.FromMinutes(1));
-        var hub = CreateHub(conversationStore: conversationStore, askUserResponseRegistry: registry);
+        var hub = CreateHub(conversationStore: conversationStore, askUserPromptResolver: new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance));
 
         await hub.RespondToAskUser(conversation.ConversationId.Value, requestId, "staging", null, cancelled: false);
 
@@ -1115,7 +1115,7 @@ public sealed class SignalRHubTests
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IAskUserPromptResolver? askUserPromptResolver = null,
         IConversationResetService? resetService = null,
         string connectionId = "conn-test",
         string? userIdentifier = "user",
@@ -1162,7 +1162,7 @@ public sealed class SignalRHubTests
             app,
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry)
+            askUserPromptResolver)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

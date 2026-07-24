@@ -54,6 +54,9 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     public virtual bool SupportsInboundImages => false;
 
     /// <inheritdoc />
+    public virtual bool SupportsInteractivePrompts => false;
+
+    /// <inheritdoc />
     public bool IsRunning => _isRunning;
 
     /// <inheritdoc />

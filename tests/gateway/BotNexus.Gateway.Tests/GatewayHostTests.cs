@@ -287,7 +287,8 @@ public sealed partial class GatewayHostTests
 
         var askUserRegistry = new AskUserResponseRegistry();
         var (requestId, pendingTask) = askUserRegistry.Register(conversationId, TimeSpan.FromMinutes(1));
-        var interceptor = new PendingAskUserInterceptor(askUserRegistry);
+        var interceptor = new PendingAskUserInterceptor(
+            new AskUserPromptResolver(askUserRegistry, NullLogger<AskUserPromptResolver>.Instance));
 
         await using var host = CreateHost(
             supervisor.Object,
