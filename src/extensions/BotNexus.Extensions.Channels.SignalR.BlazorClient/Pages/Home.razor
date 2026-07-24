@@ -50,6 +50,14 @@ else
     [Parameter] public string? ConversationId { get; set; }
     private string? _appliedRouteKey;
 
+    // #2293: re-entrancy guard. ApplyRouteSelectionAsync calls Store.NotifyChanged(), which raises
+    // Store.OnChanged, which is wired to HandleStateChanged -> ApplyRouteSelectionAsync again. Without
+    // a guard, the "agent not in Store.Agents" fallback branch (which used to return WITHOUT latching
+    // _appliedRouteKey) re-entered itself unboundedly on a deep-link/refresh before agent state
+    // populated. This flag suppresses self-triggered re-entry so a NotifyChanged() raised while a
+    // route selection is being applied cannot recursively re-enter route application.
+    private bool _applyingRoute;
+
     private string PageTitle
     {
         get
@@ -126,45 +134,67 @@ else
         if (!PortalLoad.IsReady || string.IsNullOrWhiteSpace(AgentId))
             return;
 
-        var routeAgentId = Uri.UnescapeDataString(AgentId);
-        var routeConversationId = string.IsNullOrWhiteSpace(ConversationId)
-            ? null
-            : Uri.UnescapeDataString(ConversationId);
-        var routeKey = $"{routeAgentId}|{routeConversationId ?? ""}";
-        if (string.Equals(_appliedRouteKey, routeKey, StringComparison.Ordinal))
+        // #2293: suppress self-triggered re-entry. Store.NotifyChanged() below synchronously raises
+        // Store.OnChanged, which HandleStateChanged routes straight back into this method. Guarding
+        // here means the re-raised OnChanged short-circuits instead of recursively re-applying the
+        // same route selection (which previously looped forever on the un-latched fallback branch).
+        if (_applyingRoute)
             return;
 
-        if (!Store.Agents.ContainsKey(routeAgentId))
+        _applyingRoute = true;
+        try
         {
-            if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
+            var routeAgentId = Uri.UnescapeDataString(AgentId);
+            var routeConversationId = string.IsNullOrWhiteSpace(ConversationId)
+                ? null
+                : Uri.UnescapeDataString(ConversationId);
+            var routeKey = $"{routeAgentId}|{routeConversationId ?? ""}";
+            if (string.Equals(_appliedRouteKey, routeKey, StringComparison.Ordinal))
+                return;
+
+            if (!Store.Agents.ContainsKey(routeAgentId))
             {
-                Store.SelectView(fallback, string.Empty, SelectionSource.RouteNavigation);
+                if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
+                {
+                    Store.SelectView(fallback, string.Empty, SelectionSource.RouteNavigation);
+                    // #2293: LATCH the guard on the fallback path. Previously this branch returned
+                    // without setting _appliedRouteKey, so every re-raised OnChanged re-entered the
+                    // same un-guarded fallback - an infinite recursion whenever the route AgentId was
+                    // not (yet) in Store.Agents (deep-link/refresh before agent state populates). We
+                    // have resolved a concrete view for this route (the fallback agent is now active),
+                    // so record the key: a subsequent OnChanged short-circuits at the routeKey check.
+                    _appliedRouteKey = routeKey;
+                    Store.NotifyChanged();
+                }
+
+                return;
+            }
+
+            if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
+            {
+                Store.SelectView(routeAgentId, string.Empty, SelectionSource.RouteNavigation);
                 Store.NotifyChanged();
             }
 
-            return;
-        }
+            if (routeConversationId is null)
+            {
+                _appliedRouteKey = routeKey;
+                return;
+            }
 
-        if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
-        {
-            Store.SelectView(routeAgentId, string.Empty, SelectionSource.RouteNavigation);
-            Store.NotifyChanged();
-        }
+            var agent = Store.GetAgent(routeAgentId);
+            if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
+                return;
 
-        if (routeConversationId is null)
-        {
+            if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
+                await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
+
             _appliedRouteKey = routeKey;
-            return;
         }
-
-        var agent = Store.GetAgent(routeAgentId);
-        if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
-            return;
-
-        if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
-            await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
-
-        _appliedRouteKey = routeKey;
+        finally
+        {
+            _applyingRoute = false;
+        }
     }
 
     public void Dispose()

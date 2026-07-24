@@ -425,4 +425,51 @@ public sealed class HomePageTests : IDisposable
         _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.UserClick);
         _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.SubAgentView);
     }
+
+    // ── #2293: route to an agent absent from the store must not recurse ──────────────────────────
+
+    [Fact]
+    public void Route_to_agent_absent_from_store_with_fallback_present_does_not_recurse_unbounded()
+    {
+        // #2293 regression: deep-link/refresh onto a route AgentId that is not (yet) in Store.Agents,
+        // with a non-null fallback agent present. The previous fallback branch called
+        // Store.SelectView(fallback, ..., RouteNavigation) + Store.NotifyChanged() and returned WITHOUT
+        // latching _appliedRouteKey. Store.NotifyChanged() raises Store.OnChanged -> HandleStateChanged
+        // -> ApplyRouteSelectionAsync, which re-entered the same un-guarded fallback forever. Use the
+        // REAL ClientStateStore (not a substitute) so the OnChanged/NotifyChanged loop is genuinely
+        // exercised, and assert OnChanged fires a small BOUNDED number of times.
+        var realStore = new ClientStateStore();
+        realStore.SeedAgents(new[]
+        {
+            new AgentSummary("agent-1", "Alpha")
+        });
+
+        var onChangedCount = 0;
+        realStore.OnChanged += () => onChangedCount++;
+
+        _portalLoad.IsReady.Returns(true);
+
+        using var ctx = new BunitContext();
+        ctx.Services.AddSingleton<IClientStateStore>(realStore);
+        ctx.Services.AddSingleton(_portalLoad);
+        ctx.Services.AddSingleton(_interaction);
+        ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
+        ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        ctx.Services.AddSingleton(new HttpClient());
+        ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+        ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+        // Navigate to an AgentId ABSENT from the store; a non-null fallback ("agent-1") is present.
+        // Without the fix this render never completes (unbounded recursion / stack overflow).
+        ctx.Render<Home>(p => p.Add(c => c.AgentId, "missing-agent"));
+
+        // Render completed => no unbounded recursion. The fallback was applied and latched.
+        Assert.Equal("agent-1", realStore.ActiveAgentId);
+
+        // OnChanged must fire only a small fixed number of times, NOT unboundedly. The route
+        // application raises exactly one NotifyChanged for the fallback selection; the guard then
+        // short-circuits every re-raised OnChanged. Allow generous headroom for framework-driven
+        // re-renders while still proving the loop is bounded (the pre-fix behaviour was unbounded).
+        Assert.InRange(onChangedCount, 1, 10);
+    }
 }
