@@ -288,7 +288,10 @@ public sealed class ConversationTool(
             UpdatedAt = now,
             // The conversation_new tool is invoked by an agent (the caller of this tool), so the
             // initiating citizen is always the calling agent.
-            Initiator = CitizenId.Of(agentId)
+            Initiator = CitizenId.Of(agentId),
+            // Agent-initiated via the conversation_new tool. Kind stays HumanAgent because the
+            // agent is minting a user-facing conversation, not a peer/sub-agent pairing.
+            Source = ConversationSource.Agent
         };
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);

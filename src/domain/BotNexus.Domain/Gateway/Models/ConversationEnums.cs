@@ -41,6 +41,64 @@ public enum ConversationKind
 }
 
 /// <summary>
+/// Discriminates the <em>origination trigger</em> of a conversation - the answer to "why does this
+/// conversation exist?" - as a first-class, write-once field rather than something re-derived from
+/// session-id string prefixes (<c>cron:</c>), from <see cref="Conversation.Initiator"/>, or from a
+/// hand-synthesized client-side flag. Each surface (portal, mobile, chat channels) previously
+/// re-implemented its own bespoke inference to decide how to render, group and gate a conversation;
+/// this enum is the shared typed signal that replaces all of it (epic #2300).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Orthogonal to <see cref="ConversationKind"/>.</b> <c>Kind</c> encodes the pairing topology
+/// (who is talking to whom); <c>Source</c> encodes the trigger (why it exists). A cron run, an
+/// inbound webhook run and a user DM are <em>all</em> <see cref="ConversationKind.HumanAgent"/> and
+/// are indistinguishable by <c>Kind</c> alone. Together <c>(Source, Kind)</c> fully disambiguate
+/// every origination case; <see cref="Conversation.Initiator"/> answers "which citizen" and
+/// <see cref="ConversationStatus"/> answers "what lifecycle stage".
+/// </para>
+/// <para>
+/// <b>Deliberately coarse.</b> <see cref="Agent"/> covers both sub-agent supervision and peer
+/// agent-to-agent converse because <c>Kind</c> (<see cref="ConversationKind.AgentSubAgent"/> vs
+/// <see cref="ConversationKind.AgentAgent"/>) already separates those two. A fifth value would
+/// re-introduce overlap between the two axes and is intentionally not offered.
+/// </para>
+/// </remarks>
+public enum ConversationSource
+{
+    /// <summary>
+    /// User/channel-driven: a human sent the first inbound message on a channel binding (portal,
+    /// Telegram, Signal, SMS, ...) or explicitly created the conversation through the REST API.
+    /// Kept first so the enum's default-value contract makes this the back-compat value - every
+    /// row persisted before this field existed deserializes to <c>Channel</c> with no migration
+    /// error, exactly the contract <see cref="ConversationKind.HumanAgent"/> = 0 already uses.
+    /// </summary>
+    Channel = 0,
+
+    /// <summary>
+    /// Schedule-driven: a cron job or heartbeat tick minted the conversation for its run. Lets a
+    /// client group or badge unattended scheduled runs without sniffing a <c>cron:</c> prefix out
+    /// of a session id.
+    /// </summary>
+    Cron = 1,
+
+    /// <summary>
+    /// Inbound-webhook driven: an external system POSTed to a webhook registration and the handler
+    /// pinned a fresh conversation for it. Distinct from <see cref="Channel"/> because no human is
+    /// present in the loop, which is what read-only/composer gating actually needs to know.
+    /// </summary>
+    Webhook = 2,
+
+    /// <summary>
+    /// Agent-initiated: an agent minted the conversation itself - via the <c>conversation_new</c>
+    /// tool, an agent-to-agent converse handshake, or sub-agent supervision. Use <c>Kind</c> to
+    /// tell peer converse (<see cref="ConversationKind.AgentAgent"/>) from sub-agent supervision
+    /// (<see cref="ConversationKind.AgentSubAgent"/>).
+    /// </summary>
+    Agent = 3
+}
+
+/// <summary>
 /// Controls how a channel binding participates in message fan-out.
 /// </summary>
 public enum BindingMode

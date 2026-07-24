@@ -296,6 +296,8 @@ public sealed class HeartbeatTrigger(
             AgentId = agentId,
             Title = $"heartbeat:{agentId.Value}",
             IsDefault = false,
+            // Heartbeat is a schedule-driven tick, so it shares the Cron origination trigger.
+            Source = ConversationSource.Cron,
             // Heartbeat is a self-initiated system flow; the agent itself is the initiator.
             Initiator = CitizenId.Of(agentId)
         };

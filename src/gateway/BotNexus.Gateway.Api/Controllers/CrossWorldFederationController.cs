@@ -362,6 +362,8 @@ public sealed class CrossWorldFederationController(
             ConversationId = ConversationId.Create(),
             AgentId = targetAgentId,
             Kind = ConversationKind.AgentAgent,
+            // Cross-world federation relay is an agent-to-agent handshake minted by an agent.
+            Source = ConversationSource.Agent,
             Initiator = null,
             Title = ConversationTitle,
             Purpose = null,

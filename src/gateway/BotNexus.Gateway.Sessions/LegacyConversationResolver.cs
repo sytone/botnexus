@@ -80,7 +80,9 @@ public sealed class LegacyConversationResolver
                 Title = legacyTitle,
                 IsDefault = false,
                 Initiator = CitizenId.Of(agentId),
-                Kind = ConversationKind.HumanAgent
+                Kind = ConversationKind.HumanAgent,
+                // Backfill container for orphaned human-agent sessions - channel-originated by nature.
+                Source = ConversationSource.Channel
             };
             var created = await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
             _logger?.LogInformation(

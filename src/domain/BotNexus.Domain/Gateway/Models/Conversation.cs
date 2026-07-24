@@ -129,6 +129,28 @@ public sealed record Conversation
     /// </remarks>
     public ConversationKind Kind { get; set; } = ConversationKind.HumanAgent;
 
+    /// <summary>
+    /// Gets the origination trigger for this conversation - what caused it to exist (a schedule, an
+    /// inbound webhook, a human on a channel, or an agent). Stamped once by the origin path that
+    /// mints the conversation and never afterwards: this is <c>init</c>-only by design, mirroring
+    /// <see cref="AgentId"/>, so an inbound event can never poison it the way the mutable
+    /// client-side <c>IsVirtualSession</c> flag could (epic #2300, following #2248).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Defaults to <see cref="ConversationSource.Channel"/> so every row persisted before this
+    /// field existed deserializes unchanged. Callers on a real origin path must stamp explicitly
+    /// rather than lean on the default.
+    /// </para>
+    /// <para>
+    /// Orthogonal to <see cref="Kind"/>: <c>Kind</c> is the pairing topology, <c>Source</c> is the
+    /// trigger. Rendering decisions (read-only? show the composer? group under "cron"?) are meant
+    /// to be a pure projection over <c>(Kind, Source)</c> plus the client's own selection source,
+    /// never a re-derivation from session-id substrings.
+    /// </para>
+    /// </remarks>
+    public ConversationSource Source { get; init; } = ConversationSource.Channel;
+
     /// <summary>Gets or sets whether this conversation is pinned to the top of the list.</summary>
     public bool IsPinned { get; set; }
 

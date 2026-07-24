@@ -116,7 +116,10 @@ public sealed class WebhookInboundController(
                 Status = ConversationStatus.Active,
                 CreatedAt = now,
                 UpdatedAt = now,
-                Initiator = CitizenId.Of(typedAgentId)
+                Initiator = CitizenId.Of(typedAgentId),
+                // Inbound-webhook origination (#2302): no human is in the loop, which is exactly
+                // what read-only/composer gating needs to know.
+                Source = BotNexus.Gateway.Abstractions.Models.ConversationSource.Webhook
             };
             // Stamp authoritative webhook provenance so source-specific retention (#2125) can
             // identify this conversation by its originating registration id, never by title.

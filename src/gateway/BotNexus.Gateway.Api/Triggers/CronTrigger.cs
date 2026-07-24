@@ -316,6 +316,9 @@ public sealed class CronTrigger(
             AgentId = agentId,
             Title = title,
             IsDefault = false,
+            // Schedule-driven origination (#2302). Explicit so clients never need to sniff a
+            // `cron:` prefix out of a session id to know this run was unattended.
+            Source = ConversationSource.Cron,
             Initiator = initiator
         };
 

@@ -198,6 +198,8 @@ public sealed class AgentExchangeTurnEngine
             ConversationId = ConversationId.Create(),
             AgentId = initiatorId,
             Kind = ConversationKind.AgentAgent,
+            // Agent-initiated peer exchange: (Source=Agent, Kind=AgentAgent) is the coherent pair.
+            Source = ConversationSource.Agent,
             Initiator = CitizenId.Of(initiatorId),
             Title = $"{initiatorId.Value} \u2194 {targetId.Value}",
             Purpose = null,

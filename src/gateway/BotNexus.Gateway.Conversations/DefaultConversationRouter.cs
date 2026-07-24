@@ -123,6 +123,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 AgentId = agentId,
                 Title = $"{channelType}:{channelAddress}",
                 IsDefault = false,
+                // Channel/router path: a citizen sent an inbound message on a channel binding.
+                Source = ConversationSource.Channel,
                 Initiator = initiator?.IsValid == true ? initiator : null
             };
             if (ShouldPersistBinding(agentId, channelType, channelAddress) &&

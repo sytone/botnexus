@@ -961,7 +961,7 @@ public sealed class SqliteConversationStore : IConversationStore
             FROM conversations c
             LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
             WHERE c.status = 'Active'
-            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.is_pinned, c.pinned_at
+            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.source, c.is_pinned, c.pinned_at
             ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC
             """;
 
@@ -1159,6 +1159,9 @@ public sealed class SqliteConversationStore : IConversationStore
         ("initiator", "ALTER TABLE conversations ADD COLUMN initiator TEXT;"),
         // Phase 4 / F-3 discriminator: NULL maps to ConversationKind.HumanAgent on load.
         ("kind", "ALTER TABLE conversations ADD COLUMN kind TEXT;"),
+        // #2300/#2301 origination trigger: nullable so existing rows migrate without a rewrite;
+        // NULL maps to ConversationSource.Channel on load (the back-compat default).
+        ("source", "ALTER TABLE conversations ADD COLUMN source TEXT;"),
         // Phase 9 / P9-A world discriminator (#613): NOT NULL DEFAULT '' so legacy INSERTs stay
         // valid; empty values are lazy-backfilled to the current world id on read.
         ("world_id", "ALTER TABLE conversations ADD COLUMN world_id TEXT NOT NULL DEFAULT '';"),
@@ -1326,7 +1329,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
             FROM conversations
             WHERE id = $id
             """;
@@ -1435,7 +1438,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1603,8 +1606,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1619,6 +1622,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     canvas_html = excluded.canvas_html,
                     initiator = excluded.initiator,
                     kind = excluded.kind,
+                    source = excluded.source,
                     world_id = excluded.world_id,
                     is_pinned = excluded.is_pinned,
                     pinned_at = excluded.pinned_at,
@@ -1629,8 +1633,8 @@ public sealed class SqliteConversationStore : IConversationStore
                     context_window_override = excluded.context_window_override
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1646,6 +1650,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$canvasHtml", conversation.CanvasHtml is null ? (object)DBNull.Value : conversation.CanvasHtml);
         conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
         conversationCommand.Parameters.AddWithValue("$kind", conversation.Kind.ToString());
+        conversationCommand.Parameters.AddWithValue("$source", conversation.Source.ToString());
         conversationCommand.Parameters.AddWithValue("$worldId", conversation.WorldId ?? string.Empty);
         conversationCommand.Parameters.AddWithValue("$isPinned", conversation.IsPinned ? 1 : 0);
         conversationCommand.Parameters.AddWithValue("$pinnedAt", conversation.PinnedAt.HasValue ? (object)conversation.PinnedAt.Value.ToString("O") : DBNull.Value);
@@ -1702,6 +1707,7 @@ public sealed class SqliteConversationStore : IConversationStore
             PendingAskUserJson = conversation.PendingAskUserJson,
             Initiator = conversation.Initiator,
             Kind = conversation.Kind,
+            Source = conversation.Source,
             WorldId = conversation.WorldId,
             IsPinned = conversation.IsPinned,
             PinnedAt = conversation.PinnedAt,
