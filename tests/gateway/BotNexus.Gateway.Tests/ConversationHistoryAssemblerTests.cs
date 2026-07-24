@@ -284,6 +284,63 @@ public sealed class ConversationHistoryAssemblerTests
         result.Entries.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task AssembleAsync_ProjectsTypedMessageKind_ForCompletionAndResponseAndOrdinary()
+    {
+        // #2149: the conversation history projection must expose the orthogonal typed kind so
+        // replay recovers the message / subagent-completion / subagent-response distinction; a
+        // legacy/unstamped entry projects as "message".
+        var conversationId = ConversationId.From("c_kind");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-kind"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "completion", Timestamp = Ts(0), Kind = MessageKind.SubAgentCompletion });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "parent reply", Timestamp = Ts(1), Kind = MessageKind.SubAgentResponse });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "ordinary", Timestamp = Ts(2) });
+        await sessions.SaveAsync(session);
+
+        var assembler = await NewAssemblerAsync(conversationId, "quill", sessions);
+        var result = await assembler.AssembleAsync(conversationId, limit: 50, offset: 0);
+
+        result.ShouldNotBeNull();
+        var byContent = result!.Entries.Where(e => e.Content != null).ToDictionary(e => e.Content!);
+        // The history-envelope Kind stays "message" (not "boundary"); the orthogonal presentation
+        // kind is carried on the new MessageKind field so replay recovers it.
+        byContent["completion"].Kind.ShouldBe("message");
+        byContent["completion"].MessageKind.ShouldBe("subagent-completion");
+        byContent["parent reply"].MessageKind.ShouldBe("subagent-response");
+        // Role stays the LLM role, orthogonal to the presentation kind.
+        byContent["parent reply"].Role.ShouldBe("assistant");
+        byContent["ordinary"].MessageKind.ShouldBe("message");
+    }
+
+    [Fact]
+    public async Task AssembleAsync_ChannelProjection_CanSuppressSubAgentResponse_ByTypedKind()
+    {
+        // #2149: a channel/UI projection must be able to decide to suppress or specially render a
+        // subagent-response using the typed kind ALONE - never by parsing role, ids, or text.
+        var conversationId = ConversationId.From("c_suppress");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-suppress"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hi", Timestamp = Ts(0) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "internal parent reply", Timestamp = Ts(1), Kind = MessageKind.SubAgentResponse });
+        await sessions.SaveAsync(session);
+
+        var assembler = await NewAssemblerAsync(conversationId, "quill", sessions);
+        var result = await assembler.AssembleAsync(conversationId, limit: 50, offset: 0);
+
+        result.ShouldNotBeNull();
+        // Emulate a channel projection choosing to hide subagent-response entries using ONLY the
+        // typed kind. It must be able to do so without inspecting role, sender/session ids, or text.
+        var visible = result!.Entries
+            .Where(e => e.MessageKind != MessageKind.SubAgentResponse.Value)
+            .ToList();
+
+        visible.ShouldContain(e => e.Content == "hi");
+        visible.ShouldNotContain(e => e.Content == "internal parent reply");
+    }
+
     private static DateTimeOffset Ts(int minutes) => new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
     private static async Task<ConversationHistoryAssembler> NewAssemblerAsync(ConversationId conversationId, string agentId, InMemorySessionStore sessions)

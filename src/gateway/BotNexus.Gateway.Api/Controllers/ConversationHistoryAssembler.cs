@@ -143,7 +143,10 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
                     ToolCallId = entry.ToolCallId,
                     ToolArgs = entry.ToolArgs,
                     ToolIsError = entry.ToolIsError,
-                    ThinkingContent = entry.ThinkingContent
+                    ThinkingContent = entry.ThinkingContent,
+                    // #2149: project the orthogonal typed kind so live delivery and history replay
+                    // agree; ResolveKind maps legacy/unstamped entries to "message".
+                    MessageKind = entry.ResolveKind().Value
                 });
             }
         }

@@ -39,6 +39,13 @@ public static class StreamingSessionHelper
         CancellationToken cancellationToken = default)
     {
         options ??= new StreamingSessionOptions();
+        // #2149: the orthogonal typed kind to stamp on assistant entries this run produces. The
+        // default (MessageKind.Message) stores as null so ordinary streamed responses are
+        // unchanged; a subagent-response run carries the distinct kind through every flush path so
+        // live delivery and history replay agree.
+        var assistantKind = options.AssistantMessageKind is { } k && !k.Equals(MessageKind.Message)
+            ? k
+            : null;
         var streamedContent = new StringBuilder();
         var streamedHistory = new List<SessionEntry>();
         var allHistoryEntries = new List<SessionEntry>();
@@ -146,7 +153,7 @@ public static class StreamingSessionHelper
                     streamedHistory.Clear();
                     if (streamedContent.Length > 0)
                     {
-                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
+                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
                         thinkingBuffer.Clear();
                         streamedContent.Clear();
                     }
@@ -204,7 +211,7 @@ public static class StreamingSessionHelper
         var finalContent = streamedContent.ToString();
         if (!string.IsNullOrWhiteSpace(finalContent))
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
         }
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
         {
@@ -215,7 +222,8 @@ public static class StreamingSessionHelper
             session.AddEntry(new SessionEntry
             {
                 Role = MessageRole.Assistant,
-                Content = string.Empty
+                Content = string.Empty,
+                Kind = assistantKind
             });
         }
 
@@ -322,7 +330,8 @@ public sealed record StreamingSessionOptions(
     bool IncludeErrorsInHistory = false,
     Func<AgentStreamEvent, CancellationToken, ValueTask>? OnEventAsync = null,
     ProviderStallWatchdog? StallWatchdog = null,
-    int MaxPersistedToolResultBytes = 0);
+    int MaxPersistedToolResultBytes = 0,
+    MessageKind? AssistantMessageKind = null);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.

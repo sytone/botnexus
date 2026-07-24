@@ -830,6 +830,101 @@ public sealed class SqliteSessionStoreTests
         columns.ShouldContain("trigger_type", "MigrateAsync must add session_history.trigger_type idempotently.");
     }
 
+    [Fact]
+    public async Task SaveAsync_WithMessageKindStampedEntries_RoundTripsKindAcrossReload()
+    {
+        // #2149: the orthogonal typed message kind must persist + read back so a parent turn
+        // triggered by a sub-agent completion keeps the subagent-completion / subagent-response
+        // distinction through history replay. Ordinary entries default to MessageKind.Message and
+        // must round-trip as that default (never coerced to a wrong kind).
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-kind"), AgentId.From("agent-a"));
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "completion notice", Kind = MessageKind.SubAgentCompletion });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "parent reply", Kind = MessageKind.SubAgentResponse });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "ordinary reply" }); // default
+
+        await store.SaveAsync(session);
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-kind"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded!.History.Count.ShouldBe(3);
+
+        var byContent = reloaded.History.ToDictionary(e => e.Content!);
+        byContent["completion notice"].ResolveKind().ShouldBe(MessageKind.SubAgentCompletion);
+        byContent["parent reply"].ResolveKind().ShouldBe(MessageKind.SubAgentResponse);
+        byContent["ordinary reply"].ResolveKind().ShouldBe(MessageKind.Message);
+        // Default entries persist as NULL (unstamped) so ordinary rows stay compact.
+        byContent["ordinary reply"].Kind.ShouldBeNull(
+            "An entry with the default MessageKind.Message must round-trip as an unstamped (null) kind.");
+    }
+
+    [Fact]
+    public async Task GetAsync_WithLegacySchema_MissingMessageKindColumn_ReadsMessageKindWithoutThrowing()
+    {
+        // #2149: pre-#2149 databases have no session_history.message_kind column. MigrateAsync must
+        // add it idempotently AND the projection must default a missing/NULL value to
+        // MessageKind.Message so an upgrading deployment reads existing rows without throwing and
+        // legacy entries default safely to the ordinary message kind.
+        using var fixture = new StoreFixture();
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT,
+                    channel_type TEXT,
+                    caller_id TEXT,
+                    status TEXT,
+                    metadata TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp TEXT,
+                    tool_name TEXT,
+                    tool_call_id TEXT,
+                    is_compaction_summary INTEGER NOT NULL DEFAULT 0
+                );
+
+                INSERT INTO sessions (id, agent_id, status, created_at, updated_at)
+                VALUES ('s-legacy-kind', 'agent-a', 'Active', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
+
+                INSERT INTO session_history (session_id, role, content, timestamp)
+                VALUES ('s-legacy-kind', 'assistant', 'pre-2149 message', '2025-01-01T00:00:00Z');
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-legacy-kind"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded!.History.Count.ShouldBe(1);
+        reloaded.History[0].Content.ShouldBe("pre-2149 message");
+        reloaded.History[0].Kind.ShouldBeNull(
+            "Pre-#2149 rows have no message_kind value; the projection must yield null, not throw.");
+        reloaded.History[0].ResolveKind().ShouldBe(MessageKind.Message,
+            "A legacy row with no stamped kind must default safely to MessageKind.Message.");
+
+        await using var verifyConnection = new SqliteConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var colCmd = verifyConnection.CreateCommand();
+        colCmd.CommandText = "PRAGMA table_info(session_history)";
+        var columns = new List<string>();
+        await using var colReader = await colCmd.ExecuteReaderAsync();
+        while (await colReader.ReadAsync())
+            columns.Add(colReader.GetString(1));
+        columns.ShouldContain("message_kind", "MigrateAsync must add session_history.message_kind idempotently.");
+    }
+
     // --- ListByConversationAsync: F-7 contract pins (SqliteSessionStore) ---
     //
     // Same 5 invariants as InMemory + File. ALSO verifies:

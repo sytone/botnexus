@@ -762,6 +762,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     RequestedSessionId: updated.ParentSessionId,
                     RequestedConversationId: null),
                 Content = followUp,
+                // #2149: stamp the orthogonal typed kind so the gateway persists the inbound
+                // completion entry (and the parent response) with a distinct kind. The Metadata
+                // keys are retained for back-compat / audit, but downstream consumers read the
+                // typed Kind rather than re-parsing the string metadata.
+                Kind = MessageKind.SubAgentCompletion,
                 Metadata = new Dictionary<string, object?>
                 {
                     ["messageType"] = "subagent-completion",

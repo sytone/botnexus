@@ -130,7 +130,8 @@ public sealed class SessionRowMapperTests
                 1 AS is_crash_sentinel,
                 1 AS is_history,
                 'cron' AS trigger_type,
-                'thinking...' AS thinking_content
+                'thinking...' AS thinking_content,
+                'subagent-response' AS message_kind
             """);
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
@@ -147,6 +148,9 @@ public sealed class SessionRowMapperTests
         entry.IsHistory.ShouldBeTrue();
         entry.Trigger.ShouldBe(TriggerType.Cron);
         entry.ThinkingContent.ShouldBe("thinking...");
+        // #2149: the orthogonal typed message kind maps from the message_kind column.
+        entry.Kind.ShouldBe(MessageKind.SubAgentResponse);
+        entry.ResolveKind().ShouldBe(MessageKind.SubAgentResponse);
     }
 
     [Fact]
@@ -158,7 +162,7 @@ public sealed class SessionRowMapperTests
                 NULL AS role, NULL AS content, NULL AS timestamp, NULL AS tool_name,
                 NULL AS tool_call_id, 0 AS is_compaction_summary, NULL AS tool_args,
                 0 AS tool_is_error, 0 AS is_crash_sentinel, 0 AS is_history,
-                NULL AS trigger_type, NULL AS thinking_content
+                NULL AS trigger_type, NULL AS thinking_content, NULL AS message_kind
             """);
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
@@ -174,6 +178,9 @@ public sealed class SessionRowMapperTests
         entry.IsHistory.ShouldBeFalse();
         entry.Trigger.ShouldBeNull();
         entry.ThinkingContent.ShouldBeNull();
+        // #2149: a NULL message_kind maps to a null Kind, resolving to MessageKind.Message.
+        entry.Kind.ShouldBeNull();
+        entry.ResolveKind().ShouldBe(MessageKind.Message);
     }
 
     [Fact]
