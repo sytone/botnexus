@@ -179,7 +179,7 @@ public sealed class CronSchedulerTests
         corrected.NextRunAt!.Value.ShouldBeLessThan(DateTimeOffset.UtcNow.AddDays(364),
             "NextRunAt should have been corrected from 365 days out");
 
-        await context.Store.UpdateAsync(corrected with { NextRunAt = DateTimeOffset.UtcNow.AddMinutes(-1) });
+        await context.Store.SetNextRunAtAsync(corrected.Id, DateTimeOffset.UtcNow.AddMinutes(-1));
 
         // Second tick: job fires because NextRunAt is now in the past.
         await InvokeProcessTickAsync(scheduler);
@@ -280,10 +280,10 @@ public sealed class CronSchedulerTests
         // Update the schedule while the job exists
         var updated = job with
         {
-            Schedule = "0 0 1 1 *",
-            NextRunAt = new DateTimeOffset(DateTimeOffset.UtcNow.Year + 1, 1, 1, 0, 0, 0, TimeSpan.Zero)
+            Schedule = "0 0 1 1 *"
         };
-        await context.Store.UpdateAsync(updated);
+        await context.Store.UpdateDefinitionAsync(updated);
+        await context.Store.SetNextRunAtAsync(updated.Id, new DateTimeOffset(DateTimeOffset.UtcNow.Year + 1, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
         // Manual run should not clobber the updated NextRunAt
         await scheduler.RunNowAsync(JobId.From("job-1"));
@@ -442,7 +442,7 @@ public sealed class CronSchedulerTests
         // Now simulate config sync changing the schedule to every minute
         // but NOT recomputing NextRunAt (the SyncConfiguredJobs bug)
         var synced = job with { Schedule = "* * * * *" };
-        await context.Store.UpdateAsync(synced);
+        await context.Store.UpdateDefinitionAsync(synced);
 
         var scheduler = CreateScheduler(context.Store, [action]);
         await InvokeProcessTickAsync(scheduler);

@@ -148,8 +148,9 @@ public sealed class CronScheduler(
 
             if (job.NextRunAt is null)
             {
-                var initialized = job with { NextRunAt = computedNext };
-                await _cronStore.UpdateAsync(initialized, ct).ConfigureAwait(false);
+                // #2133: narrow next_run_at write - never round-trips definition columns,
+                // so it cannot clobber a concurrent controller/tool definition edit.
+                await _cronStore.SetNextRunAtAsync(job.Id, computedNext, ct).ConfigureAwait(false);
                 continue;
             }
 
@@ -158,8 +159,7 @@ public sealed class CronScheduler(
             // a NextRunAt that no longer matches the current schedule.
             if (computedNext is not null && computedNext < job.NextRunAt)
             {
-                var corrected = job with { NextRunAt = computedNext };
-                await _cronStore.UpdateAsync(corrected, ct).ConfigureAwait(false);
+                await _cronStore.SetNextRunAtAsync(job.Id, computedNext, ct).ConfigureAwait(false);
                 if (computedNext > now)
                     continue;
             }
@@ -181,9 +181,10 @@ public sealed class CronScheduler(
             var tz = ResolveTimeZone(job);
             await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
 
-            var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? job;
-            var updated = latest with { NextRunAt = expression.GetNextOccurrence(now, tz) };
-            await _cronStore.UpdateAsync(updated, ct).ConfigureAwait(false);
+            // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
+            // persisted the run's terminal LastRun* bookkeeping and any conversation pin
+            // through their own narrow writes, so no whole-record round-trip is needed here.
+            await _cronStore.SetNextRunAtAsync(job.Id, expression.GetNextOccurrence(now, tz), ct).ConfigureAwait(false);
         });
 
         await Task.WhenAll(runTasks).ConfigureAwait(false);
@@ -383,7 +384,7 @@ public sealed class CronScheduler(
     }
 
     /// <summary>
-    /// The single "re-read latest job → <see cref="ICronStore.UpdateAsync"/> with the terminal
+    /// The single "re-read latest job → narrow <see cref="ICronStore.RecordRunFinalizationAsync"/> write of the terminal
     /// <c>LastRun*</c> fields" write-back shared by every terminal path (ok / timed_out / error /
     /// aborted). Re-reading inside the write avoids clobbering concurrent edits (schedule updates).
     /// Optionally carries a resolved <paramref name="conversationId"/> for the success path's CAS
@@ -398,14 +399,15 @@ public sealed class CronScheduler(
         ConversationId? conversationId = null,
         CancellationToken ct = default)
     {
-        var latest = await _cronStore.GetAsync(jobId, ct).ConfigureAwait(false) ?? fallback;
-        await _cronStore.UpdateAsync(latest with
-        {
-            LastRunAt = triggeredAt,
-            LastRunStatus = status,
-            LastRunError = error,
-            ConversationId = conversationId ?? latest.ConversationId
-        }, ct).ConfigureAwait(false);
+        _ = fallback;
+        // #2133: terminal bookkeeping is a narrow last_run_* write that leaves definition
+        // columns, next_run_at, and the conversation pin untouched. This is what makes run
+        // finalization racing a concurrent definition edit safe - it can no longer overwrite
+        // the edit. The conversation pin (conversationId) was already persisted atomically by
+        // TrySetConversationIdAsync's CAS in TryPinConversationAsync, so it is not re-written
+        // here; passing it separately would reintroduce a read-modify-write clobber window.
+        _ = conversationId;
+        await _cronStore.RecordRunFinalizationAsync(jobId, triggeredAt, status, error, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -860,7 +862,9 @@ public sealed class CronScheduler(
                 Metadata = configuredJob.Metadata ?? existing.Metadata
             };
 
-            await _cronStore.UpdateAsync(merged, ct).ConfigureAwait(false);
+            // #2133: config-sync is a definition write only; runtime/conversation columns
+            // are scheduler/CAS-owned and must not be round-tripped here.
+            await _cronStore.UpdateDefinitionAsync(merged, ct).ConfigureAwait(false);
         }
     }
 

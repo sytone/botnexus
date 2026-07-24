@@ -147,7 +147,23 @@ public sealed class CronController(
             CreatedAt = existing.CreatedAt
         };
 
-        var saved = await store.UpdateAsync(updated, cancellationToken);
+        // #2133: a controller definition update is a narrow write that never touches
+        // scheduler-owned runtime bookkeeping (LastRun*/NextRunAt) or the CAS-pinned
+        // conversation. If the caller changed the schedule, recompute NextRunAt via the
+        // separate narrow SetNextRunAtAsync write so a paused/racing edit cannot regress a
+        // concurrent run's status, timestamps, next run, or conversation pin.
+        var saved = await store.UpdateDefinitionAsync(updated, cancellationToken);
+        if (saved is null)
+            return NotFound();
+
+        if (!string.Equals(updated.Schedule, existing.Schedule, StringComparison.Ordinal)
+            || !string.Equals(updated.TimeZone ?? string.Empty, existing.TimeZone ?? string.Empty, StringComparison.Ordinal))
+        {
+            var nextRunAt = ComputeNextRunAt(updated.Schedule, updated.TimeZone);
+            await store.SetNextRunAtAsync(typedJobId, nextRunAt, cancellationToken);
+            saved = await store.GetAsync(typedJobId, cancellationToken) ?? saved;
+        }
+
         logger.LogInformation("Cron job updated via API: {JobId} ({ActionType})", saved.Id.Value, saved.ActionType);
         return Ok(saved);
     }
@@ -218,4 +234,48 @@ public sealed class CronController(
 
     private static bool IsTimestampInRange(DateTimeOffset value)
         => value >= MinAllowedTimestamp && value <= MaxAllowedTimestamp;
+
+    // #2133: recompute NextRunAt for a schedule/timezone change on the definition-update path.
+    // Mirrors the scheduler/tool computation (Cronos + IANA/Windows timezone fallback). A bad
+    // schedule yields null - the scheduler's Phase-1 tick re-derives NextRunAt on the next pass.
+    private static DateTimeOffset? ComputeNextRunAt(string schedule, string? timeZone)
+    {
+        try
+        {
+            var tz = ResolveTimeZone(timeZone);
+            var expr = Cronos.CronExpression.Parse(schedule, Cronos.CronFormat.Standard);
+            return expr.GetNextOccurrence(DateTimeOffset.UtcNow, tz);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timeZone)
+    {
+        if (string.IsNullOrWhiteSpace(timeZone)
+            || timeZone.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+            return TimeZoneInfo.Utc;
+
+        try { return TimeZoneInfo.FindSystemTimeZoneById(timeZone); }
+        catch (TimeZoneNotFoundException) { }
+        catch (InvalidTimeZoneException) { }
+
+        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(timeZone, out var ianaId))
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(ianaId); }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+        }
+
+        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(timeZone, out var windowsId))
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(windowsId); }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+        }
+
+        return TimeZoneInfo.Utc;
+    }
 }

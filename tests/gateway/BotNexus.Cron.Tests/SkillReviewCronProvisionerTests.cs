@@ -88,7 +88,7 @@ public sealed class SkillReviewCronProvisionerTests
 
         // Non-destructive: no create, no update - user edits survive.
         store.Verify(s => s.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
-        store.Verify(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

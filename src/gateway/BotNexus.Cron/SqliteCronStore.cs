@@ -245,7 +245,19 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         return jobs;
     }
 
-    public async Task<CronJob> UpdateAsync(CronJob job, CancellationToken ct = default)
+    /// <summary>
+    /// Applies a user-owned <b>definition</b> update to an existing job. Writes only the
+    /// caller-authored columns (name, schedule, action, agent, message, template, model,
+    /// webhook, shell, enabled, system, time zone, delete-after-run, created-by, metadata).
+    /// It deliberately does <b>not</b> touch scheduler-owned runtime bookkeeping
+    /// (<c>last_run_*</c>, <c>next_run_at</c>) or the CAS-established <c>conversation_id</c>,
+    /// so a controller/tool edit racing a concurrent run can never regress run status,
+    /// timestamps, next-run, or the pinned conversation (#2133). Rescheduling after a
+    /// schedule change is a separate <see cref="SetNextRunAtAsync"/> call. Returns the
+    /// re-read job (runtime columns reflect the current stored state), or <c>null</c> if the
+    /// job no longer exists.
+    /// </summary>
+    public async Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(job);
         await InitializeAsync(ct).ConfigureAwait(false);
@@ -257,46 +269,108 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO cron_jobs (
-                    id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run
-                )
-                VALUES (
-                    $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    schedule = excluded.schedule,
-                    action_type = excluded.action_type,
-                    agent_id = excluded.agent_id,
-                    message = excluded.message,
-                    template_name = excluded.template_name,
-                    template_parameters_json = excluded.template_parameters_json,
-                    model = excluded.model,
-                    webhook_url = excluded.webhook_url,
-                    shell_command = excluded.shell_command,
-                    enabled = excluded.enabled,
-                    system = excluded.system,
-                    time_zone = excluded.time_zone,
-                    created_by = excluded.created_by,
-                    created_at = excluded.created_at,
-                    last_run_at = excluded.last_run_at,
-                    next_run_at = excluded.next_run_at,
-                    last_run_status = excluded.last_run_status,
-                    last_run_error = excluded.last_run_error,
-                    metadata_json = excluded.metadata_json,
-                    conversation_id = excluded.conversation_id,
-                    delete_after_run = excluded.delete_after_run
+                UPDATE cron_jobs SET
+                    name = $name,
+                    schedule = $schedule,
+                    action_type = $actionType,
+                    agent_id = $agentId,
+                    message = $message,
+                    template_name = @templateName,
+                    template_parameters_json = @templateParametersJson,
+                    model = $model,
+                    webhook_url = $webhookUrl,
+                    shell_command = $shellCommand,
+                    enabled = $enabled,
+                    system = $system,
+                    time_zone = $timeZone,
+                    created_by = $createdBy,
+                    delete_after_run = $deleteAfterRun,
+                    metadata_json = $metadataJson
+                WHERE id = $id
                 """;
-            BindJob(command, job);
+            BindDefinition(command, job);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             _logger.LogInformation(
-                "Updated cron job '{JobId}' (action={ActionType}, enabled={Enabled}).",
+                "Updated cron job definition '{JobId}' (action={ActionType}, enabled={Enabled}).",
                 job.Id,
                 job.ActionType,
                 job.Enabled);
-            return job;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        return await GetAsync(job.Id, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Scheduler-owned narrow write of <c>next_run_at</c> only. Used by the scheduler's
+    /// Phase-1 initialization/stale-correction and its Phase-2 post-run reschedule, and by
+    /// controller/tool definition edits that explicitly change the schedule. It never touches
+    /// any definition column, the <c>last_run_*</c> bookkeeping, or the conversation pin, so a
+    /// reschedule racing a concurrent definition edit cannot clobber the edit (#2133).
+    /// </summary>
+    public async Task SetNextRunAtAsync(JobId jobId, DateTimeOffset? nextRunAt, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE cron_jobs
+                SET next_run_at = $nextRunAt
+                WHERE id = $jobId
+                """;
+            command.Parameters.AddWithValue("$nextRunAt", ToNullableString(nextRunAt));
+            command.Parameters.AddWithValue("$jobId", jobId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Scheduler-owned narrow write of the terminal run bookkeeping (<c>last_run_at</c>,
+    /// <c>last_run_status</c>, <c>last_run_error</c>) for a completed run. It never touches any
+    /// definition column, <c>next_run_at</c>, or the conversation pin, so run finalization racing
+    /// a concurrent definition edit cannot overwrite the edit, and cannot regress the next-run or
+    /// conversation state (#2133).
+    /// </summary>
+    public async Task RecordRunFinalizationAsync(
+        JobId jobId,
+        DateTimeOffset lastRunAt,
+        string lastRunStatus,
+        string? lastRunError,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(lastRunStatus);
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE cron_jobs
+                SET last_run_at = $lastRunAt,
+                    last_run_status = $lastRunStatus,
+                    last_run_error = $lastRunError
+                WHERE id = $jobId
+                """;
+            command.Parameters.AddWithValue("$lastRunAt", lastRunAt.ToString("O"));
+            command.Parameters.AddWithValue("$lastRunStatus", lastRunStatus);
+            command.Parameters.AddWithValue("$lastRunError", (object?)lastRunError ?? DBNull.Value);
+            command.Parameters.AddWithValue("$jobId", jobId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
         finally
         {
@@ -502,6 +576,30 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
     private SqliteConnection CreateConnection()
         => SqliteConnectionFactory.Create(_connectionString);
+
+    // #2133: binds ONLY the user-owned definition columns for the narrow UpdateDefinitionAsync
+    // write. Excludes created_at (immutable after create), last_run_*/next_run_at (scheduler-owned)
+    // and conversation_id (CAS-owned) so a definition edit cannot regress runtime/conversation state.
+    private static void BindDefinition(SqliteCommand command, CronJob job)
+    {
+        command.Parameters.AddWithValue("$id", job.Id.Value);
+        command.Parameters.AddWithValue("$name", job.Name);
+        command.Parameters.AddWithValue("$schedule", job.Schedule);
+        command.Parameters.AddWithValue("$actionType", job.ActionType);
+        command.Parameters.AddWithValue("$agentId", job.AgentId.HasValue ? (object)job.AgentId.Value.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$message", (object?)job.Message ?? DBNull.Value);
+        command.Parameters.AddWithValue("@templateName", (object?)job.TemplateName ?? DBNull.Value);
+        command.Parameters.AddWithValue("@templateParametersJson", SerializeTemplateParameters(job.TemplateParameters));
+        command.Parameters.AddWithValue("$model", (object?)job.Model ?? DBNull.Value);
+        command.Parameters.AddWithValue("$webhookUrl", (object?)job.WebhookUrl ?? DBNull.Value);
+        command.Parameters.AddWithValue("$shellCommand", (object?)job.ShellCommand ?? DBNull.Value);
+        command.Parameters.AddWithValue("$enabled", job.Enabled ? 1 : 0);
+        command.Parameters.AddWithValue("$system", job.System ? 1 : 0);
+        command.Parameters.AddWithValue("$timeZone", (object?)job.TimeZone ?? DBNull.Value);
+        command.Parameters.AddWithValue("$createdBy", (object?)job.CreatedBy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$deleteAfterRun", job.DeleteAfterRun ? 1 : 0);
+        command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
+    }
 
     private static void BindJob(SqliteCommand command, CronJob job)
     {
