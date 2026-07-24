@@ -442,6 +442,41 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
+    public void ActiveAgentId_setter_rejects_marked_sub_agent_before_its_state_or_session_type_exists()
+    {
+        // #2243 race hardening: the original guard only rejected a switch when target.IsReadOnly was
+        // ALREADY derived true (SessionType == "agent-subagent"). But HandleSubAgentSpawned registers
+        // the sub-agent asynchronously, so around send time there is often NO AgentState for the
+        // sub-agent yet (or one still carrying the default "user-agent" SessionType) when a concurrent
+        // assignment lands. MarkSubAgent records the id at spawn so the guard rejects the switch
+        // independent of that ordering. Here we deliberately do NOT create an AgentState for "sub-1".
+        var store = CreateSeededStore();
+        store.ActiveAgentId = "a-1";
+
+        store.MarkSubAgent("sub-1"); // spawn-time marking, before any AgentState/SessionType exists
+        store.ActiveAgentId = "sub-1"; // concurrent background assignment during the spawn window
+
+        store.ActiveAgentId.ShouldBe("a-1",
+            customMessage: "A sub-agent marked at spawn time must be rejected by the guard even before " +
+                "its AgentState exists or its SessionType has been stamped read-only.");
+
+        // And once its AgentState is later registered (still not user-initiated), it stays rejected.
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub-agent",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+        store.ActiveAgentId = "sub-1";
+        store.ActiveAgentId.ShouldBe("a-1");
+
+        // The explicit user "view sub-agent" click still promotes it.
+        store.SetActiveSubAgent("sub-1");
+        store.ActiveAgentId.ShouldBe("sub-1");
+    }
+
+    [Fact]
     public void ActiveAgentId_setter_allows_switching_between_user_agents()
     {
         var store = CreateSeededStore();
