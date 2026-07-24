@@ -8,6 +8,7 @@ using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using TriggerType = BotNexus.Domain.Primitives.TriggerType;
+using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Security;
@@ -568,7 +569,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     is_compaction_summary INTEGER NOT NULL DEFAULT 0,
                     is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
                     is_history INTEGER NOT NULL DEFAULT 0,
-                    trigger_type TEXT
+                    trigger_type TEXT,
+                    message_kind TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS sub_agent_sessions (
@@ -799,7 +801,12 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      // pre-P9-E DBs gain the column on the first post-upgrade open.
                      ("trigger_type", "TEXT"),
                      // #1191: thinking content persistence for portal reload
-                     ("thinking_content", "TEXT")
+                     ("thinking_content", "TEXT"),
+                     // #2149: orthogonal typed message kind (message / subagent-completion /
+                     // subagent-response). Idempotent ALTER so pre-#2149 DBs gain the column on
+                     // the first post-upgrade open; a missing/NULL value reads back as the
+                     // default MessageKind.Message.
+                     ("message_kind", "TEXT")
                  })
         {
             try
@@ -1214,7 +1221,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -1320,8 +1327,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind)
             """;
         insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
         var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
@@ -1336,6 +1343,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         var pIsHistory = insertCommand.Parameters.AddWithValue("$isHistory", 0);
         var pTriggerType = insertCommand.Parameters.AddWithValue("$triggerType", DBNull.Value);
         var pThinkingContent = insertCommand.Parameters.AddWithValue("$thinkingContent", DBNull.Value);
+        // #2149: persist the orthogonal typed message kind. NULL when the entry carries the
+        // default MessageKind.Message so legacy/default rows stay compact and read back as the default.
+        var pMessageKind = insertCommand.Parameters.AddWithValue("$messageKind", DBNull.Value);
 
         foreach (var entry in session.GetHistorySnapshot())
         {
@@ -1351,6 +1361,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
             pIsHistory.Value = entry.IsHistory ? 1 : 0;
             pTriggerType.Value = (object?)entry.Trigger?.Value ?? DBNull.Value;
             pThinkingContent.Value = (object?)entry.ThinkingContent ?? DBNull.Value;
+            // Only persist a non-default kind; MessageKind.Message (or unset) stores as NULL.
+            pMessageKind.Value = entry.Kind is { } kind && !kind.Equals(MessageKind.Message)
+                ? kind.Value
+                : (object)DBNull.Value;
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

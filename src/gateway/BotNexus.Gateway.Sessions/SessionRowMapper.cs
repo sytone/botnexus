@@ -7,6 +7,7 @@ using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using TriggerType = BotNexus.Domain.Primitives.TriggerType;
+using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -110,7 +111,11 @@ internal static class SessionRowMapper
             IsCrashSentinel = GetBool(reader, "is_crash_sentinel"),
             IsHistory = GetBool(reader, "is_history"),
             Trigger = GetNullableString(reader, "trigger_type") is { } trigger ? TriggerType.FromString(trigger) : null,
-            ThinkingContent = GetNullableString(reader, "thinking_content")
+            ThinkingContent = GetNullableString(reader, "thinking_content"),
+            // #2149: a NULL/absent message_kind reads back as an unstamped (null) Kind so an entry
+            // saved with the default kind round-trips as null; SessionEntry.ResolveKind() maps null
+            // to MessageKind.Message for consumers, keeping legacy rows and ordinary responses safe.
+            Kind = GetNullableString(reader, "message_kind") is { } messageKind ? MessageKind.FromString(messageKind) : null
         };
 
     /// <summary>

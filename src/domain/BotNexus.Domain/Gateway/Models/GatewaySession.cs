@@ -371,6 +371,25 @@ public sealed record SessionEntry
     /// Null when the model did not produce reasoning blocks.
     /// </summary>
     public string? ThinkingContent { get; init; }
+
+    /// <summary>
+    /// Orthogonal, typed presentation/delivery kind for this transcript entry (issue #2149).
+    /// <c>null</c> (the default) means the entry carries no explicit kind and is treated as
+    /// <see cref="MessageKind.Message"/> - so legacy rows persisted before this field existed
+    /// default safely on replay. The gateway stamps <see cref="MessageKind.SubAgentCompletion"/>
+    /// on the inbound completion entry and <see cref="MessageKind.SubAgentResponse"/> on the
+    /// parent agent's response entry produced while handling that completion, letting channels
+    /// distinguish the three cases without re-parsing <see cref="Role"/>, ids, or content. Kept
+    /// orthogonal to <see cref="Role"/>, which remains the LLM/conversation role.
+    /// </summary>
+    public MessageKind? Kind { get; init; }
+
+    /// <summary>
+    /// Resolves the effective <see cref="MessageKind"/> for this entry, mapping the unset
+    /// <see cref="Kind"/> (including legacy rows) to <see cref="MessageKind.Message"/>.
+    /// </summary>
+    /// <returns>The stamped kind, or <see cref="MessageKind.Message"/> when none was supplied.</returns>
+    public MessageKind ResolveKind() => Kind ?? MessageKind.Message;
 }
 
 /// <summary>

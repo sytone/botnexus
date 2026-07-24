@@ -103,6 +103,14 @@ public sealed class ConversationHistoryEntryDto
 
     [JsonPropertyName("thinkingContent")]
     public string? ThinkingContent { get; init; }
+
+    /// <summary>
+    /// Orthogonal typed presentation kind of the entry (issue #2149): <c>message</c>,
+    /// <c>subagent-completion</c>, or <c>subagent-response</c>. Null/absent from a legacy server
+    /// is treated as <c>message</c> by the client.
+    /// </summary>
+    [JsonPropertyName("messageKind")]
+    public string? MessageKind { get; init; }
 }
 
 public sealed record SessionHistoryResponseDto(
@@ -136,4 +144,12 @@ public sealed class SessionHistoryEntryDto
 
     [JsonPropertyName("thinkingContent")]
     public string? ThinkingContent { get; init; }
+
+    /// <summary>
+    /// Orthogonal typed presentation kind of the entry (issue #2149): <c>message</c>,
+    /// <c>subagent-completion</c>, or <c>subagent-response</c>. Null/absent is treated as
+    /// <c>message</c> by the client.
+    /// </summary>
+    [JsonPropertyName("messageKind")]
+    public string? MessageKind { get; init; }
 }

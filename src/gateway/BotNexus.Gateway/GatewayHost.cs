@@ -24,6 +24,7 @@ using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
+using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
@@ -426,6 +427,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 processedParts = await _mediaPipeline.ProcessAsync(originalParts, mediaContext);
             }
 
+            // #2149: derive the orthogonal typed kinds ONCE for this turn. The inbound entry is
+            // stamped with the message's own kind (e.g. subagent-completion for the internal
+            // completion notification); the parent agent's response entry produced while handling
+            // a subagent-completion is stamped subagent-response so channels can distinguish the
+            // three cases (message / subagent-completion / subagent-response) on both live delivery
+            // and history replay - without re-parsing role, ids, or text. Ordinary turns resolve to
+            // MessageKind.Message and store as null (the default), so nothing else changes.
+            var inboundKind = ResolveInboundKind(message);
+            var responseKind = inboundKind.Equals(MessageKind.SubAgentCompletion)
+                ? MessageKind.SubAgentResponse
+                : MessageKind.Message;
+
             session.AddEntry(new SessionEntry
             {
                 // Hybrid rule (#1650): an agent posting into a channel (e.g. via the
@@ -436,7 +449,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 Role = message.DeriveChannelPostRole(),
                 Content = message.Content,
                 OriginalContentParts = originalParts,
-                ProcessedContentParts = processedParts
+                ProcessedContentParts = processedParts,
+                // Persist null for the default so legacy/ordinary rows stay unstamped (#2149).
+                Kind = StampKind(inboundKind)
             });
 
             // Write-ahead Layer 1: persist user message before starting the LLM call.
@@ -564,6 +579,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         _sessions,
                         new StreamingSessionOptions(
                             IncludeErrorsInHistory: true,
+                            AssistantMessageKind: responseKind,
                             OnEventAsync: async (AgentStreamEvent evt, CancellationToken ct) =>
                             {
                                 // Enrich with agentId so the client can route events
@@ -689,7 +705,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                 // (e.g. Telegram forum topics) are already encoded in ChannelAddress.
                                 BindingId = resolvedSource.BindingId,
                                 DisplayPrefix = resolvedSource.DisplayPrefix,
-                                ChannelRequestId = message.ChannelRequestId
+                                ChannelRequestId = message.ChannelRequestId,
+                                // #2149: expose the typed kind to the adapter so it can decide whether
+                                // to suppress/collapse/specially render a subagent-response.
+                                Kind = StampKind(responseKind)
                             }, cancellationToken);
                         }
                     }
@@ -697,7 +716,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // NO_REPLY responses are intentional silences — do not persist them
                     // in the session store. Channel adapters already suppress delivery (#1237).
                     if (!IsNoReply(response.Content))
-                        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+                        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content, Kind = StampKind(responseKind) });
                 }
 
                 // Remove crash sentinel on clean turn completion (#363).
@@ -1218,6 +1237,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             return false;
 
         return response.Trim().Equals("NO_REPLY", StringComparison.Ordinal);
+    }
+
+    // #2149: normalise the default kind to null so ordinary/legacy entries and outbound
+    // messages stay unstamped (the persistence layer stores MessageKind.Message as NULL). A
+    // non-default kind (subagent-completion / subagent-response) is carried through verbatim.
+    private static MessageKind? StampKind(MessageKind kind)
+        => kind.Equals(MessageKind.Message) ? null : kind;
+
+    // #2149: resolve the inbound message's typed kind. Prefer the typed InboundMessage.Kind;
+    // for back-compat, fall back to the legacy Metadata["messageType"] token so a producer that
+    // only stamped the string metadata (e.g. before it was updated to set Kind) still yields the
+    // correct typed kind rather than silently degrading to the ordinary message default.
+    private static MessageKind ResolveInboundKind(InboundMessage message)
+    {
+        if (message.Kind is { } kind)
+            return kind;
+
+        if (message.Metadata.TryGetValue("messageType", out var raw) && raw is string token &&
+            !string.IsNullOrWhiteSpace(token))
+            return MessageKind.FromString(token);
+
+        return MessageKind.Message;
     }
 
     private async Task HandleUserInputRequiredAsync(

@@ -155,6 +155,26 @@ public sealed record InboundMessage
     public MessageRole DeriveChannelPostRole() =>
         SpeakAs
         ?? (Sender.Kind == CitizenKind.Agent ? MessageRole.Assistant : MessageRole.User);
+
+    /// <summary>
+    /// Orthogonal, typed presentation/delivery kind for this message (issue #2149). <c>null</c>
+    /// (the default) means "no explicit kind" and is treated as <see cref="MessageKind.Message"/>
+    /// downstream. The sub-agent completion dispatch stamps
+    /// <see cref="MessageKind.SubAgentCompletion"/> here so the gateway can persist the inbound
+    /// completion entry - and the resulting parent turn - with a distinct kind instead of forcing
+    /// channels to re-parse <see cref="SenderId"/>, <see cref="Metadata"/>, or the textual
+    /// completion envelope. Kept separate from <see cref="SpeakAs"/>/<see cref="MessageRole"/>: the
+    /// role stays the LLM/conversation role; the kind carries presentation semantics.
+    /// </summary>
+    public MessageKind? Kind { get; init; }
+
+    /// <summary>
+    /// Resolves the effective <see cref="MessageKind"/> for this message, mapping the unset
+    /// <see cref="Kind"/> to <see cref="MessageKind.Message"/> so every consumer reads a concrete,
+    /// non-null kind and legacy/unstamped messages default safely.
+    /// </summary>
+    /// <returns>The stamped kind, or <see cref="MessageKind.Message"/> when none was supplied.</returns>
+    public MessageKind ResolveKind() => Kind ?? MessageKind.Message;
 }
 
 /// <summary>
@@ -224,4 +244,22 @@ public sealed record OutboundMessage
     /// prior behaviour.
     /// </remarks>
     public MessageRole? SpeakAs { get; init; }
+
+    /// <summary>
+    /// Orthogonal, typed presentation/delivery kind exposed to channel adapters (issue #2149).
+    /// <c>null</c> (the default) is treated as <see cref="MessageKind.Message"/>. Carries the kind
+    /// stamped on the originating entry all the way to live delivery so an adapter can decide
+    /// whether to suppress, collapse, or specially render a <see cref="MessageKind.SubAgentCompletion"/>
+    /// notification or a <see cref="MessageKind.SubAgentResponse"/> without inferring it from role,
+    /// ids, or text. Purely additive - adapters that ignore it keep their prior behaviour.
+    /// </summary>
+    public MessageKind? Kind { get; init; }
+
+    /// <summary>
+    /// Resolves the effective <see cref="MessageKind"/> for delivery, mapping the unset
+    /// <see cref="Kind"/> to <see cref="MessageKind.Message"/> so adapters always read a concrete
+    /// kind and pre-#2149 outbound posts default safely.
+    /// </summary>
+    /// <returns>The stamped kind, or <see cref="MessageKind.Message"/> when none was supplied.</returns>
+    public MessageKind ResolveKind() => Kind ?? MessageKind.Message;
 }

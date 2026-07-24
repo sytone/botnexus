@@ -117,4 +117,14 @@ public sealed class ConversationHistoryEntry
 
     /// <summary>Thinking/reasoning content from the model (for assistant messages).</summary>
     public string? ThinkingContent { get; init; }
+
+    /// <summary>
+    /// Orthogonal, typed presentation/delivery kind of the underlying transcript entry (issue
+    /// #2149): <c>message</c> (ordinary/default), <c>subagent-completion</c> (the internal
+    /// completion notification), or <c>subagent-response</c> (the parent agent's response to it).
+    /// Distinct from <see cref="Kind"/>, which discriminates the history-envelope shape
+    /// (<c>message</c> vs <c>compaction</c>). Always emitted so replay recovers the distinction a
+    /// portal/channel needs without inferring it from <see cref="Role"/>, ids, or content.
+    /// </summary>
+    public string? MessageKind { get; init; }
 }

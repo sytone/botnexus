@@ -805,6 +805,53 @@ public sealed class StreamingSessionHelperTests
         yield return new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd };
     }
 
+    [Fact]
+    public async Task ProcessAndSaveAsync_WhenAssistantMessageKindSet_StampsStreamedAssistantEntry()
+    {
+        // #2149: a streaming parent turn produced while handling a sub-agent completion must stamp
+        // the assistant entry with subagent-response so history replay agrees with live delivery.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-kind"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "parent " },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "reply" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(AssistantMessageKind: BotNexus.Domain.Primitives.MessageKind.SubAgentResponse));
+
+        var entry = session.History.ShouldHaveSingleItem();
+        entry.Role.ShouldBe(MessageRole.Assistant);
+        entry.Content.ShouldBe("parent reply");
+        entry.ResolveKind().ShouldBe(BotNexus.Domain.Primitives.MessageKind.SubAgentResponse);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_WhenNoAssistantMessageKind_DefaultsToUnstampedMessageEntry()
+    {
+        // #2149 sad path: an ordinary streamed turn must NOT stamp a non-default kind - the entry
+        // stays unstamped (null Kind) and resolves to MessageKind.Message.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-kind-2"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object);
+
+        var entry = session.History.ShouldHaveSingleItem();
+        entry.Kind.ShouldBeNull();
+        entry.ResolveKind().ShouldBe(BotNexus.Domain.Primitives.MessageKind.Message);
+    }
+
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)
     {
         foreach (var evt in events)
