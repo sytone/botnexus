@@ -60,7 +60,10 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ILogger<ServiceBusChannelAdapter> _logger;
-    private readonly ServiceBusChannelOptions _options;
+    private readonly LateBoundChannelOptions<ServiceBusChannelOptions> _optionsHolder;
+
+    // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
+    private ServiceBusChannelOptions _options => _optionsHolder.Current;
 
     // Optional factory injected at construction time; null → create real factory in OnStartAsync.
     private readonly IServiceBusAdapterClientFactory? _injectedFactory;
@@ -110,7 +113,9 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         : base(logger)
     {
         _logger = logger;
-        _options = ResolveOptions(optionsAccessor, configuration);
+        _optionsHolder = new LateBoundChannelOptions<ServiceBusChannelOptions>(
+            () => ResolveOptions(optionsAccessor, configuration),
+            configuration);
         _injectedFactory = clientFactory;
         AllowList = [.. _options.AllowedSenderIds];
     }

@@ -28,7 +28,11 @@ public sealed class TelegramChannelAdapter(
     private const int StreamingFlushThresholdChars = 100;
 
     private readonly ILogger<TelegramChannelAdapter> _logger = logger;
-    private readonly TelegramGatewayOptions _options = ResolveOptions(optionsAccessor, configuration);
+    private readonly LateBoundChannelOptions<TelegramGatewayOptions> _optionsHolder =
+        new(() => ResolveOptions(optionsAccessor, configuration), configuration);
+
+    // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
+    private TelegramGatewayOptions _options => _optionsHolder.Current;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
 
