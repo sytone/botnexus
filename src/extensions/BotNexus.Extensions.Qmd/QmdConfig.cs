@@ -6,8 +6,13 @@ namespace BotNexus.Extensions.Qmd;
 /// </summary>
 public sealed class QmdConfig
 {
-    /// <summary>Whether the QMD extension is enabled for this agent.</summary>
-    public bool Enabled { get; set; } = true;
+    /// <summary>
+    /// Whether the QMD extension is enabled for this agent. Defaults to <c>false</c>:
+    /// QMD is opt-in and must be explicitly enabled per agent via
+    /// <c>extensions.botnexus-qmd.enabled: true</c> (issue #2116). Installs that relied on
+    /// omitting this key to mean "enabled" must now set it explicitly.
+    /// </summary>
+    public bool Enabled { get; set; }
 
     /// <summary>
     /// Path to the <c>qmd</c> binary. When null, the binary is resolved from PATH.

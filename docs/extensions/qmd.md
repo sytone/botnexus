@@ -2,6 +2,14 @@
 
 The QMD extension integrates a local knowledge base into BotNexus agents, providing keyword, semantic, and hybrid search over document collections. It wraps the external `qmd` CLI binary.
 
+> **QMD is optional and disabled by default.** No knowledge tools are contributed and no indexing
+> process starts unless an agent explicitly sets `extensions.botnexus-qmd.enabled: true`. Missing,
+> empty, or malformed configuration fails closed to disabled (malformed config logs a diagnostic).
+>
+> **Changed default (issue #2116):** earlier builds treated an omitted `botnexus-qmd` block as
+> *enabled*. That is no longer the case. Installs that relied on omission to mean "enabled" must now
+> add an explicit `"enabled": true` to keep QMD active.
+
 ## Overview
 
 | Property | Value |
@@ -71,7 +79,7 @@ Configure in your agent's extension config block:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | boolean | true | Whether the QMD extension is enabled for this agent. |
+| `enabled` | boolean | **false** | Whether the QMD extension is enabled for this agent. Must be explicitly set to `true` to activate QMD; omitted/empty/malformed config is treated as disabled. |
 | `qmdPath` | string | null | Path to the `qmd` binary. When null, resolved from PATH. |
 | `defaultSearchMode` | string | `"hybrid"` | Default search mode: `keyword`, `semantic`, or `hybrid`. |
 | `maxResults` | integer | 10 | Default maximum number of search results. |

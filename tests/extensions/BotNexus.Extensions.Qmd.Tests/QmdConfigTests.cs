@@ -9,7 +9,8 @@ public class QmdConfigTests
     {
         var config = new QmdConfig();
 
-        Assert.True(config.Enabled);
+        // QMD is opt-in: disabled by default (issue #2116).
+        Assert.False(config.Enabled);
         Assert.Null(config.QmdPath);
         Assert.Equal("hybrid", config.DefaultSearchMode);
         Assert.Equal(10, config.MaxResults);
