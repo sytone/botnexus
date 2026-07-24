@@ -14,6 +14,7 @@ public sealed class MainLayoutTests : IDisposable
     private readonly ClientStateStore _store;
     private readonly IAgentInteractionService _interaction;
     private readonly IPortalLoadService _portalLoad;
+    private readonly StubToolsHandler _toolsHandler;
 
     public MainLayoutTests()
     {
@@ -47,6 +48,9 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _toolsHandler = new StubToolsHandler();
+        var toolsHttp = new HttpClient(_toolsHandler) { BaseAddress = new Uri("http://localhost/") };
+        _ctx.Services.AddSingleton(new ToolsApiClient(toolsHttp));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -867,5 +871,114 @@ public sealed class MainLayoutTests : IDisposable
         var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
             .Last(i => i.Arguments.Count == 2 && (string?)i.Arguments[0] == "botnexus-conversation-activity-filter");
         Assert.Equal("Today", setItemCall.Arguments[1]);
+    }
+
+    // ── Tools nav section (#2233, slice 2 of #2231) ─────────────────────────────────────────
+
+    [Fact]
+    public void Tools_section_header_is_rendered()
+    {
+        var cut = RenderLayout();
+        var link = cut.Find("[data-testid='nav-tools']");
+        Assert.Contains("Tools", link.TextContent);
+        Assert.Equal("tools", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void Tools_section_renders_above_chat()
+    {
+        var cut = RenderLayout();
+
+        var markup = cut.Markup;
+        var toolsIndex = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+        var chatIndex = markup.IndexOf("href=\"chat\"", StringComparison.Ordinal);
+        Assert.True(toolsIndex >= 0 && chatIndex >= 0);
+        Assert.True(toolsIndex < chatIndex, "Tools section must render above the Chat link.");
+    }
+
+    [Fact]
+    public void Tools_section_shows_empty_state_when_no_tools()
+    {
+        _toolsHandler.SetTools("[]");
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-empty']"));
+        Assert.Contains("No tools configured", cut.Find("[data-testid='tools-empty']").TextContent);
+    }
+
+    [Fact]
+    public void Tools_section_renders_configured_tools_from_fake_source()
+    {
+        _toolsHandler.SetTools("""
+            [
+              { "id": "t-1", "name": "Grafana", "url": "https://grafana", "icon": "\uD83D\uDCC8", "order": 0 },
+              { "id": "t-2", "name": "Wiki", "url": "https://wiki", "icon": "", "order": 1 }
+            ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal(2, cut.FindAll("[data-testid='tools-subnav-item']").Count));
+        Assert.Contains("Grafana", cut.Markup);
+        Assert.Contains("Wiki", cut.Markup);
+    }
+
+    [Fact]
+    public void Tools_sub_items_link_to_tool_route()
+    {
+        _toolsHandler.SetTools("""
+            [ { "id": "t-1", "name": "Grafana", "url": "https://grafana", "icon": "", "order": 0 } ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var item = cut.Find("[data-testid='tools-subnav-item']");
+            Assert.Equal("tools/t-1", item.GetAttribute("href"));
+        });
+    }
+
+    [Fact]
+    public void Tools_sub_items_render_in_ascending_order()
+    {
+        _toolsHandler.SetTools("""
+            [
+              { "id": "t-b", "name": "Beta", "url": "https://b", "icon": "", "order": 5 },
+              { "id": "t-a", "name": "Alpha", "url": "https://a", "icon": "", "order": 1 }
+            ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var items = cut.FindAll("[data-testid='tools-subnav-item']");
+            Assert.Equal(2, items.Count);
+            Assert.Contains("Alpha", items[0].TextContent);
+            Assert.Contains("Beta", items[1].TextContent);
+        });
+    }
+
+    /// <summary>
+    /// Controllable fake tools source. Returns the JSON body configured via <see cref="SetTools"/>
+    /// for GET /api/tools, defaulting to an empty list so the nav renders its empty state.
+    /// </summary>
+    private sealed class StubToolsHandler : HttpMessageHandler
+    {
+        private string _toolsJson = "[]";
+
+        public void SetTools(string json) => _toolsJson = json;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(_toolsJson, System.Text.Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
     }
 }

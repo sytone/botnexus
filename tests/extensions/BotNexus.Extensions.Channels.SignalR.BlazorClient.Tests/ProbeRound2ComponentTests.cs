@@ -36,6 +36,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _ctx.Services.AddSingleton(new ToolsApiClient(http));
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         var _mockPrefs = Substitute.For<IPortalPreferencesService>(); _mockPrefs.Current.Returns(new PortalPreferences()); _ctx.Services.AddSingleton(_mockPrefs);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -217,7 +218,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(new CronApiClient(http));
         ctx.Services.AddSingleton(new SectionsApiClient(http));
+        ctx.Services.AddSingleton(new ToolsApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _ctx.Services.AddSingleton(new ToolsApiClient(http));
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
         var mockPrefs2 = Substitute.For<IPortalPreferencesService>(); mockPrefs2.Current.Returns(new PortalPreferences()); ctx.Services.AddSingleton(mockPrefs2);
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -260,6 +263,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _ctx.Services.AddSingleton(new ToolsApiClient(http));
 
         _store.SeedAgents([new AgentSummary("a-1", "Agent One")]);
         _store.SeedConversations("a-1", []);

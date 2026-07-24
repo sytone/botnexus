@@ -12,6 +12,7 @@
 @inject IPortalPreferencesService Prefs
 @inject CronApiClient CronApi
 @inject SectionsApiClient SectionsApi
+@inject ToolsApiClient ToolsApi
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -65,6 +66,29 @@
             @* Nav links *@
             <nav class="sidebar-nav">
                 <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+                @* Tools section -- rendered above Chat. Tools load from GET /api/tools and roam
+                   with the user server-side (#2233). Sub-items link to /tools/{id}; the host route
+                   itself lands in a later slice. *@
+                <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
+                <div class="sidebar-subnav" data-testid="tools-subnav">
+                    @if (_tools.Count == 0)
+                    {
+                        <div class="sidebar-subnav-empty" data-testid="tools-empty">No tools configured</div>
+                    }
+                    else
+                    {
+                        @foreach (var tool in _tools)
+                        {
+                            <a href="tools/@tool.Id" class="sidebar-subnav-item @(IsToolActive(tool.Id) ? "active" : "")" data-testid="tools-subnav-item" @onclick="CloseSidebar">
+                                @if (!string.IsNullOrWhiteSpace(tool.Icon))
+                                {
+                                    <span class="tools-subnav-item-icon">@tool.Icon</span>
+                                }
+                                <span class="tools-subnav-item-label">@tool.Name</span>
+                            </a>
+                        }
+                    }
+                </div>
                 <a href="chat" class="sidebar-nav-item @NavClass("chat")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
 
                 @* Scrollable agent/conversation section *@
@@ -343,6 +367,7 @@
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
     private List<Announcement> _announcements = [];
     private List<SidebarAgentItem> _sidebarAgents = [];
+    private List<ToolDto> _tools = [];
     private PortalSettingsPanel? _settingsPanel;
     private bool _showDebugPanel = false;
     private bool _sidebarOpen = false;
@@ -358,6 +383,13 @@
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
         Prefs.OnChanged += HandleStateChanged;
+    }
+
+    // Tools load independently of the JS-driven first-render pipeline so the Tools nav section
+    // populates deterministically as soon as the gateway responds (#2233). The client never throws.
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadToolsAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -841,6 +873,21 @@
                 .ToList();
         }
         catch { _sidebarAgents = []; }
+    }
+
+    // Loads the user's configured tools from GET /api/tools for the Tools nav section (#2233).
+    // The client never throws, returning an empty list on failure so the empty state renders.
+    private async Task LoadToolsAsync()
+    {
+        _tools = (await ToolsApi.ListAsync())
+            .OrderBy(t => t.Order)
+            .ToList();
+    }
+
+    private bool IsToolActive(string toolId)
+    {
+        var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        return uri.Equals($"tools/{toolId}", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task LoadCronConversationIdsAsync()
