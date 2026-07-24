@@ -194,8 +194,12 @@ Architectural decisions are captured as ADRs. Start with the
 
 ## Deferred / follow-ups (not in this slice)
 
-- Full **C4 diagram images** (PlantUML / Structurizr) for context, container,
-  and component levels.
+- **Level 3 (component) C4 views** — per-container component decompositions.
 - **Detailed per-component arc42 sections** (one page per building block).
-- **Additional ADRs** capturing past decisions (DDD/domain purity, Vogen adoption,
-  channel-centric routing, streaming-first design, SQLite persistence).
+- **Additional ADRs** capturing remaining decisions (DDD/domain purity, Vogen adoption,
+  streaming-first design).
+
+> This slice added the [C4 System Context + Container diagrams](c4-diagrams.md), the
+> [runtime view](runtime-view.md) with three sequence diagrams, and ADRs
+> [0001 (SQLite persistence)](adr/0001-use-sqlite-for-persistence.md) and
+> [0002 (channel-centric routing)](adr/0002-channel-centric-routing.md).

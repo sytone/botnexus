@@ -117,8 +117,12 @@ nav:
       - WebSocket Protocol: websocket-protocol.md
   - Architecture:
       - arc42 Overview: architecture/README.md
+      - C4 Diagrams: architecture/c4-diagrams.md
+      - Runtime View: architecture/runtime-view.md
       - ADRs: architecture/adr/README.md
       - ADR-0000 Record Decisions: architecture/adr/0000-record-architecture-decisions.md
+      - ADR-0001 SQLite Persistence: architecture/adr/0001-use-sqlite-for-persistence.md
+      - ADR-0002 Channel-Centric Routing: architecture/adr/0002-channel-centric-routing.md
       - ADR Template: architecture/adr/adr-template.md
       - Overview: architecture/overview.md
       - Domain Model: architecture/domain-model.md

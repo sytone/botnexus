@@ -31,11 +31,14 @@ We use a lightweight [MADR](https://adr.github.io/madr/)-style format.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0000](0000-record-architecture-decisions.md) | Record architecture decisions | Accepted |
+| [0001](0001-use-sqlite-for-persistence.md) | Use SQLite for platform persistence | Accepted |
+| [0002](0002-channel-centric-routing.md) | Route messages through channels (channel-centric routing) | Accepted |
 
 > New ADRs should be appended to this table as they are accepted.
 
 ## Deferred (follow-ups)
 
-This first slice establishes the ADR process and the meta-ADR. Future ADRs will capture
-existing decisions such as domain purity / DDD boundaries, Vogen-generated value objects,
-channel-centric routing, streaming-first LLM interaction, and SQLite persistence.
+The first slice established the ADR process and the meta-ADR; this slice adds ADR-0001
+(SQLite persistence) and ADR-0002 (channel-centric routing). Future ADRs will capture the
+remaining decisions such as domain purity / DDD boundaries, Vogen-generated value objects,
+and streaming-first LLM interaction.
