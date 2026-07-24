@@ -37,6 +37,7 @@
     <Compile Include="CronRunRetentionOptions.cs" />
     <Compile Include="CronRunRetentionHostedService.cs" />
     <Compile Include="MissedRunDetectionService.cs" />
+    <Compile Include="CronExternalDeliveryRedactor.cs" />
   </ItemGroup>
 
   <ItemGroup>
