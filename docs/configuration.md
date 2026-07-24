@@ -872,6 +872,35 @@ The sweep only ever considers directories whose name contains the `--subagent--`
 Each sweep pass emits a single log line with the number of directories removed, bytes reclaimed, and directories skipped as recent/unexpired. Configurable via `gateway:subAgentWorkspace:*`.
 
 
+#### Webhook conversation retention
+
+Conversations created by webhook-triggered automation are provenance-tagged and age out on a faster, dedicated schedule than ordinary human conversations. This policy is **independent** of both the world-level conversation auto-archive gate and webhook *run* retention — the three settings govern different data with their own thresholds. It is opt-in: with `enabled` left `false`, existing deployments see no behaviour change until the policy is explicitly turned on. A periodic sweep archives eligible webhook conversations using two rules: the canonical conversation of a deleted or disabled registration ages out after `disabledRegistrationInactivityDays`, while an orphan conversation (whose registration no longer exists and which is not the registration's pinned conversation) ages out faster after `orphanInactivityDays`.
+
+```json
+{
+  "gateway": {
+    "webhooks": {
+      "conversationRetention": {
+        "enabled": false,
+        "disabledRegistrationInactivityDays": 7,
+        "orphanInactivityDays": 1,
+        "checkInterval": "01:00:00"
+      }
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `webhooks.conversationRetention.enabled` | bool | `false` | Master switch. Opt-in; when `false` no webhook conversations are archived by this policy. |
+| `webhooks.conversationRetention.disabledRegistrationInactivityDays` | int | `7` | Days of inactivity after which the canonical conversation of a deleted or disabled registration becomes eligible for archival. Zero or negative disables this rule. |
+| `webhooks.conversationRetention.orphanInactivityDays` | int | `1` | Days of inactivity after which an orphan/race webhook conversation (registration gone, not the pinned conversation) becomes eligible for archival. Zero or negative disables this rule. |
+| `webhooks.conversationRetention.checkInterval` | TimeSpan | `01:00:00` (1h) | How often the retention sweep runs. |
+
+Configurable via `gateway:webhooks:conversationRetention:*`.
+
+
 #### Tool Result Persistence
 
 Large tool results (for example a recursive directory listing or a session-history dump) are otherwise written into `session_history` at full size and re-sent to the model on every subsequent turn — consuming context budget with no ongoing value. The `toolResultPersistence` section caps the size of an individual tool result **at write time**: a result whose UTF-8 byte size exceeds `maxBytes` is truncated on a rune boundary (never splitting a surrogate pair or a multi-byte UTF-8 sequence) and an explicit `[truncated N bytes]` marker is appended before the entry is persisted, so the oversized blob never lands in history nor reaches the next turn's context window.

@@ -80,7 +80,7 @@ You should see the root command help listing all available subcommands.
 28. [prompt render](#prompt-render) — Render a prompt template
 29. [prompt run](#prompt-run) — Render and execute a prompt template
 30. [satellite](#satellite) — Manage satellite nodes
-31. [doctor](#doctor) — Diagnose configuration issues
+31. [doctor](#doctor) — Run the complete CLI diagnostic suite
 32. [doctor config](#doctor-config) — Guided config migration
 33. [locations](#locations) — Manage configured locations
 34. [update](#update) — Pull, build, and restart the gateway
@@ -1732,7 +1732,7 @@ botnexus satellite remove <NAME>
 
 ## doctor
 
-Run diagnostic checks against your BotNexus configuration, providers, and environment. Reports issues with actionable fix suggestions.
+Run the complete CLI diagnostic suite against your BotNexus configuration, providers, and environment. The bare command executes **every** registered check in a deterministic order, prints a section per check, and ends with a healthy/warning/error summary plus a script-friendly aggregate exit code (`0` = all healthy, `1` = any warning, `2` = any error). Independent checks always run to completion even after one reports a finding. Focused subcommands remain for targeted runs.
 
 ### Usage
 
@@ -1767,7 +1767,7 @@ botnexus doctor --target /opt/botnexus-prod
 botnexus doctor locations
 ```
 
-Checks include: config validity, provider reachability, directory permissions, extension loading, and port availability.
+Checks include: config validity, provider reachability, directory/location accessibility, persistent and sub-agent workspace health, extension loading, and port availability. Add new checks to the registry so the aggregate suite can never silently omit one.
 
 ---
 

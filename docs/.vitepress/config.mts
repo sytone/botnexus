@@ -16,6 +16,9 @@ export default defineConfig({
     // part of the deployed docs build (kept in repo, see srcExclude below)
     /\/training\//,
     /\/api\//,
+    // Repo-root and nested AGENTS.md convention files referenced from dev/architecture
+    // docs but outside the docs source tree
+    /AGENTS(\.md)?$/,
     // localhost links (expected in setup guides)
     /localhost/,
   ],
@@ -129,12 +132,14 @@ export default defineConfig({
         text: 'Architecture',
         items: [
           { text: 'Overview', link: '/architecture/overview' },
+          { text: 'arc42-lite Overview', link: '/architecture/README' },
           { text: 'Domain Model', link: '/architecture/domain-model' },
           { text: 'Gateway Flow', link: '/architecture/gateway-flow' },
           { text: 'Channel Binding', link: '/architecture/channel-binding' },
           { text: 'Extension Guide', link: '/architecture/extension-guide' },
           { text: 'Principles', link: '/architecture/principles' },
           { text: 'System Flows', link: '/architecture/system-flows' },
+          { text: 'Decision Records (ADRs)', link: '/architecture/adr/README' },
         ],
       },
       {
@@ -159,6 +164,7 @@ export default defineConfig({
           { text: 'Running Impacted Tests', link: '/development/running-tests' },
           { text: 'Azure Build and Test Runner', link: '/development/azure-build-test-runner' },
           { text: 'Maintenance Orchestration', link: '/development/autonomous-maintenance-orchestration' },
+          { text: 'Validation Receipts', link: '/development/validation-receipts' },
         ],
       },
       {
@@ -174,6 +180,7 @@ export default defineConfig({
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
+          { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],
