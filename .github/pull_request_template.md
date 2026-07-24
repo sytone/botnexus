@@ -44,6 +44,20 @@ Closes #
 - `<Project>.Tests`: **N passed / 0 failed**
 - `Architecture.Tests`: **N** · `Scenarios.Tests`: **N**
 
+## UI evidence
+
+<!-- REQUIRED when this PR changes rendered UI (*.razor, *.scss, wwwroot/**, the BlazorClient
+     projects). Delete this section entirely for backend-only changes.
+
+     Attach a screenshot or screen recording of the new capability being exercised with REAL
+     generating agents and live conversations — a still of an empty shell does not show a
+     reviewer that streaming, incremental rendering, or state transitions actually work.
+     Prefer a recording for anything animated or progressive.
+
+     Cover the states a reviewer cannot infer from the diff: empty, loading/generating,
+     populated, and error. If the change genuinely has no visible delta (pure refactor),
+     write "No visible UI change — pure refactor" instead of attaching media. -->
+
 ## Risk & rollback
 
 <!-- Blast radius and how to undo. Call out anything a reviewer would regret discovering post-merge. -->
