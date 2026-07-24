@@ -107,6 +107,13 @@ nav:
       - Configuration: configuration.md
       - CLI Reference: cli-reference.md
       - API Reference: api-reference.md
+      - REST API Reference:
+          - Overview: api/README.md
+          - Conversations: api/conversations.md
+          - Cron: api/cron.md
+          - Satellites: api/satellites.md
+          - Webhooks: api/webhooks.md
+          - Tools: api/tools.md
       - WebSocket Protocol: websocket-protocol.md
   - Architecture:
       - arc42 Overview: architecture/README.md
