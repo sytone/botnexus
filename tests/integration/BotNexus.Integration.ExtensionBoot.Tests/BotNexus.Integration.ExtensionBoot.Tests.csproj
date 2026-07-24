@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Extension-boot smoke gate (issue #2220).
+
+      What this project covers (the gap no other gate closed):
+        1. Build the solution (which builds the full extension set).
+        2. Deploy every extension exactly as production does and boot the gateway
+           through the real CLI `gateway start` path (DeployExtensions + isolated
+           ExtensionAssemblyLoadContext).
+        3. Assert `GET /health` becomes healthy within a timeout.
+        4. Assert `GET /api/extensions/health` reports zero extension-load failures.
+           On failure the assertion surfaces the ACTUAL per-extension load error
+           (naming the missing/diverged assembly) rather than a generic 10s timeout.
+
+      Why it lives here:
+        This is the extension-assembly-load seam - real DeployExtensions, real
+        isolated load contexts, real host boot. The only out-of-scope stand-in is
+        the LLM provider (integration-mock), so the gate is deterministic and
+        CI-runnable without secrets.
+    -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Xunit.SkippableFact" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

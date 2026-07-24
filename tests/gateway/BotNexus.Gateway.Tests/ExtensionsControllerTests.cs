@@ -1,5 +1,7 @@
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 
@@ -13,7 +15,7 @@ public sealed class ExtensionsControllerTests
         var loader = new Mock<IExtensionLoader>();
         loader.Setup(value => value.GetLoaded()).Returns([]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -36,7 +38,7 @@ public sealed class ExtensionsControllerTests
                 extensionTypes: ["channel"])
         ]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -61,7 +63,7 @@ public sealed class ExtensionsControllerTests
                 extensionTypes: ["channel", "router"])
         ]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -95,7 +97,7 @@ public sealed class ExtensionsControllerTests
                 extensionTypes: ["transport"])
         ]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -119,7 +121,7 @@ public sealed class ExtensionsControllerTests
                 extensionTypes: [])
         ]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -143,7 +145,7 @@ public sealed class ExtensionsControllerTests
                 extensionTypes: ["channel"])
         ]);
 
-        var controller = new ExtensionsController(loader.Object);
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
 
         var result = controller.List();
 
@@ -151,6 +153,81 @@ public sealed class ExtensionsControllerTests
         var ok = (OkObjectResult)result.Result!;
         ok.Value.ShouldBeAssignableTo<IReadOnlyList<ExtensionResponse>>();
         ((IReadOnlyList<ExtensionResponse>)ok.Value!).ShouldAllBe(item => item is ExtensionResponse);
+    }
+
+    [Fact]
+    public void Health_WithNoRecordedResults_ReturnsOkWithZeroCounts()
+    {
+        var loader = new Mock<IExtensionLoader>();
+        var controller = new ExtensionsController(loader.Object, new ExtensionBootReport());
+
+        var result = controller.Health();
+
+        var ok = result.Result as OkObjectResult;
+        ok.ShouldNotBeNull();
+        var payload = ok!.Value as ExtensionHealthResponse;
+        payload.ShouldNotBeNull();
+        payload!.Status.ShouldBe("ok");
+        payload.LoadedCount.ShouldBe(0);
+        payload.FailedCount.ShouldBe(0);
+        payload.Failed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Health_WithAllExtensionsLoaded_ReturnsOk()
+    {
+        var loader = new Mock<IExtensionLoader>();
+        var report = new ExtensionBootReport();
+        report.Record(
+        [
+            new ExtensionLoadResult { ExtensionId = "ext-a", Success = true },
+            new ExtensionLoadResult { ExtensionId = "ext-b", Success = true }
+        ]);
+        var controller = new ExtensionsController(loader.Object, report);
+
+        var result = controller.Health();
+
+        var ok = result.Result as OkObjectResult;
+        ok.ShouldNotBeNull();
+        var payload = (ExtensionHealthResponse)ok!.Value!;
+        payload.Status.ShouldBe("ok");
+        payload.LoadedCount.ShouldBe(2);
+        payload.FailedCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Health_WithFailedExtension_Returns503AndNamesOffendingAssembly()
+    {
+        var loader = new Mock<IExtensionLoader>();
+        var report = new ExtensionBootReport();
+        report.Record(
+        [
+            new ExtensionLoadResult { ExtensionId = "ext-a", Success = true },
+            new ExtensionLoadResult
+            {
+                ExtensionId = "botnexus-servicebus",
+                Success = false,
+                Error = "Could not load file or assembly 'Azure.Messaging.ServiceBus'."
+            }
+        ]);
+        var controller = new ExtensionsController(loader.Object, report);
+
+        var result = controller.Health();
+
+        // ActionResult<T> surfaces a non-2xx status via ObjectResult in Result.
+        var objectResult = result.Result as ObjectResult;
+        objectResult.ShouldNotBeNull();
+        objectResult!.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+
+        var payload = (ExtensionHealthResponse)objectResult.Value!;
+        payload.Status.ShouldBe("failed");
+        payload.LoadedCount.ShouldBe(1);
+        payload.FailedCount.ShouldBe(1);
+        var failure = payload.Failed.ShouldHaveSingleItem();
+        failure.Id.ShouldBe("botnexus-servicebus");
+        // The real load error must be surfaced verbatim so the smoke gate names the
+        // diverged/missing assembly instead of reporting a generic timeout.
+        failure.Error.ShouldContain("Azure.Messaging.ServiceBus");
     }
 
     private static LoadedExtension CreateLoadedExtension(
