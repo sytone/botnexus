@@ -1924,6 +1924,16 @@ file sealed class ThrowingArchiveConversationStore : IConversationStore
         => _inner.TouchAsync(conversationId, ct);
     public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
         => _inner.PinAsync(conversationId, pin, ct);
+    public Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+        => _inner.AddBindingAsync(conversationId, binding, ct);
+    public Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+        => _inner.RemoveBindingAsync(conversationId, bindingId, ct);
+    public Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+        => _inner.MoveBindingAsync(fromConversationId, toConversationId, bindingId, ct);
+    public Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+        => _inner.PatchMetadataAsync(conversationId, patch, ct);
+    public Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+        => _inner.PatchOverrideAsync(conversationId, patch, ct);
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         => _inner.GetSummariesAsync(ct);
     public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)

@@ -801,6 +801,16 @@ public sealed class LegacyConversationBackfillTests
             => Inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
         public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default) => Inner.TouchAsync(conversationId, ct);
         public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default) => Inner.PinAsync(conversationId, pin, ct);
+        public Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+            => Inner.AddBindingAsync(conversationId, binding, ct);
+        public Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+            => Inner.RemoveBindingAsync(conversationId, bindingId, ct);
+        public Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+            => Inner.MoveBindingAsync(fromConversationId, toConversationId, bindingId, ct);
+        public Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+            => Inner.PatchMetadataAsync(conversationId, patch, ct);
+        public Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+            => Inner.PatchOverrideAsync(conversationId, patch, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => Inner.GetSummariesAsync(ct);
         public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)

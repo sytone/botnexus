@@ -367,4 +367,173 @@ public abstract class ConversationStoreContractTests
         loaded.ShouldNotBeNull();
         loaded!.PendingAskUserJson.ShouldBeNull();
     }
+
+    // ── Transactional binding + narrow patch operations (issue #2139) ──────────
+
+    private static ChannelBinding MakeBinding(string address)
+        => new()
+        {
+            BindingId = BindingId.Create(),
+            ChannelType = ChannelKey.From("signal"),
+            ChannelAddress = ChannelAddress.From(address),
+            BoundAt = DateTimeOffset.UtcNow
+        };
+
+    [Fact]
+    public async Task AddBindingAsync_AppendsSingleBinding()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        await store.CreateAsync(conv);
+
+        var added = await store.AddBindingAsync(conv.ConversationId, MakeBinding("addr-1"));
+
+        added.ShouldBeTrue();
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded!.ChannelBindings.Select(b => b.ChannelAddress.Value).ShouldBe(["addr-1"]);
+    }
+
+    [Fact]
+    public async Task AddBindingAsync_ReturnsFalse_WhenConversationMissing()
+    {
+        var store = CreateStore();
+        (await store.AddBindingAsync(NewId(), MakeBinding("x"))).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AddBindingAsync_DoesNotDropExistingBindings()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        await store.CreateAsync(conv);
+
+        await store.AddBindingAsync(conv.ConversationId, MakeBinding("addr-1"));
+        await store.AddBindingAsync(conv.ConversationId, MakeBinding("addr-2"));
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded!.ChannelBindings.Select(b => b.ChannelAddress.Value).OrderBy(x => x, StringComparer.Ordinal)
+            .ShouldBe(["addr-1", "addr-2"]);
+    }
+
+    [Fact]
+    public async Task RemoveBindingAsync_RemovesOnlyRequested()
+    {
+        var store = CreateStore();
+        var keep = MakeBinding("keep");
+        var drop = MakeBinding("drop");
+        var conv = MakeConversation();
+        conv.ChannelBindings.Add(keep);
+        conv.ChannelBindings.Add(drop);
+        await store.CreateAsync(conv);
+
+        var removed = await store.RemoveBindingAsync(conv.ConversationId, drop.BindingId);
+
+        removed.ShouldBeTrue();
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded!.ChannelBindings.Select(b => b.ChannelAddress.Value).ShouldBe(["keep"]);
+    }
+
+    [Fact]
+    public async Task RemoveBindingAsync_ReturnsFalse_WhenBindingMissing()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation();
+        await store.CreateAsync(conv);
+
+        (await store.RemoveBindingAsync(conv.ConversationId, BindingId.Create())).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task MoveBindingAsync_ReparentsBinding()
+    {
+        var store = CreateStore();
+        var binding = MakeBinding("mobile");
+        var source = MakeConversation();
+        source.ChannelBindings.Add(binding);
+        var target = MakeConversation();
+        await store.CreateAsync(source);
+        await store.CreateAsync(target);
+
+        var moved = await store.MoveBindingAsync(source.ConversationId, target.ConversationId, binding.BindingId);
+
+        moved.ShouldBeTrue();
+        (await store.GetAsync(source.ConversationId))!.ChannelBindings.ShouldBeEmpty();
+        (await store.GetAsync(target.ConversationId))!.ChannelBindings.Select(b => b.ChannelAddress.Value).ShouldBe(["mobile"]);
+    }
+
+    [Fact]
+    public async Task MoveBindingAsync_ReturnsFalse_WhenSourceBindingMissing()
+    {
+        var store = CreateStore();
+        var source = MakeConversation();
+        var target = MakeConversation();
+        await store.CreateAsync(source);
+        await store.CreateAsync(target);
+
+        (await store.MoveBindingAsync(source.ConversationId, target.ConversationId, BindingId.Create())).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PatchMetadataAsync_WritesOnlySetFields_AndPreservesOverrides()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation() with { Purpose = "orig-purpose", Instructions = "orig-instr", ModelOverride = "opus" };
+        await store.CreateAsync(conv);
+
+        var updated = await store.PatchMetadataAsync(
+            conv.ConversationId,
+            new ConversationMetadataPatch { Title = FieldUpdate<string>.Set("new-title") });
+
+        updated.ShouldNotBeNull();
+        updated!.Title.ShouldBe("new-title");
+        updated.Purpose.ShouldBe("orig-purpose");
+        updated.Instructions.ShouldBe("orig-instr");
+        updated.ModelOverride.ShouldBe("opus");
+    }
+
+    [Fact]
+    public async Task PatchMetadataAsync_ReturnsNull_WhenMissing()
+    {
+        var store = CreateStore();
+        (await store.PatchMetadataAsync(NewId(), new ConversationMetadataPatch { Title = FieldUpdate<string>.Set("x") })).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PatchOverrideAsync_WritesOnlySetFields_AndPreservesMetadata()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation(Agent("agent-x"), "keep-title") with { ThinkingOverride = "high" };
+        await store.CreateAsync(conv);
+
+        var updated = await store.PatchOverrideAsync(
+            conv.ConversationId,
+            new ConversationOverridePatch { Model = FieldUpdate<string?>.Set("sonnet") });
+
+        updated.ShouldNotBeNull();
+        updated!.ModelOverride.ShouldBe("sonnet");
+        updated.ThinkingOverride.ShouldBe("high");
+        updated.Title.ShouldBe("keep-title");
+    }
+
+    [Fact]
+    public async Task PatchOverrideAsync_ClearsField_WhenSetToNull()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation() with { ModelOverride = "opus", ThinkingOverride = "max", ContextWindowOverride = 200_000 };
+        await store.CreateAsync(conv);
+
+        var updated = await store.PatchOverrideAsync(
+            conv.ConversationId,
+            new ConversationOverridePatch
+            {
+                Model = FieldUpdate<string?>.Set(null),
+                Thinking = FieldUpdate<string?>.Set(null),
+                ContextWindow = FieldUpdate<int?>.Set(null)
+            });
+
+        updated.ShouldNotBeNull();
+        updated!.ModelOverride.ShouldBeNull();
+        updated.ThinkingOverride.ShouldBeNull();
+        updated.ContextWindowOverride.ShouldBeNull();
+    }
 }

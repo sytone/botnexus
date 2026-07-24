@@ -169,6 +169,130 @@ public sealed class InMemoryConversationStore : IConversationStore
         => _participantLocks.GetOrAdd(conversationId, static _ => new SemaphoreSlim(1, 1));
 
     /// <inheritdoc />
+    public async Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        var conversationLock = GetParticipantLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_conversations.TryGetValue(conversationId.Value, out var existing))
+                return false;
+            // Copy the binding list so a concurrent add builds on a private copy rather than
+            // mutating a list that may be aliased by an already-returned GetAsync reference.
+            var bindings = new List<ChannelBinding>(existing.ChannelBindings) { binding };
+            _conversations[conversationId.Value] = existing with { ChannelBindings = bindings, UpdatedAt = DateTimeOffset.UtcNow };
+            return true;
+        }
+        finally { conversationLock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        var conversationLock = GetParticipantLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_conversations.TryGetValue(conversationId.Value, out var existing))
+                return false;
+            var target = existing.ChannelBindings.FirstOrDefault(b => b.BindingId == bindingId);
+            if (target is null)
+                return false;
+            var bindings = existing.ChannelBindings.Where(b => b.BindingId != bindingId).ToList();
+            _conversations[conversationId.Value] = existing with { ChannelBindings = bindings, UpdatedAt = DateTimeOffset.UtcNow };
+            return true;
+        }
+        finally { conversationLock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        // Deterministic lock ordering (ordinal) to avoid inverse-move deadlock.
+        var (first, second) = string.CompareOrdinal(fromConversationId.Value, toConversationId.Value) <= 0
+            ? (fromConversationId.Value, toConversationId.Value)
+            : (toConversationId.Value, fromConversationId.Value);
+        var firstLock = GetParticipantLock(first);
+        await firstLock.WaitAsync(ct).ConfigureAwait(false);
+        SemaphoreSlim? secondLock = null;
+        try
+        {
+            if (!string.Equals(first, second, StringComparison.Ordinal))
+            {
+                secondLock = GetParticipantLock(second);
+                await secondLock.WaitAsync(ct).ConfigureAwait(false);
+            }
+
+            if (!_conversations.TryGetValue(fromConversationId.Value, out var source))
+                return false;
+            if (!_conversations.TryGetValue(toConversationId.Value, out var destination))
+                return false;
+            var target = source.ChannelBindings.FirstOrDefault(b => b.BindingId == bindingId);
+            if (target is null)
+                return false;
+
+            var now = DateTimeOffset.UtcNow;
+            var sourceBindings = source.ChannelBindings.Where(b => b.BindingId != bindingId).ToList();
+            var destinationBindings = new List<ChannelBinding>(destination.ChannelBindings) { target };
+            _conversations[fromConversationId.Value] = source with { ChannelBindings = sourceBindings, UpdatedAt = now };
+            _conversations[toConversationId.Value] = destination with { ChannelBindings = destinationBindings, UpdatedAt = now };
+            return true;
+        }
+        finally
+        {
+            secondLock?.Release();
+            firstLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        var conversationLock = GetParticipantLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_conversations.TryGetValue(conversationId.Value, out var existing))
+                return null;
+            var updated = existing with
+            {
+                Title = patch.Title.IsSet ? patch.Title.Value : existing.Title,
+                Purpose = patch.Purpose.IsSet ? patch.Purpose.Value : existing.Purpose,
+                Instructions = patch.Instructions.IsSet ? patch.Instructions.Value : existing.Instructions,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            _conversations[conversationId.Value] = updated;
+            return BackfillWorldId(updated);
+        }
+        finally { conversationLock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        var conversationLock = GetParticipantLock(conversationId.Value);
+        await conversationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_conversations.TryGetValue(conversationId.Value, out var existing))
+                return null;
+            var updated = existing with
+            {
+                ModelOverride = patch.Model.IsSet ? patch.Model.Value : existing.ModelOverride,
+                ThinkingOverride = patch.Thinking.IsSet ? patch.Thinking.Value : existing.ThinkingOverride,
+                ContextWindowOverride = patch.ContextWindow.IsSet ? patch.ContextWindow.Value : existing.ContextWindowOverride,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            _conversations[conversationId.Value] = updated;
+            return BackfillWorldId(updated);
+        }
+        finally { conversationLock.Release(); }
+    }
+
+    /// <inheritdoc />
     public Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,

@@ -303,6 +303,16 @@ public sealed class ConversationsControllerHistoryTests
 
         public Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default)
             => Task.CompletedTask;
+        public Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+            => throw new NotSupportedException();
 
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => throw new NotSupportedException();

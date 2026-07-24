@@ -880,6 +880,16 @@ file sealed class CountingConversationStore(IConversationStore inner) : IConvers
 
     public Task PinAsync(BotNexus.Domain.Primitives.ConversationId conversationId, bool pin, CancellationToken ct = default)
         => inner.PinAsync(conversationId, pin, ct);
+    public Task<bool> AddBindingAsync(BotNexus.Domain.Primitives.ConversationId conversationId, BotNexus.Gateway.Abstractions.Models.ChannelBinding binding, CancellationToken ct = default)
+        => inner.AddBindingAsync(conversationId, binding, ct);
+    public Task<bool> RemoveBindingAsync(BotNexus.Domain.Primitives.ConversationId conversationId, BotNexus.Domain.Primitives.BindingId bindingId, CancellationToken ct = default)
+        => inner.RemoveBindingAsync(conversationId, bindingId, ct);
+    public Task<bool> MoveBindingAsync(BotNexus.Domain.Primitives.ConversationId fromConversationId, BotNexus.Domain.Primitives.ConversationId toConversationId, BotNexus.Domain.Primitives.BindingId bindingId, CancellationToken ct = default)
+        => inner.MoveBindingAsync(fromConversationId, toConversationId, bindingId, ct);
+    public Task<BotNexus.Gateway.Abstractions.Models.Conversation?> PatchMetadataAsync(BotNexus.Domain.Primitives.ConversationId conversationId, BotNexus.Gateway.Abstractions.Conversations.ConversationMetadataPatch patch, CancellationToken ct = default)
+        => inner.PatchMetadataAsync(conversationId, patch, ct);
+    public Task<BotNexus.Gateway.Abstractions.Models.Conversation?> PatchOverrideAsync(BotNexus.Domain.Primitives.ConversationId conversationId, BotNexus.Gateway.Abstractions.Conversations.ConversationOverridePatch patch, CancellationToken ct = default)
+        => inner.PatchOverrideAsync(conversationId, patch, ct);
 
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         => inner.GetSummariesAsync(ct);

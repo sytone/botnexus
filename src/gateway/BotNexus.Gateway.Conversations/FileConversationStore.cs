@@ -228,6 +228,118 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return false;
+            conversation.ChannelBindings.Add(binding);
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
+            return true;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return false;
+            var target = conversation.ChannelBindings.FirstOrDefault(b => b.BindingId == bindingId);
+            if (target is null)
+                return false;
+            conversation.ChannelBindings.Remove(target);
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
+            return true;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var source = await FindByConversationIdAsync(fromConversationId, ct).ConfigureAwait(false);
+            if (source is null)
+                return false;
+            var destination = await FindByConversationIdAsync(toConversationId, ct).ConfigureAwait(false);
+            if (destination is null)
+                return false;
+            var target = source.ChannelBindings.FirstOrDefault(b => b.BindingId == bindingId);
+            if (target is null)
+                return false;
+
+            var now = DateTimeOffset.UtcNow;
+            source.ChannelBindings.Remove(target);
+            source.UpdatedAt = now;
+            destination.ChannelBindings.Add(target);
+            destination.UpdatedAt = now;
+            await WriteFileAsync(source, ct).ConfigureAwait(false);
+            await WriteFileAsync(destination, ct).ConfigureAwait(false);
+            return true;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return null;
+            if (patch.Title.IsSet)
+                conversation.Title = patch.Title.Value;
+            if (patch.Purpose.IsSet)
+                conversation.Purpose = patch.Purpose.Value;
+            if (patch.Instructions.IsSet)
+                conversation.Instructions = patch.Instructions.Value;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
+            return BackfillWorldId(conversation);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
+            if (conversation is null)
+                return null;
+            if (patch.Model.IsSet)
+                conversation.ModelOverride = patch.Model.Value;
+            if (patch.Thinking.IsSet)
+                conversation.ThinkingOverride = patch.Thinking.Value;
+            if (patch.ContextWindow.IsSet)
+                conversation.ContextWindowOverride = patch.ContextWindow.Value;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
+            return BackfillWorldId(conversation);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,

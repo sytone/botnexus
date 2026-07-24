@@ -162,6 +162,71 @@ public interface IConversationStore
     /// </summary>
     Task PinAsync(ConversationId conversationId, bool pin, CancellationToken ct = default);
 
+    // ── Transactional binding + narrow patch operations (issue #2139) ──────────
+    // These exist so partial REST updates never round-trip the whole aggregate through
+    // SaveAsync, which rewrites every column and deletes/recreates every binding from a
+    // detached snapshot. Each operation mutates only the state it owns, atomically with
+    // respect to the implementation's concurrency model, so concurrent binding adds,
+    // add/remove interleavings, and override/metadata/pin interleavings cannot clobber
+    // each other or unrelated fields.
+
+    /// <summary>
+    /// Atomically appends a single channel binding to the conversation without rewriting any
+    /// other conversation field or existing binding. Concurrent adds both survive because the
+    /// insert targets only the new binding row. No-ops (returns <c>false</c>) when the
+    /// conversation does not exist.
+    /// </summary>
+    /// <param name="conversationId">The conversation to bind.</param>
+    /// <param name="binding">The binding to append.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> when the conversation existed and the binding was added.</returns>
+    Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically removes a single channel binding by id without touching any other binding or
+    /// conversation field. Returns <c>false</c> when the conversation or the binding does not
+    /// exist, so an add of an unrelated binding interleaved with this remove leaves the added
+    /// binding intact.
+    /// </summary>
+    /// <param name="conversationId">The conversation owning the binding.</param>
+    /// <param name="bindingId">The binding to remove.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> when a matching binding was removed.</returns>
+    Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically re-parents a single binding from one conversation to another without rewriting
+    /// either aggregate's other fields or bindings. Returns <c>false</c> when the binding is not
+    /// found on the source conversation or the target conversation does not exist.
+    /// </summary>
+    /// <param name="fromConversationId">The conversation currently owning the binding.</param>
+    /// <param name="toConversationId">The conversation to move the binding to.</param>
+    /// <param name="bindingId">The binding to move.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> when the binding was moved.</returns>
+    Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically applies a narrow metadata patch (title / purpose / instructions). Only fields
+    /// marked set on the patch are written; bindings, pin, overrides and participants are left as
+    /// committed, so a metadata edit cannot revert an independently committed field. Returns the
+    /// updated conversation, or <c>null</c> when it does not exist.
+    /// </summary>
+    /// <param name="conversationId">The conversation to patch.</param>
+    /// <param name="patch">The set of fields to write.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically applies a narrow override patch (model / thinking / context). Only fields marked
+    /// set on the patch are written; bindings, pin, metadata and participants are left as
+    /// committed. Returns the updated conversation, or <c>null</c> when it does not exist.
+    /// </summary>
+    /// <param name="conversationId">The conversation to patch.</param>
+    /// <param name="patch">The set of override fields to write.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default);
+
     /// <summary>
     /// Returns lightweight summaries for all <em>active</em> conversations across the world,
     /// ordered most-recently-updated first.

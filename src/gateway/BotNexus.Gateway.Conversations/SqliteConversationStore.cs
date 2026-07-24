@@ -607,6 +607,291 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task<bool> AddBindingAsync(ConversationId conversationId, ChannelBinding binding, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        using var activity = ActivitySource.StartActivity("conversation.add_binding", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        activity?.SetTag("botnexus.binding.id", binding.BindingId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            if (!await ConversationExistsInTransactionAsync(connection, transaction, conversationId, ct).ConfigureAwait(false))
+                return false;
+
+            await using (var insert = connection.CreateCommand())
+            {
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO conversation_bindings (binding_id, conversation_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at)
+                    VALUES ($bindingId, $conversationId, $channelType, $channelAddress, $mode, $threadingMode, $displayPrefix, $boundAt, $lastInboundAt, $lastOutboundAt)
+                    """;
+                BindBindingParameters(insert, conversationId, binding);
+                await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await TouchInTransactionAsync(connection, transaction, conversationId, now, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+            // Drop the cached aggregate so the next read reloads bindings from disk. Cheaper and
+            // safer than mutating a shared cached list under concurrency.
+            _cache.Remove(conversationId.Value);
+            return true;
+        }
+        finally
+        {
+            conversationLock.Dispose();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RemoveBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.remove_binding", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        activity?.SetTag("botnexus.binding.id", bindingId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            int affected;
+            await using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM conversation_bindings WHERE conversation_id = $conversationId AND binding_id = $bindingId";
+                delete.Parameters.AddWithValue("$conversationId", conversationId.Value);
+                delete.Parameters.AddWithValue("$bindingId", bindingId.Value);
+                affected = await delete.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            if (affected == 0)
+                return false;
+
+            await TouchInTransactionAsync(connection, transaction, conversationId, now, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _cache.Remove(conversationId.Value);
+            return true;
+        }
+        finally
+        {
+            conversationLock.Dispose();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.move_binding", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", fromConversationId.Value);
+        activity?.SetTag("botnexus.binding.id", bindingId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        // Acquire both conversation locks in a deterministic (ordinal) order so a concurrent
+        // inverse move cannot deadlock via lock-ordering inversion.
+        var idA = fromConversationId.Value;
+        var idB = toConversationId.Value;
+        var (first, second) = string.CompareOrdinal(idA, idB) <= 0 ? (idA, idB) : (idB, idA);
+        var firstLock = await AcquireConversationLockAsync(first, ct).ConfigureAwait(false);
+        IDisposable? secondLock = null;
+        try
+        {
+            if (!string.Equals(first, second, StringComparison.Ordinal))
+                secondLock = await AcquireConversationLockAsync(second, ct).ConfigureAwait(false);
+
+            var now = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            if (!await ConversationExistsInTransactionAsync(connection, transaction, toConversationId, ct).ConfigureAwait(false))
+                return false;
+
+            int affected;
+            await using (var move = connection.CreateCommand())
+            {
+                move.Transaction = transaction;
+                move.CommandText = "UPDATE conversation_bindings SET conversation_id = $to WHERE conversation_id = $from AND binding_id = $bindingId";
+                move.Parameters.AddWithValue("$to", toConversationId.Value);
+                move.Parameters.AddWithValue("$from", fromConversationId.Value);
+                move.Parameters.AddWithValue("$bindingId", bindingId.Value);
+                affected = await move.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            if (affected == 0)
+                return false;
+
+            await TouchInTransactionAsync(connection, transaction, fromConversationId, now, ct).ConfigureAwait(false);
+            await TouchInTransactionAsync(connection, transaction, toConversationId, now, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _cache.Remove(fromConversationId.Value);
+            _cache.Remove(toConversationId.Value);
+            return true;
+        }
+        finally
+        {
+            secondLock?.Dispose();
+            firstLock.Dispose();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchMetadataAsync(ConversationId conversationId, ConversationMetadataPatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        using var activity = ActivitySource.StartActivity("conversation.patch_metadata", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            var sets = new List<string>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            if (patch.Title.IsSet)
+            {
+                sets.Add("title = $title");
+                command.Parameters.AddWithValue("$title", patch.Title.Value);
+            }
+            if (patch.Purpose.IsSet)
+            {
+                sets.Add("purpose = $purpose");
+                command.Parameters.AddWithValue("$purpose", (object?)patch.Purpose.Value ?? DBNull.Value);
+            }
+            if (patch.Instructions.IsSet)
+            {
+                sets.Add("instructions = $instructions");
+                command.Parameters.AddWithValue("$instructions", (object?)patch.Instructions.Value ?? DBNull.Value);
+            }
+
+            // Even an empty patch bumps updated_at and returns the row, mirroring SaveAsync's touch.
+            sets.Add("updated_at = $now");
+            command.Parameters.AddWithValue("$now", now.ToString("O"));
+            command.Parameters.AddWithValue("$id", conversationId.Value);
+            command.CommandText = $"UPDATE conversations SET {string.Join(", ", sets)} WHERE id = $id";
+            var affected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (affected == 0)
+                return null;
+
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _cache.Remove(conversationId.Value);
+            return await LoadConversationAsync(conversationId, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            conversationLock.Dispose();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        using var activity = ActivitySource.StartActivity("conversation.patch_override", ActivityKind.Internal);
+        activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            var sets = new List<string>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            if (patch.Model.IsSet)
+            {
+                sets.Add("model_override = $model");
+                command.Parameters.AddWithValue("$model", (object?)patch.Model.Value ?? DBNull.Value);
+            }
+            if (patch.Thinking.IsSet)
+            {
+                sets.Add("thinking_override = $thinking");
+                command.Parameters.AddWithValue("$thinking", (object?)patch.Thinking.Value ?? DBNull.Value);
+            }
+            if (patch.ContextWindow.IsSet)
+            {
+                sets.Add("context_window_override = $context");
+                command.Parameters.AddWithValue("$context", patch.ContextWindow.Value.HasValue ? patch.ContextWindow.Value.Value : (object)DBNull.Value);
+            }
+
+            sets.Add("updated_at = $now");
+            command.Parameters.AddWithValue("$now", now.ToString("O"));
+            command.Parameters.AddWithValue("$id", conversationId.Value);
+            command.CommandText = $"UPDATE conversations SET {string.Join(", ", sets)} WHERE id = $id";
+            var affected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (affected == 0)
+                return null;
+
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _cache.Remove(conversationId.Value);
+            return await LoadConversationAsync(conversationId, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            conversationLock.Dispose();
+        }
+    }
+
+    // Binds the ten binding columns onto an INSERT command. Shared by AddBindingAsync and the
+    // whole-record SaveConversationAsync path so parameter shape stays in one place.
+    private static void BindBindingParameters(SqliteCommand command, ConversationId conversationId, ChannelBinding binding)
+    {
+        command.Parameters.AddWithValue("$bindingId", binding.BindingId.Value);
+        command.Parameters.AddWithValue("$conversationId", conversationId.Value);
+        command.Parameters.AddWithValue("$channelType", binding.ChannelType.Value);
+        command.Parameters.AddWithValue("$channelAddress", binding.ChannelAddress.Value);
+        command.Parameters.AddWithValue("$mode", binding.Mode.ToString());
+        command.Parameters.AddWithValue("$threadingMode", binding.ThreadingMode.ToString());
+        command.Parameters.AddWithValue("$displayPrefix", (object?)binding.DisplayPrefix ?? DBNull.Value);
+        command.Parameters.AddWithValue("$boundAt", binding.BoundAt.ToString("O"));
+        command.Parameters.AddWithValue("$lastInboundAt", binding.LastInboundAt?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$lastOutboundAt", binding.LastOutboundAt?.ToString("O") ?? (object)DBNull.Value);
+    }
+
+    // Bumps updated_at inside an existing transaction without a separate round-trip / lock.
+    private static async Task TouchInTransactionAsync(SqliteConnection connection, SqliteTransaction transaction, ConversationId conversationId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE conversations SET updated_at = $now WHERE id = $id";
+        command.Parameters.AddWithValue("$now", now.ToString("O"));
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    // Existence check bound to an in-flight transaction so it reads the transaction's own snapshot.
+    private static async Task<bool> ConversationExistsInTransactionAsync(SqliteConnection connection, SqliteTransaction transaction, ConversationId conversationId, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM conversations WHERE id = $id LIMIT 1";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        return await command.ExecuteScalarAsync(ct).ConfigureAwait(false) is not null;
+    }
+
+    /// <inheritdoc />
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,

@@ -263,28 +263,30 @@ public sealed class ConversationsController : ControllerBase
             });
         }
 
+        // Capture previous values for the audit trail, then apply only the supplied fields as a
+        // narrow, transactional patch (#2139). The GetAsync above is used solely for the legacy
+        // guard + audit "previous value"; it is NOT written back via a whole-record SaveAsync,
+        // which would revert bindings/pin/overrides committed concurrently between the read and
+        // the write.
+        var patch = new ConversationMetadataPatch
+        {
+            Title = request.Title is not null ? FieldUpdate<string>.Set(request.Title) : FieldUpdate<string>.Unset,
+            Purpose = request.Purpose is not null ? FieldUpdate<string?>.Set(NormalizePurpose(request.Purpose)) : FieldUpdate<string?>.Unset,
+            Instructions = request.Instructions is not null ? FieldUpdate<string?>.Set(NormalizeInstructions(request.Instructions)) : FieldUpdate<string?>.Unset
+        };
+
+        var updated = await _conversations.PatchMetadataAsync(ConversationId.From(conversationId), patch, cancellationToken);
+        if (updated is null)
+            return NotFound();
+
         if (request.Title is not null)
-        {
-            var prevTitle = conversation.Title;
-            conversation.Title = request.Title;
-            await AuditAsync(conversationId, "title_changed", "api", "rest-api", prevTitle, request.Title, cancellationToken);
-        }
+            await AuditAsync(conversationId, "title_changed", "api", "rest-api", conversation.Title, updated.Title, cancellationToken);
         if (request.Purpose is not null)
-        {
-            var prevPurpose = conversation.Purpose;
-            conversation.Purpose = NormalizePurpose(request.Purpose);
-            await AuditAsync(conversationId, "purpose_set", "api", "rest-api", prevPurpose, conversation.Purpose, cancellationToken);
-        }
+            await AuditAsync(conversationId, "purpose_set", "api", "rest-api", conversation.Purpose, updated.Purpose, cancellationToken);
         if (request.Instructions is not null)
-        {
-            var prevInstructions = conversation.Instructions;
-            conversation.Instructions = NormalizeInstructions(request.Instructions);
-            await AuditAsync(conversationId, "instructions_set", "api", "rest-api", prevInstructions, conversation.Instructions, cancellationToken);
-        }
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversations.SaveAsync(conversation, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
-        return Ok(ToResponse(conversation));
+            await AuditAsync(conversationId, "instructions_set", "api", "rest-api", conversation.Instructions, updated.Instructions, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        return Ok(ToResponse(updated));
     }
 
     private static bool IsResolverOwnedLegacyConversation(Conversation conversation)
@@ -332,9 +334,12 @@ public sealed class ConversationsController : ControllerBase
             BoundAt = DateTimeOffset.UtcNow
         };
 
-        conversation.ChannelBindings.Add(binding);
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversations.SaveAsync(conversation, cancellationToken);
+        // Transactional single-binding append (#2139): inserts only the new binding row instead
+        // of deleting and recreating every binding from a detached snapshot, so two concurrent
+        // add-binding requests both survive.
+        var added = await _conversations.AddBindingAsync(ConversationId.From(conversationId), binding, cancellationToken);
+        if (!added)
+            return NotFound();
 
         return StatusCode(StatusCodes.Status201Created, ToBindingResponse(binding));
     }
@@ -358,15 +363,14 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null)
             return NotFound();
 
-        var binding = conversation.ChannelBindings.FirstOrDefault(b =>
-            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
-        if (binding is null)
-            return NotFound();
-
-        conversation.ChannelBindings.Remove(binding);
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversations.SaveAsync(conversation, cancellationToken);
-        return NoContent();
+        // Transactional single-binding removal (#2139): deletes only the requested binding row,
+        // so an unrelated binding added concurrently between the read and the write is not
+        // resurrected or dropped by a whole-record rewrite.
+        var removed = await _conversations.RemoveBindingAsync(
+            ConversationId.From(conversationId),
+            BindingId.From(bindingId),
+            cancellationToken);
+        return removed ? NoContent() : NotFound();
     }
 
     /// <summary>
@@ -679,17 +683,24 @@ public sealed class ConversationsController : ControllerBase
         var prevThinking = conversation.ThinkingOverride;
         var prevContext = conversation.ContextWindowOverride;
 
-        conversation.ModelOverride = NormalizeOverrideString(request.Model);
-        conversation.ThinkingOverride = NormalizeOverrideString(request.Thinking);
-        conversation.ContextWindowOverride = request.ContextWindow;
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversations.SaveAsync(conversation, cancellationToken);
+        // Narrow, transactional override patch (#2139): writes only the three override columns,
+        // so a pin/metadata mutation committed concurrently between the read and the write is
+        // preserved instead of being reverted by a whole-record SaveAsync.
+        var overridePatch = new ConversationOverridePatch
+        {
+            Model = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Model)),
+            Thinking = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Thinking)),
+            ContextWindow = FieldUpdate<int?>.Set(request.ContextWindow)
+        };
+        var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), overridePatch, cancellationToken);
+        if (updated is null)
+            return NotFound();
 
-        await AuditAsync(conversationId, "model_override_set", "api", "rest-api", prevModel, conversation.ModelOverride, cancellationToken);
-        await AuditAsync(conversationId, "thinking_override_set", "api", "rest-api", prevThinking, conversation.ThinkingOverride, cancellationToken);
-        await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), conversation.ContextWindowOverride?.ToString(), cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
-        return Ok(ToResponse(conversation));
+        await AuditAsync(conversationId, "model_override_set", "api", "rest-api", prevModel, updated.ModelOverride, cancellationToken);
+        await AuditAsync(conversationId, "thinking_override_set", "api", "rest-api", prevThinking, updated.ThinkingOverride, cancellationToken);
+        await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), updated.ContextWindowOverride?.ToString(), cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        return Ok(ToResponse(updated));
     }
 
     /// <summary>Clears every per-conversation override, reverting all three fields to the agent default.</summary>
@@ -706,14 +717,19 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         var prevModel = conversation.ModelOverride;
-        conversation.ModelOverride = null;
-        conversation.ThinkingOverride = null;
-        conversation.ContextWindowOverride = null;
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _conversations.SaveAsync(conversation, cancellationToken);
+        // Transactional clear of only the three override columns (#2139).
+        var clearPatch = new ConversationOverridePatch
+        {
+            Model = FieldUpdate<string?>.Set(null),
+            Thinking = FieldUpdate<string?>.Set(null),
+            ContextWindow = FieldUpdate<int?>.Set(null)
+        };
+        var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), clearPatch, cancellationToken);
+        if (updated is null)
+            return NotFound();
         await AuditAsync(conversationId, "model_override_cleared", "api", "rest-api", prevModel, null, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
-        return Ok(ToResponse(conversation));
+        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        return Ok(ToResponse(updated));
     }
 
     private LlmModel? ResolveModelForValidation(AgentId agentId, string? modelId)
