@@ -16,7 +16,8 @@ public static class PlatformConfigSchema
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     private static readonly Lazy<JsonSchema> CachedSchema = new(GenerateSchemaInternal);

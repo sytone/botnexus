@@ -158,7 +158,14 @@ try {
 }
 finally {
     if (-not $KeepRepository -and (Test-Path $repo)) {
-        foreach ($path in $worktrees) { git -C $repo worktree remove -f $path 2>$null }
+        foreach ($path in $worktrees) {
+            # Lock-aware cleanup so a Windows file lock records-and-skips
+            # instead of leaking a registered-but-removed worktree (#2104).
+            $wtResult = Remove-WorktreeSafely -RepoRoot $repo -WorktreePath $path -Force
+            if ($wtResult.outcome -eq 'locked') {
+                Write-Warning "Worktree '$path' locked during proof cleanup; recorded and skipped."
+            }
+        }
         Remove-Item $repo -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
