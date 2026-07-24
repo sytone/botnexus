@@ -181,6 +181,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<ISessionWriteLock, SessionWriteLock>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.TryAddSingleton<IConversationSectionStore, InMemoryConversationSectionStore>();
         services.TryAddSingleton<IAgentIdentityResolver, AgentIdentityResolver>();
         services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
@@ -622,6 +623,7 @@ public static class GatewayServiceCollectionExtensions
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
+            services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore, InMemoryConversationSectionStore>());
             return;
         }
 
@@ -642,6 +644,11 @@ public static class GatewayServiceCollectionExtensions
                     fs,
                     serviceProvider.GetService<IWorldContext>());
             }));
+            services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
+                new SqliteConversationSectionStore(
+                    $"Data Source={Path.Combine(dataDirectory, "sections.sqlite")}",
+                    serviceProvider.GetRequiredService<ILogger<SqliteConversationSectionStore>>(),
+                    serviceProvider.GetService<IWorldContext>())));
             return;
         }
 
@@ -662,6 +669,11 @@ public static class GatewayServiceCollectionExtensions
 
             services.AddSingleton<IConversationAuditLog>(
                 new SqliteConversationAuditLog(connectionString));
+            services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
+                new SqliteConversationSectionStore(
+                    connectionString,
+                    serviceProvider.GetRequiredService<ILogger<SqliteConversationSectionStore>>(),
+                    serviceProvider.GetService<IWorldContext>())));
             return;
         }
 
