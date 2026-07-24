@@ -372,4 +372,306 @@ public sealed class SchemaFormTests : IDisposable
         Assert.Contains("static-a", opts);
         Assert.Contains("static-b", opts);
     }
+
+    // -- 8. Lossless path traversal through arrays (#2062 core defect) -------
+
+    // Regression for the core defect: Set() only walked JsonObject intermediates, so a path
+    // through a JsonArray element silently wrote into a fresh graph and lost the edit. Editing a
+    // scalar field inside an array-of-objects entry must write back to the SAME array element.
+    [Fact]
+    public void Editing_field_through_array_element_writes_back_lossless()
+    {
+        JsonObject? updated = null;
+        var itemSchema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject { ["name"] = Scalar("string", "text", "Name") },
+        };
+        var models = new JsonObject { ["type"] = "array", ["x-ui-label"] = "Items", ["items"] = itemSchema };
+        var schema = Envelope(new JsonObject { ["items"] = models });
+        var value = new JsonObject
+        {
+            ["items"] = new JsonArray(
+                new JsonObject { ["name"] = "a" },
+                new JsonObject { ["name"] = "b" }),
+        };
+        var cut = Render(schema, value, v => updated = v);
+
+        cut.Find("[data-testid='field-items[1].name'] input").Change("b-edited");
+
+        Assert.NotNull(updated);
+        // The sibling element must be untouched and the edited element updated in place.
+        Assert.Equal("a", updated["items"]![0]!["name"]!.GetValue<string>());
+        Assert.Equal("b-edited", updated["items"]![1]!["name"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Editing_nested_dictionary_of_objects_writes_back_without_clobbering_siblings()
+    {
+        JsonObject? updated = null;
+        var valueSchema = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject { ["apiKey"] = Scalar("string", "text", "API key") } };
+        var providers = new JsonObject { ["type"] = "object", ["x-ui-label"] = "Providers", ["additionalProperties"] = valueSchema };
+        var schema = Envelope(new JsonObject { ["providers"] = providers });
+        var value = new JsonObject
+        {
+            ["providers"] = new JsonObject
+            {
+                ["openai"] = new JsonObject { ["apiKey"] = "o" },
+                ["anthropic"] = new JsonObject { ["apiKey"] = "a" },
+            },
+        };
+        var cut = Render(schema, value, v => updated = v);
+
+        cut.Find("[data-testid='field-providers.anthropic.apiKey'] input").Change("a-new");
+
+        Assert.NotNull(updated);
+        Assert.Equal("o", updated["providers"]!["openai"]!["apiKey"]!.GetValue<string>());
+        Assert.Equal("a-new", updated["providers"]!["anthropic"]!["apiKey"]!.GetValue<string>());
+    }
+
+    // -- 9. List lifecycle: add / remove / reorder --------------------------
+
+    private static JsonObject StringListSchema()
+    {
+        var models = new JsonObject { ["type"] = "array", ["x-ui-label"] = "Models", ["items"] = new JsonObject { ["type"] = "string", ["x-ui-widget"] = "text" } };
+        return Envelope(new JsonObject { ["models"] = models });
+    }
+
+    [Fact]
+    public void Adding_a_list_item_appends_and_writes_back()
+    {
+        JsonObject? updated = null;
+        var cut = Render(StringListSchema(), new JsonObject { ["models"] = new JsonArray("a") }, v => updated = v);
+
+        cut.Find("[data-testid='array-add-models']").Click();
+
+        Assert.NotNull(updated);
+        Assert.Equal(2, updated["models"]!.AsArray().Count);
+        Assert.Equal("a", updated["models"]![0]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Removing_a_list_item_drops_it_and_keeps_siblings()
+    {
+        JsonObject? updated = null;
+        var cut = Render(StringListSchema(), new JsonObject { ["models"] = new JsonArray("a", "b", "c") }, v => updated = v);
+
+        cut.Find("[data-testid='array-remove-models-1']").Click();
+
+        Assert.NotNull(updated);
+        var arr = updated["models"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        Assert.Equal(new[] { "a", "c" }, arr.ToArray());
+    }
+
+    [Fact]
+    public void Reordering_a_list_item_moves_it_down()
+    {
+        JsonObject? updated = null;
+        var cut = Render(StringListSchema(), new JsonObject { ["models"] = new JsonArray("a", "b", "c") }, v => updated = v);
+
+        cut.Find("[data-testid='array-down-models-0']").Click();
+
+        Assert.NotNull(updated);
+        var arr = updated["models"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        Assert.Equal(new[] { "b", "a", "c" }, arr.ToArray());
+    }
+
+    [Fact]
+    public void Reordering_a_list_item_moves_it_up()
+    {
+        JsonObject? updated = null;
+        var cut = Render(StringListSchema(), new JsonObject { ["models"] = new JsonArray("a", "b", "c") }, v => updated = v);
+
+        cut.Find("[data-testid='array-up-models-2']").Click();
+
+        Assert.NotNull(updated);
+        var arr = updated["models"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        Assert.Equal(new[] { "a", "c", "b" }, arr.ToArray());
+    }
+
+    [Fact]
+    public void Adding_object_list_item_seeds_default_child_fields()
+    {
+        JsonObject? updated = null;
+        var itemSchema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["name"] = Scalar("string", "text", "Name"),
+                ["enabled"] = Scalar("boolean", "toggle", "Enabled"),
+            },
+        };
+        var arrNode = new JsonObject { ["type"] = "array", ["x-ui-label"] = "Rules", ["items"] = itemSchema };
+        var schema = Envelope(new JsonObject { ["rules"] = arrNode });
+        var cut = Render(schema, new JsonObject { ["rules"] = new JsonArray() }, v => updated = v);
+
+        cut.Find("[data-testid='array-add-rules']").Click();
+
+        Assert.NotNull(updated);
+        var item = updated["rules"]![0]!.AsObject();
+        Assert.True(item.ContainsKey("name"));
+        Assert.True(item.ContainsKey("enabled"));
+        Assert.False(item["enabled"]!.GetValue<bool>());
+    }
+
+    // -- 10. Dictionary lifecycle: add / delete / rename --------------------
+
+    private static JsonObject ProvidersDictSchema(bool immutableKeys = false, string? keyPattern = null)
+    {
+        var valueSchema = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject { ["apiKey"] = Scalar("string", "text", "API key") } };
+        var providers = new JsonObject { ["type"] = "object", ["x-ui-label"] = "Providers", ["additionalProperties"] = valueSchema };
+        if (immutableKeys) providers["x-ui-immutable-keys"] = true;
+        if (keyPattern is not null) providers["x-ui-key-pattern"] = keyPattern;
+        return Envelope(new JsonObject { ["providers"] = providers });
+    }
+
+    [Fact]
+    public void Adding_a_dictionary_entry_creates_it_with_defaulted_value()
+    {
+        JsonObject? updated = null;
+        var value = new JsonObject { ["providers"] = new JsonObject { ["openai"] = new JsonObject { ["apiKey"] = "o" } } };
+        var cut = Render(ProvidersDictSchema(), value, v => updated = v);
+
+        cut.Find("[data-testid='dict-newkey-providers']").Change("anthropic");
+        cut.Find("[data-testid='dict-add-providers']").Click();
+
+        Assert.NotNull(updated);
+        Assert.True(updated["providers"]!.AsObject().ContainsKey("anthropic"));
+        // Existing sibling survives.
+        Assert.Equal("o", updated["providers"]!["openai"]!["apiKey"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Adding_a_dictionary_entry_with_empty_key_shows_error_and_does_not_add()
+    {
+        JsonObject? updated = null;
+        var value = new JsonObject { ["providers"] = new JsonObject { ["openai"] = new JsonObject { ["apiKey"] = "o" } } };
+        var cut = Render(ProvidersDictSchema(), value, v => updated = v);
+
+        cut.Find("[data-testid='dict-add-providers']").Click();
+
+        cut.Find("[data-testid='dict-error-providers']");
+        // No write-back should have added a blank key.
+        Assert.Single(value["providers"]!.AsObject());
+    }
+
+    [Fact]
+    public void Adding_a_duplicate_dictionary_key_shows_error()
+    {
+        var value = new JsonObject { ["providers"] = new JsonObject { ["openai"] = new JsonObject { ["apiKey"] = "o" } } };
+        var cut = Render(ProvidersDictSchema(), value);
+
+        cut.Find("[data-testid='dict-newkey-providers']").Change("openai");
+        cut.Find("[data-testid='dict-add-providers']").Click();
+
+        var err = cut.Find("[data-testid='dict-error-providers']");
+        Assert.Contains("already exists", err.TextContent);
+    }
+
+    [Fact]
+    public void Adding_a_key_violating_pattern_shows_error()
+    {
+        var value = new JsonObject { ["providers"] = new JsonObject() };
+        var cut = Render(ProvidersDictSchema(keyPattern: "^[a-z]+$"), value);
+
+        cut.Find("[data-testid='dict-newkey-providers']").Change("Bad Key!");
+        cut.Find("[data-testid='dict-add-providers']").Click();
+
+        cut.Find("[data-testid='dict-error-providers']");
+        Assert.Empty(value["providers"]!.AsObject());
+    }
+
+    [Fact]
+    public void Deleting_a_dictionary_entry_removes_only_that_entry()
+    {
+        JsonObject? updated = null;
+        var value = new JsonObject
+        {
+            ["providers"] = new JsonObject
+            {
+                ["openai"] = new JsonObject { ["apiKey"] = "o" },
+                ["anthropic"] = new JsonObject { ["apiKey"] = "a" },
+            },
+        };
+        var cut = Render(ProvidersDictSchema(), value, v => updated = v);
+
+        cut.Find("[data-testid='dict-delete-providers-openai']").Click();
+
+        Assert.NotNull(updated);
+        Assert.False(updated["providers"]!.AsObject().ContainsKey("openai"));
+        Assert.True(updated["providers"]!.AsObject().ContainsKey("anthropic"));
+    }
+
+    [Fact]
+    public void Renaming_a_dictionary_key_preserves_value_and_order()
+    {
+        JsonObject? updated = null;
+        var value = new JsonObject
+        {
+            ["providers"] = new JsonObject
+            {
+                ["openai"] = new JsonObject { ["apiKey"] = "o" },
+                ["anthropic"] = new JsonObject { ["apiKey"] = "a" },
+            },
+        };
+        var cut = Render(ProvidersDictSchema(), value, v => updated = v);
+
+        cut.Find("[data-testid='dict-rename-input-providers-openai']").Change("openai-2");
+        cut.Find("[data-testid='dict-rename-providers-openai']").Click();
+
+        Assert.NotNull(updated);
+        var keys = updated["providers"]!.AsObject().Select(kv => kv.Key).ToList();
+        Assert.Equal(new[] { "openai-2", "anthropic" }, keys.ToArray());
+        Assert.Equal("o", updated["providers"]!["openai-2"]!["apiKey"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Renaming_to_an_existing_key_shows_error()
+    {
+        var value = new JsonObject
+        {
+            ["providers"] = new JsonObject
+            {
+                ["openai"] = new JsonObject { ["apiKey"] = "o" },
+                ["anthropic"] = new JsonObject { ["apiKey"] = "a" },
+            },
+        };
+        var cut = Render(ProvidersDictSchema(), value);
+
+        cut.Find("[data-testid='dict-rename-input-providers-openai']").Change("anthropic");
+        cut.Find("[data-testid='dict-rename-providers-openai']").Click();
+
+        cut.Find("[data-testid='dict-error-providers']");
+        Assert.True(value["providers"]!.AsObject().ContainsKey("openai"));
+    }
+
+    [Fact]
+    public void Immutable_key_dictionary_hides_rename_control()
+    {
+        var value = new JsonObject { ["providers"] = new JsonObject { ["openai"] = new JsonObject { ["apiKey"] = "o" } } };
+        var cut = Render(ProvidersDictSchema(immutableKeys: true), value);
+
+        Assert.Empty(cut.FindAll("[data-testid='dict-rename-providers-openai']"));
+        // Delete + add remain available even when keys are immutable.
+        cut.Find("[data-testid='dict-delete-providers-openai']");
+    }
+
+    // -- 11. Secret-valued dictionary lifecycle -----------------------------
+
+    [Fact]
+    public void Adding_secret_valued_dictionary_entry_renders_password_widget()
+    {
+        var valueSchema = new JsonObject { ["type"] = "string", ["x-ui-widget"] = "secret", ["x-ui-secret"] = true, ["x-ui-label"] = "Key" };
+        var apiKeys = new JsonObject { ["type"] = "object", ["x-ui-label"] = "API Keys", ["additionalProperties"] = valueSchema };
+        var schema = Envelope(new JsonObject { ["apiKeys"] = apiKeys });
+        var value = new JsonObject { ["apiKeys"] = new JsonObject { ["k1"] = "***" } };
+        var cut = Render(schema, value);
+
+        cut.Find("[data-testid='dict-newkey-apiKeys']").Change("k2");
+        cut.Find("[data-testid='dict-add-apiKeys']").Click();
+
+        var input = cut.Find("[data-testid='field-apiKeys.k2'] input");
+        Assert.Equal("password", input.GetAttribute("type"));
+    }
 }
