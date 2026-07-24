@@ -1591,11 +1591,75 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IReadOnlyList<MessageContentPart>? contentParts,
         AgentDescriptor? descriptor = null)
     {
-        var content = InjectDateTimeIfEnabled(message.Content, descriptor);
+        // Fold any non-image attachment content (text files, non-image binaries) into the
+        // message text BEFORE datetime injection so the agent actually receives it. Image parts
+        // continue to flow through the vision path via BuildImageContent. Prior to this, only
+        // image/* parts were consumed and every non-image paperclip attachment was silently
+        // dropped (#2294).
+        var withAttachments = AppendNonImageAttachments(message.Content, contentParts);
+        var content = InjectDateTimeIfEnabled(withAttachments, descriptor);
         var images = BuildImageContent(contentParts);
         return images is { Count: > 0 }
             ? new AgentUserMessage(content, images)
             : new AgentUserMessage(content);
+    }
+
+    /// <summary>
+    /// Inlines non-image attachment content into the user message text so it reaches the agent.
+    /// Text content parts (e.g. an uploaded <c>.log</c> / <c>text/plain</c> file) are embedded
+    /// verbatim inside a labelled <c>&lt;attachment&gt;</c> block. Non-image binary parts, which
+    /// cannot be represented as text, are surfaced as a metadata reference line (filename, MIME
+    /// type, size) so the agent is at least aware of them. Image parts are intentionally skipped
+    /// here — they travel the vision path via <see cref="BuildImageContent"/>. Returns the
+    /// original content unchanged when there are no non-image parts.
+    /// </summary>
+    internal static string AppendNonImageAttachments(
+        string content,
+        IReadOnlyList<MessageContentPart>? contentParts)
+    {
+        if (contentParts is null or { Count: 0 })
+            return content;
+
+        System.Text.StringBuilder? sb = null;
+        foreach (var part in contentParts)
+        {
+            switch (part)
+            {
+                case TextContentPart text:
+                {
+                    sb ??= new System.Text.StringBuilder();
+                    sb.Append('\n');
+                    sb.Append("<attachment mimeType=\"").Append(text.MimeType).Append("\">\n");
+                    sb.Append(text.Text);
+                    sb.Append("\n</attachment>");
+                    break;
+                }
+                case BinaryContentPart bin when !bin.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase):
+                {
+                    sb ??= new System.Text.StringBuilder();
+                    var name = string.IsNullOrWhiteSpace(bin.FileName) ? "(unnamed)" : bin.FileName;
+                    sb.Append('\n');
+                    sb.Append("<attachment fileName=\"").Append(name)
+                      .Append("\" mimeType=\"").Append(bin.MimeType)
+                      .Append("\" sizeBytes=\"").Append(bin.Data.Length)
+                      .Append("\" />");
+                    break;
+                }
+                case ReferenceContentPart refPart when !refPart.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase):
+                {
+                    sb ??= new System.Text.StringBuilder();
+                    var name = string.IsNullOrWhiteSpace(refPart.FileName) ? "(unnamed)" : refPart.FileName;
+                    sb.Append('\n');
+                    sb.Append("<attachment fileName=\"").Append(name)
+                      .Append("\" mimeType=\"").Append(refPart.MimeType)
+                      .Append("\" uri=\"").Append(refPart.Uri)
+                      .Append("\" />");
+                    break;
+                }
+            }
+        }
+
+        return sb is null ? content : content + sb.ToString();
     }
 
     /// <summary>
