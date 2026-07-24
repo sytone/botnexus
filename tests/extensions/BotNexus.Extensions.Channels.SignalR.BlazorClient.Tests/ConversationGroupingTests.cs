@@ -130,6 +130,85 @@ public sealed class ConversationGroupingTests : IDisposable
             Assert.Contains("Cron Task", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
     }
 
+    /// <summary>
+    /// #2304: a conversation the SERVER marked <c>source="Cron"</c> is grouped under Scheduled and
+    /// badged from the typed projection alone — no <c>cronconv:</c> id prefix, no mutable
+    /// <c>IsVirtualSession</c> flag, no cron-job id lookup.
+    /// </summary>
+    [Fact]
+    public void ServerSuppliedCronSource_RenderedInScheduledGroup_WithCronBadge()
+    {
+        ExpandScheduledGroupByDefault();
+
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Scheduled Run", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
+            new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
+            Assert.Contains("Scheduled Run", scheduledGroup.TextContent);
+            Assert.Contains("Cron", scheduledGroup.TextContent);
+        });
+
+        // The normal conversation stays in the normal group.
+        var convsGroup = cut.Find("[data-testid='conversation-group-conversations']");
+        Assert.Contains("Normal Chat", convsGroup.TextContent);
+        Assert.DoesNotContain("Scheduled Run", convsGroup.TextContent);
+    }
+
+    /// <summary>
+    /// #2304: a webhook-originated conversation is badged from the immutable server signal.
+    /// </summary>
+    [Fact]
+    public void ServerSuppliedWebhookSource_IsBadgedFromTheImmutableSignal()
+    {
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Webhook Run", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Webhook"),
+            new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        var cut = RenderLayout();
+
+        var item = cut.Find("[data-conversation-id='c-1']");
+        Assert.Contains("Webhook", item.TextContent);
+
+        var normalItem = cut.Find("[data-conversation-id='c-2']");
+        Assert.DoesNotContain("Webhook", normalItem.TextContent);
+        Assert.DoesNotContain("Cron", normalItem.TextContent);
+        Assert.DoesNotContain("Read-only", normalItem.TextContent);
+    }
+
+    /// <summary>
+    /// #2304 regression guard, the conversation-shaped twin of #2248: an inbound sub-agent event
+    /// must not be able to badge, regroup, or hide the user's own conversation.
+    /// </summary>
+    [Fact]
+    public void InboundSubAgentEvent_LeavesTheUserConversationUnbadgedAndVisible()
+    {
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        // Inbound, non-user-driven events fire against the same agent/conversation.
+        _store.MarkSubAgent("a-1-sub");
+        _store.RegisterSession("a-1", "sess-sub", sessionType: "agent-subagent", conversationId: "c-1");
+
+        var cut = RenderLayout();
+
+        var convsGroup = cut.Find("[data-testid='conversation-group-conversations']");
+        Assert.Contains("My Chat", convsGroup.TextContent);
+
+        var item = cut.Find("[data-conversation-id='c-1']");
+        Assert.DoesNotContain("Read-only", item.TextContent);
+        Assert.DoesNotContain("Virtual", item.TextContent);
+
+        Assert.Equal(ConversationSource.Channel, _store.GetConversation("c-1")!.Source);
+    }
+
     [Fact]
     public void ScheduledGroup_CollapsedByDefault()
     {

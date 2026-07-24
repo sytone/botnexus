@@ -311,6 +311,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 ActiveSessionId = dto.ActiveSessionId,
                 CreatedAt = dto.CreatedAt,
                 UpdatedAt = dto.UpdatedAt,
+                // Immutable origin signal, seeded once straight from the server payload (#2304).
+                Source = ConversationOrigin.ParseSource(dto.Source),
+                Kind = ConversationOrigin.ParseKind(dto.Kind),
                 HistoryLoaded = true // brand new — nothing to load
             };
 
@@ -904,6 +907,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 Title = "Sub-agent session",
                 Status = "Active",
                 ActiveSessionId = subAgentId,
+                // Locally-synthesised observer row for a sub-agent transcript: its origin is known
+                // without a server payload and is stamped once, immutably (#2304).
+                Source = ConversationSource.Agent,
+                Kind = ConversationKind.AgentSubAgent,
                 IsVirtualSession = true,
                 VirtualSessionKind = "subagent",
                 CreatedAt = DateTimeOffset.UtcNow,

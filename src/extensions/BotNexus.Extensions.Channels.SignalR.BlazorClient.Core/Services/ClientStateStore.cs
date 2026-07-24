@@ -220,6 +220,10 @@ public sealed class ClientStateStore : IClientStateStore
                 existing.ActiveSessionId = dto.ActiveSessionId;
                 existing.CreatedAt = dto.CreatedAt;
                 existing.UpdatedAt = dto.UpdatedAt;
+
+                // Source/Kind are deliberately NOT refreshed here: they are init-only, write-once
+                // origin signals (#2304). A conversation cannot change why it exists or who is in
+                // it, so a refresh must never be able to rewrite them.
             }
             else
             {
@@ -232,7 +236,10 @@ public sealed class ClientStateStore : IClientStateStore
                     Status = dto.Status,
                     ActiveSessionId = dto.ActiveSessionId,
                     CreatedAt = dto.CreatedAt,
-                    UpdatedAt = dto.UpdatedAt
+                    UpdatedAt = dto.UpdatedAt,
+                    // Immutable origin signal, seeded once straight from the server payload (#2304).
+                    Source = ConversationOrigin.ParseSource(dto.Source),
+                    Kind = ConversationOrigin.ParseKind(dto.Kind)
                 };
             }
         }

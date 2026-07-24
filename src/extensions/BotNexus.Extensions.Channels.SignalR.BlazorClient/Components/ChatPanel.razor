@@ -578,16 +578,17 @@ private bool IsStreaming =>
             : false; // no active conversation = not in turn
     // #2248: read-only is a VIEW concern, not a session-type-data concern. It is true when EITHER
     // the agent is an IMMUTABLE observer/sub-agent (Agent.IsReadOnly now derives from the immutable
-    // IsObserverAgent, NOT the mutable SessionType), OR the active view was promoted by the explicit
-    // "view sub-agent" interaction (ActiveSelectionSource == SubAgentView), OR the active conversation
-    // is a genuine virtual projection (cron). Crucially it is NO LONGER derived from Agent.SessionType,
-    // so a concurrent RegisterSession(agent-subagent) that poisons a REAL user agent's SessionType can
-    // never flip this true and hide the user's composer / new-session / send controls (#2248). A real
-    // user agent whose SessionType was stamped "agent-subagent" by an inbound sub-agent event stays
-    // fully interactive because IsObserverAgent is false and the source is a normal user selection.
+    // IsObserverAgent, NOT the mutable SessionType), OR the active conversation's typed render
+    // projection says so. #2304: that projection is computed from the conversation's immutable,
+    // init-only (Kind, Source) origin plus the store's ActiveSelectionSource - it subsumes the old
+    // SelectionSource.SubAgentView check. Crucially none of its inputs are mutable, so a concurrent
+    // RegisterSession(agent-subagent) or any inbound sub-agent/cron event can never flip this true
+    // and hide the user's composer / new-session / send controls. The legacy IsVirtualSession probe
+    // remains only as a transitional fallback for locally-synthesised rows; child E deletes it.
     private bool IsReadOnly =>
         (Agent?.IsReadOnly ?? false)
-        || Store.ActiveSelectionSource == SelectionSource.SubAgentView
+        || (ActiveConversation?.Project(Store.ActiveSelectionSource).IsReadOnly
+            ?? Store.ActiveSelectionSource == SelectionSource.SubAgentView)
         || (ActiveConversation?.IsVirtualSession ?? false);
     private bool CanManageActiveConversation =>
         HasActiveConversation && !IsReadOnly && ActiveConversation?.IsDefault != true;

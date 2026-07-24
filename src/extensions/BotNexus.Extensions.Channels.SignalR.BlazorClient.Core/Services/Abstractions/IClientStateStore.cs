@@ -330,6 +330,31 @@ public sealed class ConversationState
     /// <summary>When the conversation was last updated.</summary>
     public DateTimeOffset UpdatedAt { get; set; }
 
+    /// <summary>
+    /// The immutable origination trigger of this conversation, supplied by the server on every
+    /// conversation payload (epic #2300). <b>Write-once:</b> <c>init</c>-only by design so no inbound
+    /// SignalR event can ever mutate it — the exact defect class fixed for agents in #2248. All
+    /// read-only / composer / grouping render decisions derive from it via
+    /// <see cref="ConversationRenderProjection"/>.
+    /// </summary>
+    public ConversationSource Source { get; init; } = ConversationSource.Channel;
+
+    /// <summary>
+    /// The immutable citizen-pairing of this conversation, supplied by the server. <c>init</c>-only
+    /// for the same reason as <see cref="Source"/>; the two together form the projection input.
+    /// </summary>
+    public ConversationKind Kind { get; init; } = ConversationKind.HumanAgent;
+
+    /// <summary>
+    /// The deterministic render projection for this conversation under the supplied selection
+    /// source. The single approved way to ask "is this read-only / does it show a composer / how is
+    /// it grouped" — see <see cref="ConversationRenderProjection"/>.
+    /// </summary>
+    /// <param name="selectionSource">The source that requested the current active view.</param>
+    /// <returns>The projection over this conversation's immutable origin.</returns>
+    public ConversationRenderProjection Project(SelectionSource selectionSource) =>
+        ConversationRenderProjection.For(this, selectionSource);
+
     /// <summary>True when this is a virtual read-only session row (for example, cron).</summary>
     public bool IsVirtualSession { get; set; }
 
