@@ -310,17 +310,14 @@ public sealed class CronTrigger(
             ? request!.JobName!
             : "Cron";
 
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.From($"conv:{Guid.NewGuid():N}"),
-            AgentId = agentId,
-            Title = title,
-            IsDefault = false,
-            // Schedule-driven origination (#2302). Explicit so clients never need to sniff a
-            // `cron:` prefix out of a session id to know this run was unattended.
-            Source = ConversationSource.Cron,
-            Initiator = initiator
-        };
+        // Schedule-driven origination (#2302). Minted through the single creation seam (#2310)
+        // so clients never need to sniff a `cron:` prefix out of a session id to know this run
+        // was unattended, and provenance cannot be silently omitted.
+        var conversation = ConversationFactory.CreateForCron(
+            ConversationId.From($"conv:{Guid.NewGuid():N}"),
+            agentId,
+            title: title,
+            initiator: initiator);
 
         await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
         logger.LogInformation(

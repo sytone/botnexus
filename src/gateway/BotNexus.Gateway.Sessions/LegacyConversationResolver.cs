@@ -73,17 +73,13 @@ public sealed class LegacyConversationResolver
             if (existing is not null)
                 return existing;
 
-            var conversation = new Conversation
-            {
-                ConversationId = ConversationId.Create(),
-                AgentId = agentId,
-                Title = legacyTitle,
-                IsDefault = false,
-                Initiator = CitizenId.Of(agentId),
-                Kind = ConversationKind.HumanAgent,
-                // Backfill container for orphaned human-agent sessions - channel-originated by nature.
-                Source = ConversationSource.Channel
-            };
+            // Backfill container for orphaned human-agent sessions - channel-originated by nature.
+            // Minted through the single creation seam (#2310) so provenance cannot be omitted.
+            var conversation = ConversationFactory.CreateForChannel(
+                ConversationId.Create(),
+                agentId,
+                title: legacyTitle,
+                initiator: CitizenId.Of(agentId));
             var created = await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
             _logger?.LogInformation(
                 "Created legacy conversation {ConversationId} for agent {AgentId} to backfill orphan sessions.",

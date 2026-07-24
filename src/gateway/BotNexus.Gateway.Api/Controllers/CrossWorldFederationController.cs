@@ -357,27 +357,22 @@ public sealed class CrossWorldFederationController(
         // into the target system prompt; caller-controlled text there is an XPIA vector.
         // Initiator is null because cross-world citizens don't resolve in the local registries;
         // source identity is preserved on Metadata only.
-        var conversation = await conversationStore.CreateAsync(new Conversation
-        {
-            ConversationId = ConversationId.Create(),
-            AgentId = targetAgentId,
-            Kind = ConversationKind.AgentAgent,
-            // Cross-world federation relay is an agent-to-agent handshake minted by an agent.
-            Source = ConversationSource.Agent,
-            Initiator = null,
-            Title = ConversationTitle,
-            Purpose = null,
-            Status = ConversationStatus.Active,
-            Metadata =
-            {
-                ["sourceWorldId"] = request.SourceWorldId,
-                ["sourceAgentId"] = request.SourceAgentId,
-                ["sourceConversationId"] = request.ConversationId,
-                ["sourceSessionId"] = request.SourceSessionId,
-                ["targetWorldId"] = _localWorldId,
-                ["channelType"] = CrossWorldChannel.Value
-            }
-        }, cancellationToken).ConfigureAwait(false);
+        // Cross-world federation relay is an agent-to-agent handshake minted by an agent.
+        // Minted through the single creation seam (#2310).
+        var relayConversation = ConversationFactory.CreateForAgent(
+            ConversationKind.AgentAgent,
+            ConversationId.Create(),
+            targetAgentId,
+            title: ConversationTitle,
+            initiator: null);
+        relayConversation.Metadata["sourceWorldId"] = request.SourceWorldId;
+        relayConversation.Metadata["sourceAgentId"] = request.SourceAgentId;
+        relayConversation.Metadata["sourceConversationId"] = request.ConversationId;
+        relayConversation.Metadata["sourceSessionId"] = request.SourceSessionId;
+        relayConversation.Metadata["targetWorldId"] = _localWorldId;
+        relayConversation.Metadata["channelType"] = CrossWorldChannel.Value;
+
+        var conversation = await conversationStore.CreateAsync(relayConversation, cancellationToken).ConfigureAwait(false);
 
         var sessionId = SessionId.Create();
         var session = await sessionStore.GetOrCreateAsync(sessionId, targetAgentId, cancellationToken).ConfigureAwait(false);
