@@ -22,7 +22,7 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal sealed class SubAgentCommand
 {
-    private const string SubAgentWorkspaceDirectoryName = "botnexus-subagent-workspaces";
+    internal const string SubAgentWorkspaceDirectoryName = "botnexus-subagent-workspaces";
 
     private readonly IFileSystem _fileSystem;
 
@@ -181,7 +181,7 @@ internal sealed class SubAgentCommand
     /// gateway may never have run): an empty map is returned so every on-disk directory is treated as
     /// an orphan and therefore prunable. Opened read-only so the running gateway is never disturbed.
     /// </summary>
-    private static IReadOnlyDictionary<string, string> LoadStatusesByAgentDirectory(string sessionsDbPath)
+    internal static IReadOnlyDictionary<string, string> LoadStatusesByAgentDirectory(string sessionsDbPath)
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!File.Exists(sessionsDbPath))
