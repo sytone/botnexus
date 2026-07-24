@@ -100,6 +100,7 @@
     <Project Path="tests/integration/BotNexus.Integration.Cli.Tests/BotNexus.Integration.Cli.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.ConfigSave.Tests/BotNexus.Integration.ConfigSave.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj" />
+    <Project Path="tests/integration/BotNexus.Integration.ExtensionBoot.Tests/BotNexus.Integration.ExtensionBoot.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.ProviderTests/BotNexus.Integration.ProviderTests.csproj" />
     <Project Path="tests/integration/BotNexus.Integration.ServiceBusStreaming.Tests/BotNexus.Integration.ServiceBusStreaming.Tests.csproj" />
     <Project Path="tests/integration/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj" />

@@ -464,9 +464,16 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     return new LlmClient(apiProviders, models);
 });
 
+// Boot-time extension load report (#2220): capture the raw load results so a failing
+// extension is not merely a bootstrap warning that leaves /health green. The report is
+// registered as a singleton and surfaced by GET /api/extensions/health, which returns 503
+// naming the offending assembly/type instead of a generic health-check timeout.
+var extensionBootReport = new BotNexus.Gateway.Diagnostics.ExtensionBootReport();
+builder.Services.AddSingleton(extensionBootReport);
 using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger, dispose: false))
 {
     var extensionLoadResults = await builder.Services.LoadConfiguredExtensionsAsync(startupPlatformConfig, bootstrapLoggerFactory);
+    extensionBootReport.Record(extensionLoadResults);
     if (extensionLoadResults.Any(result => !result.Success))
     {
         var failed = string.Join(", ", extensionLoadResults.Where(result => !result.Success).Select(result => result.ExtensionId));
