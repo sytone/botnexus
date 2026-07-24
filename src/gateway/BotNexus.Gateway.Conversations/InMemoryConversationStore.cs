@@ -312,9 +312,12 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
     {
-        // Archived conversations are excluded from the active list.
+        // Archived conversations are excluded from the active list, as are nested sub-agent runs
+        // (#2338): a conversation with a parent is reachable only by expanding its spawning tool
+        // call in that parent, never as a top-level entry.
         IReadOnlyList<ConversationSummary> summaries = [.. _conversations.Values
             .Where(c => c.Status != ConversationStatus.Archived)
+            .Where(c => c.ParentConversationId is null)
             .OrderByDescending(c => c.IsPinned)
             .ThenByDescending(c => c.PinnedAt)
             .ThenByDescending(c => c.UpdatedAt)

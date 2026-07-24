@@ -46,13 +46,26 @@ public sealed record SubAgentSpawnRequest
     public IReadOnlyList<string>? ParentToolDenyList { get; init; }
 
     /// <summary>
-    /// The parent's conversation that this sub-agent's child session must be bound to.
-    /// Required because sub-agent output must always remain visible in the parent's
-    /// conversation thread — orphan sub-agent sessions are not a supported state.
-    /// Enforced by Vogen so the wrapper is non-empty; enforced by <c>required</c> so
-    /// callers cannot forget to supply it.
+    /// The <em>parent's</em> conversation - the supervising thread this sub-agent run is nested
+    /// under. Since #2338 this is the <b>parent edge</b>, not the child's identity: the child gets
+    /// its own minted <see cref="ConversationId"/> and records this value as
+    /// <c>Conversation.ParentConversationId</c>. Previously it was assigned directly onto the child
+    /// session's <c>ConversationId</c>, which collapsed two conversations onto one id and broadcast
+    /// every child tool call and delta into the parent's SignalR group.
+    /// Enforced by Vogen so the wrapper is non-empty; enforced by <c>required</c> so callers cannot
+    /// forget to supply it (a parentless sub-agent run would be unreachable - see
+    /// <c>SubAgentEagerPinArchitectureTests</c>).
     /// </summary>
     public required ConversationId InheritedConversationId { get; init; }
+
+    /// <summary>
+    /// The id of the parent-side tool call (typically <c>spawn_subagent</c>) that requested this
+    /// run, when the caller knows it. Recorded on the child conversation as
+    /// <c>Conversation.SpawningToolCallId</c> so a channel can render the run as an expandable card
+    /// in place of that exact call rather than guessing the association by timestamp (#2338).
+    /// <c>null</c> for spawns that do not originate from a tool call.
+    /// </summary>
+    public string? SpawningToolCallId { get; init; }
 
     /// <summary>
     /// The spawn mode: <see cref="Embody"/> a role with optional customisations, or

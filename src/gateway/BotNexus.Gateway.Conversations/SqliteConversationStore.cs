@@ -960,7 +960,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 c.pinned_at
             FROM conversations c
             LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
-            WHERE c.status = 'Active'
+            WHERE c.status = 'Active' AND c.parent_conversation_id IS NULL
             GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.source, c.is_pinned, c.pinned_at
             ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC
             """;
@@ -1140,6 +1140,13 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var indexCommand = connection.CreateCommand();
         indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_conversations_initiator ON conversations(initiator);";
         await indexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        // #2338: the top-level listing filters on parent_conversation_id IS NULL and the
+        // expand-a-nested-run lookup seeks by parent id, so both want this index.
+        await using var parentIndexCommand = connection.CreateCommand();
+        parentIndexCommand.CommandText =
+            "CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id);";
+        await parentIndexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     // Additive `conversations` columns in application order. The `kind` column maps NULL to
@@ -1166,7 +1173,12 @@ public sealed class SqliteConversationStore : IConversationStore
         // valid; empty values are lazy-backfilled to the current world id on read.
         ("world_id", "ALTER TABLE conversations ADD COLUMN world_id TEXT NOT NULL DEFAULT '';"),
         ("is_pinned", "ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;"),
-        ("pinned_at", "ALTER TABLE conversations ADD COLUMN pinned_at TEXT;")
+        ("pinned_at", "ALTER TABLE conversations ADD COLUMN pinned_at TEXT;"),
+        // #2338 nested-run edge: nullable so every existing row deserializes unchanged (NULL means
+        // "top-level conversation"). Indexed in EnsureConversationColumnsAsync because the listing
+        // filter (`parent_conversation_id IS NULL`) and the child lookup both key off it.
+        ("parent_conversation_id", "ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;"),
+        ("spawning_tool_call_id", "ALTER TABLE conversations ADD COLUMN spawning_tool_call_id TEXT;")
     };
 
     // Race-tolerant single-column migration. Probes PRAGMA table_info first (cheap, avoids a
@@ -1329,7 +1341,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id
             FROM conversations
             WHERE id = $id
             """;
@@ -1438,7 +1450,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1606,8 +1618,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1633,8 +1645,8 @@ public sealed class SqliteConversationStore : IConversationStore
                     context_window_override = excluded.context_window_override
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1659,6 +1671,11 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$modelOverride", conversation.ModelOverride is null ? (object)DBNull.Value : conversation.ModelOverride);
         conversationCommand.Parameters.AddWithValue("$thinkingOverride", conversation.ThinkingOverride is null ? (object)DBNull.Value : conversation.ThinkingOverride);
         conversationCommand.Parameters.AddWithValue("$contextWindowOverride", conversation.ContextWindowOverride.HasValue ? conversation.ContextWindowOverride.Value : (object)DBNull.Value);
+        // #2338: deliberately NOT in the upsert's DO UPDATE SET list - the parent edge and the
+        // spawning tool call are write-once creation facts (init-only on the model), so a later
+        // SaveAsync must never be able to re-parent a persisted conversation.
+        conversationCommand.Parameters.AddWithValue("$parentConversationId", conversation.ParentConversationId is null ? DBNull.Value : conversation.ParentConversationId.Value.Value);
+        conversationCommand.Parameters.AddWithValue("$spawningToolCallId", conversation.SpawningToolCallId is null ? (object)DBNull.Value : conversation.SpawningToolCallId);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -1708,6 +1725,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Initiator = conversation.Initiator,
             Kind = conversation.Kind,
             Source = conversation.Source,
+            ParentConversationId = conversation.ParentConversationId,
+            SpawningToolCallId = conversation.SpawningToolCallId,
             WorldId = conversation.WorldId,
             IsPinned = conversation.IsPinned,
             PinnedAt = conversation.PinnedAt,

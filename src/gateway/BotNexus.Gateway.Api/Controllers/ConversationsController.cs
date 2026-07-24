@@ -118,6 +118,11 @@ public sealed class ConversationsController : ControllerBase
 
         var summaries = relevant
             .Where(c => c.Status == ConversationStatus.Active)
+            // #2338: a nested sub-agent run is not independently addressable - it surfaces only by
+            // expanding its spawning tool call in the parent conversation. Filtering here keeps the
+            // agent-scoped branch consistent with the global GetSummariesAsync branch above, which
+            // applies the same rule in the store.
+            .Where(c => c.ParentConversationId is null)
             .OrderByDescending(c => c.IsPinned)
             .ThenByDescending(c => c.PinnedAt)
             .ThenByDescending(c => c.UpdatedAt)

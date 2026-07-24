@@ -6,6 +6,7 @@ using System.Text;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
@@ -35,6 +36,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
+    // #2338: the child run mints its own conversation through ConversationFactory and persists it
+    // here. Optional so hosts/tests without a conversation store behave exactly as before apart
+    // from the row not being written - the id is still minted so the child never shares the
+    // parent's SignalR group.
+    private readonly IConversationStore? _conversationStore;
     // Trusted-only security-event sink (#1647). Optional: null behaves exactly as before (no
     // emission). Spawn and kill each emit one SecurityEvent so the sandbox boundary is recorded
     // to the trusted sink and never the public activity/diagnostic stream.
@@ -69,7 +75,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         DefaultToolPolicyProvider? policyProvider = null,
         ISessionStore? sessionStore = null,
         TimeProvider? timeProvider = null,
-        ISecurityEventSink? securityEvents = null)
+        ISecurityEventSink? securityEvents = null,
+        IConversationStore? conversationStore = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -82,45 +89,97 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _sessionStore = sessionStore;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _securityEvents = securityEvents;
+        _conversationStore = conversationStore;
     }
 
     /// <summary>
-    /// Eagerly pins the freshly-created child session to the parent's conversation BEFORE
-    /// <see cref="SpawnAsync"/> returns, so concurrent lookups
+    /// Eagerly mints the child run's <b>own</b> conversation and binds the freshly-created child
+    /// session to it BEFORE <see cref="SpawnAsync"/> returns, so concurrent lookups
     /// (<see cref="ISessionStore.ListByConversationAsync"/>, /api/conversations/{id}/history,
-    /// canvas resolvers) never observe the child as an orphan. Prior to this the pin ran inside the
+    /// canvas resolvers) never observe the child as an orphan. Prior to this the bind ran inside the
     /// fire-and-forget <c>Task.Run</c> at the end of <c>SpawnAsync</c>, opening an orphan window
     /// between the method returning and the background task being scheduled (Phase 4 / F-6).
     /// </summary>
     /// <remarks>
-    /// No-op when no <see cref="ISessionStore"/> is wired. If the child row does not exist yet,
-    /// this method creates and persists it before handle creation can start background execution.
-    /// Extracted from <see cref="SpawnAsync"/> so the eager-pin step is a
-    /// named, awaited unit on the orchestration path (#1630); the eager (not lazy) ordering is
-    /// guarded by the architecture/behaviour tests. Declared BEFORE <c>SpawnAsync</c> so the
+    /// <para>
+    /// <b>#2338.</b> The child no longer inherits the parent's <see cref="ConversationId"/>. It gets
+    /// its own, linked back to the supervisor through <c>Conversation.ParentConversationId</c> (and,
+    /// when known, <c>Conversation.SpawningToolCallId</c>). Sharing the id made
+    /// <c>SignalRChannelAdapter</c> - which routes purely by conversation id - broadcast every child
+    /// tool call, thinking delta and content delta into the <em>parent's</em> group, interleaving the
+    /// sub-agent's internals with the parent's own turn. Distinct ids make that structurally
+    /// impossible; the parent edge is what keeps the run reachable and keeps it out of top-level
+    /// listings.
+    /// </para>
+    /// <para>
+    /// The child conversation row is only persisted when an <see cref="IConversationStore"/> is
+    /// wired; the id is minted either way so the child session is never bound to the parent's
+    /// conversation. Session materialisation is a no-op when no <see cref="ISessionStore"/> is
+    /// wired. Extracted from <see cref="SpawnAsync"/> so the eager step is a named, awaited unit on
+    /// the orchestration path (#1630); the eager (not lazy) ordering is guarded by the
+    /// architecture/behaviour tests. Declared BEFORE <c>SpawnAsync</c> so the
     /// <c>.ConversationId =</c> mutation lexically precedes the fire-and-forget <c>Task.Run</c> in
     /// the orchestrator -- the F-6 architecture fence
     /// (SubAgentEagerPinArchitectureTests.NoConversationIdMutation_InsideTaskRun) is a source-position
-    /// check, so the eager-pin helper must sit above the queue point even though it is awaited first.
+    /// check, so this helper must sit above the queue point even though it is awaited first.
+    /// </para>
     /// </remarks>
-    /// <param name="request">The spawn request carrying the inherited conversation id.</param>
-    /// <param name="childSessionId">The minted child session to bind to the parent conversation.</param>
+    /// <param name="request">The spawn request carrying the parent conversation edge.</param>
+    /// <param name="childSessionId">The minted child session to bind to the child conversation.</param>
     /// <param name="childAgentId">The ephemeral child agent that owns the new session.</param>
+    /// <param name="name">Resolved display name for the run, used as the conversation title.</param>
     /// <param name="ct">Cancellation token for the store reads/writes.</param>
-    private async Task PinChildConversationAsync(
+    /// <returns>The child run's own conversation id.</returns>
+    private async Task<ConversationId> MintChildConversationAsync(
         SubAgentSpawnRequest request,
         SessionId childSessionId,
         AgentId childAgentId,
+        string? name,
         CancellationToken ct)
     {
-        if (_sessionStore is null)
-            return;
+        var childConversationId = ConversationId.Create();
 
-        var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false)
-            ?? await _sessionStore.GetOrCreateAsync(childSessionId, childAgentId, ct).ConfigureAwait(false);
-        childSession.ConversationId = request.InheritedConversationId;
-        childSession.SessionType = SessionType.AgentSubAgent;
-        await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+        if (_conversationStore is not null)
+        {
+            // ConversationFactory is the single sanctioned creation seam (#2310/#2321): the
+            // sub-agent factory hard-codes Kind = AgentSubAgent / Source = Agent and requires the
+            // parent edge, so a parentless or mislabelled child conversation cannot be constructed.
+            var childConversation = ConversationFactory.CreateForSubAgent(
+                childConversationId,
+                childAgentId,
+                request.InheritedConversationId,
+                request.SpawningToolCallId,
+                title: string.IsNullOrWhiteSpace(name) ? "Sub-agent run" : name,
+                initiator: CitizenId.Of(request.ParentAgentId),
+                purpose: request.Task);
+
+            try
+            {
+                await _conversationStore.CreateAsync(childConversation, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort, matching the other persistence side-effects on this path: a failed
+                // conversation row must not abort the spawn. The child session is still bound to the
+                // minted id, so the run stays isolated from the parent's group either way.
+                _logger.LogWarning(
+                    ex,
+                    "Failed to persist child conversation '{ChildConversationId}' for sub-agent under parent conversation '{ParentConversationId}'.",
+                    childConversationId,
+                    request.InheritedConversationId);
+            }
+        }
+
+        if (_sessionStore is not null)
+        {
+            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false)
+                ?? await _sessionStore.GetOrCreateAsync(childSessionId, childAgentId, ct).ConfigureAwait(false);
+            childSession.ConversationId = childConversationId;
+            childSession.SessionType = SessionType.AgentSubAgent;
+            await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+        }
+
+        return childConversationId;
     }
 
     /// <inheritdoc />
@@ -180,10 +239,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             });
         }
 
-        // Materialize and persist the child session before handle creation. Handle creation can
-        // reach the model immediately, so this is the last safe point to guarantee that every
-        // later tool write-ahead has a durable parent row (#2113).
-        await PinChildConversationAsync(request, childSessionId, childAgentId, ct).ConfigureAwait(false);
+        // Materialize and persist the child conversation + session before handle creation. Handle
+        // creation can reach the model immediately, so this is the last safe point to guarantee that
+        // every later tool write-ahead has a durable parent row (#2113). Since #2338 the child owns
+        // its own conversation rather than inheriting the parent's.
+        var childConversationId = await MintChildConversationAsync(request, childSessionId, childAgentId, name, ct).ConfigureAwait(false);
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
@@ -196,6 +256,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentId = subAgentId,
             ParentSessionId = request.ParentSessionId,
             ChildSessionId = childSessionId,
+            ChildConversationId = childConversationId,
             Name = name,
             ParentAgentId = request.ParentAgentId.Value,
             ChildAgentId = childAgentId.Value,

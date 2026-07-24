@@ -157,6 +157,47 @@ public sealed record Conversation
     /// </remarks>
     public ConversationSource Source { get; init; } = ConversationSource.Channel;
 
+    /// <summary>
+    /// Gets the conversation that spawned this one, when this conversation is a nested run rather
+    /// than a top-level thread. <c>null</c> for every ordinary conversation (and for every row
+    /// persisted before this field existed, which therefore deserializes unchanged).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The missing <em>edge</em> that issue #2338 identifies. A sub-agent run is a full conversation,
+    /// but before this field the only available link to its supervisor was
+    /// <c>SubAgentSpawnRequest.InheritedConversationId</c> - which is why that value got jammed into
+    /// the child session's <see cref="ConversationId"/> identity field, collapsing two distinct
+    /// conversations onto one id and flooding the parent's SignalR group with the child's internals.
+    /// Modelling the relationship explicitly lets the child keep its own identity.
+    /// </para>
+    /// <para>
+    /// Write-once (<c>init</c>-only), like every other domain identity property pinned by
+    /// <c>ModelImmutabilityArchitectureTests</c> (#2319): a conversation's parentage is a
+    /// creation-time fact, and re-parenting a persisted conversation would silently invalidate every
+    /// listing filter and expand-in-place render that keys off it.
+    /// </para>
+    /// <para>
+    /// Presentation contract: conversations with a non-null parent are <em>nested</em> and must not
+    /// appear at top level in conversation listings (see <c>GetSummariesAsync</c> in each
+    /// <c>IConversationStore</c> implementation). This is the correct fix for the listing complaint
+    /// that #468 originally addressed by collapsing the identity.
+    /// </para>
+    /// </remarks>
+    public ConversationId? ParentConversationId { get; init; }
+
+    /// <summary>
+    /// Gets the id of the tool call in the parent conversation that spawned this one (e.g. the
+    /// <c>spawn_subagent</c> call). <c>null</c> when this conversation was not spawned by a tool
+    /// call. Write-once for the same reason as <see cref="ParentConversationId"/>.
+    /// </summary>
+    /// <remarks>
+    /// Binds the nested run back to the <em>exact</em> originating tool call rather than forcing a
+    /// channel to guess by timestamp, which is what lets an adapter render the run as an expandable
+    /// card in place of that call.
+    /// </remarks>
+    public string? SpawningToolCallId { get; init; }
+
     /// <summary>Gets or sets whether this conversation is pinned to the top of the list.</summary>
     public bool IsPinned { get; set; }
 
