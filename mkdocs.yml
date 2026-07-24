@@ -137,6 +137,7 @@ nav:
       - DDD Patterns: development/ddd-patterns.md
       - Triggers and Federation: development/triggers-and-federation.md
       - WebUI Connection: development/webui-connection.md
+      - Debugging: development/debugging.md
   - Guides:
       - Audio Recording: guides/audio-recording.md
       - Watchdog Setup: guides/watchdog-setup.md
