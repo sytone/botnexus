@@ -148,6 +148,9 @@
 @code {
     private ConversationSectionsPanel? _sectionsPanel;
 
+    // Conversation id whose "move to section" menu is currently open (#2324); null when closed.
+    private string? _sectionMenuConversationId;
+
     private bool _cronGroupCollapsed = true;
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
@@ -782,9 +785,80 @@
                         @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
                     @(conversation.IsVirtualSession ? "\u2715" : "\uD83D\uDDD1\uFE0F")
                 </button>
+                @RenderSectionAssign(agent, conversation)
             }
         </div>
     };
+
+    // #2324: the sections feature (#2124) shipped with no way to put a conversation *into* a section -
+    // SectionsApiClient.AssignAsync had zero UI call sites. This is the interim inline affordance the
+    // issue sanctions: a per-row folder button opening a small "move to section" menu. The richer
+    // right-click context menu (#2326) and inline section rendering (#2325) are separate work; when
+    // #2326 lands, this menu's Assign/Unassign handlers are the reusable seam it can call.
+    private RenderFragment RenderSectionAssign(AgentState agent, ConversationState conversation) => __builder =>
+    {
+        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
+        <button class="conversation-section-btn" data-testid="conversation-section-btn"
+                title="Move to section"
+                aria-label="Move to section"
+                aria-haspopup="menu"
+                aria-expanded="@(isOpen ? "true" : "false")"
+                @onclick:stopPropagation="true"
+                @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
+            &#x1F4C1;
+        </button>
+        @if (isOpen)
+        {
+            var sections = _sectionsPanel?.Sections ?? [];
+            var currentSectionId = GetAssignedSectionId(conversation.ConversationId);
+            <div class="conversation-section-menu" data-testid="conversation-section-menu" role="menu">
+                <button class="conversation-section-menu-item @(currentSectionId is null ? "active" : "")"
+                        role="menuitem"
+                        data-testid="conversation-section-menu-none"
+                        @onclick:stopPropagation="true"
+                        @onclick="() => UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)">None</button>
+                @foreach (var section in sections)
+                {
+                    <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ? "active" : "")"
+                            role="menuitem"
+                            data-testid="conversation-section-menu-item"
+                            data-section-id="@section.SectionId"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, section.SectionId)">@section.Name</button>
+                }
+                @if (sections.Count == 0)
+                {
+                    <div class="conversation-section-menu-empty" data-testid="conversation-section-menu-empty">No sections yet.</div>
+                }
+            </div>
+        }
+    };
+
+    private void ToggleSectionMenu(string conversationId) =>
+        _sectionMenuConversationId = string.Equals(_sectionMenuConversationId, conversationId, StringComparison.Ordinal)
+            ? null
+            : conversationId;
+
+    private string? GetAssignedSectionId(string conversationId) =>
+        _sectionsPanel is not null && _sectionsPanel.Assignments.TryGetValue(conversationId, out var sectionId)
+            ? sectionId
+            : null;
+
+    private async Task AssignConversationSectionAsync(string agentId, string conversationId, string sectionId)
+    {
+        _sectionMenuConversationId = null;
+        if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId) && _sectionsPanel is not null)
+            await _sectionsPanel.ReloadAsync();
+        StateHasChanged();
+    }
+
+    private async Task UnassignConversationSectionAsync(string agentId, string conversationId)
+    {
+        _sectionMenuConversationId = null;
+        if (await SectionsApi.UnassignAsync(agentId, conversationId) && _sectionsPanel is not null)
+            await _sectionsPanel.ReloadAsync();
+        StateHasChanged();
+    }
 
     private static string FormatAgentName(AgentState agent) =>
         string.IsNullOrWhiteSpace(agent.Emoji)
