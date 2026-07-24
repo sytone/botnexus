@@ -7,6 +7,7 @@ using BotNexus.Gateway.Agents;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
@@ -107,6 +108,119 @@ public sealed class WorkspaceControllerTests
     }
 
     private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
+
+        return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
+    }
+}
+
+/// <summary>
+/// Regression coverage for #2333: entries deleted between enumeration and the lazy stat
+/// must be skipped, not abort the whole listing with a 500.
+/// </summary>
+public sealed class WorkspaceControllerTocTouTests
+{
+    private const string WorkspacePath = @"C:\workspace\agent-a";
+
+    [Fact]
+    public void GetWorkspace_WhenFileVanishesBeforeStat_SkipsEntryAndReturnsOk()
+    {
+        var vanishedPath = Path.Combine(WorkspacePath, "tmp", "scratch.txt");
+        var inner = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "SOUL.md")] = new("soul"),
+            [Path.Combine(WorkspacePath, "tmp", "keep.txt")] = new("keep"),
+            [vanishedPath] = new("about to be deleted")
+        });
+
+        var fileSystem = CreateFileSystem(inner, vanishedFilePath: vanishedPath, vanishedDirectoryPath: null);
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.GetWorkspace("agent-a", depth: 2);
+
+        var payload = (result.Result as OkObjectResult)?.Value.ShouldBeOfType<WorkspaceDirectoryResponse>();
+        payload.ShouldNotBeNull();
+        payload!.Entries.ShouldContain(entry => entry.Path == "SOUL.md");
+
+        var tmp = payload.Entries.Single(entry => entry.Path == "tmp");
+        tmp.Children.ShouldContain(child => child.Path == "tmp/keep.txt");
+        tmp.Children.ShouldNotContain(child => child.Path == "tmp/scratch.txt");
+    }
+
+    [Fact]
+    public void GetWorkspace_WhenDirectoryVanishesMidWalk_ReturnsOkWithEmptyChildren()
+    {
+        var vanishedDirectory = Path.Combine(WorkspacePath, "tmp");
+        var inner = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "SOUL.md")] = new("soul"),
+            [Path.Combine(vanishedDirectory, "scratch.txt")] = new("scratch")
+        });
+
+        var fileSystem = CreateFileSystem(inner, vanishedFilePath: null, vanishedDirectoryPath: vanishedDirectory);
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.GetWorkspace("agent-a", depth: 2);
+
+        var payload = (result.Result as OkObjectResult)?.Value.ShouldBeOfType<WorkspaceDirectoryResponse>();
+        payload.ShouldNotBeNull();
+        payload!.Entries.ShouldContain(entry => entry.Path == "SOUL.md");
+
+        var tmp = payload.Entries.Single(entry => entry.Path == "tmp" && entry.Type == "directory");
+        tmp.Children.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Wraps a <see cref="MockFileSystem"/> so a single file's lazy <c>Length</c> stat, or a single
+    /// directory's enumeration, fails the way a concurrently deleted entry does on a real filesystem.
+    /// </summary>
+    private static IFileSystem CreateFileSystem(
+        MockFileSystem inner,
+        string? vanishedFilePath,
+        string? vanishedDirectoryPath)
+    {
+        var directory = new Mock<IDirectory>();
+        directory
+            .Setup(target => target.Exists(It.IsAny<string?>()))
+            .Returns((string? path) => inner.Directory.Exists(path));
+        directory
+            .Setup(target => target.EnumerateFileSystemEntries(It.IsAny<string>()))
+            .Returns((string path) => string.Equals(path, vanishedDirectoryPath, StringComparison.Ordinal)
+                ? throw new DirectoryNotFoundException(path)
+                : inner.Directory.EnumerateFileSystemEntries(path));
+
+        var vanishedFile = new Mock<IFileInfo>();
+        vanishedFile.Setup(target => target.LinkTarget).Returns((string?)null);
+        vanishedFile.Setup(target => target.Length).Throws(new FileNotFoundException("deleted", vanishedFilePath));
+
+        var fileInfoFactory = new Mock<IFileInfoFactory>();
+        fileInfoFactory
+            .Setup(target => target.New(It.IsAny<string>()))
+            .Returns((string path) => string.Equals(path, vanishedFilePath, StringComparison.Ordinal)
+                ? vanishedFile.Object
+                : inner.FileInfo.New(path));
+
+        var fileSystem = new Mock<IFileSystem>();
+        fileSystem.Setup(target => target.Path).Returns(inner.Path);
+        fileSystem.Setup(target => target.File).Returns(inner.File);
+        fileSystem.Setup(target => target.Directory).Returns(directory.Object);
+        fileSystem.Setup(target => target.DirectoryInfo).Returns(inner.DirectoryInfo);
+        fileSystem.Setup(target => target.FileInfo).Returns(fileInfoFactory.Object);
+        return fileSystem.Object;
+    }
+
+    private static WorkspaceController CreateController(IFileSystem fileSystem, string workspacePath)
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(new AgentDescriptor
