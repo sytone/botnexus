@@ -167,11 +167,12 @@ public sealed class ConfigChecksTests
     // ── DevOriginEnforcementCheck ─────────────────────────────────────────────
 
     [Fact]
-    public void DevOriginEnforcementCheck_ApplicableWhenKeylessAndFlagAbsent()
+    public void DevOriginEnforcementCheck_NotApplicableWhenKeylessAndFlagAbsent()
     {
-        // Empty config == keyless dev mode, no flag -> recommend enabling.
+        // #1946: the guard is ON by default, so an absent flag already protects the keyless
+        // gateway - nothing to recommend.
         var root = new JsonObject();
-        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeTrue();
+        new DevOriginEnforcementCheck().IsApplicable(root).ShouldBeFalse();
     }
 
     [Fact]

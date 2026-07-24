@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.FeatureManagement;
@@ -43,14 +44,22 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private const string DefaultAllowedOrigin = "http://localhost:5005";
 
     /// <summary>
-    /// Feature flag gating the dev-mode browser-Origin enforcement (#1931). When the flag is
-    /// absent or disabled the guard is inert and dev/no-key mode behaves exactly as it did
-    /// before the guard existed - this is deliberately OFF by default so introducing the guard
-    /// cannot lock a keyless user out of the UI on restart. The <c>doctor config</c> command
-    /// surfaces a recommendation to enable it, and a future release will flip the default on.
-    /// Lives under the <c>FeatureManagement</c> section of config.json.
+    /// Feature flag gating the dev-mode browser-Origin enforcement (#1931). The guard is now
+    /// ENABLED BY DEFAULT (#1946): when the flag is <em>unspecified</em> the guard is active so
+    /// keyless gateways are protected against DNS-rebind / CSRF out-of-the-box. Operators can
+    /// still explicitly opt out with <c>FeatureManagement.GatewayDevOriginEnforcement: false</c>.
+    /// A feature-flag evaluation fault fails OPEN (guard disabled) so a misconfiguration can never
+    /// lock the operator out. Lives under the <c>FeatureManagement</c> section of config.json.
     /// </summary>
     public const string DevOriginEnforcementFeature = "GatewayDevOriginEnforcement";
+
+    /// <summary>
+    /// Configuration key path for the dev-origin enforcement flag under the Microsoft.FeatureManagement
+    /// schema. Used to distinguish an <em>unspecified</em> flag (default ON, #1946) from an explicit
+    /// <c>false</c> (operator opt-out) - a distinction <see cref="IFeatureManager"/> alone cannot make,
+    /// because it reports both as disabled.
+    /// </summary>
+    private const string DevOriginEnforcementConfigKey = "FeatureManagement:" + DevOriginEnforcementFeature;
 
     /// <summary>The target reference reported on every auth handshake event.</summary>
     private const string GatewayTarget = "gateway";
@@ -60,6 +69,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private readonly IReadOnlyList<string>? _staticAllowedOrigins;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly IFeatureManager? _featureManager;
+    private readonly IConfiguration? _configuration;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
     private readonly ISecurityEventSink? _securityEvents;
 
@@ -82,12 +92,14 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         string? apiKey,
         ILogger<ApiKeyGatewayAuthHandler> logger,
         ISecurityEventSink? securityEvents = null,
-        IFeatureManager? featureManager = null)
+        IFeatureManager? featureManager = null,
+        IConfiguration? configuration = null)
     {
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
         _featureManager = featureManager;
+        _configuration = configuration;
         _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
@@ -102,13 +114,15 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         PlatformConfig platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
         ISecurityEventSink? securityEvents = null,
-        IFeatureManager? featureManager = null)
+        IFeatureManager? featureManager = null,
+        IConfiguration? configuration = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = null;
         _securityEvents = securityEvents;
         _featureManager = featureManager;
+        _configuration = configuration;
         _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
@@ -123,13 +137,15 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         IOptionsMonitor<PlatformConfig> platformConfig,
         ILogger<ApiKeyGatewayAuthHandler> logger,
         ISecurityEventSink? securityEvents = null,
-        IFeatureManager? featureManager = null)
+        IFeatureManager? featureManager = null,
+        IConfiguration? configuration = null)
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
         _platformConfig = platformConfig;
         _securityEvents = securityEvents;
         _featureManager = featureManager;
+        _configuration = configuration;
         _staticAllowedOrigins = null;
         _identitiesByApiKey = BuildIdentityMap(
             platformConfig.CurrentValue.ApiKey,
@@ -155,10 +171,10 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             // on the allow-list; a missing Origin (curl/CLI/same-origin non-browser) is allowed.
             //
             // This guard is gated behind the GatewayDevOriginEnforcement feature flag, which is
-            // OFF by default (#1931 rollout safety): introducing the guard must never lock a
-            // keyless user out of the UI on restart. Operators opt in (doctor surfaces the
-            // recommendation), and a future release flips the default on. A null feature manager
-            // (constructed without DI, e.g. in tests) is treated as disabled.
+            // ON by default (#1946): keyless gateways are protected out-of-the-box. Operators can
+            // explicitly opt out with FeatureManagement.GatewayDevOriginEnforcement: false. A flag
+            // evaluation fault fails OPEN so a misconfiguration can never lock the operator out. A
+            // null feature manager (constructed without DI, e.g. in tests) is treated as disabled.
             if (await IsDevOriginEnforcementEnabledAsync().ConfigureAwait(false) &&
                 !IsOriginAllowed(context.Headers, out var rejectedOrigin))
             {
@@ -212,10 +228,12 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     }
 
     /// <summary>
-    /// Returns whether the dev-mode browser-Origin guard (#1931) is currently enabled. Defaults
-    /// to <c>false</c> when no feature manager is wired (e.g. tests or non-DI construction) so
-    /// the guard is inert unless an operator explicitly opts in via the
-    /// <see cref="DevOriginEnforcementFeature"/> flag.
+    /// Returns whether the dev-mode browser-Origin guard is currently enabled. The guard is ON by
+    /// default (#1946): when the <see cref="DevOriginEnforcementFeature"/> flag is <em>unspecified</em>
+    /// the guard is active, protecting keyless gateways out-of-the-box. An operator retains the
+    /// escape hatch of setting the flag explicitly to <c>false</c>. Defaults to <c>false</c> only
+    /// when no feature manager is wired (e.g. tests or non-DI construction), and a flag-evaluation
+    /// fault fails OPEN (guard disabled) so a misconfiguration can never lock the operator out.
     /// </summary>
     private async Task<bool> IsDevOriginEnforcementEnabledAsync()
     {
@@ -224,7 +242,23 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         try
         {
-            return await _featureManager.IsEnabledAsync(DevOriginEnforcementFeature).ConfigureAwait(false);
+            var enabled = await _featureManager.IsEnabledAsync(DevOriginEnforcementFeature).ConfigureAwait(false);
+            if (enabled)
+                return true;
+
+            // #1946: IsEnabledAsync reports both an unspecified flag and an explicit `false` as
+            // disabled. To honour the default-ON policy we consult IConfiguration: if the operator
+            // has NOT specified the flag at all, the guard defaults ON. An explicitly configured
+            // value (including `false`) is respected as-is. When no configuration is available
+            // (non-DI construction), we fall back to the feature manager's disabled result.
+            if (_configuration is null)
+                return false;
+
+            var configured = _configuration[DevOriginEnforcementConfigKey];
+            if (string.IsNullOrWhiteSpace(configured))
+                return true;
+
+            return false;
         }
         catch (Exception ex)
         {

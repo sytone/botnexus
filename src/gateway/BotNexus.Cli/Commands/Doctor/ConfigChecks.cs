@@ -81,17 +81,18 @@ public sealed class SkillsWorldDefaultCheck : IConfigCheck
 }
 
 /// <summary>
-/// Recommends enabling the dev-mode browser-Origin guard (#1931) when the gateway runs keyless
-/// (development mode). The guard defends the auto-granted <c>gateway-dev</c> admin identity
-/// against DNS-rebind / CSRF from a malicious web origin, but ships OFF by default so it can
-/// never lock a keyless operator out of the UI on restart. This check surfaces the opt-in.
+/// Surfaces a keyless gateway that has explicitly <em>opted out</em> of the dev-mode browser-Origin
+/// guard. As of #1946 the guard is ON by default: an absent flag means the <c>gateway-dev</c> admin
+/// identity is already defended against DNS-rebind / CSRF from a malicious web origin. Only an
+/// explicit <c>FeatureManagement.GatewayDevOriginEnforcement: false</c> leaves a keyless gateway
+/// exposed, so that is the sole case this check recommends re-enabling.
 /// <para>
 /// Only applicable when NO API key is configured (keyless dev mode) and the
-/// <c>FeatureManagement.GatewayDevOriginEnforcement</c> flag is not already enabled. Applying the
-/// fix seeds <c>gateway.cors.allowedOrigins</c> with the localhost default (only if unset, so an
-/// operator's existing origins are preserved) and turns the flag on. Operators who reach the UI
-/// over a non-localhost origin (LAN hostname, reverse proxy, netbird) must add that origin to
-/// <c>gateway.cors.allowedOrigins</c> before enabling, or they will be locked out.
+/// <c>FeatureManagement.GatewayDevOriginEnforcement</c> flag is explicitly set to <c>false</c>.
+/// Applying the fix seeds <c>gateway.cors.allowedOrigins</c> with the localhost default (only if
+/// unset, so an operator's existing origins are preserved) and turns the flag back on. Operators
+/// who reach the UI over a non-localhost origin (LAN hostname, reverse proxy, netbird) must add
+/// that origin to <c>gateway.cors.allowedOrigins</c> before re-enabling, or they will be locked out.
 /// </para>
 /// </summary>
 public sealed class DevOriginEnforcementCheck : IConfigCheck
@@ -102,9 +103,9 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
 
     public string Id => "devmode-origin-enforcement";
     public string Description =>
-        "Gateway runs keyless (dev mode) with the browser-Origin guard disabled - the gateway-dev admin identity is reachable from any web origin (DNS-rebind/CSRF risk).";
+        "Gateway runs keyless (dev mode) with the browser-Origin guard explicitly disabled (FeatureManagement.GatewayDevOriginEnforcement: false) - the gateway-dev admin identity is reachable from any web origin (DNS-rebind/CSRF risk). The guard is ON by default; only an explicit opt-out leaves it exposed.";
     public string FixDescription =>
-        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"http://localhost:5005\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
+        "Re-enable FeatureManagement.GatewayDevOriginEnforcement (or remove the explicit false to restore the secure default) and seed gateway.cors.allowedOrigins = [\"http://localhost:5005\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
 
     public bool IsApplicable(JsonObject root)
     {
@@ -112,8 +113,9 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
         if (HasAnyApiKey(root))
             return false;
 
-        // Already enabled -> nothing to recommend.
-        return !IsFeatureEnabled(root);
+        // #1946: the guard is ON by default, so an absent flag already protects the gateway.
+        // Only an explicit opt-out (false) leaves the keyless gateway exposed and worth surfacing.
+        return IsFeatureExplicitlyDisabled(root);
     }
 
     public void Apply(JsonObject root)
@@ -143,16 +145,16 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
         return apiKeys is { Count: > 0 };
     }
 
-    private static bool IsFeatureEnabled(JsonObject root)
+    private static bool IsFeatureExplicitlyDisabled(JsonObject root)
     {
         var fm = root["FeatureManagement"] as JsonObject;
         if (fm is null)
             return false;
 
         // Microsoft.FeatureManagement accepts either a bool literal or an object with an
-        // EnabledFor filter list; we only treat a literal `true` as "already enabled" for the
-        // purposes of this recommendation.
-        return fm[FeatureName] is JsonValue v && v.TryGetValue<bool>(out var enabled) && enabled;
+        // EnabledFor filter list; we only treat a literal `false` as an explicit opt-out. An
+        // absent flag is the default-ON state (#1946) and is intentionally not surfaced here.
+        return fm[FeatureName] is JsonValue v && v.TryGetValue<bool>(out var enabled) && !enabled;
     }
 }
 

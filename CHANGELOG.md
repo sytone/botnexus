@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **security:** Enable dev-origin enforcement by default (#1946)
+
+  The dev-mode browser-Origin guard (`GatewayDevOriginEnforcement`) is now **ON by default**.
+  A keyless gateway reached from a browser now enforces the `Gateway.Cors.AllowedOrigins`
+  allow-list out-of-the-box, defending the auto-granted `gateway-dev` admin identity against
+  DNS-rebind / CSRF. Localhost (`http://localhost:5005`) is allowed by default.
+
+  **Upgrade note:** if you run a keyless gateway reached over a **non-localhost origin** (LAN
+  hostname, reverse proxy, netbird, or any `https://` fronting), add that origin to
+  `Gateway.Cors.AllowedOrigins` **before upgrading**, or the browser will be rejected on the
+  next gateway start. Operators can explicitly opt out with
+  `FeatureManagement.GatewayDevOriginEnforcement: false`. Flag-evaluation faults still fail
+  open (guard disabled) so a misconfiguration can never lock you out.
+
 ## [0.34.0] - 2026-07-23
 
 ### ✨ Features
