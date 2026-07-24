@@ -208,7 +208,10 @@ public static class GatewayServiceCollectionExtensions
                 apiKey: null,
                 sp.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
                 sp.GetService<ISecurityEventSink>(),
-                sp.GetService<IFeatureManager>()));
+                sp.GetService<IFeatureManager>(),
+                // #1946: IConfiguration lets the handler distinguish an unspecified dev-origin flag
+                // (default ON) from an explicit opt-out (`false`), which IFeatureManager cannot.
+                sp.GetService<IConfiguration>()));
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
 
         // Hook dispatcher: register as a concrete singleton instance so that
@@ -373,7 +376,9 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
                 serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>(),
                 serviceProvider.GetService<ISecurityEventSink>(),
-                serviceProvider.GetService<IFeatureManager>())));
+                serviceProvider.GetService<IFeatureManager>(),
+                // #1946: default-ON dev-origin guard needs IConfiguration to detect an explicit opt-out.
+                serviceProvider.GetService<IConfiguration>())));
 
         var defaultAgentId = config.Gateway?.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId))
