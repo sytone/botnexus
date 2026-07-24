@@ -103,6 +103,44 @@ public sealed partial class SecretRedactor : ISecretRedactor
     }
 
     /// <summary>
+    /// Redacts a command/agent output summary or diagnostic destined for external delivery
+    /// (cron webhook / <c>cron_changed</c> fan-out, #1752). Applies every base <see cref="Redact(string)"/>
+    /// secret pattern first, then additionally classifies action-required material that must never
+    /// leave the box: device / verification codes become <c>[redacted-code]</c>, device action URLs
+    /// (e.g. <c>Visit https://.../device and enter code ...</c>) become <c>[redacted-url]</c>, and
+    /// <c>key=value</c> secrets (<c>token=</c>/<c>api_key=</c>/<c>password=</c>/<c>secret=</c>) have their
+    /// value masked with <c>***</c>.
+    ///
+    /// MUST be applied to the external copy only; keep the full unredacted output for the local
+    /// operator record. Returns <paramref name="input"/> unchanged when it is null/empty or nothing matched.
+    /// </summary>
+    public string RedactForExternalDelivery(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        // Action-required patterns run BEFORE the base secret sweep so that key=value secrets are
+        // masked with *** (and device codes/URLs classified) rather than being swept up first by the
+        // generic api_key pattern into [REDACTED].
+        var result = input;
+
+        // Device action URLs before key=value so a "https://.../device" is classified as a URL.
+        result = DeviceActionUrlRegex().Replace(result, "[redacted-url]");
+
+        // key=value action secrets: preserve the key name + separator, mask the value with ***.
+        result = KeyValueSecretRegex().Replace(result, "${key}***");
+
+        // Device / verification codes: the "enter code XXXX" phrase form first, then the bare
+        // hyphenated code shape (e.g. WDJB-MJHT) that OAuth device flows print standalone.
+        result = EnterCodePhraseRegex().Replace(result, "enter code [redacted-code]");
+        result = HyphenatedDeviceCodeRegex().Replace(result, "[redacted-code]");
+
+        // Base secret patterns last (they emit a security event when they replace anything).
+        result = Redact(result);
+
+        return result;
+    }
+    /// <summary>
     /// Records one <c>secret.redacted</c> event to the trusted sink. The target is a fixed,
     /// non-sensitive reference (the transcript being scrubbed) - never the matched secret value or a
     /// count that could narrow it. Best-effort: a null sink is a no-op and any sink fault is
@@ -208,4 +246,28 @@ public sealed partial class SecretRedactor : ISecretRedactor
     // Handles: api_key=VALUE, api-key: VALUE, apiKey=VALUE  (case-insensitive key name)
     [GeneratedRegex(@"(?i)api[_\-]?key\s*[=:]\s*[A-Za-z0-9+/=._\-]{20,}", RegexOptions.Compiled)]
     private static partial Regex GenericApiKeyRegex();
+    // -------------- External-delivery action-required patterns (#1752) --------------
+
+    // Device action URL: an http(s) URL whose path ends in /device (optionally trailing slash or
+    // query), as emitted by OAuth device-authorization flows
+    // (e.g. "Visit https://github.com/login/device and enter code ..."). Redacted to [redacted-url].
+    [GeneratedRegex(@"https?://[^\s""'<>]*?/device(?:/|\?[^\s""'<>]*)?", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex DeviceActionUrlRegex();
+
+    // "enter code <value>" verification phrase. The code is a run of 4+ alphanumerics (optionally
+    // hyphenated). Only the value is replaced so the surrounding instruction survives.
+    [GeneratedRegex(@"(?i)enter\s+code\s+[A-Za-z0-9][A-Za-z0-9\-]{3,}", RegexOptions.Compiled)]
+    private static partial Regex EnterCodePhraseRegex();
+
+    // Bare hyphenated device code shape: two-or-more groups of 4 alphanumerics joined by hyphens
+    // (e.g. WDJB-MJHT, ABCD-1234). The fixed 4-4 grouped shape is the discriminator OAuth device
+    // flows use; ordinary hyphenated prose words do not match it.
+    [GeneratedRegex(@"\b[A-Za-z0-9]{4,}(?:-[A-Za-z0-9]{4,})+\b", RegexOptions.Compiled)]
+    private static partial Regex HyphenatedDeviceCodeRegex();
+
+    // key=value action secrets: token / api_key / api-key / apikey / password / passwd / pwd /
+    // secret, '=' or ':' separator, then a value of 4+ non-delimiter chars. Named group "key"
+    // captures the key + separator so it is preserved while the value is masked with ***.
+    [GeneratedRegex(@"(?<key>(?i:token|api[_\-]?key|password|passwd|pwd|secret)\s*[=:]\s*)[^\s""',;]{4,}", RegexOptions.Compiled)]
+    private static partial Regex KeyValueSecretRegex();
 }

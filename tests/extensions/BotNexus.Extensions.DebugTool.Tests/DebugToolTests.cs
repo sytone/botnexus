@@ -945,5 +945,7 @@ public sealed class DebugToolTests : IDisposable
             WasInvoked = true;
             return input.Replace(secret, "[REDACTED]");
         }
+
+        public string RedactForExternalDelivery(string input) => Redact(input);
     }
 }
