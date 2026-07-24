@@ -1,3 +1,11 @@
+@* #2247: the active agent+conversation is route-owned - navigation is the single source of truth.
+   /agent/{AgentId}/conversation/{ConversationId} is the canonical shape (the default conversation
+   resolves when the segment is omitted). The legacy /chat/... routes stay registered so old
+   deep-links and any still-open browser-history entries continue to restore the correct view on
+   refresh and back/forward. Both shapes flow through the same ApplyRouteSelectionAsync seam, which
+   drives SelectView(..., SelectionSource.RouteNavigation) - no inbound event can move the view. *@
+@page "/agent/{AgentId}"
+@page "/agent/{AgentId}/conversation/{ConversationId}"
 @page "/chat"
 @page "/chat/{AgentId}"
 @page "/chat/{AgentId}/{ConversationId}"

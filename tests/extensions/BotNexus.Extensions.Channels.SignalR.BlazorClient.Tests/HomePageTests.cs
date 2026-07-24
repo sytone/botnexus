@@ -364,4 +364,65 @@ public sealed class HomePageTests : IDisposable
         _store.Received(1).NotifyChanged();
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
+
+    // ── #2247: route-owned view via the canonical /agent/{id}/conversation/{id} shape ──────────
+
+    [Fact]
+    public void Canonical_agent_conversation_route_restores_agent_and_selects_conversation()
+    {
+        // #2247: a deep-link / refresh onto the canonical route-owned shape must restore exactly that
+        // view. Home binds the SAME AgentId/ConversationId parameters for the /agent/{id}/conversation/{id}
+        // route as for the legacy /chat route, so the restore path is identical - proving the new shape
+        // drives SelectView(RouteNavigation) and conversation selection.
+        _portalLoad.IsReady.Returns(true);
+
+        var targetAgent = new AgentState
+        {
+            AgentId = "farnsworth",
+            DisplayName = "Farnsworth",
+            ActiveConversationId = "c-1"
+        };
+        targetAgent.Conversations["c-1"] = new ConversationState { ConversationId = "c-1", Title = "One" };
+        targetAgent.Conversations["c-99"] = new ConversationState { ConversationId = "c-99", Title = "Deep" };
+        var agents = new Dictionary<string, AgentState> { ["farnsworth"] = targetAgent };
+
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci => agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+
+        _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+
+        _ctx.Render<Home>(p => p
+            .Add(c => c.AgentId, "farnsworth")
+            .Add(c => c.ConversationId, "c-99"));
+
+        Assert.Equal("farnsworth", _store.ActiveAgentId);
+        _store.Received().SelectView("farnsworth", string.Empty, SelectionSource.RouteNavigation);
+        _interaction.Received(1).SelectConversationAsync("farnsworth", "c-99");
+    }
+
+    [Fact]
+    public void Route_restore_only_ever_uses_RouteNavigation_source_never_UserClick_or_SubAgentView()
+    {
+        // #2247 seam guard: the route-restore path must tag its selection as RouteNavigation. It must
+        // never impersonate a UserClick or a SubAgentView, since those carry different authority in the
+        // store's anti-hijack guard. This pins the intent-source contract for deep-link/refresh/back.
+        _portalLoad.IsReady.Returns(true);
+
+        var agent = new AgentState { AgentId = "farnsworth", DisplayName = "Farnsworth" };
+        var agents = new Dictionary<string, AgentState> { ["farnsworth"] = agent };
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci => agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+
+        _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
+
+        _ctx.Render<Home>(p => p.Add(c => c.AgentId, "farnsworth"));
+
+        _store.Received().SelectView("farnsworth", string.Empty, SelectionSource.RouteNavigation);
+        _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.UserClick);
+        _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.SubAgentView);
+    }
 }

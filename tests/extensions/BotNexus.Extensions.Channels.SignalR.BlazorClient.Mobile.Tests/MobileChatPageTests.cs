@@ -470,4 +470,25 @@ public sealed class MobileChatPageTests : IDisposable
         await _interaction.Received(1).LoadMoreHistoryAsync("agent-1", "conv-1");
     }
 
+    // -- #2247: mobile route-owned view uses the RouteNavigation source ------
+
+    [Fact]
+    public void Canonical_route_restore_uses_RouteNavigation_source_only()
+    {
+        // #2247: the mobile Chat page mirrors the desktop route-owned contract. A deep-link / refresh
+        // restore must tag its selection RouteNavigation and never impersonate a UserClick or
+        // SubAgentView, so an inbound event can never move the view without a navigation call.
+        _portalLoad.IsReady.Returns(true);
+
+        var agent = new AgentState { AgentId = "farnsworth", DisplayName = "Farnsworth" };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["farnsworth"] = agent }.AsReadOnly());
+        _store.GetAgent("farnsworth").Returns(agent);
+
+        _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "farnsworth"));
+
+        _store.Received().SelectView("farnsworth", string.Empty, SelectionSource.RouteNavigation);
+        _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.UserClick);
+        _store.DidNotReceive().SelectView("farnsworth", Arg.Any<string>(), SelectionSource.SubAgentView);
+    }
+
 }

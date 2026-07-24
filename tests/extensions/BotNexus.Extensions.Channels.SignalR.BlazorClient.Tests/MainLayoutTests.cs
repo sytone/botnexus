@@ -472,7 +472,7 @@ public sealed class MainLayoutTests : IDisposable
         cut.Find(".agent-dropdown-select").Change("a-1");
 
         cut.WaitForAssertion(() =>
-            Assert.EndsWith("/chat/a-1/c-1", nav.Uri));
+            Assert.EndsWith("/agent/a-1/conversation/c-1", nav.Uri));
     }
 
     [Fact]
@@ -486,7 +486,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var nav = _ctx.Services.GetRequiredService<NavigationManager>();
-        nav.NavigateTo("http://localhost/chat/a-1/c-1");
+        nav.NavigateTo("http://localhost/agent/a-1/conversation/c-1");
 
         var cut = RenderLayout();
         // Wait for async renders to stabilize before clicking
@@ -496,7 +496,7 @@ public sealed class MainLayoutTests : IDisposable
             .Click());
 
         cut.WaitForAssertion(() =>
-            Assert.EndsWith("/chat/a-1/c-2", nav.Uri));
+            Assert.EndsWith("/agent/a-1/conversation/c-2", nav.Uri));
     }
 
     [Fact]
@@ -515,7 +515,7 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
         cut.Find(".agent-dropdown-select").Change(agentId);
 
-        var expectedSuffix = $"/chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(conversationId)}";
+        var expectedSuffix = $"/agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(conversationId)}";
         cut.WaitForAssertion(() =>
             Assert.EndsWith(expectedSuffix, nav.Uri));
     }
@@ -644,8 +644,9 @@ public sealed class MainLayoutTests : IDisposable
     [Fact]
     public void Conversation_list_items_have_correct_href()
     {
-        // #699: the href must point to the routable /chat/{agentId}/{conversationId} path
-        // so the browser can open the conversation directly via right-click.
+        // #699 + #2247: the href must point to the canonical route-owned
+        // /agent/{agentId}/conversation/{conversationId} path so the browser can open the
+        // conversation directly via right-click, and refresh/back restore exactly that view.
         const string agentId = "a-1";
         const string convId = "c-1";
         _store.SeedAgents([new AgentSummary(agentId, "Alpha")]);
@@ -659,7 +660,7 @@ public sealed class MainLayoutTests : IDisposable
         var anchor = cut.Find(".conversation-list-item-btn");
         var href = anchor.GetAttribute("href");
         Assert.NotNull(href);
-        Assert.Contains($"chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(convId)}", href);
+        Assert.Contains($"agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(convId)}", href);
     }
 
     [Fact]
