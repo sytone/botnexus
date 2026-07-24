@@ -71,7 +71,7 @@
                     <label class="tools-form-field tools-form-field-narrow">
                         <span class="tools-form-label">Icon</span>
                         <input class="tools-form-input" data-testid="tools-form-icon" type="text"
-                               placeholder="&#x1F4C8;" maxlength="8" value="@_editing.Icon"
+                               placeholder="@IconPlaceholder" maxlength="8" value="@_editing.Icon"
                                @oninput="e => _editing.Icon = e.Value?.ToString() ?? string.Empty" />
                     </label>
 
@@ -151,6 +151,10 @@
 </div>
 
 @code {
+    // Emoji placeholder for the icon field. Held as a C# constant because a raw HTML entity in a
+    // placeholder attribute is emitted literally by Blazor rather than decoded.
+    private const string IconPlaceholder = "\U0001F4C8";
+
     private List<ToolDto> _tools = [];
     private bool _loading = true;
     private bool _busy;
