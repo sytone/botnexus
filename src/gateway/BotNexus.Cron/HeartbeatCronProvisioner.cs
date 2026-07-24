@@ -116,7 +116,9 @@ public sealed class HeartbeatCronProvisioner : IHostedService, IHeartbeatProvisi
                 TimeZone = timezone
             };
 
-            await _cronStore.UpdateAsync(updated, cancellationToken).ConfigureAwait(false);
+            // #2133: heartbeat provisioning is a definition write; the scheduler owns
+            // NextRunAt/LastRun* and CAS owns the conversation pin, so use the narrow write.
+            await _cronStore.UpdateDefinitionAsync(updated, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(
                 "Updated heartbeat cron job for agent '{AgentId}' with schedule '{Schedule}'.",
                 descriptor.AgentId, cronExpression);

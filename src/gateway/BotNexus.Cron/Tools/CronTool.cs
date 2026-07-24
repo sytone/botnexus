@@ -195,6 +195,14 @@ public sealed class CronTool(
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
         };
 
+        // #2133: a tool definition update is a narrow write that never touches scheduler-owned
+        // runtime bookkeeping (LastRun*/NextRunAt) or the CAS-pinned conversation, so it cannot
+        // regress a concurrent run's status, timestamps, next run, or conversation pin.
+        var saved = await cronStore.UpdateDefinitionAsync(updated, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
+
+        // Reschedule via the separate narrow next_run_at write only when the schedule or timezone
+        // actually changed, so the reschedule cannot clobber a concurrent definition edit either.
         var scheduleChanged = !string.Equals(newSchedule, existing.Schedule, StringComparison.Ordinal);
         var tzChanged = !string.Equals(newTimeZone ?? "", existing.TimeZone ?? "", StringComparison.Ordinal);
         if (scheduleChanged || tzChanged)
@@ -208,10 +216,10 @@ public sealed class CronTool(
             }
             catch { /* invalid schedule — will be caught by scheduler */ }
 
-            updated = updated with { NextRunAt = nextRunAt };
+            await cronStore.SetNextRunAtAsync(jobId, nextRunAt, cancellationToken).ConfigureAwait(false);
+            saved = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false) ?? saved;
         }
 
-        var saved = await cronStore.UpdateAsync(updated, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(saved, JsonOptions));
     }
 

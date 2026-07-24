@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Api.Controllers;
@@ -211,6 +212,68 @@ public sealed class CronControllerTests
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
 
+    // #2133 controller-path same-job concurrency seam: a paused controller definition update
+    // (routed through the narrow UpdateDefinitionAsync + SetNextRunAtAsync writes) racing the
+    // scheduler's narrow runtime/conversation writes on the SAME job must not regress run
+    // status, timestamps, next run, or the conversation pin. Uses a real SQLite store.
+    [Fact]
+    public async Task Update_RacingSchedulerRuntimeWrites_PreservesRuntimeAndConversation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cron-ctrl-tests", Guid.NewGuid().ToString("N"));
+        var dbPath = Path.Combine(tempDir, "cron.db");
+        var store = new SqliteCronStore(dbPath, new FileSystem());
+        try
+        {
+            await store.InitializeAsync();
+            await store.CreateAsync(CreateJob("job-1") with { Schedule = "*/5 * * * *" });
+            var jobId = JobId.From("job-1");
+
+            var scheduler = new CronScheduler(
+                store,
+                [new RecordingAction()],
+                new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+                new StaticOptionsMonitor<CronOptions>(new CronOptions()),
+                NullLogger<CronScheduler>.Instance);
+            var controller = new CronController(
+                store, scheduler, new StaticOptionsMonitor<CronOptions>(new CronOptions()), NullLogger<CronController>.Instance);
+
+            var runAt = DateTimeOffset.UtcNow;
+            var nextRun = runAt.AddMinutes(5);
+
+            var controllerUpdate = Task.Run(async () =>
+                await controller.Update("job-1", CreateJob("job-1") with { Schedule = "*/5 * * * *", Name = "Edited", Enabled = false }, CancellationToken.None));
+
+            var runtimeWrites = Task.Run(async () =>
+            {
+                await store.RecordRunFinalizationAsync(jobId, runAt, "ok", null);
+                await store.SetNextRunAtAsync(jobId, nextRun);
+                await store.TrySetConversationIdAsync(jobId, ConversationId.From("conv-1"));
+            });
+
+            await Task.WhenAll(controllerUpdate, runtimeWrites);
+
+            var loaded = await store.GetAsync(jobId);
+            loaded.ShouldNotBeNull();
+            loaded!.Name.ShouldBe("Edited");
+            loaded.Enabled.ShouldBeFalse();
+            loaded.LastRunStatus.ShouldBe("ok");
+            loaded.NextRunAt.ShouldNotBeNull();
+            loaded.NextRunAt!.Value.ShouldBe(nextRun, TimeSpan.FromSeconds(1));
+            loaded.ConversationId!.Value.Value.ShouldBe("conv-1");
+        }
+        finally
+        {
+            SqliteConnectionClearHelper();
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch (IOException) { }
+            }
+        }
+    }
+
+    private static void SqliteConnectionClearHelper()
+        => Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
     private static CronController CreateController(FakeCronStore store, ICronAction action, CronOptions options)
     {
         var scheduler = new CronScheduler(
@@ -276,10 +339,44 @@ public sealed class CronControllerTests
             return Task.FromResult(jobs);
         }
 
-        public Task<CronJob> UpdateAsync(CronJob job, CancellationToken ct = default)
+        public Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default)
         {
-            _jobs[job.Id.Value] = job;
-            return Task.FromResult(job);
+            // Mirror the SQLite narrow definition write: preserve scheduler-owned runtime
+            // bookkeeping (LastRun*/NextRunAt) and the CAS-pinned conversation from the stored
+            // row; only the caller-authored definition columns are overwritten (#2133).
+            if (!_jobs.TryGetValue(job.Id.Value, out var existing))
+                return Task.FromResult<CronJob?>(null);
+
+            var merged = job with
+            {
+                CreatedAt = existing.CreatedAt,
+                LastRunAt = existing.LastRunAt,
+                NextRunAt = existing.NextRunAt,
+                LastRunStatus = existing.LastRunStatus,
+                LastRunError = existing.LastRunError,
+                ConversationId = existing.ConversationId
+            };
+            _jobs[job.Id.Value] = merged;
+            return Task.FromResult<CronJob?>(merged);
+        }
+
+        public Task SetNextRunAtAsync(JobId jobId, DateTimeOffset? nextRunAt, CancellationToken ct = default)
+        {
+            if (_jobs.TryGetValue(jobId.Value, out var existing))
+                _jobs[jobId.Value] = existing with { NextRunAt = nextRunAt };
+            return Task.CompletedTask;
+        }
+
+        public Task RecordRunFinalizationAsync(JobId jobId, DateTimeOffset lastRunAt, string lastRunStatus, string? lastRunError, CancellationToken ct = default)
+        {
+            if (_jobs.TryGetValue(jobId.Value, out var existing))
+                _jobs[jobId.Value] = existing with
+                {
+                    LastRunAt = lastRunAt,
+                    LastRunStatus = lastRunStatus,
+                    LastRunError = lastRunError
+                };
+            return Task.CompletedTask;
         }
 
         public Task DeleteAsync(JobId jobId, CancellationToken ct = default)
