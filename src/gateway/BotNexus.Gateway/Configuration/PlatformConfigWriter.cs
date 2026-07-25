@@ -22,6 +22,7 @@ public sealed class PlatformConfigWriter
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+    private static readonly JsonSerializerOptions PlatformPersistOptions = new() { WriteIndented = true };
     private readonly string _configPath;
     private readonly IFileSystem _fileSystem;
     private readonly ConfigBackupService? _backup;
@@ -184,6 +185,66 @@ public sealed class PlatformConfigWriter
     }
 
     /// <summary>
+    /// Applies a targeted raw-JSON mutation and persists it only when the resulting
+    /// <em>complete</em> candidate document validates.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the safe replacement for the typed whole-root rewrite
+    /// (<see cref="UpdatePlatformConfigAsync"/>) that targeted CLI operations used to perform
+    /// (#2057). Two properties matter:
+    /// </para>
+    /// <list type="number">
+    ///   <item>The document is read, mutated, validated, and written inside the same writer lock,
+    ///   so a concurrent writer cannot interleave between the read and the replace.</item>
+    ///   <item>Validation runs against the candidate <em>before</em> the live file is touched. When
+    ///   the candidate is rejected nothing is written, no backup is taken, and the original bytes
+    ///   on disk are left byte-for-byte unchanged.</item>
+    /// </list>
+    /// <para>
+    /// Because only the addressed node is rewritten, unknown root/child keys, extension-owned
+    /// JSON, secrets, and the reserved <c>agents.defaults</c> entry all survive untouched.
+    /// </para>
+    /// </remarks>
+    /// <param name="mutation">
+    /// Mutates the raw root in place and returns <see langword="null"/> on success, or a
+    /// caller-presentable message to abort the write (for example an unresolvable key path).
+    /// </param>
+    /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
+    /// <returns>The rejection messages; empty when the mutation was validated and persisted.</returns>
+    public async Task<IReadOnlyList<string>> MutateValidatedAsync(
+        Func<JsonObject, string?> mutation,
+        string reason,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+
+        await WriteLock.WaitAsync(ct);
+        try
+        {
+            var root = await ReadRootAsync(ct);
+
+            var mutationError = mutation(root);
+            if (!string.IsNullOrWhiteSpace(mutationError))
+                return [mutationError];
+
+            // Validate the complete candidate document, not just the mutated fragment: a locally
+            // plausible edit can still violate a cross-field rule elsewhere in the graph.
+            var candidateJson = root.ToJsonString(PlatformPersistOptions);
+            var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
+            if (errors.Count > 0)
+                return errors;
+
+            await WriteRootAsync(root, reason, ct);
+            return [];
+        }
+        finally
+        {
+            WriteLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Removes a keyed entry from a section.
     /// </summary>
     public async Task RemoveSectionEntryAsync(string sectionName, string key, CancellationToken ct = default)
@@ -201,8 +262,6 @@ public sealed class PlatformConfigWriter
         var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
         return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
     }
-
-    private static readonly JsonSerializerOptions PlatformPersistOptions = new() { WriteIndented = true };
 
     private async Task WriteRootAsync(JsonObject root, string reason, CancellationToken ct)
     {

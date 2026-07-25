@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -168,22 +169,32 @@ internal sealed class ProviderCommand
             return 1;
         }
 
-        var config = await LoadOrCreateConfigAsync(configPath, cancellationToken);
-        config.Providers ??= new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase);
+        var existed = RawConfigPath.FindEntryKey(
+            await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath, name) is not null;
 
-        var existed = config.Providers.TryGetValue(name, out var existing);
-        var updated = new ProviderConfig
-        {
-            Enabled = enabled,
-            ApiKey = apiKey ?? (existed ? existing!.ApiKey : null),
-            BaseUrl = baseUrl ?? (existed ? existing!.BaseUrl : null),
-            DefaultModel = defaultModel ?? (existed ? existing!.DefaultModel : null),
-            Api = api ?? (existed ? existing!.Api : null),
-            Models = models.Count > 0 ? models.ToList() : (existed ? existing!.Models : null)
-        };
+        // PATCH semantics: only the flags the caller actually supplied are written. Fields the CLI
+        // does not model - reasoning, context capability, and anything a future schema adds - are
+        // never mentioned and therefore survive verbatim (#2057).
+        var patch = new JsonObject { ["enabled"] = enabled };
+        if (apiKey is not null)
+            patch["apiKey"] = apiKey;
+        if (baseUrl is not null)
+            patch["baseUrl"] = baseUrl;
+        if (defaultModel is not null)
+            patch["defaultModel"] = defaultModel;
+        if (api is not null)
+            patch["api"] = api;
+        if (models.Count > 0)
+            patch["models"] = new JsonArray([.. models.Select(model => (JsonNode)JsonValue.Create(model)!)]);
 
-        config.Providers[name] = updated;
-        await SaveConfigAsync(config, configPath, cancellationToken);
+        var exitCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TryPatchEntry(root, ProvidersPath, name, patch, out var error) ? null : error,
+            "before-provider-update",
+            verbose,
+            cancellationToken);
+        if (exitCode != 0)
+            return exitCode;
 
         AnsiConsole.MarkupLine(existed
             ? $"[green]✓[/] Provider [green]{name}[/] updated."
@@ -192,12 +203,16 @@ internal sealed class ProviderCommand
 
         if (verbose)
         {
-            var json = JsonSerializer.Serialize(updated, WriteJsonOptions);
-            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(json)}[/]");
+            var saved = RawConfigPath.GetEntry(
+                await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath, name);
+            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved?.ToJsonString(WriteJsonOptions) ?? "{}")}[/]");
         }
 
         return 0;
     }
+
+    /// <summary>Raw-document path of the providers section.</summary>
+    private const string ProvidersPath = "providers";
 
     internal async Task<int> ExecuteRemoveAsync(string configPath, string name, bool verbose, CancellationToken cancellationToken)
     {
@@ -207,20 +222,30 @@ internal sealed class ProviderCommand
             return 1;
         }
 
-        var config = await LoadOrCreateConfigAsync(configPath, cancellationToken);
-        if (config.Providers is null || !config.Providers.ContainsKey(name))
+        var root = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
+        if (RawConfigPath.FindEntryKey(root, ProvidersPath, name) is null)
         {
             AnsiConsole.MarkupLine($"[yellow]No provider named '{Markup.Escape(name)}' to remove.[/]");
             return 0;
         }
 
-        config.Providers.Remove(name);
-        await SaveConfigAsync(config, configPath, cancellationToken);
+        var exitCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            candidate => RawConfigPath.TryRemoveEntry(candidate, ProvidersPath, name, out var error) ? null : error,
+            "before-provider-update",
+            verbose,
+            cancellationToken);
+        if (exitCode != 0)
+            return exitCode;
 
         AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{Markup.Escape(name)}[/] removed.");
         AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Remaining providers: {config.Providers.Count}[/]");
+        {
+            var remaining = RawConfigPath.Get(
+                await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath) as JsonObject;
+            AnsiConsole.MarkupLine($"[dim]Remaining providers: {remaining?.Count ?? 0}[/]");
+        }
 
         return 0;
     }
@@ -377,25 +402,35 @@ internal sealed class ProviderCommand
                     _ => c.Get<string>("apiKey")
                 };
 
-                cfg.Providers ??= new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase);
-                cfg.Providers[providerName] = new ProviderConfig
+                var wizardPatch = new JsonObject
                 {
-                    Enabled = true,
-                    ApiKey = apiKeyValue,
-                    BaseUrl = c.TryGet<string>("baseUrl", out var baseUrl) ? baseUrl : null,
-                    Api = c.TryGet<string>("api", out var api) ? api : null,
-                    DefaultModel = c.TryGet<string>("defaultModel", out var model) ? model : null
+                    ["enabled"] = true,
+                    ["apiKey"] = apiKeyValue
                 };
+                if (c.TryGet<string>("baseUrl", out var baseUrl))
+                    wizardPatch["baseUrl"] = baseUrl;
+                if (c.TryGet<string>("api", out var api))
+                    wizardPatch["api"] = api;
+                if (c.TryGet<string>("defaultModel", out var model))
+                    wizardPatch["defaultModel"] = model;
 
-                await SaveConfigAsync(cfg, configPath, ct);
+                var wizardExit = await CliConfigMutation.ApplyAsync(
+                    configPath,
+                    root => RawConfigPath.TryPatchEntry(root, ProvidersPath, providerName, wizardPatch, out var error) ? null : error,
+                    "before-provider-update",
+                    c.Get<bool>("verbose"),
+                    ct);
+                if (wizardExit != 0)
+                    return;
 
                 AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{providerName}[/] configured successfully.");
                 AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
 
                 if (c.Get<bool>("verbose"))
                 {
-                    var json = JsonSerializer.Serialize(cfg.Providers[providerName], WriteJsonOptions);
-                    AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(json)}[/]");
+                    var saved = RawConfigPath.GetEntry(
+                        await CliConfigMutation.ReadAsync(configPath, ct), ProvidersPath, providerName);
+                    AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved?.ToJsonString(WriteJsonOptions) ?? "{}")}[/]");
                 }
             })
             .Build();
@@ -578,18 +613,6 @@ internal sealed class ProviderCommand
         {
             return new PlatformConfig();
         }
-    }
-
-    private static async Task SaveConfigAsync(PlatformConfig config, CancellationToken cancellationToken)
-        => await SaveConfigAsync(config, PlatformConfigLoader.DefaultConfigPath, cancellationToken);
-
-    private static async Task SaveConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
-    {
-        PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var fileSystem = new System.IO.Abstractions.FileSystem();
-        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
-        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-        await writer.UpdatePlatformConfigAsync(config, "before-provider-update", cancellationToken);
     }
 
     private static string GetAuthDisplay(string? apiKey)

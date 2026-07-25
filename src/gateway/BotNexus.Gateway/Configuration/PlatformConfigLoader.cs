@@ -145,6 +145,37 @@ public static class PlatformConfigLoader
         return config;
     }
 
+    /// <summary>
+    /// Validates a complete candidate config <em>document</em> without touching disk.
+    /// </summary>
+    /// <remarks>
+    /// Targeted raw-path mutations (#2057) must prove the whole candidate document is loadable and
+    /// valid <em>before</em> the live file is replaced, so a rejected candidate leaves the original
+    /// bytes untouched. This runs the same materialise (deserialize -&gt; migrate -&gt; extract
+    /// <c>agents.defaults</c>) pipeline the real loader uses, then the same schema and cross-field
+    /// validators, so a candidate that passes here is guaranteed to reload successfully.
+    /// </remarks>
+    /// <param name="rawJson">The candidate document's full JSON text.</param>
+    /// <returns>One message per problem; empty when the candidate is safe to persist.</returns>
+    public static IReadOnlyList<string> ValidateRawJson(string rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(rawJson);
+
+        PlatformConfig config;
+        try
+        {
+            config = MaterializeConfig(rawJson);
+        }
+        catch (JsonException ex)
+        {
+            return [$"Invalid JSON. {ex.Message}"];
+        }
+
+        var errors = new List<string>(PlatformConfigSchema.ValidateObject(config));
+        errors.AddRange(PlatformConfigValidator.Validate(config));
+        return errors;
+    }
+
     /// <summary>Validates non-fatal configuration concerns and returns warnings.</summary>
     /// <remarks>
     /// Forwarding shim retained for existing callers; the implementation lives in

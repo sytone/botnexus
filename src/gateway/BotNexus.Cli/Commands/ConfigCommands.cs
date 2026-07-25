@@ -94,13 +94,31 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (config is null)
             return 1;
 
+        // The typed graph is used only to type-check and coerce the incoming string against the
+        // declared shape of the key. It is deliberately NOT written back: re-serializing the typed
+        // object would drop everything the graph does not model (#2057).
         if (!configPathResolver.TrySetValue(config, keyPath, rawValue, out var error))
         {
             AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
             return 1;
         }
 
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        if (!configPathResolver.TryGetValue(config, keyPath, out var coerced, out var readBackError))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(readBackError)}");
+            return 1;
+        }
+
+        var node = coerced is null
+            ? null
+            : JsonSerializer.SerializeToNode(coerced, coerced.GetType(), CreateWriteJsonOptions());
+
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TrySet(root, keyPath, node, out var setError) ? null : setError,
+            "before-config-set",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -152,38 +170,6 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
             AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
-    }
-
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, bool verbose, CancellationToken cancellationToken)
-        => await SaveAndValidateAsync(config, PlatformConfigLoader.DefaultConfigPath, verbose, cancellationToken);
-
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, string configPath, bool verbose, CancellationToken cancellationToken)
-    {
-        await WriteConfigAsync(config, configPath, cancellationToken);
-
-        var reloaded = await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
-        var errors = PlatformConfigLoader.Validate(reloaded);
-        if (errors.Count > 0)
-        {
-            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
-            foreach (var error in errors)
-                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
-            return 1;
-        }
-
-        if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
-
-        return 0;
-    }
-
-    private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
-    {
-        PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var fileSystem = new System.IO.Abstractions.FileSystem();
-        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
-        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-        await writer.UpdatePlatformConfigAsync(config, "before-config-set", cancellationToken);
     }
 
     private static void PrintValue(object? value)
