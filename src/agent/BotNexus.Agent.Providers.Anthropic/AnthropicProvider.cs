@@ -369,11 +369,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         _ => throw new InvalidOperationException($"Unhandled Anthropic stop reason: {reason}")
     };
 
+    // #2374: delegates to the shared parsed family+version gate rather than carrying a private copy
+    // of the literal substring list. A new Opus/Sonnet generation now needs no edit here at all.
     internal static bool IsAdaptiveThinkingModel(string modelId) =>
-        modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("opus-4-8", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("opus-4.8", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("sonnet-4-6", StringComparison.OrdinalIgnoreCase) ||
-        modelId.Contains("sonnet-4.6", StringComparison.OrdinalIgnoreCase);
+        ModelCapabilityHeuristics.IsAdaptiveThinkingModel(modelId);
 }

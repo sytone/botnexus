@@ -56,6 +56,7 @@ Copilot provides access to models from multiple families. Availability depends o
 |-------|--------|
 | `claude-sonnet-4-20250514` | Claude (Anthropic) |
 | `claude-opus-4-20250514` | Claude (Anthropic) |
+| `claude-opus-5` | Claude (Anthropic) |
 | `gpt-4o` | GPT (OpenAI) |
 | `gpt-4.1` | GPT (OpenAI) |
 | `o3-mini` | GPT (OpenAI) |

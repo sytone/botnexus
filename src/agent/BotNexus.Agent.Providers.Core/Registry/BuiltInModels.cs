@@ -60,6 +60,7 @@ public sealed class BuiltInModels
         Register(modelRegistry, "github-copilot", "claude-opus-4.5", "Claude Opus 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 160000, 32000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-opus-4.6", "Claude Opus 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-opus-4.8", "Claude Opus 4.8", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "claude-opus-5", "Claude Opus 5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4", "Claude Sonnet 4", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 216000, 16000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.5", "Claude Sonnet 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.6", "Claude Sonnet 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 32000, headers: CopilotHeaders);
