@@ -188,11 +188,32 @@ export function parseTitle(title) {
 /**
  * Strips HTML comments (the template's guidance blocks) so unfilled boilerplate
  * is never mistaken for a completed section.
+ *
+ * A PR body is attacker-controlled text, so a single `replace` pass is not enough:
+ * `<!-- <!-- --> -->` leaves a bare `<!--` behind once the inner comment is removed,
+ * which can smuggle an unterminated comment (and therefore hidden headings) past the
+ * guard. Iterate to a fixed point, then drop any unterminated trailing `<!--`, which a
+ * real HTML parser would treat as commenting out the remainder of the document.
+ *
  * @param {string} body
  * @returns {string}
  */
 export function stripComments(body) {
-  return String(body ?? "").replace(/<!--[\s\S]*?-->/g, "");
+  let text = String(body ?? "");
+
+  // Bounded fixed-point loop: each pass strictly shortens the string, and the cap
+  // keeps a pathological body from spinning the guard.
+  for (let pass = 0; pass < 100; pass += 1) {
+    const next = text.replace(/<!--[\s\S]*?-->/g, "");
+    if (next === text) {
+      break;
+    }
+    text = next;
+  }
+
+  // Any surviving comment opener is unterminated: everything after it is commented out.
+  const unterminated = text.indexOf("<!--");
+  return unterminated === -1 ? text : text.slice(0, unterminated);
 }
 
 /**

@@ -120,6 +120,29 @@ test("stripComments removes template guidance so boilerplate is not counted", ()
   assert.equal(stripComments("a <!-- hidden --> b").trim(), "a  b".trim());
 });
 
+test("stripComments leaves no comment opener behind when one pass forms a new one", () => {
+  // "<!" + "<!-- -->" + "-- ...": removing the inner comment splices the surrounding
+  // fragments into a brand-new "<!--" opener that a single replace pass never sees.
+  // (CodeQL: incomplete multi-character sanitization.)
+  const stripped = stripComments("a <!<!-- -->-- hidden");
+  assert.equal(stripped.includes("<!--"), false);
+});
+
+test("stripComments treats an unterminated comment as commenting out the rest", () => {
+  const stripped = stripComments("## Summary\nreal\n<!-- ## Changes\nhidden");
+  assert.equal(stripped.includes("<!--"), false);
+  assert.equal(stripped.includes("hidden"), false);
+  assert.equal(stripped.includes("real"), true);
+});
+
+test("extractHeadings ignores a heading smuggled behind a spliced comment opener", () => {
+  // Without fixed-point stripping the residual "<!--" would leave "## Changes"
+  // visible to the guard even though a markdown renderer keeps it commented out.
+  const headings = extractHeadings("## Summary\n<!<!-- -->--\n## Changes");
+  assert.equal(headings.has("summary"), true);
+  assert.equal(headings.has("changes"), false);
+});
+
 test("extractHeadings ignores headings that live inside HTML comments", () => {
   const headings = extractHeadings("<!--\n## Summary\n-->\n## Changes");
   assert.equal(headings.has("changes"), true);
