@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Abstractions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,11 @@ namespace BotNexus.Persistence.Sqlite;
 ///   on NFS/SMB/UNC and can corrupt or silently disable WAL.</item>
 ///   <item>Bounds <c>-wal</c> growth with an explicit <c>PRAGMA wal_autocheckpoint = N</c>
 ///   (default 1000 pages) whenever WAL is engaged.</item>
+///   <item>Caps the on-disk <c>-wal</c> file size with <c>PRAGMA journal_size_limit = N</c>
+///   (default 64 MiB). <c>wal_autocheckpoint</c> and PASSIVE checkpoints recycle WAL space
+///   <i>in place</i> and never shrink the file, so without this cap a transiently-blocked
+///   checkpoint can leave a multi-gigabyte <c>-wal</c> parked at its high-water mark until the
+///   process exits (#2370).</item>
 ///   <item>Verifies the <b>effective</b> journal mode by re-reading <c>PRAGMA journal_mode;</c>
 ///   and logs a warning (and surfaces it via <see cref="JournalModeResult.Applied"/>) when the
 ///   requested mode did not take.</item>
@@ -32,6 +38,21 @@ public sealed class SqliteWalMaintenance
 {
     /// <summary>Default <c>wal_autocheckpoint</c> page threshold (SQLite's own default is 1000).</summary>
     public const int DefaultWalAutocheckpoint = 1000;
+
+    /// <summary>
+    /// Default <c>journal_size_limit</c> in bytes (64 MiB). Chosen to be comfortably larger than a
+    /// healthy steady-state WAL - so ordinary commits never pay a truncation cost - while still
+    /// reclaiming pathological high-water marks left behind by a checkpoint that a long-running
+    /// reader transiently blocked.
+    /// </summary>
+    public const long DefaultJournalSizeLimitBytes = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Sentinel for <c>journal_size_limit</c> meaning "no bound" - SQLite's own default. Pass this
+    /// only when a store deliberately wants an unbounded <c>-wal</c>; it reintroduces the growth
+    /// documented in #2370.
+    /// </summary>
+    public const long UnlimitedJournalSizeLimit = -1L;
 
     private readonly INetworkPathDetector _networkPathDetector;
     private readonly ILogger<SqliteWalMaintenance> _logger;
@@ -65,12 +86,16 @@ public sealed class SqliteWalMaintenance
     /// <param name="connection">An open SQLite connection to the target database.</param>
     /// <param name="databasePath">The on-disk path of the database file, used for network detection.</param>
     /// <param name="walAutocheckpoint">Page threshold for <c>wal_autocheckpoint</c> when WAL engages.</param>
+    /// <param name="journalSizeLimitBytes">Byte cap for <c>journal_size_limit</c> when WAL engages.
+    /// Defaults to <see cref="DefaultJournalSizeLimitBytes"/> (64 MiB). Pass
+    /// <see cref="UnlimitedJournalSizeLimit"/> (-1) to opt out of the bound entirely.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A <see cref="JournalModeResult"/> describing the requested vs effective mode.</returns>
     public async Task<JournalModeResult> ApplyJournalModeAsync(
         SqliteConnection connection,
         string databasePath,
         int walAutocheckpoint = DefaultWalAutocheckpoint,
+        long journalSizeLimitBytes = DefaultJournalSizeLimitBytes,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(connection);
@@ -79,6 +104,16 @@ public sealed class SqliteWalMaintenance
         {
             throw new ArgumentOutOfRangeException(
                 nameof(walAutocheckpoint), walAutocheckpoint, "wal_autocheckpoint must be non-negative.");
+        }
+
+        // -1 is SQLite's documented "unlimited" sentinel; anything below that is meaningless and
+        // would be silently coerced by SQLite, hiding a configuration mistake.
+        if (journalSizeLimitBytes < UnlimitedJournalSizeLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(journalSizeLimitBytes),
+                journalSizeLimitBytes,
+                "journal_size_limit must be -1 (unlimited) or a non-negative byte count.");
         }
 
         var isNetwork = _networkPathDetector.IsNetworkPath(databasePath);
@@ -93,18 +128,32 @@ public sealed class SqliteWalMaintenance
         }
 
         int? appliedAutocheckpoint = null;
+        long? appliedJournalSizeLimit = null;
         if (!isNetwork)
         {
             // Bound -wal growth so a long-lived writer cannot let the WAL balloon unbounded.
-            await using var autoCp = connection.CreateCommand();
-            autoCp.CommandText = $"PRAGMA wal_autocheckpoint = {walAutocheckpoint};";
-            await autoCp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            appliedAutocheckpoint = walAutocheckpoint;
+            await using (var autoCp = connection.CreateCommand())
+            {
+                autoCp.CommandText = $"PRAGMA wal_autocheckpoint = {walAutocheckpoint};";
+                await autoCp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                appliedAutocheckpoint = walAutocheckpoint;
+            }
+
+            // wal_autocheckpoint recycles WAL space in place but never shrinks the file, so cap the
+            // on-disk size too: SQLite truncates back to this bound when a fully-checkpointed WAL
+            // resets, which is the only thing that reclaims a pathological high-water mark short of
+            // closing the database (#2370).
+            await using (var sizeLimit = connection.CreateCommand())
+            {
+                sizeLimit.CommandText = $"PRAGMA journal_size_limit = {journalSizeLimitBytes.ToString(CultureInfo.InvariantCulture)};";
+                await sizeLimit.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                appliedJournalSizeLimit = journalSizeLimitBytes;
+            }
         }
 
         var effectiveMode = await QueryEffectiveJournalModeAsync(connection, cancellationToken).ConfigureAwait(false);
 
-        var result = new JournalModeResult(requestedMode, effectiveMode, isNetwork, appliedAutocheckpoint);
+        var result = new JournalModeResult(requestedMode, effectiveMode, isNetwork, appliedAutocheckpoint, appliedJournalSizeLimit);
 
         if (!result.Applied)
         {
@@ -116,8 +165,9 @@ public sealed class SqliteWalMaintenance
         else
         {
             _logger.LogDebug(
-                "SQLite journal_mode for {DatabasePath} set to '{Effective}' (network={IsNetwork}, wal_autocheckpoint={AutoCp}).",
-                databasePath, effectiveMode, isNetwork, appliedAutocheckpoint);
+                "SQLite journal_mode for {DatabasePath} set to '{Effective}' (network={IsNetwork}, " +
+                "wal_autocheckpoint={AutoCp}, journal_size_limit={JournalSizeLimit}).",
+                databasePath, effectiveMode, isNetwork, appliedAutocheckpoint, appliedJournalSizeLimit);
         }
 
         return result;
