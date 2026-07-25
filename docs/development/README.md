@@ -32,6 +32,7 @@ This directory contains detailed documentation for developers working on or exte
 
 ### Tooling & repo
 
+- **[code-standards.md](code-standards.md)** - XML comment standard, naming, dependency boundaries, and testing conventions
 - **[pr-and-commit-conventions.md](pr-and-commit-conventions.md)** — Required PR body and squash-commit format, and the reviewer inspection order for agent-authored changes
 - **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution

@@ -130,6 +130,10 @@ chore(deps): bump Microsoft.Extensions.* to 10.0.1
 BotNexus enforces a few hard conventions. The full detail lives in
 [`AGENTS.md`](AGENTS.md) and the per-area `AGENTS.md` files under `src/`.
 
+Full code standards - XML comment requirements, naming, dependency boundaries,
+and testing conventions - are in
+[docs/development/code-standards.md](docs/development/code-standards.md).
+
 - **Cross-platform paths.** Production code injects `IFileSystem`
   (`System.IO.Abstractions`) and uses `fileSystem.Path.Combine(...)` rather than
   hardcoded separators or `/tmp/`. Use `Path.Combine()` in tests and static
