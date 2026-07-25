@@ -1659,6 +1659,51 @@ Headers are absent when rate limiting is disabled or on exempt paths (e.g., heal
 
 ---
 
+### Nav Order (Portal Sidebar)
+
+The portal left-nav ordering model. The gateway stores per-item order overrides server-side so
+they roam with the user across browsers and devices; the effective order is the built-in defaults
+layered with those overrides. Lower order numbers render higher in the sidebar.
+
+#### List Nav Order
+
+```http
+GET /api/nav-order
+```
+
+Returns every built-in nav item with its effective order, ascending.
+
+```json
+[
+  { "key": "conversations", "order": 10 },
+  { "key": "tools", "order": 20 }
+]
+```
+
+#### Set a Nav Order Override
+
+```http
+PUT /api/nav-order/{key}
+PATCH /api/nav-order/{key}
+Content-Type: application/json
+
+{ "order": 5 }
+```
+
+`{key}` is the stable nav key (for example `tools`). Returns the full updated ordered list.
+An empty or whitespace key returns `400 Bad Request`.
+
+#### Reset a Nav Key
+
+```http
+DELETE /api/nav-order/{key}
+```
+
+Removes the user override for `{key}`, restoring its built-in default. Returns the full updated
+ordered list.
+
+---
+
 ## Error Handling
 
 ### Error Response Format
