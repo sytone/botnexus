@@ -59,6 +59,9 @@ public sealed class ClientStateStore : IClientStateStore
         _selection.AgentId is { Length: > 0 } id ? id : null;
 
     /// <inheritdoc />
+    public SelectionSource ActiveSelectionSource => _selection.Source;
+
+    /// <inheritdoc />
     public bool PendingSelectionInvalid => _pendingSelectionInvalid;
 
     /// <inheritdoc />
@@ -80,13 +83,16 @@ public sealed class ClientStateStore : IClientStateStore
         agentId ??= string.Empty;
         conversationId ??= string.Empty;
 
-        // #2243/#2246 fold: a single, source-keyed anti-hijack guard. Reject the selection when it
-        // targets a sub-agent view UNLESS the caller explicitly asked for it via
+        // #2243/#2246/#2248 fold: a single, source-keyed anti-hijack guard. Reject the selection when
+        // it targets a sub-agent view UNLESS the caller explicitly asked for it via
         // SelectionSource.SubAgentView. "Targets a sub-agent" is true when EITHER the id was marked
         // at spawn time (_knownSubAgentIds, folded from #2254 — covers the race where no AgentState
-        // exists yet or its SessionType is not yet stamped read-only) OR the agent's derived
-        // IsReadOnly is already true. Keying on intent source (the point of #2246) plus the spawn
-        // marker (the point of #2254) makes the guard independent of SessionType-stamp ordering.
+        // exists yet) OR the agent's IMMUTABLE IsReadOnly (IsObserverAgent) is already true. #2248
+        // makes IsReadOnly key on the immutable observer classification rather than the mutable
+        // SessionType, so a RegisterSession(agent-subagent) that poisons a REAL user agent's
+        // SessionType can NEVER cause a UserClick onto that user agent to be rejected here. Keying on
+        // intent source (#2246) + the spawn marker (#2254) + immutable kind (#2248) makes the guard
+        // independent of any SessionType-stamp ordering or poisoning.
         if (source != SelectionSource.SubAgentView
             && agentId.Length > 0
             && (_knownSubAgentIds.Contains(agentId)
@@ -214,6 +220,10 @@ public sealed class ClientStateStore : IClientStateStore
                 existing.ActiveSessionId = dto.ActiveSessionId;
                 existing.CreatedAt = dto.CreatedAt;
                 existing.UpdatedAt = dto.UpdatedAt;
+
+                // Source/Kind are deliberately NOT refreshed here: they are init-only, write-once
+                // origin signals (#2304). A conversation cannot change why it exists or who is in
+                // it, so a refresh must never be able to rewrite them.
             }
             else
             {
@@ -226,7 +236,10 @@ public sealed class ClientStateStore : IClientStateStore
                     Status = dto.Status,
                     ActiveSessionId = dto.ActiveSessionId,
                     CreatedAt = dto.CreatedAt,
-                    UpdatedAt = dto.UpdatedAt
+                    UpdatedAt = dto.UpdatedAt,
+                    // Immutable origin signal, seeded once straight from the server payload (#2304).
+                    Source = ConversationOrigin.ParseSource(dto.Source),
+                    Kind = ConversationOrigin.ParseKind(dto.Kind)
                 };
             }
         }
@@ -234,7 +247,7 @@ public sealed class ClientStateStore : IClientStateStore
         // Remove conversations no longer in the list
         var incomingIds = incoming.Select(d => d.ConversationId).ToHashSet();
         foreach (var id in agent.Conversations
-                     .Where(kv => !incomingIds.Contains(kv.Key) && !kv.Value.IsVirtualSession)
+                     .Where(kv => !incomingIds.Contains(kv.Key) && !kv.Value.IsLocallySynthesised)
                      .Select(kv => kv.Key)
                      .ToList())
         {
@@ -500,13 +513,17 @@ public sealed class ClientStateStore : IClientStateStore
 
         // Cron sessions must not overwrite the active user-facing session or the active
         // conversation's ActiveSessionId. Doing so caused new user conversations to receive
-        // a cron: session ID prefix, because RefreshConversationsForAgentAsync iterates all
+        // a cron session ID, because RefreshConversationsForAgentAsync iterates all
         // sessions (including cron) and the last one processed would stamp agent.SessionId.
-        var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase)
-            || (!string.IsNullOrWhiteSpace(sessionId) && sessionId.StartsWith("cron:", StringComparison.Ordinal));
+        //
+        // #2305: this is the SESSION's declared type as reported by the server on the
+        // RegisterSession call - not an inference of the CONVERSATION's origin from an id
+        // substring. The `cron:` session-id prefix probe that used to back this up is deleted;
+        // conversation origin comes only from the immutable server-stamped ConversationSource.
+        var isCron = string.Equals(sessionType, "cron", StringComparison.OrdinalIgnoreCase);
         if (isCron)
         {
-            // For cron sessions, only update the virtual conversation projection if it exists.
+            // For cron sessions, only update the locally-synthesised projection if it exists.
             // Never touch agent.SessionId or a real user conversation.
             if (channelType is not null)
                 agent.ChannelType ??= channelType;
@@ -530,7 +547,7 @@ public sealed class ClientStateStore : IClientStateStore
         // target a different conversation's (often idle) session. See steer-routing fix.
         if (conversationId is not null)
         {
-            if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsVirtualSession)
+            if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsLocallySynthesised)
                 ownerConv.ActiveSessionId = sessionId;
 
             // Only the active conversation's session should drive the agent-global fallback.
@@ -546,7 +563,7 @@ public sealed class ClientStateStore : IClientStateStore
         agent.SessionId = sessionId;
         if (agent.ActiveConversationId is not null &&
             agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
-            !activeConv.IsVirtualSession)
+            !activeConv.IsLocallySynthesised)
         {
             activeConv.ActiveSessionId = sessionId;
         }

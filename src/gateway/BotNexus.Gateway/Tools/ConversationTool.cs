@@ -277,19 +277,18 @@ public sealed class ConversationTool(
             throw new ArgumentException(newPurposeError);
         var message = ReadString(arguments, "message");
         var now = DateTimeOffset.UtcNow;
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.Create(),
-            AgentId = targetAgentId,
-            Title = string.IsNullOrWhiteSpace(title) ? "New conversation" : title.Trim(),
-            Purpose = string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim(),
-            Status = ConversationStatus.Active,
-            CreatedAt = now,
-            UpdatedAt = now,
+        var conversation = ConversationFactory.CreateForAgent(
+            // Kind stays HumanAgent because the agent is minting a user-facing conversation, not a
+            // peer/sub-agent pairing.
+            ConversationKind.HumanAgent,
+            ConversationId.Create(),
+            targetAgentId,
+            title: string.IsNullOrWhiteSpace(title) ? null : title.Trim(),
             // The conversation_new tool is invoked by an agent (the caller of this tool), so the
             // initiating citizen is always the calling agent.
-            Initiator = CitizenId.Of(agentId)
-        };
+            initiator: CitizenId.Of(agentId),
+            purpose: string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim(),
+            timestamp: now);
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(message))

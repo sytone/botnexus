@@ -141,6 +141,7 @@ public sealed class ConversationsController : ControllerBase
             c.UpdatedAt,
             c.Purpose,
             c.Kind.ToString(),
+            c.Source.ToString(),
             c.IsPinned,
             c.PinnedAt,
             c.Participants.Select(p => new ParticipantSummary(
@@ -191,21 +192,16 @@ public sealed class ConversationsController : ControllerBase
         if (ConversationInputValidator.ValidateInstructions(request.Instructions) is { } instructionsError)
             return BadRequest(new { error = instructionsError });
 
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.Create(),
-            AgentId = AgentId.From(request.AgentId),
-            Title = string.IsNullOrWhiteSpace(request.Title) ? "New conversation" : request.Title,
-            Purpose = NormalizePurpose(request.Purpose),
-            Instructions = NormalizeInstructions(request.Instructions),
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow,
+        var conversation = ConversationFactory.CreateForChannel(
+            ConversationId.Create(),
+            AgentId.From(request.AgentId),
+            title: request.Title,
             // Initiator left null: this endpoint is currently unauthenticated, so we cannot
             // determine which user/agent created the conversation. Once SignalR/portal claims-based
             // auth lands (see issue #527) this should be populated from the request principal.
-            Initiator = null
-        };
+            initiator: null,
+            purpose: NormalizePurpose(request.Purpose),
+            instructions: NormalizeInstructions(request.Instructions));
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);
         await AuditAsync(created.ConversationId.Value, "created", "api", "rest-api", null, created.Title, cancellationToken);
@@ -546,7 +542,9 @@ public sealed class ConversationsController : ControllerBase
         UpdatedAt: c.UpdatedAt,
         ModelOverride: c.ModelOverride,
         ThinkingOverride: c.ThinkingOverride,
-        ContextWindowOverride: c.ContextWindowOverride);
+        ContextWindowOverride: c.ContextWindowOverride,
+        Kind: c.Kind.ToString(),
+        Source: c.Source.ToString());
 
     private static BindingResponse ToBindingResponse(ChannelBinding b) => new(
         BindingId: b.BindingId.Value,

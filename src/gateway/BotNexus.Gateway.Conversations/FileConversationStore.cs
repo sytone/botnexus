@@ -486,6 +486,7 @@ public sealed class FileConversationStore : IConversationStore
             c.UpdatedAt,
             c.Purpose,
             c.Kind.ToString(),
+            c.Source.ToString(),
             c.IsPinned,
             c.PinnedAt,
             // #1427: populate the participant roster (avatar-chip list the portal renders)

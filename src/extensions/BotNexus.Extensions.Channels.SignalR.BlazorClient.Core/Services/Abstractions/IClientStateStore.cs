@@ -33,6 +33,14 @@ public interface IClientStateStore
     string? ActiveAgentId { get; }
 
     /// <summary>
+    /// The <see cref="SelectionSource"/> that requested the current active view. Read-only projection of
+    /// the single <see cref="ViewSelection"/> the store holds. Lets read-only be a VIEW concern (#2248):
+    /// a <see cref="SelectionSource.SubAgentView"/> selection is a read-only observer projection
+    /// regardless of any mutable session-type stamping. Mutated only via <see cref="SelectView"/>.
+    /// </summary>
+    SelectionSource ActiveSelectionSource { get; }
+
+    /// <summary>
     /// True when the last active selection was invalidated by an inbound event (the active agent was
     /// removed, or its active conversation 404'd server-side) and no replacement has been chosen yet.
     /// Inbound handlers set this instead of mutating the active view themselves; the UI observes it on
@@ -227,11 +235,27 @@ public sealed class AgentState
     /// <summary>Channel type for this session.</summary>
     public string? ChannelType { get; set; }
 
-    /// <summary>Session type — user-agent, agent-subagent, etc.</summary>
+    /// <summary>Session type — user-agent, agent-subagent, etc. This is a MUTABLE telemetry field
+    /// stamped by inbound session events via <c>RegisterSession</c>; it must NEVER drive read-only /
+    /// roster classification because a sub-agent session event can stamp a real user agent's
+    /// SessionType="agent-subagent" and poison its identity (#2248). Use <see cref="IsObserverAgent"/>
+    /// for any read-only or roster decision.</summary>
     public string SessionType { get; set; } = "user-agent";
 
-    /// <summary>Whether this session is read-only (sub-agent observer).</summary>
-    public bool IsReadOnly => SessionType == "agent-subagent";
+    /// <summary>
+    /// IMMUTABLE classification fixed at agent creation: <see langword="true"/> for a read-only
+    /// sub-agent / observer virtual entry (created in <c>AgentInteractionService.ViewSubAgentAsync</c>),
+    /// <see langword="false"/> for a real user agent seeded from the <c>/api/agents</c> identity
+    /// (SeedAgents / RefreshAgentsAsync / PortalLoadService). Unlike the mutable <see cref="SessionType"/>,
+    /// this can never be flipped by an inbound <c>RegisterSession</c> event, so a concurrent sub-agent
+    /// session event can never remove a real user agent from the roster or hide its composer (#2248).
+    /// </summary>
+    public bool IsObserverAgent { get; init; }
+
+    /// <summary>Whether this agent is a read-only (sub-agent observer) view. Derived from the
+    /// IMMUTABLE <see cref="IsObserverAgent"/> classification, NOT the mutable <see cref="SessionType"/>,
+    /// so session-type mutation can no longer poison a real user agent's read-only state (#2248).</summary>
+    public bool IsReadOnly => IsObserverAgent;
 
     /// <summary>Whether the SignalR hub connection is live.</summary>
     public bool IsConnected { get; set; }
@@ -306,11 +330,46 @@ public sealed class ConversationState
     /// <summary>When the conversation was last updated.</summary>
     public DateTimeOffset UpdatedAt { get; set; }
 
-    /// <summary>True when this is a virtual read-only session row (for example, cron).</summary>
-    public bool IsVirtualSession { get; set; }
+    /// <summary>
+    /// The immutable origination trigger of this conversation, supplied by the server on every
+    /// conversation payload (epic #2300). <b>Write-once:</b> <c>init</c>-only by design so no inbound
+    /// SignalR event can ever mutate it — the exact defect class fixed for agents in #2248. All
+    /// read-only / composer / grouping render decisions derive from it via
+    /// <see cref="ConversationRenderProjection"/>.
+    /// </summary>
+    public ConversationSource Source { get; init; } = ConversationSource.Channel;
 
-    /// <summary>Virtual session kind label (for example, "cron"). Null for normal conversations.</summary>
-    public string? VirtualSessionKind { get; set; }
+    /// <summary>
+    /// The immutable citizen-pairing of this conversation, supplied by the server. <c>init</c>-only
+    /// for the same reason as <see cref="Source"/>; the two together form the projection input.
+    /// </summary>
+    public ConversationKind Kind { get; init; } = ConversationKind.HumanAgent;
+
+    /// <summary>
+    /// The deterministic render projection for this conversation under the supplied selection
+    /// source. The single approved way to ask "is this read-only / does it show a composer / how is
+    /// it grouped" — see <see cref="ConversationRenderProjection"/>.
+    /// </summary>
+    /// <param name="selectionSource">The source that requested the current active view.</param>
+    /// <returns>The projection over this conversation's immutable origin.</returns>
+    public ConversationRenderProjection Project(SelectionSource selectionSource) =>
+        ConversationRenderProjection.For(this, selectionSource);
+
+    /// <summary>
+    /// True for a row the CLIENT minted locally rather than one the server enumerated - today only
+    /// the sub-agent observer transcript row created by "view sub-agent". Such a row has no server
+    /// conversation behind it, so it reads the raw session transcript instead of merged conversation
+    /// history, is never back-paged, is never bound to an inbound session, and survives a
+    /// server-driven conversation-list reconciliation.
+    /// </summary>
+    /// <remarks>
+    /// <b>Write-once (#2305).</b> <c>init</c>-only, replacing the mutable virtual-session flag/kind
+    /// pair that epic #2300 deleted. It is deliberately a statement about
+    /// row PROVENANCE ("who created this row object"), not about conversation ORIGIN ("why does this
+    /// conversation exist") - origin is answered solely by the immutable <see cref="Source"/> /
+    /// <see cref="Kind"/> pair and never by a flag or an id substring.
+    /// </remarks>
+    public bool IsLocallySynthesised { get; init; }
 
 
     // ── Canvas ──────────────────────────────────────────────────────────────────

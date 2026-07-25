@@ -55,6 +55,7 @@ internal static class ConversationRowMapper
             CanvasHtml = GetNullableString(reader, "canvas_html"),
             Initiator = DeserializeInitiator(GetNullableString(reader, "initiator")),
             Kind = ParseConversationKind(GetNullableString(reader, "kind")),
+            Source = ParseConversationSource(GetOptionalString(reader, "source")),
             WorldId = GetNullableString(reader, "world_id") ?? string.Empty,
             IsPinned = !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             PinnedAt = GetNullableTimestamp(reader, "pinned_at"),
@@ -91,6 +92,7 @@ internal static class ConversationRowMapper
             ParseTimestamp(reader.GetString(reader.GetOrdinal("updated_at"))),
             GetNullableString(reader, "purpose"),
             GetNullableString(reader, "kind") ?? ConversationKind.HumanAgent.ToString(),
+            GetOptionalString(reader, "source") ?? ConversationSource.Channel.ToString(),
             !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             GetNullableTimestamp(reader, "pinned_at"),
             roster);
@@ -178,6 +180,32 @@ internal static class ConversationRowMapper
         => Enum.TryParse<ConversationKind>(value, ignoreCase: true, out var parsed)
             ? parsed
             : ConversationKind.HumanAgent;
+
+    /// <summary>
+    /// Reads a column that may not be present in the projection at all. Unlike
+    /// <c>GetNullableString</c> (which assumes the ordinal exists and lets <c>GetOrdinal</c> throw
+    /// on a short row - deliberate loudness for the legacy columns, see the type remarks), this
+    /// tolerates absence. Used only for columns added late enough that a caller may still be
+    /// selecting a pre-migration projection.
+    /// </summary>
+    private static string? GetOptionalString(SqliteDataReader reader, string column)
+    {
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            if (!string.Equals(reader.GetName(i), column, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return reader.IsDBNull(i) ? null : reader.GetString(i);
+        }
+
+        return null;
+    }
+
+    // Back-compat contract (#2301): a NULL/absent/garbage `source` value must hydrate as Channel
+    // rather than throw, so every conversation row persisted before the column existed still loads.
+    private static ConversationSource ParseConversationSource(string? value)
+        => Enum.TryParse<ConversationSource>(value, ignoreCase: true, out var parsed)
+            ? parsed
+            : ConversationSource.Channel;
 
     private static BindingMode ParseBindingMode(string? value)
         => Enum.TryParse<BindingMode>(value, ignoreCase: true, out var parsed)

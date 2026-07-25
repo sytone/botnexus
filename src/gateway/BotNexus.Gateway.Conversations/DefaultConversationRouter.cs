@@ -117,14 +117,13 @@ public sealed class DefaultConversationRouter : IConversationRouter
             // any sub-address (e.g. forum topic) into the channel address themselves.
             // There is no special "default" conversation for addressless channels -- an empty
             // address is a valid stable identity (e.g. a future channel with no external ID).
-            conversation = new Conversation
-            {
-                ConversationId = ConversationId.Create(),
-                AgentId = agentId,
-                Title = $"{channelType}:{channelAddress}",
-                IsDefault = false,
-                Initiator = initiator?.IsValid == true ? initiator : null
-            };
+            // Channel/router path: a citizen sent an inbound message on a channel binding.
+            // Minted through the single creation seam (#2310) so provenance cannot be omitted.
+            conversation = ConversationFactory.CreateForChannel(
+                ConversationId.Create(),
+                agentId,
+                title: $"{channelType}:{channelAddress}",
+                initiator: initiator?.IsValid == true ? initiator : null);
             if (ShouldPersistBinding(agentId, channelType, channelAddress) &&
                 !conversation.ChannelBindings.Any(b =>
                     b.ChannelType == channelType && b.ChannelAddress == channelAddress))

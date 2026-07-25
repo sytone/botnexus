@@ -103,7 +103,11 @@
     ];
 
     private AgentState? CurrentAgent => Store.GetAgent(AgentId);
-    private bool IsSubAgent => CurrentAgent?.IsReadOnly == true && CurrentAgent?.SessionType == "agent-subagent";
+    // #2248: sub-agent classification keys on the IMMUTABLE IsObserverAgent kind, NOT the mutable
+    // SessionType. A real user agent whose SessionType was stamped "agent-subagent" by an inbound
+    // session event must NOT have its Workspace/Reports tabs suppressed — only genuine sub-agent
+    // observer entries are.
+    private bool IsSubAgent => CurrentAgent?.IsObserverAgent == true;
     private IEnumerable<(AgentPanelTab Key, string Label, string Icon)> VisibleTabs =>
         IsSubAgent ? s_tabs.Where(t => t.Key != AgentPanelTab.Workspace && t.Key != AgentPanelTab.Reports) : s_tabs;
 

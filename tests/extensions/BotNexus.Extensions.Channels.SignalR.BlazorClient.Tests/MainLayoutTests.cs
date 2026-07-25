@@ -15,6 +15,7 @@ public sealed class MainLayoutTests : IDisposable
     private readonly IAgentInteractionService _interaction;
     private readonly IPortalLoadService _portalLoad;
     private readonly StubToolsHandler _toolsHandler;
+    private readonly StubNavOrderHandler _navOrderHandler;
 
     public MainLayoutTests()
     {
@@ -51,6 +52,9 @@ public sealed class MainLayoutTests : IDisposable
         _toolsHandler = new StubToolsHandler();
         var toolsHttp = new HttpClient(_toolsHandler) { BaseAddress = new Uri("http://localhost/") };
         _ctx.Services.AddSingleton(new ToolsApiClient(toolsHttp));
+        _navOrderHandler = new StubNavOrderHandler();
+        var navOrderHttp = new HttpClient(_navOrderHandler) { BaseAddress = new Uri("http://localhost/") };
+        _ctx.Services.AddSingleton(new NavOrderApiClient(navOrderHttp));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -220,17 +224,19 @@ public sealed class MainLayoutTests : IDisposable
         Assert.NotNull(activeConv);
     }
 
+    /// <summary>
+    /// #2305 (epic #2300): a cron conversation is badged "Cron" and offers CLOSE (not archive)
+    /// purely because the SERVER stamped <c>source="Cron"</c>. No mutable flag, no id prefix.
+    /// </summary>
     [Fact]
-    public async Task Virtual_cron_conversation_shows_badge_and_close_button()
+    public async Task Cron_source_conversation_shows_badge_and_close_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
-            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron")
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
-        var conv = _store.GetAgent("a-1")!.Conversations["c-1"];
-        conv.IsVirtualSession = true;
-        conv.VirtualSessionKind = "cron";
+        Assert.Equal(ConversationSource.Cron, _store.GetAgent("a-1")!.Conversations["c-1"].Source);
 
         var cut = RenderLayout();
 
@@ -243,19 +249,21 @@ public sealed class MainLayoutTests : IDisposable
         Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
     }
 
+    /// <summary>
+    /// #2305: hiding runtime-internal threads is an explicit <c>internal:</c> id-NAMESPACE rule, not
+    /// origin inference. The mutable virtual-session-kind "internal" path that used to also
+    /// hide rows is deleted with the flag; this asserts the surviving namespace rule still hides an
+    /// internal thread while a normal conversation stays visible.
+    /// </summary>
     [Fact]
-    public void Virtual_internal_conversation_is_hidden_from_user_conversation_list()
+    public void Internal_namespaced_conversation_is_hidden_from_user_conversation_list()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("c-2", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("internal:sub-agent-thread", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
-
-        var internalConversation = _store.GetAgent("a-1")!.Conversations["c-2"];
-        internalConversation.IsVirtualSession = true;
-        internalConversation.VirtualSessionKind = "internal";
 
         var cut = RenderLayout();
 
@@ -325,10 +333,20 @@ public sealed class MainLayoutTests : IDisposable
     [Fact]
     public void Read_only_agent_hides_new_conversation_button()
     {
-        _store.SeedAgents([new AgentSummary("sub-1", "Subagent")]);
+        // A genuine sub-agent observer entry (IMMUTABLE IsObserverAgent kind) can only become the
+        // active view via the explicit SubAgentView source (the store's anti-hijack guard rejects
+        // every other source onto a read-only agent). #2248: read-only is keyed on the immutable
+        // kind, never the mutable SessionType.
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Subagent",
+            SessionType = "agent-subagent",
+            IsObserverAgent = true,
+            IsConnected = true
+        });
         _store.SeedConversations("sub-1", []);
-        _store.SelectView("sub-1", string.Empty, SelectionSource.UserClick);
-        _store.GetAgent("sub-1")!.SessionType = "agent-subagent";
+        _store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
 
         var cut = RenderLayout();
 
@@ -560,13 +578,14 @@ public sealed class MainLayoutTests : IDisposable
     [Fact]
     public void Sub_agents_in_store_are_not_shown_in_top_level_agent_dropdown()
     {
-        // A real agent and a sub-agent (IsReadOnly via SessionType=agent-subagent) are both in the store
+        // A real agent and a sub-agent (read-only via the IMMUTABLE IsObserverAgent kind) are both in the store
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.UpsertAgent(new AgentState
         {
             AgentId = "sub-xyz",
             DisplayName = "SubTask",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
 
@@ -586,12 +605,45 @@ public sealed class MainLayoutTests : IDisposable
             AgentId = "sub-xyz",
             DisplayName = "SubTask",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
 
         var cut = RenderLayout();
 
         Assert.Empty(cut.FindAll(".agent-dropdown-select"));
+    }
+
+    [Fact]
+    public async Task SubAgentSpawned_style_session_poisoning_keeps_user_agent_in_roster_and_selection_unchanged()
+    {
+        // #2248 regression: a real user-agent conversation is active. An inbound sub-agent session
+        // event (RegisterSession agent-subagent, exactly what HandleSubAgentSpawned drives) lands and
+        // stamps the user agent's mutable SessionType. The user agent must STAY in the dropdown
+        // roster and the active-view selection must NOT revert.
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.SelectView("a-1", "c-1", SelectionSource.UserClick);
+
+        var cut = RenderLayout();
+        var agentBefore = _store.ActiveAgentId;
+        var convBefore = _store.ActiveConversationId;
+
+        // Simulate the inbound SubAgentSpawned data churn: poison the user agent's SessionType.
+        await cut.InvokeAsync(() =>
+        {
+            _store.RegisterSession("a-1", "sess-poison", sessionType: "agent-subagent");
+            _store.NotifyChanged();
+        });
+
+        var options = cut.FindAll(".agent-dropdown-select option");
+        Assert.Contains(options, o => o.GetAttribute("value") == "a-1");
+        _store.ActiveAgentId.ShouldBe(agentBefore,
+            customMessage: "An inbound sub-agent session event must not revert the active agent (#2248).");
+        _store.ActiveConversationId.ShouldBe(convBefore,
+            customMessage: "An inbound sub-agent session event must not revert the active conversation (#2248).");
     }
 
     [Fact]
@@ -961,6 +1013,149 @@ public sealed class MainLayoutTests : IDisposable
             Assert.Contains("Alpha", items[0].TextContent);
             Assert.Contains("Beta", items[1].TextContent);
         });
+    }
+
+    // -- Sidebar ordering model (#2236, slice 5 of #2231) -----------------------------------
+
+    [Fact]
+    public void Nav_renders_all_builtin_items_in_default_order()
+    {
+        var cut = RenderLayout();
+
+        var markup = cut.Markup;
+        int Idx(string needle) => markup.IndexOf(needle, StringComparison.Ordinal);
+
+        var activity = Idx("Activity");
+        var tools = Idx("data-testid=\"nav-tools\"");
+        var chat = Idx("href=\"chat\"");
+        var config = Idx("href=\"configuration\"");
+        var agents = Idx("href=\"agents\"");
+        var cron = Idx("data-testid=\"nav-cron-jobs\"");
+
+        Assert.True(activity >= 0 && tools >= 0 && chat >= 0 && config >= 0 && agents >= 0 && cron >= 0);
+        Assert.True(activity < tools, "Activity must precede Tools by default.");
+        Assert.True(tools < chat, "Tools must precede Chat by default.");
+        Assert.True(chat < config, "Chat must precede Configuration by default.");
+        Assert.True(config < agents, "Configuration must precede Agents by default.");
+        Assert.True(agents < cron, "Agents must precede Cron by default.");
+    }
+
+    [Fact]
+    public void Nav_default_order_places_tools_above_chat()
+    {
+        _navOrderHandler.SetOrder("[]");
+
+        var cut = RenderLayout();
+
+        var markup = cut.Markup;
+        var toolsIndex = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+        var chatIndex = markup.IndexOf("href=\"chat\"", StringComparison.Ordinal);
+        Assert.True(toolsIndex >= 0 && chatIndex >= 0);
+        Assert.True(toolsIndex < chatIndex, "Tools must render above Chat by default.");
+    }
+
+    [Fact]
+    public void Lowering_tools_order_moves_it_above_activity()
+    {
+        _navOrderHandler.SetOrder("""
+            [
+              { "key": "tools", "order": 5 },
+              { "key": "activity", "order": 10 },
+              { "key": "chat", "order": 30 },
+              { "key": "configuration", "order": 40 },
+              { "key": "skills", "order": 50 },
+              { "key": "agents", "order": 60 },
+              { "key": "cron", "order": 70 }
+            ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var markup = cut.Markup;
+            var tools = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+            var activity = markup.IndexOf("Activity", StringComparison.Ordinal);
+            var chat = markup.IndexOf("href=\"chat\"", StringComparison.Ordinal);
+            Assert.True(tools >= 0 && activity >= 0 && chat >= 0);
+            Assert.True(tools < activity, "Lowering Tools order must move it above Activity.");
+            Assert.True(tools < chat, "Tools must remain above Chat.");
+        });
+    }
+
+    [Fact]
+    public void Custom_order_can_move_chat_to_top()
+    {
+        _navOrderHandler.SetOrder("""
+            [
+              { "key": "chat", "order": 1 },
+              { "key": "activity", "order": 10 },
+              { "key": "tools", "order": 20 },
+              { "key": "configuration", "order": 40 },
+              { "key": "skills", "order": 50 },
+              { "key": "agents", "order": 60 },
+              { "key": "cron", "order": 70 }
+            ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var markup = cut.Markup;
+            var chat = markup.IndexOf("href=\"chat\"", StringComparison.Ordinal);
+            var activity = markup.IndexOf("Activity", StringComparison.Ordinal);
+            var tools = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+            Assert.True(chat >= 0 && activity >= 0 && tools >= 0);
+            Assert.True(chat < activity, "Chat override to order 1 must render above Activity.");
+            Assert.True(chat < tools, "Chat override to order 1 must render above Tools.");
+        });
+    }
+
+    [Fact]
+    public void Malformed_nav_order_falls_back_to_builtin_default_order()
+    {
+        _navOrderHandler.SetRaw("not json");
+
+        var cut = RenderLayout();
+
+        var markup = cut.Markup;
+        var tools = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+        var chat = markup.IndexOf("href=\"chat\"", StringComparison.Ordinal);
+        Assert.True(tools >= 0 && chat >= 0);
+        Assert.True(tools < chat, "Fallback default order must keep Tools above Chat.");
+    }
+
+    /// <summary>
+    /// Controllable fake nav-order source. Returns the JSON body configured via
+    /// <see cref="SetOrder"/> for GET /api/nav-order, defaulting to the built-in effective order.
+    /// </summary>
+    private sealed class StubNavOrderHandler : HttpMessageHandler
+    {
+        private string _json = """
+            [
+              { "key": "activity", "order": 10 },
+              { "key": "tools", "order": 20 },
+              { "key": "chat", "order": 30 },
+              { "key": "configuration", "order": 40 },
+              { "key": "skills", "order": 50 },
+              { "key": "agents", "order": 60 },
+              { "key": "cron", "order": 70 }
+            ]
+            """;
+
+        public void SetOrder(string json) => _json = json;
+
+        public void SetRaw(string raw) => _json = raw;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(_json, System.Text.Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
     }
 
     /// <summary>

@@ -56,15 +56,25 @@ public sealed class ConversationHistoryAssemblerTests
         var conversationId = ConversationId.From("c_two_sessions");
         var sessions = new InMemorySessionStore();
 
-        var first = await sessions.GetOrCreateAsync(SessionId.From("s-first"), AgentId.From("quill"));
-        first.Session.ConversationId = conversationId;
-        first.Session.CreatedAt = Ts(0);
+        // Session.CreatedAt is write-once (#2316), so build the sessions directly rather than
+        // creating-then-mutating; the in-memory store persists whatever SaveAsync is handed.
+        var first = new GatewaySession(new Session
+        {
+            SessionId = SessionId.From("s-first"),
+            ConversationId = conversationId,
+            CreatedAt = Ts(0)
+        });
+        first.HydrateAgentId(AgentId.From("quill"));
         first.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "in-first", Timestamp = Ts(1) });
         await sessions.SaveAsync(first);
 
-        var second = await sessions.GetOrCreateAsync(SessionId.From("s-second"), AgentId.From("quill"));
-        second.Session.ConversationId = conversationId;
-        second.Session.CreatedAt = Ts(10);
+        var second = new GatewaySession(new Session
+        {
+            SessionId = SessionId.From("s-second"),
+            ConversationId = conversationId,
+            CreatedAt = Ts(10)
+        });
+        second.HydrateAgentId(AgentId.From("quill"));
         second.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "in-second", Timestamp = Ts(11) });
         await sessions.SaveAsync(second);
 

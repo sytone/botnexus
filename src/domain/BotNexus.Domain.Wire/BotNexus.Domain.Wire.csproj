@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Gateway.Abstractions.Models</RootNamespace>
+    <Description>Dependency-free conversation and channel wire enums shared by the gateway and the Blazor WASM clients.</Description>
+  </PropertyGroup>
+
+  <!-- #2329: this project MUST stay dependency-free.
+
+       It exists so the Blazor WebAssembly client can consume the SINGLE canonical declaration of the
+       conversation wire enums without referencing BotNexus.Domain. Every assembly reachable from the
+       WASM client is downloaded by the browser, and BotNexus.Domain pulls in Vogen.SharedTypes at
+       runtime (Vogen's generated value objects reference it), which has no business in a browser.
+
+       Do NOT add PackageReference or ProjectReference entries here. If a type needs a dependency,
+       it belongs in BotNexus.Domain, not in this assembly. -->
+
+</Project>

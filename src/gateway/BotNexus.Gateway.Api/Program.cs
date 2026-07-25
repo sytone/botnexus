@@ -34,6 +34,7 @@ using OpenTelemetry.Trace;
 using BotNexus.Gateway.Telemetry;
 using Serilog;
 using System.Reflection;
+using BotNexus.Gateway.Nav;
 using BotNexus.Gateway.Tools;
 using BotNexus.Gateway.Webhooks;
 
@@ -221,6 +222,11 @@ builder.Services.AddBotNexusWebhooks(webhookDbPath, configuration: builder.Confi
 // tools survive gateway restarts and roam with the user across browsers/devices (#2232).
 var toolsDbPath = System.IO.Path.Combine(webhookDataDir, "tools.sqlite");
 builder.Services.AddBotNexusTools(toolsDbPath);
+
+// Portal nav-order store - SQLite in the same writable data directory so per-user sidebar
+// ordering overrides survive gateway restarts and roam with the user (#2236, slice 5 of #2231).
+var navOrderDbPath = System.IO.Path.Combine(webhookDataDir, "nav-order.sqlite");
+builder.Services.AddBotNexusNavOrder(navOrderDbPath);
 
 static string? ResolveCronModel(CronJobConfig config)
 {

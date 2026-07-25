@@ -87,7 +87,9 @@ public sealed class InMemorySessionStore : SessionStoreBase
         // _sync is non-async so we cannot hold it across the await anyway.
         if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
         {
-            var legacy = await _legacyResolver.ResolveAsync(session.AgentId, cancellationToken).ConfigureAwait(false);
+            var legacy = await _legacyResolver
+                .ResolveAsync(session.AgentId, LegacyResolveReason.SaveTimeStamp, cancellationToken)
+                .ConfigureAwait(false);
             session.ConversationId = legacy.ConversationId;
 
             // If this is the current active session, also bind it as the conversation's

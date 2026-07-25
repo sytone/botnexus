@@ -16,6 +16,8 @@ builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
+// #2036: start-conversation orchestration (create -> persist model override -> send first message).
+builder.Services.AddScoped<IStartConversationService, StartConversationService>();
 // #1951: the mobile chat palette consumes the SAME shared Core slash-command dispatcher the
 // desktop ChatPanel uses (registry + dispatcher from #1949, approval hook from #1950), giving
 // full command parity across clients. The approval hook is optional; when no implementation is

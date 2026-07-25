@@ -15,6 +15,7 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
     [property: JsonPropertyName("kind")] string Kind = "HumanAgent",
+    [property: JsonPropertyName("source")] string Source = "Channel",
     [property: JsonPropertyName("isPinned")] bool IsPinned = false,
     [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null,
     [property: JsonPropertyName("participants")] IReadOnlyList<ParticipantDto>? Participants = null);
@@ -43,7 +44,9 @@ public sealed record ConversationResponseDto(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
     [property: JsonPropertyName("modelOverride")] string? ModelOverride = null,
     [property: JsonPropertyName("thinkingOverride")] string? ThinkingOverride = null,
-    [property: JsonPropertyName("contextWindowOverride")] int? ContextWindowOverride = null);
+    [property: JsonPropertyName("contextWindowOverride")] int? ContextWindowOverride = null,
+    [property: JsonPropertyName("kind")] string Kind = "HumanAgent",
+    [property: JsonPropertyName("source")] string Source = "Channel");
 
 public sealed record SetConversationOverrideRequestDto(
     [property: JsonPropertyName("model")] string? Model = null,

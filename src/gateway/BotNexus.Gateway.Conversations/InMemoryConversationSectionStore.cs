@@ -57,7 +57,8 @@ public sealed class InMemoryConversationSectionStore : IConversationSectionStore
                 .DefaultIfEmpty(-1)
                 .Max() + 1;
             section.Order = nextOrder;
-            section.CreatedAt = DateTimeOffset.UtcNow;
+            // CreatedAt is write-once (#2316): rebuild the record rather than mutating it.
+            section = section with { CreatedAt = DateTimeOffset.UtcNow };
             section.UpdatedAt = section.CreatedAt;
             if (!_sections.TryAdd(section.SectionId.Value, section))
                 throw new InvalidOperationException($"A section with id '{section.SectionId}' already exists.");

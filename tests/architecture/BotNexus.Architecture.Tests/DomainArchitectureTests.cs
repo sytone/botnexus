@@ -15,22 +15,68 @@ public sealed class DomainArchitectureTests
     private static readonly Assembly DomainAssembly = typeof(AgentId).Assembly;
 
     /// <summary>
-    /// Domain has no project references — it is the leaf of the dependency graph. Source-generator
-    /// package references (e.g. Vogen) are allowed because they contribute generated source rather
-    /// than runtime dependencies.
+    /// Domain sits at the bottom of the dependency graph. Source-generator package references
+    /// (e.g. Vogen) are allowed because they contribute generated source.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>One permitted project reference: <c>BotNexus.Domain.Wire</c></b> (#2329). Wire holds the
+    /// dependency-free conversation/channel wire enums and is a strictly deeper leaf than Domain -
+    /// it references nothing at all. It exists because the Blazor WebAssembly client must share the
+    /// single canonical enum declaration without referencing Domain: every assembly reachable from
+    /// the WASM client is downloaded by the browser, and Domain pulls <c>Vogen.SharedTypes</c> in at
+    /// runtime (Vogen's generated value objects reference it).
+    /// </para>
+    /// <para>
+    /// The invariant this test protects is unchanged: Domain must not depend on gateway,
+    /// infrastructure, or extension assemblies. Depending on a deeper dependency-free leaf does not
+    /// violate that. Any OTHER reference appearing here is a real violation and must fail.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void Domain_HasNoProjectReferences()
     {
+        // The single sanctioned exception, justified in the remarks above. Deliberately an exact
+        // allowlist rather than a prefix match, so a future "BotNexus.Domain.Something" that is NOT
+        // dependency-free cannot slip through unnoticed.
+        string[] permitted = ["BotNexus.Domain.Wire"];
+
         var referencedAssemblyNames = DomainAssembly
             .GetReferencedAssemblies()
             .Select(name => name.Name!)
             .Where(name => !IsFrameworkAssembly(name))
+            .Where(name => !permitted.Contains(name))
             .ToArray();
 
         referencedAssemblyNames.ShouldBeEmpty(
             "BotNexus.Domain must remain a leaf node. Found unexpected references: " +
             string.Join(", ", referencedAssemblyNames));
+    }
+
+    /// <summary>
+    /// <c>BotNexus.Domain.Wire</c> must itself reference NOTHING outside the framework (#2329).
+    /// This is the load-bearing half of the arrangement above: Wire is only safe for the Blazor
+    /// WebAssembly client to reference because it drags nothing into the browser payload. If a
+    /// dependency is ever added here, the leak this project exists to prevent silently returns.
+    /// </summary>
+    [Fact]
+    public void DomainWire_IsCompletelyDependencyFree()
+    {
+        var wireAssembly = typeof(BotNexus.Gateway.Abstractions.Models.ConversationSource).Assembly;
+
+        wireAssembly.GetName().Name.ShouldBe(
+            "BotNexus.Domain.Wire",
+            "the conversation wire enums must live in the dependency-free Wire assembly, not Domain.");
+
+        var referenced = wireAssembly
+            .GetReferencedAssemblies()
+            .Select(name => name.Name!)
+            .Where(name => !IsFrameworkAssembly(name))
+            .ToArray();
+
+        referenced.ShouldBeEmpty(
+            "BotNexus.Domain.Wire must stay dependency-free so the Blazor WASM client can reference " +
+            "it without downloading anything extra. Found: " + string.Join(", ", referenced));
     }
 
     /// <summary>

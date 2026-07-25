@@ -142,10 +142,23 @@ public sealed class MobileArchiveConversationTests : IDisposable
         Assert.Empty(cut.FindAll(".reset-confirm-overlay"));
     }
 
+    /// <summary>
+    /// #2305 (epic #2300): the close-vs-archive wording is driven by the IMMUTABLE, server-stamped
+    /// <c>Source == ConversationSource.Cron</c>, not by the deleted mutable virtual-session flag. Because <c>Source</c> is <c>init</c>-only, the cron row must be CONSTRUCTED as cron -
+    /// which is exactly the point: no inbound event can retro-fit it.
+    /// </summary>
     [Fact]
-    public void Virtual_session_uses_close_wording()
+    public void Cron_source_conversation_uses_close_wording()
     {
-        _agentState.Conversations["conv-1"].IsVirtualSession = true;
+        _agentState.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Quarterly plan",
+            Status = "Active",
+            ActiveSessionId = "session-1",
+            Source = ConversationSource.Cron,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
 
         var cut = _ctx.Render<Chat>();
 

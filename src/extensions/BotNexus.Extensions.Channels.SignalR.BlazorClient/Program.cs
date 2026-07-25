@@ -15,6 +15,8 @@ builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
+// #2036: start-conversation orchestration (create -> persist model override -> send first message).
+builder.Services.AddScoped<IStartConversationService, StartConversationService>();
 builder.Services.AddScoped<BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.ISlashCommandDispatcher, BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.SlashCommandDispatcher>();
 builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 builder.Services.AddScoped<PlatformConfigService>();
@@ -27,6 +29,7 @@ builder.Services.AddScoped<LocationsApiClient>();
 builder.Services.AddScoped<CronApiClient>();
 builder.Services.AddScoped<SectionsApiClient>();
 builder.Services.AddScoped<ToolsApiClient>();
+builder.Services.AddScoped<NavOrderApiClient>();
 builder.Services.AddScoped<IPortalPreferencesService, PortalPreferencesService>();
 
 await builder.Build().RunAsync();

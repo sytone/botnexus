@@ -311,6 +311,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 ActiveSessionId = dto.ActiveSessionId,
                 CreatedAt = dto.CreatedAt,
                 UpdatedAt = dto.UpdatedAt,
+                // Immutable origin signal, seeded once straight from the server payload (#2304).
+                Source = ConversationOrigin.ParseSource(dto.Source),
+                Kind = ConversationOrigin.ParseKind(dto.Kind),
                 HistoryLoaded = true // brand new — nothing to load
             };
 
@@ -450,10 +453,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (conv is null)
             return 0;
 
-        // Nothing older to fetch, a fetch is already in flight, or this is a virtual
-        // (cron/sub-agent) transcript that is not paged backwards. Treat as a no-op so a
-        // repeated scroll-to-top never double-fetches or pages a virtual session (#1691).
-        if (!conv.HasMoreHistory || conv.IsLoadingHistory || conv.IsVirtualSession)
+        // Nothing older to fetch, a fetch is already in flight, or this is a locally-synthesised
+        // observer transcript row that is not paged backwards. Treat as a no-op so a repeated
+        // scroll-to-top never double-fetches or pages a synthesised row (#1691, #2305).
+        if (!conv.HasMoreHistory || conv.IsLoadingHistory || conv.IsLocallySynthesised)
             return 0;
 
         conv.IsLoadingHistory = true;
@@ -655,6 +658,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 DisplayName = subAgent.Name ?? $"Sub-agent {subAgentId[..Math.Min(8, subAgentId.Length)]}",
                 SessionId = childSessionId,
                 SessionType = "agent-subagent",
+                // #2248: fix the IMMUTABLE observer classification at creation. This is the ONLY
+                // path that mints a read-only sub-agent virtual entry, so it is the one place that
+                // sets IsObserverAgent=true. Real user agents (SeedAgents / PortalLoadService) leave
+                // it false and can never be poisoned into read-only by a session-type event.
+                IsObserverAgent = true,
                 IsConnected = true
             });
             _store.RegisterSession(subAgentId, childSessionId);
@@ -739,9 +747,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            // Virtual sessions (cron/soul projections) read the raw session transcript;
-            // regular conversations read the merged conversation history with boundaries.
-            if (conv.IsVirtualSession && conv.ActiveSessionId is { Length: > 0 } sessionId)
+            // Locally-synthesised observer rows (sub-agent transcripts) read the raw session
+            // transcript; server-backed conversations read merged conversation history with
+            // boundaries (#2305).
+            if (conv.IsLocallySynthesised && conv.ActiveSessionId is { Length: > 0 } sessionId)
             {
                 await LoadVirtualHistoryAsync(conv, sessionId);
             }
@@ -899,8 +908,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 Title = "Sub-agent session",
                 Status = "Active",
                 ActiveSessionId = subAgentId,
-                IsVirtualSession = true,
-                VirtualSessionKind = "subagent",
+                // Locally-synthesised observer row for a sub-agent transcript: its origin is known
+                // without a server payload and is stamped once, immutably (#2304).
+                Source = ConversationSource.Agent,
+                Kind = ConversationKind.AgentSubAgent,
+                IsLocallySynthesised = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
                 HistoryLoaded = false

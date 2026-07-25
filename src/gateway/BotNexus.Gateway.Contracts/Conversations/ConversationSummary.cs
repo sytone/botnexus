@@ -18,6 +18,11 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// like the portal can hide internal agent-to-agent transcripts from the user-facing conversation
 /// list. Defaults to <c>HumanAgent</c> for back-compat with pre-Phase-4 stores.
 /// </param>
+/// <param name="Source">
+/// Origination trigger (<c>Channel</c>, <c>Cron</c>, <c>Webhook</c>, or <c>Agent</c>) - why the
+/// conversation exists, orthogonal to <paramref name="Kind"/> which says who is paired with whom.
+/// Defaults to <c>Channel</c> for back-compat with rows persisted before the field existed (#2300).
+/// </param>
 /// <param name="Participants">
 /// Citizen participants in this conversation — enables the portal to render a participant
 /// roster (avatar chips) in the conversation header for multi-agent sessions.
@@ -34,6 +39,7 @@ public sealed record ConversationSummary(
     DateTimeOffset UpdatedAt,
     string? Purpose = null,
     string Kind = "HumanAgent",
+    string Source = "Channel",
     bool IsPinned = false,
     DateTimeOffset? PinnedAt = null,
     IReadOnlyList<ParticipantSummary>? Participants = null);

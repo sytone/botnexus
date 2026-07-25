@@ -193,16 +193,14 @@ public sealed class AgentExchangeTurnEngine
         string? objective,
         CancellationToken cancellationToken)
     {
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.Create(),
-            AgentId = initiatorId,
-            Kind = ConversationKind.AgentAgent,
-            Initiator = CitizenId.Of(initiatorId),
-            Title = $"{initiatorId.Value} \u2194 {targetId.Value}",
-            Purpose = null,
-            Status = ConversationStatus.Active
-        };
+        // Agent-initiated peer exchange: (Source=Agent, Kind=AgentAgent) is the coherent pair.
+        // Minted through the single creation seam (#2310).
+        var conversation = ConversationFactory.CreateForAgent(
+            ConversationKind.AgentAgent,
+            ConversationId.Create(),
+            initiatorId,
+            title: $"{initiatorId.Value} \u2194 {targetId.Value}",
+            initiator: CitizenId.Of(initiatorId));
 
         if (channelType is { } ct)
         {

@@ -290,15 +290,14 @@ public sealed class HeartbeatTrigger(
             return existing;
         }
 
-        var conversation = new Conversation
-        {
-            ConversationId = stableId,
-            AgentId = agentId,
-            Title = $"heartbeat:{agentId.Value}",
-            IsDefault = false,
-            // Heartbeat is a self-initiated system flow; the agent itself is the initiator.
-            Initiator = CitizenId.Of(agentId)
-        };
+        // Heartbeat is a schedule-driven tick, so it shares the Cron origination trigger, and it is
+        // a self-initiated system flow so the agent itself is the initiator. Minted through the
+        // single creation seam (#2310).
+        var conversation = ConversationFactory.CreateForCron(
+            stableId,
+            agentId,
+            title: $"heartbeat:{agentId.Value}",
+            initiator: CitizenId.Of(agentId));
         try
         {
             await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);

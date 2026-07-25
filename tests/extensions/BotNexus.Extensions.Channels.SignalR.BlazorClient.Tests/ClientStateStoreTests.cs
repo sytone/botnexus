@@ -431,6 +431,7 @@ public sealed class ClientStateStoreTests
             AgentId = "sub-1",
             DisplayName = "Sub-agent",
             SessionType = "agent-subagent", // => IsReadOnly == true
+            IsObserverAgent = true,
             IsConnected = true
         });
 
@@ -469,6 +470,7 @@ public sealed class ClientStateStoreTests
             AgentId = "sub-1",
             DisplayName = "Sub-agent",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
         store.SelectView("sub-1", string.Empty, SelectionSource.Bootstrap);
@@ -503,6 +505,7 @@ public sealed class ClientStateStoreTests
             AgentId = "sub-1",
             DisplayName = "Sub-agent",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
 
@@ -517,8 +520,8 @@ public sealed class ClientStateStoreTests
         // The SubAgentView allowance must be scoped to the single SelectView call: a subsequent
         // background event switching onto another read-only sub-agent must still be rejected.
         var store = CreateSeededStore();
-        store.UpsertAgent(new AgentState { AgentId = "sub-1", DisplayName = "Sub 1", SessionType = "agent-subagent", IsConnected = true });
-        store.UpsertAgent(new AgentState { AgentId = "sub-2", DisplayName = "Sub 2", SessionType = "agent-subagent", IsConnected = true });
+        store.UpsertAgent(new AgentState { AgentId = "sub-1", DisplayName = "Sub 1", SessionType = "agent-subagent", IsObserverAgent = true, IsConnected = true });
+        store.UpsertAgent(new AgentState { AgentId = "sub-2", DisplayName = "Sub 2", SessionType = "agent-subagent", IsObserverAgent = true, IsConnected = true });
 
         store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
         store.SelectView("sub-2", string.Empty, SelectionSource.UserClick); // simulates a background SubAgentSpawned assignment
@@ -586,6 +589,7 @@ public sealed class ClientStateStoreTests
             AgentId = "sub-1",
             DisplayName = "Sub-agent",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
         store.RegisterSession("sub-1", "sub-1");
@@ -618,6 +622,7 @@ public sealed class ClientStateStoreTests
             AgentId = "sub-9",
             DisplayName = "Sub 9",
             SessionType = "agent-subagent",
+            IsObserverAgent = true,
             IsConnected = true
         });
         store.RegisterSession("sub-9", "sub-9");
@@ -677,6 +682,84 @@ public sealed class ClientStateStoreTests
             new AgentSummary("a-2", "Beta")
         ]);
         return store;
+    }
+
+    // ── #2248 session-type poisoning immunity ──────────────────────────────────
+
+    [Fact]
+    public void RegisterSession_agent_subagent_on_a_seeded_user_agent_does_not_make_it_read_only()
+    {
+        // #2248 root-cause guard: a real USER agent seeded from /api/agents has the immutable
+        // IsObserverAgent=false. A concurrent inbound sub-agent session event stamping its mutable
+        // SessionType="agent-subagent" must NOT make it read-only, because IsReadOnly now derives
+        // from the immutable kind, not the churning SessionType.
+        var store = CreateSeededStore();
+        var agent = store.GetAgent("a-1")!;
+        agent.IsReadOnly.ShouldBeFalse(customMessage: "A seeded user agent starts interactive.");
+
+        store.RegisterSession("a-1", "sess-poison", sessionType: "agent-subagent");
+
+        store.GetAgent("a-1")!.IsReadOnly.ShouldBeFalse(
+            customMessage: "RegisterSession(agent-subagent) must NOT poison a real user agent into " +
+                "read-only — IsReadOnly keys on the immutable IsObserverAgent, not SessionType (#2248).");
+    }
+
+    [Fact]
+    public void RegisterSession_agent_subagent_does_not_remove_a_user_agent_from_the_roster_projection()
+    {
+        // The roster projection filters on !IsReadOnly (the immutable kind). A sub-agent session
+        // event on a user agent must never drop it from the roster.
+        var store = CreateSeededStore();
+
+        store.RegisterSession("a-1", "sess-poison", sessionType: "agent-subagent");
+
+        var roster = store.Agents.Values.Where(a => !a.IsReadOnly).Select(a => a.AgentId).ToList();
+        roster.ShouldContain("a-1",
+            customMessage: "A RegisterSession(agent-subagent) on a user agent must not remove it from " +
+                "the roster projection (#2248).");
+    }
+
+    [Fact]
+    public void SelectView_user_click_is_accepted_after_session_type_poisoning()
+    {
+        // #2248 leak site 3: the anti-hijack guard previously keyed on derived IsReadOnly from the
+        // mutable SessionType, so a poisoned user agent's UserClick was rejected and the view
+        // reverted. With IsReadOnly keyed on the immutable kind, a UserClick onto a real user agent
+        // is always accepted — the selection actually changes.
+        var store = CreateSeededStore();
+        store.SelectView("a-2", string.Empty, SelectionSource.UserClick);
+
+        // An inbound sub-agent session event poisons a-1's SessionType.
+        store.RegisterSession("a-1", "sess-poison", sessionType: "agent-subagent");
+
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+
+        store.ActiveAgentId.ShouldBe("a-1",
+            customMessage: "A UserClick onto a real user agent must be ACCEPTED even after its " +
+                "SessionType was stamped agent-subagent by an inbound event (#2248).");
+    }
+
+    [Fact]
+    public void ActiveSelectionSource_projects_the_source_of_the_current_view()
+    {
+        // #2248: read-only becomes a view concern. The store surfaces the active SelectionSource as
+        // a read-only projection so the chat panel can gate read-only on SubAgentView.
+        var store = CreateSeededStore();
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub-agent",
+            SessionType = "agent-subagent",
+            IsObserverAgent = true,
+            IsConnected = true
+        });
+
+        store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+        store.ActiveSelectionSource.ShouldBe(SelectionSource.UserClick);
+
+        store.SelectView("sub-1", string.Empty, SelectionSource.SubAgentView);
+        store.ActiveSelectionSource.ShouldBe(SelectionSource.SubAgentView,
+            customMessage: "ActiveSelectionSource must project the source of the current view (#2248).");
     }
 
     [Fact]

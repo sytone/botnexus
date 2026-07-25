@@ -15,6 +15,7 @@ public sealed class GatewaySession
     private string? _callerId;
     private readonly ISecretRedactor? _redactor;
     private AgentId _agentId;
+    private Session _session;
 
     public GatewaySession()
         : this(new Session(), null)
@@ -23,12 +24,16 @@ public sealed class GatewaySession
 
     public GatewaySession(Session session, ISecretRedactor? redactor = null)
     {
-        Session = session ?? throw new ArgumentNullException(nameof(session));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
         _redactor = redactor;
     }
 
-    /// <summary>Domain session state for persistence.</summary>
-    public Session Session { get; }
+    /// <summary>
+    /// Domain session state for persistence. The reference is replaced only by the
+    /// <c>init</c> accessors below, which run during object initialization before any
+    /// caller can observe <see cref="Runtime"/>; it is effectively readonly afterwards.
+    /// </summary>
+    public Session Session => _session;
 
     /// <summary>Infrastructure runtime state for thread-safe mutation and replay buffering.</summary>
     public GatewaySessionRuntime Runtime
@@ -46,8 +51,8 @@ public sealed class GatewaySession
     /// <summary>Unique session identifier.</summary>
     public SessionId SessionId
     {
-        get => Session.SessionId;
-        init => Session.SessionId = value;
+        get => _session.SessionId;
+        init => _session = _session with { SessionId = value };
     }
 
     /// <summary>
@@ -123,8 +128,8 @@ public sealed class GatewaySession
     /// <summary>When the session was created.</summary>
     public DateTimeOffset CreatedAt
     {
-        get => Session.CreatedAt;
-        init => Session.CreatedAt = value;
+        get => _session.CreatedAt;
+        init => _session = _session with { CreatedAt = value };
     }
 
     /// <summary>When the session was last active.</summary>

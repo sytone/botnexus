@@ -108,16 +108,15 @@ public sealed class WebhookInboundController(
         {
             // Try to pin one — create a new conversation if not yet pinned.
             var now = DateTimeOffset.UtcNow;
-            var conversation = new BotNexus.Gateway.Abstractions.Models.Conversation
-            {
-                ConversationId = ConversationId.Create(),
-                AgentId = typedAgentId,
-                Title = $"Webhook: {registration.Label}",
-                Status = ConversationStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now,
-                Initiator = CitizenId.Of(typedAgentId)
-            };
+            // Inbound-webhook origination (#2302): no human is in the loop, which is exactly
+            // what read-only/composer gating needs to know. Minted through the single creation
+            // seam (#2310) so provenance cannot be silently omitted.
+            var conversation = BotNexus.Gateway.Abstractions.Models.ConversationFactory.CreateForWebhook(
+                ConversationId.Create(),
+                typedAgentId,
+                title: $"Webhook: {registration.Label}",
+                initiator: CitizenId.Of(typedAgentId),
+                timestamp: now);
             // Stamp authoritative webhook provenance so source-specific retention (#2125) can
             // identify this conversation by its originating registration id, never by title.
             WebhookConversationProvenance.Stamp(conversation.Metadata, typedWebhookId);

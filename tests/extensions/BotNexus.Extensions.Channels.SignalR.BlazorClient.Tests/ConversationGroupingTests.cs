@@ -49,6 +49,7 @@ public sealed class ConversationGroupingTests : IDisposable
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
+        _ctx.Services.AddStubNavOrderApiClient();
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -84,9 +85,9 @@ public sealed class ConversationGroupingTests : IDisposable
         // value to "false" makes OnAfterRenderAsync land on expanded and removes the race entirely.
         ExpandScheduledGroupByDefault();
 
-        // Arrange: one cronconv:-prefixed conversation
+        // Arrange: one server-stamped Source=Cron conversation (#2305: no id-prefix inference)
         SeedAgentWithConversations(
-            new ConversationSummaryDto("cronconv:daily-check", "a-1", "Daily Check", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("conv-daily-check", "a-1", "Daily Check", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
             new ConversationSummaryDto("c-1", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
 
@@ -102,39 +103,118 @@ public sealed class ConversationGroupingTests : IDisposable
             Assert.Contains("Daily Check", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
     }
 
+    /// <summary>
+    /// #2305: a conversation whose SERVER-stamped source is <c>Cron</c> is grouped under Scheduled.
+    /// This replaces the deleted mutable virtual-session flag/kind fixture -
+    /// the typed origin is now the only mechanism.
+    /// </summary>
     [Fact]
-    public void CronConversations_VirtualKind_RenderedInScheduledGroup()
+    public void CronConversations_TypedSource_RenderedInScheduledGroup()
     {
         // Seed the Scheduled group as expanded so the rendered output is deterministic (see the
         // sibling test above for the OnAfterRenderAsync re-collapse race this avoids).
         ExpandScheduledGroupByDefault();
 
-        // Arrange: conversation with IsVirtualSession + VirtualSessionKind = "cron"
         SeedAgentWithConversations(
-            new ConversationSummaryDto("c-1", "a-1", "Cron Task", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("c-1", "a-1", "Cron Task", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
             new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
-        var cronConv = _store.GetAgent("a-1")!.Conversations["c-1"];
-        cronConv.IsVirtualSession = true;
-        cronConv.VirtualSessionKind = "cron";
+        Assert.Equal(ConversationSource.Cron, _store.GetAgent("a-1")!.Conversations["c-1"].Source);
 
         var cut = RenderLayout();
 
         var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
         Assert.NotNull(scheduledGroup);
 
-        // The virtual-kind cron conversation (IsVirtualSession + VirtualSessionKind == "cron")
-        // should be grouped under Scheduled exactly like a cronconv:-prefixed one.
         cut.WaitForAssertion(() =>
             Assert.Contains("Cron Task", cut.Find("[data-testid='conversation-group-scheduled']").TextContent));
+    }
+
+    /// <summary>
+    /// #2304: a conversation the SERVER marked <c>source="Cron"</c> is grouped under Scheduled and
+    /// badged from the typed projection alone - no conversation-id prefix, no mutable
+    /// virtual-session flag, no cron-job id lookup.
+    /// </summary>
+    [Fact]
+    public void ServerSuppliedCronSource_RenderedInScheduledGroup_WithCronBadge()
+    {
+        ExpandScheduledGroupByDefault();
+
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Scheduled Run", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
+            new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var scheduledGroup = cut.Find("[data-testid='conversation-group-scheduled']");
+            Assert.Contains("Scheduled Run", scheduledGroup.TextContent);
+            Assert.Contains("Cron", scheduledGroup.TextContent);
+        });
+
+        // The normal conversation stays in the normal group.
+        var convsGroup = cut.Find("[data-testid='conversation-group-conversations']");
+        Assert.Contains("Normal Chat", convsGroup.TextContent);
+        Assert.DoesNotContain("Scheduled Run", convsGroup.TextContent);
+    }
+
+    /// <summary>
+    /// #2304: a webhook-originated conversation is badged from the immutable server signal.
+    /// </summary>
+    [Fact]
+    public void ServerSuppliedWebhookSource_IsBadgedFromTheImmutableSignal()
+    {
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "Webhook Run", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Webhook"),
+            new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        var cut = RenderLayout();
+
+        var item = cut.Find("[data-conversation-id='c-1']");
+        Assert.Contains("Webhook", item.TextContent);
+
+        var normalItem = cut.Find("[data-conversation-id='c-2']");
+        Assert.DoesNotContain("Webhook", normalItem.TextContent);
+        Assert.DoesNotContain("Cron", normalItem.TextContent);
+        Assert.DoesNotContain("Read-only", normalItem.TextContent);
+    }
+
+    /// <summary>
+    /// #2304 regression guard, the conversation-shaped twin of #2248: an inbound sub-agent event
+    /// must not be able to badge, regroup, or hide the user's own conversation.
+    /// </summary>
+    [Fact]
+    public void InboundSubAgentEvent_LeavesTheUserConversationUnbadgedAndVisible()
+    {
+        SeedAgentWithConversations(
+            new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        );
+
+        // Inbound, non-user-driven events fire against the same agent/conversation.
+        _store.MarkSubAgent("a-1-sub");
+        _store.RegisterSession("a-1", "sess-sub", sessionType: "agent-subagent", conversationId: "c-1");
+
+        var cut = RenderLayout();
+
+        var convsGroup = cut.Find("[data-testid='conversation-group-conversations']");
+        Assert.Contains("My Chat", convsGroup.TextContent);
+
+        var item = cut.Find("[data-conversation-id='c-1']");
+        Assert.DoesNotContain("Read-only", item.TextContent);
+        Assert.DoesNotContain("Virtual", item.TextContent);
+
+        Assert.Equal(ConversationSource.Channel, _store.GetConversation("c-1")!.Source);
     }
 
     [Fact]
     public void ScheduledGroup_CollapsedByDefault()
     {
-        // Arrange: a cron conversation
+        // Arrange: a server-stamped Source=Cron conversation
         SeedAgentWithConversations(
-            new ConversationSummaryDto("cronconv:job-1", "a-1", "Cron Job", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("conv-job-1", "a-1", "Cron Job", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
             new ConversationSummaryDto("c-1", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
 
@@ -152,10 +232,10 @@ public sealed class ConversationGroupingTests : IDisposable
     [Fact]
     public void ScheduledGroup_ShowsCount()
     {
-        // Arrange: two cron conversations
+        // Arrange: two server-stamped Source=Cron conversations
         SeedAgentWithConversations(
-            new ConversationSummaryDto("cronconv:job-1", "a-1", "Cron Job 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("cronconv:job-2", "a-1", "Cron Job 2", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("conv-job-1", "a-1", "Cron Job 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
+            new ConversationSummaryDto("conv-job-2", "a-1", "Cron Job 2", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron"),
             new ConversationSummaryDto("c-1", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
 
@@ -251,11 +331,11 @@ public sealed class ConversationGroupingTests : IDisposable
     [Fact]
     public void NormalConversations_RenderedInConversationsGroup()
     {
-        // Arrange: mix of pinned, normal, and cron conversations
+        // Arrange: mix of pinned, normal, and Source=Cron conversations
         SeedAgentWithConversations(
             new ConversationSummaryDto("c-1", "a-1", "Pinned Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, IsPinned: true),
             new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("cronconv:job-1", "a-1", "Cron Job", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("conv-job-1", "a-1", "Cron Job", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Cron")
         );
 
         var cut = RenderLayout();
@@ -303,6 +383,7 @@ public sealed class ConversationGroupingTests : IDisposable
         ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
         ctx.Services.AddSingleton(new SectionsApiClient(httpWithMock));
         ctx.Services.AddSingleton(new ToolsApiClient(httpWithMock));
+        ctx.Services.AddStubNavOrderApiClient();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
         // Render the Scheduled group expanded by default so the assertion does not depend on a
         // toggle click racing the async OnAfterRenderAsync localStorage read (see the

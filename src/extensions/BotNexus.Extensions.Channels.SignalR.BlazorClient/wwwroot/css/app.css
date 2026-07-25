@@ -4133,6 +4133,74 @@ details[open] > .thinking-summary::before {
     filter: none;
 }
 
+/* ── Move-to-section affordance (#2324) ───────────────────────────────────────────────── */
+
+/* Third hover action on a conversation row, left of the pin, opening the section menu. */
+.conversation-section-btn {
+    position: absolute;
+    right: 2.95rem;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 0.1rem 0.25rem;
+    filter: grayscale(1) opacity(0.6);
+}
+
+.conversation-list-item:hover .conversation-section-btn,
+.conversation-list-item .conversation-section-btn[aria-expanded="true"] {
+    opacity: 1;
+}
+
+.conversation-section-btn:hover {
+    filter: none;
+}
+
+.conversation-section-menu {
+    position: absolute;
+    right: 0.25rem;
+    top: 100%;
+    z-index: 20;
+    min-width: 10rem;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elevated, var(--bg-secondary, #222));
+    border: 1px solid var(--border, #444);
+    border-radius: 4px;
+    padding: 0.2rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.conversation-section-menu-item {
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text, #ddd);
+    font-size: 0.75rem;
+    padding: 0.25rem 0.4rem;
+    border-radius: 3px;
+}
+
+.conversation-section-menu-item:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.conversation-section-menu-item.active {
+    color: var(--accent);
+}
+
+.conversation-section-menu-empty {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    padding: 0.25rem 0.4rem;
+}
+
 /* ── Conversation Group Headers ───────────────────────────────────────────────────────── */
 
 .conversation-group {
@@ -5763,4 +5831,115 @@ h3.conversation-title.editable:hover {
 
 .tool-host-open-external:hover {
     filter: brightness(1.1);
+}
+
+/* ------------------------------------------------------------------
+   Tools management UI (#2235, slice 4 of #2231)
+   CRUD surface for user-defined portal tools at /tools. Reuses the
+   agents/cron page shell so the surface matches existing portal UX.
+   ------------------------------------------------------------------ */
+.tools-manage-page .tools-editor {
+    margin-bottom: 1rem;
+}
+
+.tools-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    padding: 0.5rem 0 0.75rem 0;
+}
+
+.tools-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1 1 18rem;
+    min-width: 0;
+}
+
+.tools-form-field-narrow {
+    flex: 0 1 8rem;
+}
+
+.tools-form-field-check {
+    flex: 1 1 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tools-form-label {
+    font-size: 0.8rem;
+    opacity: 0.75;
+}
+
+.tools-form-input {
+    padding: 0.4rem 0.55rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--input-bg, #1b1b1b);
+    color: inherit;
+    font: inherit;
+    min-width: 0;
+}
+
+.tools-form-errors {
+    margin: 0 0 0.5rem 0;
+    padding-left: 1.1rem;
+    color: var(--error-color, #e06c75);
+    font-size: 0.85rem;
+}
+
+.tools-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.tools-list-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 6px;
+}
+
+.tools-list-icon {
+    font-size: 1.15rem;
+    flex: 0 0 auto;
+}
+
+.tools-list-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.tools-list-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tools-list-meta {
+    display: flex;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
+.tools-list-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+    .tools-list-item {
+        flex-wrap: wrap;
+    }
 }

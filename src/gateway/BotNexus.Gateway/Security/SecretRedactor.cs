@@ -28,6 +28,16 @@ public sealed partial class SecretRedactor : ISecretRedactor
         // GitHub classic tokens: ghp_, ghs_, gho_
         GitHubClassicTokenRegex(),
 
+        // GitLab personal access tokens (glpat-...)
+        GitLabPersonalAccessTokenRegex(),
+        // GitLab routable token family (gldt-, glcbt-, glptt-, glft-, glimt-, glagent-,
+        // glwt-, glsoat-, glffct-, glrt-, glrtr-)
+        GitLabRoutableTokenRegex(),
+        // GitLab runner registration tokens (GR1348941...)
+        GitLabRunnerTokenRegex(),
+        // GitLab session cookie (_gitlab_session=...)
+        GitLabSessionCookieRegex(),
+
         // AWS access key IDs (AKIA...)
         AwsAccessKeyRegex(),
         // AWS secret access key VALUES via field name (aws_secret_access_key: "..." / SecretAccessKey=...)
@@ -187,6 +197,24 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
     [GeneratedRegex(@"gh[pso]_[A-Za-z0-9]{36}", RegexOptions.Compiled)]
     private static partial Regex GitHubClassicTokenRegex();
+
+    // GitLab personal access token (glpat-<20 chars>). Mirrors the GitHub prefix-token style.
+    [GeneratedRegex(@"glpat-[A-Za-z0-9._=\-]{20}", RegexOptions.Compiled)]
+    private static partial Regex GitLabPersonalAccessTokenRegex();
+
+    // GitLab routable token family: a fixed set of two-to-five-letter prefixes (deploy, CI build,
+    // pipeline trigger, feed, incoming mail, agent, webhook, SCIM OAuth, feature-flag client,
+    // runner authentication, runner registration) followed by <20 chars>.
+    [GeneratedRegex(@"gl(dt|cbt|ptt|ft|imt|agent|wt|soat|ffct|rt|rtr)-[A-Za-z0-9._\-]{20}", RegexOptions.Compiled)]
+    private static partial Regex GitLabRoutableTokenRegex();
+
+    // GitLab runner registration token (GR1348941<20 chars>).
+    [GeneratedRegex(@"GR1348941[A-Za-z0-9_\-]{20}", RegexOptions.Compiled)]
+    private static partial Regex GitLabRunnerTokenRegex();
+
+    // GitLab session cookie (_gitlab_session=<20 chars>).
+    [GeneratedRegex(@"_gitlab_session=[A-Za-z0-9%._\-]{20}", RegexOptions.Compiled)]
+    private static partial Regex GitLabSessionCookieRegex();
 
     [GeneratedRegex(@"AKIA[0-9A-Z]{16}", RegexOptions.Compiled)]
     private static partial Regex AwsAccessKeyRegex();

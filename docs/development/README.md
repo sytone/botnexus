@@ -19,6 +19,7 @@ This directory contains detailed documentation for developers working on or exte
 - **[message-flow.md](message-flow.md)** — Channel dispatch, routing, session lifecycle
 - **[prompt-pipeline.md](prompt-pipeline.md)** — System prompt construction and caching
 - **[session-stores.md](session-stores.md)** — Session persistence implementations
+- **[compat-shim-lifecycle.md](compat-shim-lifecycle.md)** — Migrate forward, then delete: convention for schema/model compatibility shims
 - **[gateway-crash-diagnostics.md](gateway-crash-diagnostics.md)** — Minidump-on-crash, last-chance fault breadcrumb, and unclean-shutdown detection
 - **[triggers-and-federation.md](triggers-and-federation.md)** — Cron, soul, and cross-world agent communication
 - **[webui-connection.md](webui-connection.md)** — SignalR hub, subscribe-all model, multi-session UI
@@ -31,6 +32,7 @@ This directory contains detailed documentation for developers working on or exte
 
 ### Tooling & repo
 
+- **[pr-and-commit-conventions.md](pr-and-commit-conventions.md)** — Required PR body and squash-commit format, and the reviewer inspection order for agent-authored changes
 - **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
 - **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene

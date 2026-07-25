@@ -48,7 +48,9 @@ public sealed class ChatPanelTests : IDisposable
         return agent;
     }
 
-    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false, bool isPinned = false) =>
+    // #2305: `source`/`kind` are the IMMUTABLE server-supplied origin. Tests seed them through the
+    // DTO (the only legitimate way in) because ConversationState.Source/Kind are init-only.
+    private static ConversationSummaryDto MakeConvDto(string convId, string agentId, string title = "Test Conv", bool isDefault = false, bool isPinned = false, string kind = "HumanAgent", string source = "Channel") =>
         new ConversationSummaryDto(
             ConversationId: convId,
             AgentId: agentId,
@@ -59,6 +61,8 @@ public sealed class ChatPanelTests : IDisposable
             BindingCount: 0,
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow,
+            Kind: kind,
+            Source: source,
             IsPinned: isPinned);
 
     [Fact]
@@ -155,15 +159,24 @@ public sealed class ChatPanelTests : IDisposable
     [Fact]
     public void Read_only_sub_agent_view_hides_interactive_controls()
     {
-        CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
-        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        // #2248: a genuine sub-agent observer entry is read-only via the IMMUTABLE IsObserverAgent
+        // kind, promoted to the active view only via the SubAgentView source.
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub Agent",
+            SessionType = "agent-subagent",
+            IsObserverAgent = true,
+            IsConnected = true
+        });
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session", source: "Agent")]);
         _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
+        _store.SelectView("sub-1", "subagent-session:sub-1", SelectionSource.SubAgentView);
 
         var agent = _store.GetAgent("sub-1")!;
-        agent.SessionType = "agent-subagent";
         var conversation = agent.Conversations["subagent-session:sub-1"];
-        conversation.IsVirtualSession = true;
-        conversation.VirtualSessionKind = "subagent";
+        // #2305: read-only now comes from the IMMUTABLE (Kind, Source) pair, not a mutable flag.
+        Assert.Equal(ConversationSource.Agent, conversation.Source);
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
 
@@ -171,6 +184,29 @@ public sealed class ChatPanelTests : IDisposable
         Assert.Empty(cut.FindAll(".chat-input"));
         Assert.Empty(cut.FindAll(".new-chat-btn"));
         Assert.Empty(cut.FindAll(".conversation-title.editable"));
+    }
+
+    [Fact]
+    public void Session_type_poisoning_of_active_user_agent_keeps_composer_interactive()
+    {
+        // #2248 regression: a real user-agent conversation is active. An inbound sub-agent session
+        // event stamps the user agent's mutable SessionType="agent-subagent". The composer, send,
+        // and new-session controls MUST stay rendered and interactive (IsReadOnly==false), because
+        // read-only now keys on the immutable kind + view source, not the mutable SessionType.
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.UserClick);
+
+        // Inbound sub-agent session event poisons the user agent's SessionType.
+        _store.RegisterSession("agent-1", "sess-poison", sessionType: "agent-subagent");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.DoesNotContain("read-only-banner", cut.Markup);
+        Assert.NotEmpty(cut.FindAll("[data-testid=chat-input]"));
+        Assert.NotEmpty(cut.FindAll("[data-testid=chat-send]"));
+        Assert.NotEmpty(cut.FindAll(".new-chat-btn"));
     }
 
     [Fact]
@@ -218,14 +254,11 @@ public sealed class ChatPanelTests : IDisposable
     public void Read_only_sub_agent_view_does_not_bind_prevent_enter_submit()
     {
         CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
-        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session", source: "Agent")]);
         _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
 
         var agent = _store.GetAgent("sub-1")!;
         agent.SessionType = "agent-subagent";
-        var conversation = agent.Conversations["subagent-session:sub-1"];
-        conversation.IsVirtualSession = true;
-        conversation.VirtualSessionKind = "subagent";
 
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
@@ -860,9 +893,10 @@ public sealed class ChatPanelTests : IDisposable
     public void Read_only_conversation_hides_pin_and_archive_header_actions()
     {
         CreateAndSeedAgent("agent-1");
-        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1", source: "Cron")]);
         _store.SetActiveConversation("agent-1", "conv-1");
-        _store.GetAgent("agent-1")!.Conversations["conv-1"].IsVirtualSession = true;
+        // #2305: read-only comes from the immutable server-stamped Source == Cron.
+        Assert.Equal(ConversationSource.Cron, _store.GetAgent("agent-1")!.Conversations["conv-1"].Source);
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 

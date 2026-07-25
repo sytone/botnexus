@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Vogen is pinned PrivateAssets="all" in BotNexus.Domain so the generator cannot leak into
+         the Blazor WASM payload (#2329). This project asserts on Vogen types directly, so it
+         declares its own reference rather than relying on transitive flow. -->
+    <PackageReference Include="Vogen" />
     <PackageReference Include="coverlet.collector">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

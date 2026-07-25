@@ -134,8 +134,8 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
     [Fact]
     public void SubAgent_workspace_tab_url_is_suppressed_to_conversation()
     {
-        // Register agent-1 as a sub-agent
-        _store.RegisterSession("agent-1", "session-sub-1", "signalr", "agent-subagent");
+        // #2248: a GENUINE sub-agent observer entry (immutable IsObserverAgent) suppresses Workspace.
+        SeedAgentOneAsObserver();
 
         _ctx.Services.GetRequiredService<NavigationManager>()
             .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=workspace");
@@ -172,8 +172,8 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
     [Fact]
     public void SubAgent_reports_tab_url_is_suppressed_to_conversation()
     {
-        // Register agent-1 as a sub-agent
-        _store.RegisterSession("agent-1", "session-sub-1", "signalr", "agent-subagent");
+        // #2248: a GENUINE sub-agent observer entry (immutable IsObserverAgent) suppresses Reports.
+        SeedAgentOneAsObserver();
 
         _ctx.Services.GetRequiredService<NavigationManager>()
             .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=reports");
@@ -210,6 +210,35 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1")
             .Add(c => c.ConversationId, "conv-1"));
+
+    // #2248: re-seed agent-1 as a GENUINE sub-agent observer (immutable IsObserverAgent) while
+    // preserving its seeded conversation, so tests that need a real sub-agent no longer rely on
+    // session-type poisoning (which no longer classifies a user agent as a sub-agent).
+    private void SeedAgentOneAsObserver()
+    {
+        _store.RemoveAgent("agent-1");
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            SessionType = "agent-subagent",
+            IsObserverAgent = true,
+            IsConnected = true
+        });
+        _store.SeedConversations("agent-1", [
+            new ConversationSummaryDto(
+                ConversationId: "conv-1",
+                AgentId: "agent-1",
+                Title: "General",
+                IsDefault: true,
+                Status: "Active",
+                ActiveSessionId: null,
+                BindingCount: 0,
+                CreatedAt: DateTimeOffset.UtcNow,
+                UpdatedAt: DateTimeOffset.UtcNow)
+        ]);
+        _store.SelectView("agent-1", string.Empty, SelectionSource.SubAgentView);
+    }
 
     private static string FindRepositoryRoot()
     {

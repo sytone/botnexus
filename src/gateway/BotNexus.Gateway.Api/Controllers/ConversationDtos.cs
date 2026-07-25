@@ -22,6 +22,12 @@ public sealed record AddBindingRequest(
     string? DisplayPrefix);
 
 /// <summary>Full conversation response including bindings.</summary>
+/// <remarks>
+/// <c>Kind</c> and <c>Source</c> are the two orthogonal provenance axes a client needs to render a
+/// conversation without inference (epic #2300): <c>Kind</c> is the pairing topology, <c>Source</c>
+/// is the origination trigger. Both are emitted as the enum <em>name</em>, matching the existing
+/// string convention already used for <c>Status</c> on this contract.
+/// </remarks>
 public sealed record ConversationResponse(
     string ConversationId,
     string AgentId,
@@ -36,7 +42,9 @@ public sealed record ConversationResponse(
     DateTimeOffset UpdatedAt,
     string? ModelOverride = null,
     string? ThinkingOverride = null,
-    int? ContextWindowOverride = null);
+    int? ContextWindowOverride = null,
+    string Kind = "HumanAgent",
+    string Source = "Channel");
 
 /// <summary>
 /// Request body for setting or clearing a conversation's model / thinking / context override

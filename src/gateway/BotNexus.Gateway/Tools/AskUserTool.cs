@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -129,20 +129,25 @@ public sealed class AskUserTool(
             Timeout = timeout
         };
 
-        onUpdate?.Invoke(new AgentToolResult(Array.Empty<AgentToolContent>(), request));
-
-        // Persist the pending prompt as durable conversation-scoped state so a reloaded tab, a
-        // newly-opened window, mobile that missed the live UserInputRequired event, or a gateway
-        // restart can rehydrate and resume it (#1488, #2047). Best-effort: a persistence hiccup
-        // must never break the interactive prompt itself.
-        await PersistPendingPromptAsync(request, cancellationToken).ConfigureAwait(false);
-
         // Tracks whether the wait reached an explicit terminal state (answer / cancel / timeout).
         // Only a terminal state clears the durable checkpoint; a shutdown-driven cancellation of the
         // in-memory wait must leave the checkpoint intact so a restarted gateway can resume it.
         var reachedTerminalState = false;
         try
         {
+            // The registry entry above is live pending-input state. Any failure between here and
+            // the wait resolving (e.g. the widget-emit callback throwing) must cancel that entry,
+            // otherwise the conversation stays permanently pending and silently swallows every
+            // subsequent user message (#1916). The broad try/finally below already clears the
+            // durable copy on every exit path; extend it to own the registration lifetime too.
+            onUpdate?.Invoke(new AgentToolResult(Array.Empty<AgentToolContent>(), request));
+
+            // Persist the pending prompt as durable conversation-scoped state so a reloaded tab, a
+            // newly-opened window, mobile that missed the live UserInputRequired event, or a gateway
+            // restart can rehydrate it (ask_user durability, #1488). Best-effort: a persistence hiccup
+            // must never break the interactive prompt itself.
+            await PersistPendingPromptAsync(request, cancellationToken).ConfigureAwait(false);
+
             var response = await registration.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             reachedTerminalState = true;
             return TextResult(JsonSerializer.Serialize(response, JsonOptions));
@@ -165,6 +170,15 @@ public sealed class AskUserTool(
                 RequestId = registration.RequestId,
                 WasCancelled = true
             }, JsonOptions));
+        }
+        catch
+        {
+            // Any other failure after Register (widget emit, persistence rethrow, etc.) must not
+            // leave the registry entry live -- self-heal by cancelling so the session unblocks
+            // instead of soft-locking in pending-input state (#1916, criterion 4). Re-throw so the
+            // agent loop still receives the error.
+            responseRegistry.Cancel(registration.RequestId);
+            throw;
         }
         finally
         {

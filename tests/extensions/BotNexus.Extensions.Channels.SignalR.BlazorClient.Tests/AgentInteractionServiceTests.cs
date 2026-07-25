@@ -270,8 +270,11 @@ public sealed class AgentInteractionServiceTests
         {
             ConversationId = "cron-session:cron:job-1:run",
             Title = "Cron session",
-            IsVirtualSession = true,
-            VirtualSessionKind = "cron",
+            // #2305: origin is the immutable typed Source, seeded at construction. The old
+            // virtual-session flag/kind pair is deleted. IsLocallySynthesised marks it as
+            // a client-minted transcript row so it reads SESSION history, not conversation history.
+            Source = ConversationSource.Cron,
+            IsLocallySynthesised = true,
             ActiveSessionId = "cron:job-1:run",
             HistoryLoaded = false
         };
@@ -314,8 +317,8 @@ public sealed class AgentInteractionServiceTests
             ConversationId = "cron-session:cron:job-1:run",
             Title = "Cron session",
             IsDefault = false,
-            IsVirtualSession = true,
-            VirtualSessionKind = "cron",
+            Source = ConversationSource.Cron,
+            IsLocallySynthesised = true,
             ActiveSessionId = "cron:job-1:run",
             HistoryLoaded = true
         };
@@ -365,8 +368,12 @@ public sealed class AgentInteractionServiceTests
         Assert.Equal("subagent-session:sub-1", subAgent.ActiveConversationId);
 
         var conversation = subAgent.Conversations["subagent-session:sub-1"];
-        Assert.True(conversation.IsVirtualSession);
-        Assert.Equal("subagent", conversation.VirtualSessionKind);
+        // #2305: the locally-synthesised observer row carries the immutable typed origin instead of
+        // the deleted virtual-session flag/kind pair, and renders read-only from it.
+        Assert.True(conversation.IsLocallySynthesised);
+        Assert.Equal(ConversationSource.Agent, conversation.Source);
+        Assert.Equal(ConversationKind.AgentSubAgent, conversation.Kind);
+        Assert.True(conversation.Project(SelectionSource.SubAgentView).IsReadOnly);
         Assert.Single(conversation.Messages);
         Assert.Equal("sub-agent result", conversation.Messages[0].Content);
     }
@@ -382,8 +389,8 @@ public sealed class AgentInteractionServiceTests
         {
             ConversationId = cronKey,
             Title = "Cron · cron:202",
-            IsVirtualSession = true,
-            VirtualSessionKind = "cron",
+            Source = ConversationSource.Cron,
+            IsLocallySynthesised = true,
             ActiveSessionId = sessionId,
             HistoryLoaded = true
         };
@@ -408,9 +415,9 @@ public sealed class AgentInteractionServiceTests
         {
             ConversationId = cronKey,
             Title = "Cron · stale",
-            IsVirtualSession = true,
-            VirtualSessionKind = "cron",
-            ActiveSessionId = null, // stale — no backing session
+            Source = ConversationSource.Cron,
+            IsLocallySynthesised = true,
+            ActiveSessionId = null, // stale - no backing session
             HistoryLoaded = false
         };
 
