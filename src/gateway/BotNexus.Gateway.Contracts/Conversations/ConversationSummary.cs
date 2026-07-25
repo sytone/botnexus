@@ -23,6 +23,13 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// conversation exists, orthogonal to <paramref name="Kind"/> which says who is paired with whom.
 /// Defaults to <c>Channel</c> for back-compat with rows persisted before the field existed (#2300).
 /// </param>
+/// <param name="Visibility">
+/// Who may see the conversation (<c>UserFacing</c>, <c>InspectableReadOnly</c>, or
+/// <c>InternalHidden</c>) - orthogonal to every other axis here. Lets a client filter runtime
+/// bookkeeping threads out of the user's list from a typed field instead of probing the
+/// conversation id for an <c>internal:</c> prefix. Defaults to <c>UserFacing</c> for back-compat
+/// with rows persisted before the field existed (#2340).
+/// </param>
 /// <param name="Participants">
 /// Citizen participants in this conversation — enables the portal to render a participant
 /// roster (avatar chips) in the conversation header for multi-agent sessions.
@@ -40,6 +47,7 @@ public sealed record ConversationSummary(
     string? Purpose = null,
     string Kind = "HumanAgent",
     string Source = "Channel",
+    string Visibility = "UserFacing",
     bool IsPinned = false,
     DateTimeOffset? PinnedAt = null,
     IReadOnlyList<ParticipantSummary>? Participants = null);

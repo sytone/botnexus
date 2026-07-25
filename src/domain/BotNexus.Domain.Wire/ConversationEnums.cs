@@ -99,6 +99,63 @@ public enum ConversationSource
 }
 
 /// <summary>
+/// Discriminates <em>who may see</em> a conversation - the answer to "should this row ever be
+/// rendered to a user?" - as a first-class, write-once field rather than something re-derived from
+/// a conversation-id string prefix (issue #2340, following epic #2300).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>A fifth, genuinely orthogonal axis.</b> <see cref="ConversationKind"/> encodes topology (who
+/// is talking to whom), <see cref="ConversationSource"/> encodes the trigger (why it exists),
+/// <c>Conversation.Initiator</c> encodes identity (which citizen opened it) and
+/// <see cref="ConversationStatus"/> encodes lifecycle (active or archived). None of them answers
+/// visibility: a runtime bookkeeping thread and a user's own DM can share every one of those four
+/// values and still differ on whether the sidebar should show them.
+/// </para>
+/// <para>
+/// <b>Why it exists.</b> Until #2340 the portal answered this by probing the conversation id for an
+/// <c>internal:</c> prefix. A conversation id is an opaque identifier; keying behaviour on its text
+/// is a hidden coupling between id-minting code and rendering code with nothing enforcing they
+/// agree, and the failure mode is silent in both directions (an internal thread appears in the
+/// user's sidebar, or a real conversation vanishes from it). This enum is the typed signal that
+/// replaces that probe, and it removed the last allowlisted exception from the origin-inference
+/// fence.
+/// </para>
+/// <para>
+/// <b>Write-once.</b> Stamped at creation by <c>ConversationFactory</c> and <c>init</c>-only
+/// thereafter, exactly like <see cref="ConversationSource"/>. Visibility is a property of what the
+/// conversation <em>is</em>, so no later write - and in particular no inbound event - may re-stamp
+/// it and make a hidden bookkeeping thread appear, or a user's conversation disappear.
+/// </para>
+/// </remarks>
+public enum ConversationVisibility
+{
+    /// <summary>
+    /// Shown in the user's conversation list and fully interactive (subject to the independent
+    /// read-only gating derived from <see cref="ConversationSource"/>/<see cref="ConversationKind"/>).
+    /// Kept first so the enum's default-value contract makes this the back-compat value: every row
+    /// persisted before this field existed deserializes to <c>UserFacing</c> with no migration
+    /// error, the same contract <see cref="ConversationSource.Channel"/> = 0 already uses.
+    /// </summary>
+    UserFacing = 0,
+
+    /// <summary>
+    /// Visible to the user but never writable: an observer/audit view of a conversation the user may
+    /// inspect but is not a participant in. Distinct from <see cref="UserFacing"/> so a surface can
+    /// render the row while suppressing every write affordance, and distinct from
+    /// <see cref="InternalHidden"/> so the row is not silently dropped from the list.
+    /// </summary>
+    InspectableReadOnly = 1,
+
+    /// <summary>
+    /// Runtime bookkeeping that must never be rendered to a user - the internal threads the portal
+    /// used to suppress with an <c>internal:</c> id-prefix probe. A conversation carrying this value
+    /// is filtered out of user-facing listings entirely.
+    /// </summary>
+    InternalHidden = 2
+}
+
+/// <summary>
 /// Controls how a channel binding participates in message fan-out.
 /// </summary>
 public enum BindingMode

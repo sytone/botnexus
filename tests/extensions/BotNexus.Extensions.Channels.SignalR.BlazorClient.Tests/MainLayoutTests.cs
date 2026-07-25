@@ -250,18 +250,18 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     /// <summary>
-    /// #2305: hiding runtime-internal threads is an explicit <c>internal:</c> id-NAMESPACE rule, not
-    /// origin inference. The mutable virtual-session-kind "internal" path that used to also
-    /// hide rows is deleted with the flag; this asserts the surviving namespace rule still hides an
-    /// internal thread while a normal conversation stays visible.
+    /// #2340: hiding runtime-internal threads reads the first-class, server-stamped
+    /// <c>ConversationVisibility</c>. The <c>internal:</c> id-prefix probe this replaced is gone and
+    /// fenced; note the id here is deliberately a plain one, proving the hiding decision no longer
+    /// depends on the id text at all.
     /// </summary>
     [Fact]
-    public void Internal_namespaced_conversation_is_hidden_from_user_conversation_list()
+    public void Internal_hidden_conversation_is_hidden_from_user_conversation_list()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("internal:sub-agent-thread", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("c-2", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Channel", "InternalHidden")
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
@@ -271,29 +271,54 @@ public sealed class MainLayoutTests : IDisposable
         Assert.DoesNotContain("Internal sub-agent", cut.Markup);
     }
 
+    /// <summary>
+    /// #2340 regression guard in the opposite direction: an <c>internal:</c>-shaped id with the
+    /// back-compat default visibility must now STAY visible. Under the deleted prefix probe this row
+    /// vanished purely because of how its id happened to be spelled - the silent failure mode that
+    /// motivated replacing the probe with a typed field.
+    /// </summary>
     [Fact]
-    public void Internal_prefix_conversation_is_hidden_from_user_conversation_list()
+    public void Internal_prefixed_id_with_default_visibility_is_still_listed()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("internal:sub-1", "a-1", "Legit id-shaped thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
 
         Assert.Contains("General", cut.Markup);
-        Assert.DoesNotContain("Internal routing thread", cut.Markup);
+        Assert.Contains("Legit id-shaped thread", cut.Markup);
+    }
+
+    /// <summary>
+    /// #2340: <c>InspectableReadOnly</c> is visible-but-not-writable, so it must still be LISTED.
+    /// Only <c>InternalHidden</c> removes a row; write gating is the independent job of
+    /// <c>ConversationRenderProjection</c>. Collapsing the two would silently hide audit views.
+    /// </summary>
+    [Fact]
+    public void Inspectable_read_only_conversation_is_still_listed()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Observer view", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Channel", "InspectableReadOnly")
+        ]);
+        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+
+        var cut = RenderLayout();
+
+        Assert.Contains("Observer view", cut.Markup);
     }
 
     [Fact]
-    public void Internal_conversations_are_not_rendered_as_selectable_conversation_rows()
+    public void Internal_hidden_conversations_are_not_rendered_as_selectable_conversation_rows()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
-            new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            new ConversationSummaryDto("c-2", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Channel", "InternalHidden")
         ]);
         _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
 

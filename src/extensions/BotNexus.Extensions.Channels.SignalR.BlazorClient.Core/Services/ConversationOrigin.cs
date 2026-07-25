@@ -53,4 +53,24 @@ public static class ConversationOrigin
         && Enum.IsDefined(parsed)
             ? parsed
             : ConversationKind.HumanAgent;
+
+    /// <summary>
+    /// Parses the <c>visibility</c> field of a conversation payload (#2340). Unknown/empty values
+    /// return <see cref="ConversationVisibility.UserFacing"/>, matching the server's default-value
+    /// contract.
+    /// </summary>
+    /// <remarks>
+    /// The fallback deliberately fails <em>open</em> (visible) rather than closed. A client older
+    /// than its server would otherwise interpret a newly-added visibility value as "unknown" and, if
+    /// that meant hidden, silently empty the user's conversation list on a server upgrade. An
+    /// unexpectedly visible row is a cosmetic defect; an unexpectedly missing one looks like data
+    /// loss.
+    /// </remarks>
+    /// <param name="value">The raw wire value, e.g. <c>"InternalHidden"</c>. Case-insensitive.</param>
+    /// <returns>The parsed visibility, or <see cref="ConversationVisibility.UserFacing"/> when unrecognised.</returns>
+    public static ConversationVisibility ParseVisibility(string? value) =>
+        Enum.TryParse<ConversationVisibility>(value, ignoreCase: true, out var parsed)
+        && Enum.IsDefined(parsed)
+            ? parsed
+            : ConversationVisibility.UserFacing;
 }

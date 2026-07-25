@@ -198,6 +198,27 @@ public sealed record Conversation
     /// </remarks>
     public string? SpawningToolCallId { get; init; }
 
+    /// Gets who may see this conversation - whether it is a user-facing row, a read-only inspectable
+    /// view, or runtime bookkeeping that must never be rendered. Stamped once by the origin path
+    /// that mints the conversation and <c>init</c>-only thereafter, exactly like <see cref="Source"/>
+    /// (issue #2340).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Defaults to <see cref="ConversationVisibility.UserFacing"/> so every row persisted before this
+    /// field existed deserializes unchanged and stays visible.
+    /// </para>
+    /// <para>
+    /// Orthogonal to the other four axes. <see cref="Kind"/> is topology, <see cref="Source"/> is the
+    /// trigger, <see cref="Initiator"/> is identity and <see cref="Status"/> is lifecycle; none of
+    /// them answers "should a user ever see this row?". This field replaces the last surviving
+    /// id-prefix probe (a client-side <c>internal:</c> conversation-id test): behaviour keyed on the
+    /// TEXT of an opaque identifier is a hidden coupling between id-minting and rendering code that
+    /// fails silently in both directions.
+    /// </para>
+    /// </remarks>
+    public ConversationVisibility Visibility { get; init; } = ConversationVisibility.UserFacing;
+
     /// <summary>Gets or sets whether this conversation is pinned to the top of the list.</summary>
     public bool IsPinned { get; set; }
 

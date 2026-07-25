@@ -147,6 +147,7 @@ public sealed class ConversationsController : ControllerBase
             c.Purpose,
             c.Kind.ToString(),
             c.Source.ToString(),
+            c.Visibility.ToString(),
             c.IsPinned,
             c.PinnedAt,
             c.Participants.Select(p => new ParticipantSummary(
@@ -549,7 +550,8 @@ public sealed class ConversationsController : ControllerBase
         ThinkingOverride: c.ThinkingOverride,
         ContextWindowOverride: c.ContextWindowOverride,
         Kind: c.Kind.ToString(),
-        Source: c.Source.ToString());
+        Source: c.Source.ToString(),
+        Visibility: c.Visibility.ToString());
 
     private static BindingResponse ToBindingResponse(ChannelBinding b) => new(
         BindingId: b.BindingId.Value,

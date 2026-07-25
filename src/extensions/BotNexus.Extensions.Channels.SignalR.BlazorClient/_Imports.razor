@@ -12,3 +12,8 @@
 @using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components
 
 @using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.Abstractions
+@* #2340: the conversation wire enums have a single canonical declaration in
+   BotNexus.Gateway.Abstractions.Models (see BlazorClient.Core.csproj). Imported here as type
+   ALIASES rather than a whole-namespace using so unrelated same-named types in that namespace do
+   not collide with the client's own models. *@
+@using ConversationVisibility = BotNexus.Gateway.Abstractions.Models.ConversationVisibility

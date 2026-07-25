@@ -59,6 +59,7 @@ internal static class ConversationRowMapper
             // #2338: NULL (the value for every pre-existing row) means "top-level conversation".
             ParentConversationId = ParseOptionalConversationId(GetOptionalString(reader, "parent_conversation_id")),
             SpawningToolCallId = GetOptionalString(reader, "spawning_tool_call_id"),
+            Visibility = ParseConversationVisibility(GetOptionalString(reader, "visibility")),
             WorldId = GetNullableString(reader, "world_id") ?? string.Empty,
             IsPinned = !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             PinnedAt = GetNullableTimestamp(reader, "pinned_at"),
@@ -96,6 +97,7 @@ internal static class ConversationRowMapper
             GetNullableString(reader, "purpose"),
             GetNullableString(reader, "kind") ?? ConversationKind.HumanAgent.ToString(),
             GetOptionalString(reader, "source") ?? ConversationSource.Channel.ToString(),
+            GetOptionalString(reader, "visibility") ?? ConversationVisibility.UserFacing.ToString(),
             !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             GetNullableTimestamp(reader, "pinned_at"),
             roster);
@@ -216,6 +218,15 @@ internal static class ConversationRowMapper
     // rather than defensive tidiness.
     private static ConversationId? ParseOptionalConversationId(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : ConversationId.From(value);
+    // Back-compat contract (#2340): a NULL/absent/garbage `visibility` value must hydrate as
+    // UserFacing rather than throw, so every conversation row persisted before the column existed
+    // still loads AND stays visible. Failing closed here would silently vacuum a user's whole
+    // conversation list on upgrade.
+    private static ConversationVisibility ParseConversationVisibility(string? value)
+        => Enum.TryParse<ConversationVisibility>(value, ignoreCase: true, out var parsed)
+            && Enum.IsDefined(parsed)
+            ? parsed
+            : ConversationVisibility.UserFacing;
 
     private static BindingMode ParseBindingMode(string? value)
         => Enum.TryParse<BindingMode>(value, ignoreCase: true, out var parsed)
