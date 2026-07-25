@@ -102,10 +102,21 @@ public sealed class WasmPayloadDependencyArchitectureTests
         // The single shared library.
         ["BotNexus.Extensions.Channels.SignalR.BlazorClient.Core"] =
             "Shared services, contracts, and state models for both Blazor clients. This is the ONLY " +
-            "shared library in the payload and it is deliberately dependency-free: it must not gain " +
-            "project references. If the client needs to share a server-owned contract type, extract " +
-            "a tiny zero-dependency wire assembly rather than referencing the server assembly " +
-            "(see #2329 proposal 3).",
+            "shared library in the payload. Its one permitted project reference is " +
+            "BotNexus.Domain.Wire (below) - the sanctioned shape from #2329 proposal 3. It must not " +
+            "gain any other project reference: if the client needs a server-owned contract type, " +
+            "move that type into the zero-dependency wire assembly rather than referencing the " +
+            "server assembly.",
+
+        // The zero-dependency wire assembly, added by #2300/#2308.
+        ["BotNexus.Domain.Wire"] =
+            "Enum-only, dependency-free wire contracts (ConversationEnums) shared by the gateway and " +
+            "both Blazor WASM clients. This is #2329 proposal 3 realised: the clients need the " +
+            "SINGLE canonical declaration of the conversation wire enums, and referencing " +
+            "BotNexus.Domain to get them would drag Vogen.SharedTypes into the browser payload. " +
+            "Cost is one tiny assembly with no transitive closure. It MUST stay dependency-free - " +
+            "its csproj carries the same prohibition, and adding a PackageReference or " +
+            "ProjectReference there would silently widen the payload for every user.",
     };
 
     /// <summary>
@@ -358,6 +369,51 @@ public sealed class WasmPayloadDependencyArchitectureTests
             "Positive pin: the allowlisted SignalR client must be accepted.");
         IsExpectedWasmOutputAssembly("BotNexus.Extensions.Channels.SignalR.BlazorClient.Core").ShouldBeTrue(
             "Positive pin: the shared client library must be accepted.");
+        IsExpectedWasmOutputAssembly("BotNexus.Domain.Wire").ShouldBeTrue(
+            "Positive pin: the zero-dependency wire assembly is a sanctioned payload member (#2345). " +
+            "Note this is deliberately NOT prefix-based - BotNexus.Domain itself is still rejected " +
+            "above, so the allowance cannot widen into the server graph.");
+    }
+
+    /// <summary>
+    /// The wire assembly is only an acceptable payload member because it has no transitive closure.
+    /// Allowlisting it (#2345) removes the closure fence's objection, so this test supplies the
+    /// replacement guarantee: if anyone adds a reference to BotNexus.Domain.Wire, the browser payload
+    /// silently grows for every user and the allowlist justification becomes a lie.
+    /// </summary>
+    [Fact]
+    public void DomainWire_StaysDependencyFree()
+    {
+        const string WireProject = "BotNexus.Domain.Wire";
+
+        // Vacuity pin: this test exists solely to police the BotNexus.Domain.Wire allowlist entry.
+        // If that entry is ever removed, this test must be removed with it rather than left quietly
+        // passing and guarding nothing.
+        AllowedProjectsInWasmClosure.ShouldContainKey(
+            WireProject,
+            $"{WireProject} is no longer allowlisted, so this guard has nothing to police. Remove " +
+            "this test alongside the allowlist entry - do not leave it passing vacuously.");
+
+        var csproj = Path.Combine(RepoRoot, "src", "domain", WireProject, WireProject + ".csproj");
+        File.Exists(csproj).ShouldBeTrue(
+            $"BotNexus.Domain.Wire project not found at {csproj}. It is allowlisted into the WASM " +
+            "payload on the strict condition that it stays dependency-free; if it moved or was " +
+            "renamed, update this fence and its allowlist entry together.");
+
+        var document = XDocument.Load(csproj);
+        var references = document
+            .Descendants()
+            .Where(element =>
+                element.Name.LocalName is "PackageReference" or "ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value ?? "(no Include)")
+            .ToList();
+
+        references.ShouldBeEmpty(
+            "BotNexus.Domain.Wire must stay dependency-free. It is downloaded by every browser as " +
+            "part of the Blazor WASM payload, and it is allowlisted (#2345) only because it has an " +
+            "empty transitive closure. A reference here drags its whole graph into the payload. Put " +
+            "the type in BotNexus.Domain instead. See #2329.\nReferences found: " +
+            string.Join("; ", references));
     }
 
     [Fact]
