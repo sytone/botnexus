@@ -3,6 +3,6 @@
   "name": "BotNexus QMD Knowledge Base",
   "description": "Optional local knowledge base search with BM25, vector, and hybrid modes. Disabled by default; set extensions.botnexus-qmd.enabled: true per agent to enable.",
   "version": "1.1.0",
-  "optional": true,
-  "enabledByDefault": false
+  "entryAssembly": "BotNexus.Extensions.Qmd.dll",
+  "extensionTypes": ["tool"]
 }

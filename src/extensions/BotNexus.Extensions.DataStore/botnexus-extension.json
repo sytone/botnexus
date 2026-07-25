@@ -2,5 +2,7 @@
   "id": "botnexus-data-store",
   "name": "BotNexus Data Store",
   "description": "Per-agent structured SQLite data store with JSON ingestion, SQL SELECT queries, and schema inference.",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.DataStore.dll",
+  "extensionTypes": ["tool"]
 }
