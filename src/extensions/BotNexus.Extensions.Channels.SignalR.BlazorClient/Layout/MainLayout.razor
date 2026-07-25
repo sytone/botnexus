@@ -26,8 +26,10 @@
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
             </button>
-            <span class="banner-logo">&#x1F916;</span>
-            <span class="banner-title">BotNexus</span>
+            <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home" @onclick="CloseSidebar">
+                <span class="banner-logo">&#x1F916;</span>
+                <span class="banner-title">BotNexus</span>
+            </a>
             <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;</button>
             @if (Prefs.Current.DebugModeEnabled)
             {
@@ -228,7 +230,7 @@
 
     private RenderFragment RenderActivityNav() => __builder =>
     {
-        <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+        <a href="activity" class="sidebar-nav-item @NavClass("activity")" data-testid="nav-activity" @onclick="OnNavClick">&#x1F4CA; Activity</a>
     };
 
     private RenderFragment RenderToolsNav() => __builder =>
@@ -607,12 +609,11 @@
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
 
-        // The Activity dashboard owns the root landing route ("" or "activity").
+        // #2037: the Home page now owns the root landing route, so Activity is highlighted only on
+        // its own /activity route (it used to also claim "" when it was the root page).
         if (string.Equals(page, "activity", StringComparison.OrdinalIgnoreCase))
         {
-            return uri == "" || uri.Equals("activity", StringComparison.OrdinalIgnoreCase)
-                ? "active"
-                : "";
+            return uri.Equals("activity", StringComparison.OrdinalIgnoreCase) ? "active" : "";
         }
 
         // The Chat section covers the legacy /chat[/...] routes and the canonical route-owned
