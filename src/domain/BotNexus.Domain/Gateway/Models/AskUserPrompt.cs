@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -17,14 +19,26 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// <see cref="AskUserInputType"/> so an unrecognised future input type degrades to a text
 /// prompt instead of throwing during deserialization at the channel edge.
 /// </para>
+/// <para>
+/// <see cref="ConversationId"/> is the typed <see cref="BotNexus.Domain.Primitives.ConversationId"/>
+/// value object rather than a raw string, matching <c>Conversation.ConversationId</c> and
+/// <c>AskUserRequest.ConversationId</c>. It is nullable rather than <c>required</c> because
+/// reconciliation can legitimately run before a conversation id is known - flattened event metadata
+/// may omit it and the structured fallback may be a partial payload. Nullable is the established
+/// codebase idiom for an optional conversation id (see <c>InboundMessageContext.RequestedConversationId</c>
+/// and <c>CronJob.ConversationId</c>); the Vogen <c>default</c> sentinel is prohibited (VOG009).
+/// </para>
 /// </remarks>
 public sealed record AskUserPrompt
 {
     /// <summary>Correlation identifier used when resolving this prompt.</summary>
     public required string RequestId { get; init; }
 
-    /// <summary>Conversation that owns the prompt and can satisfy it from any bound channel.</summary>
-    public required string ConversationId { get; init; }
+    /// <summary>
+    /// Conversation that owns the prompt and can satisfy it from any bound channel. Null when
+    /// neither reconciliation source supplied one.
+    /// </summary>
+    public ConversationId? ConversationId { get; init; }
 
     /// <summary>Prompt text presented to the user.</summary>
     public required string Prompt { get; init; }

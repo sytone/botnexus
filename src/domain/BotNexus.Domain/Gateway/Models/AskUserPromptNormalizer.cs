@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -52,7 +53,10 @@ public static class AskUserPromptNormalizer
         prompt = null;
 
         var requestId = GetRequiredString(metadata, "requestId") ?? fallback?.RequestId;
-        var conversationId = GetRequiredString(metadata, "conversationId") ?? fallback?.ConversationId;
+        // Pattern-matched rather than `?.Value` so this reads the optional prompt id without
+        // the null-conditional shape the P9-B-2 session fence bans repo-wide.
+        var fallbackConversationId = fallback is { ConversationId: { } fallbackId } ? fallbackId.Value : null;
+        var conversationId = GetRequiredString(metadata, "conversationId") ?? fallbackConversationId;
         var promptText = GetRequiredString(metadata, "prompt") ?? fallback?.Prompt;
         var inputType = GetRequiredString(metadata, "inputType") ?? fallback?.InputType;
 
@@ -69,7 +73,9 @@ public static class AskUserPromptNormalizer
         prompt = new AskUserPrompt
         {
             RequestId = requestId,
-            ConversationId = conversationId ?? string.Empty,
+            // Left null when neither source carried an id, rather than forced through
+            // From(string.Empty) which the ConversationId validator rejects.
+            ConversationId = conversationId is null ? null : ConversationId.From(conversationId),
             Prompt = promptText,
             InputType = inputType,
             Choices = ParseChoices(metadata) ?? fallback?.Choices,
@@ -91,7 +97,7 @@ public static class AskUserPromptNormalizer
     /// <returns><c>false</c> when the JSON is missing, malformed, or lacks required fields.</returns>
     public static bool TryBuildFromPersistedJson(
         string? json,
-        string conversationId,
+        ConversationId? conversationId,
         [NotNullWhen(true)] out AskUserPrompt? prompt)
     {
         prompt = null;
@@ -122,7 +128,7 @@ public static class AskUserPromptNormalizer
         // being hydrated so the prompt always binds to the thread the user is looking at.
         var resolvedConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
             ? conversationId
-            : payload.ConversationId!;
+            : ConversationId.From(payload.ConversationId!);
 
         prompt = new AskUserPrompt
         {
@@ -282,7 +288,7 @@ public static class AskUserPromptProjection
     public static AskUserPrompt ToPrompt(this AskUserRequest request) => new()
     {
         RequestId = request.RequestId,
-        ConversationId = request.ConversationId.Value,
+        ConversationId = request.ConversationId,
         Prompt = request.Prompt,
         InputType = request.InputType.ToString(),
         Choices = request.Choices is { Count: > 0 }

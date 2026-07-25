@@ -20,7 +20,7 @@ public sealed class AskUserPromptNormalizerTests
         var fallback = new AskUserPrompt
         {
             RequestId = "from-payload",
-            ConversationId = "conv-payload",
+            ConversationId = ConversationId.From("conv-payload"),
             Prompt = "payload prompt",
             InputType = "FreeForm"
         };
@@ -31,7 +31,7 @@ public sealed class AskUserPromptNormalizerTests
 
         AskUserPromptNormalizer.TryReconcile(metadata, fallback, out var prompt).ShouldBeTrue();
         prompt!.RequestId.ShouldBe("from-metadata");
-        prompt.ConversationId.ShouldBe("conv-metadata");
+        prompt.ConversationId.ShouldBe(ConversationId.From("conv-metadata"));
         prompt.Prompt.ShouldBe("metadata prompt");
         prompt.InputType.ShouldBe("SingleChoice");
     }
@@ -42,7 +42,7 @@ public sealed class AskUserPromptNormalizerTests
         var fallback = new AskUserPrompt
         {
             RequestId = "req-1",
-            ConversationId = "conv-1",
+            ConversationId = ConversationId.From("conv-1"),
             Prompt = "Pick one",
             InputType = "SingleChoice",
             Choices = [new AskUserPromptChoice("a", "Option A")],
@@ -91,9 +91,9 @@ public sealed class AskUserPromptNormalizerTests
              "allowFreeForm":true,"timeout":"00:05:00"}
             """;
 
-        AskUserPromptNormalizer.TryBuildFromPersistedJson(json, "conv-fallback", out var prompt).ShouldBeTrue();
+        AskUserPromptNormalizer.TryBuildFromPersistedJson(json, ConversationId.From("conv-fallback"), out var prompt).ShouldBeTrue();
         prompt!.RequestId.ShouldBe("req-9");
-        prompt.ConversationId.ShouldBe("conv-9");
+        prompt.ConversationId.ShouldBe(ConversationId.From("conv-9"));
         prompt.Choices!.Count.ShouldBe(2);
         prompt.Choices[1].Label.ShouldBe("no");
         prompt.AllowFreeForm.ShouldBeTrue();
@@ -105,8 +105,38 @@ public sealed class AskUserPromptNormalizerTests
     {
         const string json = """{"requestId":"r","prompt":"p","inputType":"FreeForm"}""";
 
-        AskUserPromptNormalizer.TryBuildFromPersistedJson(json, "conv-hydrating", out var prompt).ShouldBeTrue();
-        prompt!.ConversationId.ShouldBe("conv-hydrating");
+        AskUserPromptNormalizer.TryBuildFromPersistedJson(json, ConversationId.From("conv-hydrating"), out var prompt).ShouldBeTrue();
+        prompt!.ConversationId.ShouldBe(ConversationId.From("conv-hydrating"));
+    }
+
+    /// <summary>
+    /// The seam persists an <see cref="AskUserRequest"/> and rehydrates it through
+    /// <c>PendingAskUserJson</c>, so the typed <see cref="ConversationId"/> must survive a
+    /// System.Text.Json round-trip. Vogen's <c>Conversions.SystemTextJson</c> generates the
+    /// converter that writes the id as a bare JSON string, which is exactly what the loose
+    /// persisted payload shape reads back - no bespoke converter is involved (#2334 review).
+    /// </summary>
+    [Fact]
+    public void Typed_conversation_id_round_trips_through_the_persisted_ask_user_payload()
+    {
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var request = new AskUserRequest
+        {
+            RequestId = "req-rt",
+            ConversationId = ConversationId.From("c_roundtrip"),
+            SessionId = SessionId.From("sess-rt"),
+            AgentId = AgentId.From("agent-rt"),
+            Prompt = "Continue?",
+            InputType = AskUserInputType.FreeForm
+        };
+
+        var json = JsonSerializer.Serialize(request, options);
+
+        // Vogen serializes the value object as a bare string, not as a wrapper object.
+        json.ShouldContain("\"conversationId\":\"c_roundtrip\"");
+
+        AskUserPromptNormalizer.TryBuildFromPersistedJson(json, ConversationId.From("c_other"), out var prompt).ShouldBeTrue();
+        prompt!.ConversationId.ShouldBe(ConversationId.From("c_roundtrip"));
     }
 
     [Theory]
@@ -115,7 +145,7 @@ public sealed class AskUserPromptNormalizerTests
     [InlineData("not json at all")]
     [InlineData("""{"prompt":"missing request id and input type"}""")]
     public void PersistedJson_returns_false_for_missing_or_unusable_payloads(string? json)
-        => AskUserPromptNormalizer.TryBuildFromPersistedJson(json, "conv-1", out _).ShouldBeFalse();
+        => AskUserPromptNormalizer.TryBuildFromPersistedJson(json, ConversationId.From("conv-1"), out _).ShouldBeFalse();
 
     [Fact]
     public void AskUserRequest_projects_onto_the_shared_prompt_model()
@@ -135,7 +165,7 @@ public sealed class AskUserPromptNormalizerTests
         var prompt = request.ToPrompt();
 
         prompt.RequestId.ShouldBe("req-p");
-        prompt.ConversationId.ShouldBe("conv-p");
+        prompt.ConversationId.ShouldBe(ConversationId.From("conv-p"));
         prompt.InputType.ShouldBe("MultipleChoice");
         prompt.AllowMultiple.ShouldBeTrue();
         prompt.HasChoices.ShouldBeTrue();
@@ -149,7 +179,7 @@ public sealed class AskUserPromptNormalizerTests
         var prompt = new AskUserPrompt
         {
             RequestId = "r",
-            ConversationId = "c",
+            ConversationId = ConversationId.From("c"),
             Prompt = "Pick",
             InputType = "SingleChoice",
             Choices = [new AskUserPromptChoice("staging", "Staging"), new AskUserPromptChoice("prod", "Production")]
@@ -168,7 +198,7 @@ public sealed class AskUserPromptNormalizerTests
         var prompt = new AskUserPrompt
         {
             RequestId = "r",
-            ConversationId = "c",
+            ConversationId = ConversationId.From("c"),
             Prompt = "Pick any",
             InputType = "MultipleChoice",
             Choices = [new AskUserPromptChoice("a", "A"), new AskUserPromptChoice("b", "B")],
@@ -188,7 +218,7 @@ public sealed class AskUserPromptNormalizerTests
         var prompt = new AskUserPrompt
         {
             RequestId = "r",
-            ConversationId = "c",
+            ConversationId = ConversationId.From("c"),
             Prompt = "What is the deploy tag?",
             InputType = "FreeForm"
         };

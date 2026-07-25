@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -52,13 +53,22 @@ public static class AskUserPromptFactory
     /// <param name="json">Raw persisted <c>AskUserRequest</c> JSON, or null/empty when no prompt is pending.</param>
     /// <param name="conversationId">The conversation being hydrated, used when the payload omits its own id.</param>
     /// <param name="prompt">The reconstructed prompt state on success.</param>
+    /// <remarks>
+    /// The raw string is parsed into the typed <see cref="BotNexus.Domain.Primitives.ConversationId"/>
+    /// here, at the client edge, because the client's own view models still address conversations by
+    /// string key. Everything past this boundary is typed.
+    /// </remarks>
     public static bool TryBuildFromPersistedJson(
         string? json,
         string conversationId,
         [NotNullWhen(true)] out AskUserPromptState? prompt)
     {
         prompt = null;
-        if (!AskUserPromptNormalizer.TryBuildFromPersistedJson(json, conversationId, out var normalized))
+        var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
+            ? (ConversationId?)null
+            : ConversationId.From(conversationId);
+
+        if (!AskUserPromptNormalizer.TryBuildFromPersistedJson(json, typedConversationId, out var normalized))
             return false;
 
         prompt = ToState(normalized);
@@ -80,7 +90,9 @@ public static class AskUserPromptFactory
         return new AskUserPrompt
         {
             RequestId = payload.RequestId ?? string.Empty,
-            ConversationId = payload.ConversationId ?? string.Empty,
+            ConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
+                ? null
+                : ConversationId.From(payload.ConversationId),
             Prompt = payload.Prompt ?? string.Empty,
             InputType = payload.InputType ?? string.Empty,
             Choices = payload.Choices is { Count: > 0 }
@@ -101,7 +113,10 @@ public static class AskUserPromptFactory
     private static AskUserPromptState ToState(AskUserPrompt prompt) => new()
     {
         RequestId = prompt.RequestId,
-        ConversationId = prompt.ConversationId,
+        // The client view model keys conversations by string; unwrap at this last edge only.
+        // Pattern-matched rather than `?.Value` to avoid the null-conditional shape the P9-B-2
+        // session fence bans repo-wide.
+        ConversationId = prompt is { ConversationId: { } promptConversationId } ? promptConversationId.Value : string.Empty,
         Prompt = prompt.Prompt,
         InputType = prompt.InputType,
         Choices = prompt.Choices?

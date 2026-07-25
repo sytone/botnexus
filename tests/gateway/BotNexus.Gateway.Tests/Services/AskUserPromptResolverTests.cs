@@ -247,7 +247,7 @@ public sealed class AskUserPromptResolverTests
             var matched = AskUserPromptTextRenderer.MatchChoice(prompt, reply);
             return resolver.ResolveAsync(new AskUserSubmission
             {
-                ConversationId = ConversationId.From(prompt.ConversationId),
+                ConversationId = prompt.ConversationId!.Value,
                 RequestId = prompt.RequestId,
                 SelectedValues = matched is null ? null : [matched],
                 FreeFormText = matched is null ? reply : null,
