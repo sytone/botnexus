@@ -109,11 +109,14 @@ nav:
       - API Reference: api-reference.md
       - REST API Reference:
           - Overview: api/README.md
+          - Agents: api/agents.md
           - Conversations: api/conversations.md
           - Cron: api/cron.md
           - Satellites: api/satellites.md
+          - Sessions: api/sessions.md
           - Webhooks: api/webhooks.md
           - Tools: api/tools.md
+      - SignalR Hub Reference: api/signalr.md
       - WebSocket Protocol: websocket-protocol.md
   - Architecture:
       - arc42 Overview: architecture/README.md
