@@ -81,11 +81,22 @@ var resolvedConfigPath = string.IsNullOrWhiteSpace(platformConfigPath)
 // eagerly loads (and re-loads on change) each source, and a parse failure there escapes on a
 // background thread which would crash the host. If the file is invalid we skip adding it to the
 // pipeline entirely and the gateway runs on defaults until the file is fixed and the host restarts.
+//
+// #2358: the startup check above is startup-ONLY. Once the source is in the pipeline with
+// reloadOnChange: true, a LATER corruption (partial write, hand edit, disk fault) hits
+// FileConfigurationProvider.Load on the file-watcher thread, which clears the data and rethrows an
+// InvalidDataException that terminates the running host. AddResilientJsonFile registers a provider
+// that validates the candidate BEFORE applying it and, on failure, rejects it and keeps serving the
+// last-known-good configuration while logging a clear error.
 if (IsValidJsonFile(resolvedConfigPath))
 {
     try
     {
-        builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+        builder.Configuration.AddResilientJsonFile(
+            resolvedConfigPath,
+            optional: true,
+            reloadOnChange: true,
+            onLoadFailure: (message, ex) => Log.Error(ex, "{Message}", message));
     }
     catch (Exception ex)
     {
