@@ -7,12 +7,18 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Gateway.Dispatching;
 
 /// <summary>
-/// Default <see cref="IInboundMessageOrchestrator"/> that owns the per-session
+/// Default <see cref="IInboundMessageOrchestrator"/> that owns the per-isolation-unit
 /// FIFO queue, applies bounded backpressure, and delegates per-message processing
 /// to an <see cref="IInboundMessageProcessor"/>. Migrated from the queue plumbing
 /// formerly embedded in <c>GatewayHost</c> so every transport — channel adapters,
 /// SignalR hubs, REST controllers — can share the same serialisation guarantee.
 /// </summary>
+/// <remarks>
+/// The unit of isolation is defined by <see cref="InboundIsolationKey"/>: the canonical
+/// conversation when the delivery names one, otherwise the session, otherwise the
+/// channel composite (#2123). Everything mapping to one key runs strictly FIFO; distinct
+/// keys run in parallel.
+/// </remarks>
 public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestrator, IChannelDispatcher, IAsyncDisposable
 {
     /// <summary>Default bounded-channel capacity for per-session queues.</summary>
@@ -127,19 +133,19 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     }
 
     /// <summary>
-    /// Derives the per-session queue key. When the inbound message carries a
-    /// <see cref="InboundMessageRoutingHints.RequestedSessionId"/> we use that
-    /// directly so the same logical session always lands on the same queue
-    /// regardless of channel address. Otherwise we fall back to channel-type
-    /// + channel-address — matching the legacy <c>GatewayHost.GetQueueKey</c>.
+    /// Derives the queue key by delegating to <see cref="InboundIsolationKey"/>, the
+    /// single explicit definition of the inbound unit of isolation.
     /// </summary>
+    /// <remarks>
+    /// This method deliberately holds no policy of its own. Before #2123 the rule was
+    /// inlined here as <c>RequestedSessionId ?? channelType:channelAddress</c>, which
+    /// left the isolation unit implicit and, for webhooks, wrong: it keyed on the
+    /// registration id, so two registrations pinned to one conversation ran on separate
+    /// queues and raced that conversation's <c>active_session_id</c>. The rule and its
+    /// rationale now live in one documented, directly-tested place.
+    /// </remarks>
     private static string GetQueueKey(InboundMessage message)
-    {
-        var hints = InboundMessageRoutingHints.FromMessage(message);
-        return hints.RequestedSessionId is { } sid
-            ? sid.Value
-            : $"{message.ChannelType}:{message.ChannelAddress}";
-    }
+        => InboundIsolationKey.ForMessage(message).Value;
 
     /// <summary>
     /// Sends a busy-feedback message back through the originating channel

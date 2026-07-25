@@ -297,6 +297,46 @@ established on the registration and reused for all subsequent runs.
 
 ---
 
+## Concurrency policy
+
+Webhook delivery follows one explicit rule:
+
+> **The canonical conversation is the unit of isolation.**
+
+A conversation owns its `active_session_id`, message history, pending `ask_user`
+state, todo/canvas state and finalizer writes. Two agent turns running at once in
+one conversation would stomp all of it, so the gateway serializes them instead.
+
+What this means in practice:
+
+- **One canonical conversation per registration.** Each registration lazily pins
+  exactly one conversation and reuses it for every delivery.
+- **One stable active session** per registration/conversation for as long as that
+  session remains reusable. Each run records the session it resolved to.
+- **Deliveries sharing a conversation are FIFO serialized** - including deliveries
+  arriving through *different* registrations that are pinned to the same
+  conversation. Ordering follows arrival order; turns never overlap.
+- **A run is an execution record, not a conversation.** Every delivery gets its own
+  run ID and status, but runs never materialize as sidebar conversations.
+- **Parallelism requires separate conversations.** Deliveries to different
+  conversations run concurrently. If you need true parallel processing, use
+  separate conversations - never concurrent sessions over one conversation.
+
+### How this applies per response mode
+
+| Mode | Isolation |
+| --- | --- |
+| `async` | Serialized per conversation. The 202 returns immediately; the queued turn still waits its place in the conversation's FIFO order. |
+| `sync` | Serialized per conversation. The connection is held while the turn waits its turn and then executes, so a busy conversation makes a sync call wait. |
+| `callback` | Serialized per conversation, identical to `async`. The callback fires after that delivery's turn completes. |
+| `agentAction: false` | No agent turn runs, so the delivery never enters the queue and is outside the isolation boundary entirely. |
+
+> **Sync mode and busy conversations.** Because sync holds the connection while
+> queued, a backlog on a shared conversation counts against the 120s sync timeout.
+> Use `async` for high-volume registrations, or give them their own conversations.
+
+---
+
 ## Store-only delivery (`agentAction: false`)
 
 Set `agentAction` to `false` to record the message **without** triggering an agent

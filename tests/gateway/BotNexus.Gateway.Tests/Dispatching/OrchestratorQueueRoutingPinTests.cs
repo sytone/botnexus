@@ -35,7 +35,7 @@ public sealed class OrchestratorQueueRoutingPinTests
 
         var key = InvokeGetQueueKey(message);
 
-        key.ShouldBe("sess-typed-1");
+        key.ShouldBe("session:sess-typed-1");
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class OrchestratorQueueRoutingPinTests
 
         var key = InvokeGetQueueKey(message);
 
-        key.ShouldBe("web:conv-1");
+        key.ShouldBe("channel:web:conv-1");
     }
 
     [Theory]
@@ -58,7 +58,7 @@ public sealed class OrchestratorQueueRoutingPinTests
 
         var key = InvokeGetQueueKey(message);
 
-        key.ShouldBe("web:conv-1");
+        key.ShouldBe("channel:web:conv-1");
     }
 
     private static string InvokeGetQueueKey(InboundMessage message)
