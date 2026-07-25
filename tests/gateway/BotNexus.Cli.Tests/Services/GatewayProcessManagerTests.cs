@@ -173,9 +173,10 @@ public sealed class GatewayProcessManagerTests : IDisposable
     [Fact]
     public async Task StartAsync_WhenAlreadyRunning_ReturnsAlreadyRunningResult()
     {
-        // Write a PID file with the current process ID (which is definitely running)
-        var currentPid = Process.GetCurrentProcess().Id;
-        await WritePidFileAsync(currentPid);
+        // Write an identity-bearing PID file for the current process (definitely running).
+        var currentProcess = Process.GetCurrentProcess();
+        var currentPid = currentProcess.Id;
+        await WriteIdentityPidFileAsync(currentProcess);
 
         var options = new GatewayStartOptions(
             ExecutablePath: "BotNexus.Gateway.Api.dll",
@@ -266,8 +267,8 @@ public sealed class GatewayProcessManagerTests : IDisposable
 
         try
         {
-            // Write the PID file
-            await WritePidFileAsync(process.Id);
+            // Write the PID file WITH identity so the kill is authorised (issue #2369).
+            await WriteIdentityPidFileAsync(process);
 
             var result = await _manager.StopAsync(_testPidDirectory);
 
@@ -351,7 +352,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
             // Give process a moment to start
             await Task.Delay(100);
 
-            await WritePidFileAsync(process.Id);
+            await WriteIdentityPidFileAsync(process);
 
             var status = await _manager.GetStatusAsync(_testPidDirectory);
 
@@ -394,7 +395,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
         // dotnet --version exits immediately; use the current test process instead
         // as it is definitely alive and the name check accepts any dotnet process
         var currentProcess = Process.GetCurrentProcess();
-        await WritePidFileAsync(currentProcess.Id);
+        await WriteIdentityPidFileAsync(currentProcess);
 
         var status = await _manager.GetStatusAsync(_testPidDirectory);
 
@@ -450,7 +451,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
 
         try
         {
-            await WritePidFileAsync(process.Id);
+            await WriteIdentityPidFileAsync(process);
 
             var result = await neverExitsManager.StopAsync(_testPidDirectory);
 
@@ -477,7 +478,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
     {
         // Use the current process — always alive
         var currentProcess = Process.GetCurrentProcess();
-        await WritePidFileAsync(currentProcess.Id);
+        await WriteIdentityPidFileAsync(currentProcess);
 
         _manager.IsRunning(_testPidDirectory).ShouldBeTrue();
     }
@@ -544,9 +545,12 @@ public sealed class GatewayProcessManagerTests : IDisposable
         try
         {
             // Write current PID to alt target (process is running)
-            var currentPid = Process.GetCurrentProcess().Id;
+            var currentProcess = Process.GetCurrentProcess();
+            var currentPid = currentProcess.Id;
             var altPidPath = Path.Combine(altTarget, "gateway.pid");
-            await File.WriteAllTextAsync(altPidPath, currentPid.ToString());
+            await File.WriteAllTextAsync(
+                altPidPath,
+                GatewayPidFile.Serialize(GatewayPidFile.Capture(currentProcess)));
 
             // Status for alt target should find the process
             var altStatus = await _manager.GetStatusAsync(altTarget);
@@ -573,6 +577,23 @@ public sealed class GatewayProcessManagerTests : IDisposable
             Directory.CreateDirectory(directory);
         }
         await File.WriteAllTextAsync(pidFilePath, pid.ToString());
+    }
+
+    /// <summary>
+    /// Writes an identity-bearing PID file (the format produced by StartAsync since issue #2369),
+    /// which is what authorises stop/status to act on the PID.
+    /// </summary>
+    private async Task WriteIdentityPidFileAsync(Process process)
+    {
+        var pidFilePath = GetPidFilePath();
+        var directory = Path.GetDirectoryName(pidFilePath);
+        if (directory is not null && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+        await File.WriteAllTextAsync(
+            pidFilePath,
+            GatewayPidFile.Serialize(GatewayPidFile.Capture(process)));
     }
 
     private string GetPidFilePath() => Path.Combine(_testPidDirectory, "gateway.pid");
