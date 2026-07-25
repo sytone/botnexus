@@ -1,7 +1,21 @@
 #!/bin/sh
-# BotNexus pre-commit hook — use an exact strict Azure receipt when available;
-# otherwise run authoritative Azure validation. Local fallback is explicit only.
+# BotNexus pre-commit hook (#2331).
+#
+# This gate is deliberately ADVISORY and fast: an exact-content strict receipt short-
+# circuits it, otherwise it runs impacted projects only, under per-step timeouts, and
+# SKIPS cleanly if another BotNexus validation already holds the global lock. It never
+# runs a full-solution build and never runs Playwright - that is the pre-push gate's and
+# CI's job. A commit-time gate that regularly overruns or fails on contention just trains
+# everyone to pass --no-verify, at which point it protects nothing.
+#
+# Budgets (override via env before committing):
+#   lock wait 120s, impacted build+test 600s. A step that exceeds its budget is named in
+#   the failure output so it can be diagnosed.
 
-pwsh -NoProfile -File scripts/repo/Validate-PreCommit.Tests.ps1
-pwsh -NoProfile -File scripts/repo/Validate-PreCommit.ps1
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
+cd "$repo_root" || exit 1
+
+pwsh -NoProfile -File "$repo_root/scripts/repo/ValidationSteps.Tests.ps1" || exit 1
+pwsh -NoProfile -File "$repo_root/scripts/repo/Validate-PreCommit.Tests.ps1" || exit 1
+pwsh -NoProfile -File "$repo_root/scripts/repo/Validate-PreCommit.ps1" -Hook -WorktreePath "$repo_root"
 exit $?
