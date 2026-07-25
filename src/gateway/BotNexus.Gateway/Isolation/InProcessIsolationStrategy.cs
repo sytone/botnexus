@@ -523,7 +523,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         [
             new ToolProviders.CronToolProvider(
                 _serviceProvider.GetService<ICronStore>(),
-                _serviceProvider.GetService<CronScheduler>()),
+                _serviceProvider.GetService<CronScheduler>(),
+                _serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>()),
             new ToolProviders.SessionToolProvider(sessionStore),
             new ToolProviders.ConversationToolProvider(
                 conversationStore,

@@ -73,6 +73,12 @@ public sealed class HeartbeatAction : ICronAction
             return;
         }
 
+        // #2373: classify an unresolvable model override before dispatch so the run records the
+        // real reason instead of an opaque provider error raised deep inside the agent turn.
+        CronModelPreflight.EnsureResolvable(
+            context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+            context.Job.Model);
+
         var trigger = ResolveHeartbeatTrigger(context.Services, descriptor);
 
         var sessionId = await trigger

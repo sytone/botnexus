@@ -95,7 +95,10 @@ internal interface IToolProvider
 /// Cron scheduling tool (<c>cron</c>). Included when the cron allowlist gate passes and no cron tool
 /// was already contributed by the extension registry.
 /// </summary>
-internal sealed class CronToolProvider(ICronStore? cronStore, CronScheduler? cronScheduler) : IToolProvider
+internal sealed class CronToolProvider(
+    ICronStore? cronStore,
+    CronScheduler? cronScheduler,
+    BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -110,7 +113,7 @@ internal sealed class CronToolProvider(ICronStore? cronStore, CronScheduler? cro
     {
         var allowCrossAgentCron = ResolveAllowCrossAgentCron(context.Descriptor);
         IReadOnlyList<IAgentTool> tools =
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron)];
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry)];
         return Task.FromResult(tools);
     }
 

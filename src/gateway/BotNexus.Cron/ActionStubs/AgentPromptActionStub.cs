@@ -38,6 +38,12 @@ public sealed class AgentPromptAction : ICronAction
         if (string.IsNullOrWhiteSpace(message))
             throw new InvalidOperationException("Cron job must define either a message or a templateName for agent-prompt actions.");
 
+        // #2373: classify an unresolvable model override before dispatch so the run records the
+        // real reason instead of an opaque provider error raised deep inside the agent turn.
+        CronModelPreflight.EnsureResolvable(
+            context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+            context.Job.Model);
+
         var registry = context.Services.GetService<IAgentRegistry>();
         var descriptor = registry?.Get(agentId);
 

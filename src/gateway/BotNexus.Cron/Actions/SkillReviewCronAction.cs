@@ -105,6 +105,12 @@ public sealed class SkillReviewCronAction : ICronAction
             "Skill review for agent '{AgentId}': dispatching restricted review pass ({PromptLength} char prompt, {ToolCount} allowed tools)",
             agentId.Value, prompt.Length, AllowedTools.Count);
 
+        // #2373: classify an unresolvable model override before dispatch so the run records the
+        // real reason instead of an opaque provider error raised deep inside the agent turn.
+        CronModelPreflight.EnsureResolvable(
+            context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+            context.Job.Model);
+
         var trigger = context.Services.GetServices<IInternalTrigger>()
             .FirstOrDefault(t => t.Type.Equals(TriggerType.Cron))
             ?? throw new InvalidOperationException("Cron internal trigger is not registered.");

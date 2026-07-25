@@ -91,6 +91,12 @@ public sealed class MemoryDreamingCronAction : ICronAction
             "Memory dreaming for agent '{AgentId}': {NoteCount} daily notes, {PromptLength} char prompt",
             agentId.Value, dailyNotes.Count, prompt.Length);
 
+        // #2373: classify an unresolvable model override before dispatch so the run records the
+        // real reason instead of an opaque provider error raised deep inside the agent turn.
+        CronModelPreflight.EnsureResolvable(
+            context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+            context.Job.Model);
+
         // Dispatch via internal trigger (same pattern as agent-prompt)
         var trigger = context.Services.GetServices<IInternalTrigger>()
             .FirstOrDefault(t => t.Type.Equals(TriggerType.Cron))
