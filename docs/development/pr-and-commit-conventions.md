@@ -84,7 +84,7 @@ Co-authored-by: agent-farnsworth[bot] <293187211+agent-farnsworth[bot]@users.nor
 
 ## PR body
 
-Use [`.github/pull_request_template.md`](../../.github/pull_request_template.md), which GitHub prefills.
+Use [`.github/pull_request_template.md`](https://github.com/Sytone/botnexus/blob/main/.github/pull_request_template.md), which GitHub prefills.
 Sections, in order:
 
 | Section | Required | Purpose |
