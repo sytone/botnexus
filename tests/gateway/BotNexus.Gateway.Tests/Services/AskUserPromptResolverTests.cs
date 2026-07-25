@@ -245,9 +245,16 @@ public sealed class AskUserPromptResolverTests
         public ValueTask<AskUserResolutionResult> AnswerTextDegradedAsync(AskUserPrompt prompt, string reply)
         {
             var matched = AskUserPromptTextRenderer.MatchChoice(prompt, reply);
+
+            // The prompt is the shared wire shape and carries a plain-string conversation id, so
+            // the channel maps it back to the typed value object here - the same boundary
+            // conversion any real channel performs (#2334).
+            var conversationId = prompt.ToConversationId()
+                ?? throw new InvalidOperationException("A text-degraded reply requires a prompt bound to a conversation.");
+
             return resolver.ResolveAsync(new AskUserSubmission
             {
-                ConversationId = prompt.ConversationId!.Value,
+                ConversationId = conversationId,
                 RequestId = prompt.RequestId,
                 SelectedValues = matched is null ? null : [matched],
                 FreeFormText = matched is null ? reply : null,

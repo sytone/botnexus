@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -13,10 +12,16 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// <para>
 /// As of #2322 this type is a thin client-side adapter. The reconciliation itself - metadata
 /// preference order, choice parsing, timeout arithmetic, persisted-payload tolerance - moved to
-/// <see cref="AskUserPromptNormalizer"/> in the domain, because that logic is channel-independent
-/// and Telegram, Discord, or a TUI cannot reference a Blazor client assembly. What remains here is
-/// only the projection onto the client's own view model (<see cref="AskUserPromptState"/>), which
-/// carries UI-only concerns such as <c>IsSubmitting</c>.
+/// <see cref="AskUserPromptNormalizer"/> in the shared dependency-free wire assembly
+/// (<c>BotNexus.Domain.Wire</c>), because that logic is channel-independent and Telegram,
+/// Discord, or a TUI cannot reference a Blazor client assembly. What remains here is only the
+/// projection onto the client's own view model (<see cref="AskUserPromptState"/>), which carries
+/// UI-only concerns such as <c>IsSubmitting</c>.
+/// </para>
+/// <para>
+/// WASM PAYLOAD NOTE (#2329, #2334): the normalizer is reached through <c>BotNexus.Domain.Wire</c>
+/// and NOT through <c>BotNexus.Domain</c>. The latter flows <c>Vogen</c> as a runtime asset, and
+/// every assembly this project can reach is downloaded by the browser.
 /// </para>
 /// <para>
 /// Behaviour is unchanged; the existing factory, hub, mobile, and hydration tests continue to
@@ -54,9 +59,9 @@ public static class AskUserPromptFactory
     /// <param name="conversationId">The conversation being hydrated, used when the payload omits its own id.</param>
     /// <param name="prompt">The reconstructed prompt state on success.</param>
     /// <remarks>
-    /// The raw string is parsed into the typed <see cref="BotNexus.Domain.Primitives.ConversationId"/>
-    /// here, at the client edge, because the client's own view models still address conversations by
-    /// string key. Everything past this boundary is typed.
+    /// The conversation id stays a plain string on both sides of this call: the client's view
+    /// models address conversations by string key, and the shared wire model does too, so no
+    /// value-object conversion is needed (or possible) at this edge.
     /// </remarks>
     public static bool TryBuildFromPersistedJson(
         string? json,
@@ -64,11 +69,11 @@ public static class AskUserPromptFactory
         [NotNullWhen(true)] out AskUserPromptState? prompt)
     {
         prompt = null;
-        var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
-            ? (ConversationId?)null
-            : ConversationId.From(conversationId);
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId)
+            ? null
+            : conversationId;
 
-        if (!AskUserPromptNormalizer.TryBuildFromPersistedJson(json, typedConversationId, out var normalized))
+        if (!AskUserPromptNormalizer.TryBuildFromPersistedJson(json, normalizedConversationId, out var normalized))
             return false;
 
         prompt = ToState(normalized);
@@ -92,7 +97,7 @@ public static class AskUserPromptFactory
             RequestId = payload.RequestId ?? string.Empty,
             ConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
                 ? null
-                : ConversationId.From(payload.ConversationId),
+                : payload.ConversationId,
             Prompt = payload.Prompt ?? string.Empty,
             InputType = payload.InputType ?? string.Empty,
             Choices = payload.Choices is { Count: > 0 }
@@ -113,10 +118,10 @@ public static class AskUserPromptFactory
     private static AskUserPromptState ToState(AskUserPrompt prompt) => new()
     {
         RequestId = prompt.RequestId,
-        // The client view model keys conversations by string; unwrap at this last edge only.
-        // Pattern-matched rather than `?.Value` to avoid the null-conditional shape the P9-B-2
-        // session fence bans repo-wide.
-        ConversationId = prompt is { ConversationId: { } promptConversationId } ? promptConversationId.Value : string.Empty,
+        // Both sides key conversations by string, so this is a straight copy with a null-empty
+        // normalisation. Pattern-matched rather than `??` chaining on a null-conditional to avoid
+        // the shape the P9-B-2 session fence bans repo-wide.
+        ConversationId = prompt is { ConversationId: { } promptConversationId } ? promptConversationId : string.Empty,
         Prompt = prompt.Prompt,
         InputType = prompt.InputType,
         Choices = prompt.Choices?

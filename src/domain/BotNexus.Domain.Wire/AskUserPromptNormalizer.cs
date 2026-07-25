@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -14,7 +13,16 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// client. That made it unreachable from any other channel: Telegram, Discord, or a TUI cannot
 /// reference a Blazor WebAssembly client assembly, so each would have had to reimplement the
 /// metadata/payload preference order, choice parsing, and timeout arithmetic - and the copies
-/// would drift. It now lives in the domain so every channel reconciles identically.
+/// would drift. It now lives in a shared assembly so every channel reconciles identically.
+/// </para>
+/// <para>
+/// WASM PAYLOAD NOTE (#2329, #2334): this lives in the dependency-free
+/// <c>BotNexus.Domain.Wire</c> rather than <c>BotNexus.Domain</c>, because the Blazor
+/// WebAssembly client is one of the channels that reconciles prompts, and every assembly it can
+/// reach is downloaded by the browser. <c>BotNexus.Domain</c> flows <c>Vogen</c> as a runtime
+/// asset, so hosting this logic there would have put <c>Vogen.SharedTypes.dll</c> into the
+/// payload. Conversation ids are therefore handled as plain strings here; the gateway maps them
+/// to the typed value object at its own boundary via <c>AskUserPromptProjection</c>.
 /// </para>
 /// <para>
 /// Preference order matches the shipped client behaviour exactly: flattened stream-event
@@ -38,8 +46,8 @@ public static class AskUserPromptNormalizer
     /// <param name="metadata">Flattened <c>UserInputRequired</c> event metadata, when present.</param>
     /// <param name="fallback">
     /// Structured payload projected to <see cref="AskUserPrompt"/> - for the gateway this comes
-    /// from <see cref="AskUserRequest"/> via <see cref="AskUserPromptProjection.ToPrompt"/>; for a
-    /// client it comes from its own wire contract. May be null when only metadata is available.
+    /// from <c>AskUserRequest</c> via <c>AskUserPromptProjection.ToPrompt</c>; for a client it
+    /// comes from its own wire contract. May be null when only metadata is available.
     /// </param>
     /// <param name="prompt">The reconciled prompt on success.</param>
     /// <returns>
@@ -53,9 +61,9 @@ public static class AskUserPromptNormalizer
         prompt = null;
 
         var requestId = GetRequiredString(metadata, "requestId") ?? fallback?.RequestId;
-        // Pattern-matched rather than `?.Value` so this reads the optional prompt id without
-        // the null-conditional shape the P9-B-2 session fence bans repo-wide.
-        var fallbackConversationId = fallback is { ConversationId: { } fallbackId } ? fallbackId.Value : null;
+        // Pattern-matched rather than `?.` so this reads the optional prompt id without the
+        // null-conditional shape the P9-B-2 session fence bans repo-wide.
+        var fallbackConversationId = fallback is { ConversationId: { } fallbackId } ? fallbackId : null;
         var conversationId = GetRequiredString(metadata, "conversationId") ?? fallbackConversationId;
         var promptText = GetRequiredString(metadata, "prompt") ?? fallback?.Prompt;
         var inputType = GetRequiredString(metadata, "inputType") ?? fallback?.InputType;
@@ -73,9 +81,9 @@ public static class AskUserPromptNormalizer
         prompt = new AskUserPrompt
         {
             RequestId = requestId,
-            // Left null when neither source carried an id, rather than forced through
-            // From(string.Empty) which the ConversationId validator rejects.
-            ConversationId = conversationId is null ? null : ConversationId.From(conversationId),
+            // Left null when neither source carried an id. The gateway validates it when it maps
+            // this wire shape onto the typed ConversationId at its own boundary.
+            ConversationId = conversationId,
             Prompt = promptText,
             InputType = inputType,
             Choices = ParseChoices(metadata) ?? fallback?.Choices,
@@ -97,7 +105,7 @@ public static class AskUserPromptNormalizer
     /// <returns><c>false</c> when the JSON is missing, malformed, or lacks required fields.</returns>
     public static bool TryBuildFromPersistedJson(
         string? json,
-        ConversationId? conversationId,
+        string? conversationId,
         [NotNullWhen(true)] out AskUserPrompt? prompt)
     {
         prompt = null;
@@ -128,7 +136,7 @@ public static class AskUserPromptNormalizer
         // being hydrated so the prompt always binds to the thread the user is looking at.
         var resolvedConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
             ? conversationId
-            : ConversationId.From(payload.ConversationId!);
+            : payload.ConversationId;
 
         prompt = new AskUserPrompt
         {
@@ -276,32 +284,4 @@ public static class AskUserPromptNormalizer
         public string? Label { get; init; }
         public string? Description { get; init; }
     }
-}
-
-/// <summary>
-/// Projects the gateway-side <see cref="AskUserRequest"/> onto the channel-agnostic
-/// <see cref="AskUserPrompt"/> render model.
-/// </summary>
-public static class AskUserPromptProjection
-{
-    /// <summary>Projects a gateway ask-user request onto the render-ready prompt model.</summary>
-    public static AskUserPrompt ToPrompt(this AskUserRequest request) => new()
-    {
-        RequestId = request.RequestId,
-        ConversationId = request.ConversationId,
-        Prompt = request.Prompt,
-        InputType = request.InputType.ToString(),
-        Choices = request.Choices is { Count: > 0 }
-            ? request.Choices
-                .Where(choice => !string.IsNullOrWhiteSpace(choice.Value))
-                .Select(choice => new AskUserPromptChoice(
-                    choice.Value,
-                    string.IsNullOrWhiteSpace(choice.Label) ? choice.Value : choice.Label!,
-                    choice.Description))
-                .ToList()
-            : null,
-        AllowMultiple = request.AllowMultiple,
-        AllowFreeForm = request.AllowFreeForm,
-        ExpiresAt = request.Timeout is { } timeout ? DateTimeOffset.UtcNow.Add(timeout) : null
-    };
 }

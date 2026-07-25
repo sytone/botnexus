@@ -1,5 +1,3 @@
-using BotNexus.Domain.Primitives;
-
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -10,23 +8,34 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// This is the single normalized shape every channel renders from, regardless of whether the
 /// prompt arrived as a live <c>UserInputRequired</c> stream event, as flattened event metadata,
 /// or was rehydrated from the durable <c>PendingAskUserJson</c> payload persisted on the
-/// conversation row. It deliberately lives in the domain assembly rather than in a client
-/// project so a channel extension (Telegram, Discord, Slack, TUI) can consume it without
-/// referencing the Blazor client - the duplication hazard called out in #2322.
+/// conversation row. It deliberately lives outside any client project so a channel extension
+/// (Telegram, Discord, Slack, TUI) can consume it without referencing the Blazor client - the
+/// duplication hazard called out in #2322.
 /// </para>
 /// <para>
-/// <see cref="InputType"/> is kept as the raw string rather than
-/// <see cref="AskUserInputType"/> so an unrecognised future input type degrades to a text
-/// prompt instead of throwing during deserialization at the channel edge.
+/// WASM PAYLOAD NOTE (#2329, #2334): this type lives in the dependency-free
+/// <c>BotNexus.Domain.Wire</c> assembly rather than in <c>BotNexus.Domain</c>. The Blazor
+/// WebAssembly client renders these prompts, and every assembly reachable from a WASM entry
+/// point is downloaded by the browser. <c>BotNexus.Domain</c> references <c>Vogen</c> as a bare
+/// <c>PackageReference</c> that flows as a RUNTIME asset (see the note in BotNexus.Domain.csproj -
+/// <c>PrivateAssets="all"</c> was tried and empirically rejected because
+/// <c>Vogen.ValueObjectValidationException</c> is caught at runtime on the server). Keeping the
+/// ask_user wire shapes here is what lets the client share this exact declaration without
+/// dragging Vogen.SharedTypes.dll into the browser payload.
 /// </para>
 /// <para>
-/// <see cref="ConversationId"/> is the typed <see cref="BotNexus.Domain.Primitives.ConversationId"/>
-/// value object rather than a raw string, matching <c>Conversation.ConversationId</c> and
-/// <c>AskUserRequest.ConversationId</c>. It is nullable rather than <c>required</c> because
-/// reconciliation can legitimately run before a conversation id is known - flattened event metadata
-/// may omit it and the structured fallback may be a partial payload. Nullable is the established
-/// codebase idiom for an optional conversation id (see <c>InboundMessageContext.RequestedConversationId</c>
-/// and <c>CronJob.ConversationId</c>); the Vogen <c>default</c> sentinel is prohibited (VOG009).
+/// <see cref="InputType"/> is kept as the raw string rather than <c>AskUserInputType</c> so an
+/// unrecognised future input type degrades to a text prompt instead of throwing during
+/// deserialization at the channel edge.
+/// </para>
+/// <para>
+/// <see cref="ConversationId"/> is a plain <see cref="string"/> rather than the typed
+/// <c>BotNexus.Domain.Primitives.ConversationId</c> value object, because that value object is
+/// Vogen-generated and cannot cross into this dependency-free assembly. This is the wire shape;
+/// the gateway maps it to and from the typed id at its own boundary (see
+/// <c>AskUserPromptProjection</c>), which is exactly where validation belongs. It is nullable
+/// because reconciliation can legitimately run before a conversation id is known - flattened
+/// event metadata may omit it and the structured fallback may be a partial payload.
 /// </para>
 /// </remarks>
 public sealed record AskUserPrompt
@@ -38,7 +47,7 @@ public sealed record AskUserPrompt
     /// Conversation that owns the prompt and can satisfy it from any bound channel. Null when
     /// neither reconciliation source supplied one.
     /// </summary>
-    public ConversationId? ConversationId { get; init; }
+    public string? ConversationId { get; init; }
 
     /// <summary>Prompt text presented to the user.</summary>
     public required string Prompt { get; init; }
