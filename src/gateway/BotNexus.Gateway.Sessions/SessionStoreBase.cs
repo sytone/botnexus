@@ -55,6 +55,89 @@ public abstract class SessionStoreBase : ISessionStore
 
     public abstract Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Default narrow transcript append (issue #2132): re-reads the authoritative session, enforces
+    /// the shared terminal-status conflict rule, and appends onto <em>that</em> instance rather than
+    /// onto a caller-supplied snapshot. Because the re-read happens here, a stale caller snapshot can
+    /// never replace the complete history. <see cref="SqliteSessionStore"/> overrides this to insert
+    /// only the new history rows under a single per-session lock, leaving the existing rows untouched.
+    /// </summary>
+    public virtual async Task<SessionAppendMutationResult> AppendEntriesAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        var session = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+            return new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0);
+
+        if (SessionMutationPolicy.IsTerminal(session.Status))
+            return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
+
+        if (entries.Count == 0)
+            return new SessionAppendMutationResult(SessionMutationOutcome.Applied, 0);
+
+        session.AddEntries(entries);
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+    }
+
+    /// <summary>
+    /// Default narrow metadata patch (issue #2132): merges onto the authoritative re-read rather than
+    /// onto the caller's snapshot, so a transcript append that landed in the caller's read-write gap
+    /// is preserved. <see cref="SqliteSessionStore"/> overrides this to rewrite only the metadata
+    /// column under its per-session lock.
+    /// </summary>
+    public virtual async Task<SessionMetadataMutationResult> PatchMetadataAsync(
+        SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+
+        var session = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+            return SessionMetadataMutationResult.NotFound;
+
+        SessionMutationPolicy.ApplyMetadataPatch(session.Metadata, patch);
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return new SessionMetadataMutationResult(
+            SessionMutationOutcome.Applied,
+            new Dictionary<string, object?>(session.Metadata));
+    }
+
+    /// <summary>
+    /// Default narrow lifecycle compare-and-set (issue #2132): evaluates
+    /// <see cref="SessionMutationPolicy.CanTransition"/> against the authoritative re-read, not the
+    /// caller's snapshot, so a transition another actor already performed is reported as an explicit
+    /// conflict instead of being reverted. <see cref="SqliteSessionStore"/> overrides this to perform
+    /// the compare and the status write in a single conditional UPDATE under its per-session lock.
+    /// </summary>
+    public virtual async Task<SessionStatusMutationResult> TransitionStatusAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionStatus> expectedStatuses,
+        SessionStatus newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedStatuses);
+
+        var session = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+            return new SessionStatusMutationResult(SessionMutationOutcome.NotFound, SessionStatus.Active, default);
+
+        if (!SessionMutationPolicy.CanTransition(expectedStatuses, session.Status))
+            return new SessionStatusMutationResult(SessionMutationOutcome.Conflict, session.Status, session.UpdatedAt);
+
+        session.Status = newStatus;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return new SessionStatusMutationResult(SessionMutationOutcome.Applied, newStatus, session.UpdatedAt);
+    }
+
     public abstract Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)

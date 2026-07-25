@@ -283,6 +283,217 @@ public sealed class SqliteSessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Issue #2132. Inserts <b>only</b> the new history rows: the existing <c>session_history</c>
+    /// rows and the <c>metadata</c>/<c>status</c> columns of the <c>sessions</c> row are left exactly
+    /// as they stand, so this can never replace the complete history from a stale snapshot the way
+    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/> does. The status probe and the
+    /// inserts run under a single striped session lock, so a competing seal cannot slip between the
+    /// conflict check and the write.
+    /// </remarks>
+    public override async Task<SessionAppendMutationResult> AppendEntriesAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        using var activity = ActivitySource.StartActivity("session.append_entries", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            var status = await ReadStatusAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+            if (status is null)
+                return new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0);
+
+            if (SessionMutationPolicy.IsTerminal(status.Value))
+                return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
+
+            // Redact through a throwaway GatewaySession so appended content goes through the same
+            // secret-redaction path as the whole-aggregate save.
+            var redacted = RedactForAppend(entries);
+
+            if (redacted.Count > 0)
+            {
+                await InsertHistoryAsync(connection, sessionId, redacted, cancellationToken).ConfigureAwait(false);
+                await TouchUpdatedAtAsync(connection, sessionId, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+            }
+
+            // The cached aggregate no longer reflects the row; drop it so the next read re-materialises
+            // the merged transcript rather than serving a pre-append snapshot.
+            _cache.Remove(sessionId);
+            return new SessionAppendMutationResult(SessionMutationOutcome.Applied, redacted.Count);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Issue #2132. Reads the current <c>metadata</c> column, merges the patch, and writes back only
+    /// that column plus <c>updated_at</c> - all under one striped session lock, so two concurrent
+    /// patches compose and neither one rewrites the transcript or the lifecycle status.
+    /// </remarks>
+    public override async Task<SessionMetadataMutationResult> PatchMetadataAsync(
+        SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        using var activity = ActivitySource.StartActivity("session.patch_metadata", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var readCommand = connection.CreateCommand();
+            readCommand.CommandText = "SELECT metadata FROM sessions WHERE id = $sessionId";
+            readCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            var rawMetadata = await readCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (rawMetadata is null)
+                return SessionMetadataMutationResult.NotFound;
+
+            var metadataJson = rawMetadata as string;
+            var metadata = string.IsNullOrWhiteSpace(metadataJson)
+                ? []
+                : JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions) ?? [];
+
+            SessionMutationPolicy.ApplyMetadataPatch(metadata, patch);
+
+            await using var writeCommand = connection.CreateCommand();
+            writeCommand.CommandText = "UPDATE sessions SET metadata = $metadata, updated_at = $updatedAt WHERE id = $sessionId";
+            writeCommand.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(metadata, JsonOptions));
+            writeCommand.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            writeCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            await writeCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            _cache.Remove(sessionId);
+            return new SessionMetadataMutationResult(SessionMutationOutcome.Applied, metadata);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Issue #2132. The compare and the set are one conditional <c>UPDATE ... WHERE status IN (...)</c>,
+    /// so the check-then-write window is closed at the database level as well as by the striped lock.
+    /// Only <c>status</c> and <c>updated_at</c> are written; the transcript and metadata are untouched.
+    /// </remarks>
+    public override async Task<SessionStatusMutationResult> TransitionStatusAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionStatus> expectedStatuses,
+        SessionStatus newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedStatuses);
+        if (expectedStatuses.Count == 0)
+            throw new ArgumentException("A lifecycle transition must declare at least one expected status.", nameof(expectedStatuses));
+
+        using var activity = ActivitySource.StartActivity("session.transition_status", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            var current = await ReadStatusAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+            if (current is null)
+                return new SessionStatusMutationResult(SessionMutationOutcome.NotFound, SessionStatus.Active, default);
+
+            var updatedAt = DateTimeOffset.UtcNow;
+            if (!SessionMutationPolicy.CanTransition(expectedStatuses, current.Value))
+            {
+                activity?.SetTag("botnexus.session.transition.conflict", true);
+                return new SessionStatusMutationResult(SessionMutationOutcome.Conflict, current.Value, updatedAt);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE sessions SET status = $newStatus, updated_at = $updatedAt WHERE id = $sessionId AND status = $expectedStatus";
+            command.Parameters.AddWithValue("$newStatus", newStatus.ToString());
+            command.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+            command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            command.Parameters.AddWithValue("$expectedStatus", current.Value.ToString());
+            var affected = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            _cache.Remove(sessionId);
+
+            // Zero rows means the persisted status string moved between the probe and the UPDATE
+            // (or is a legacy alias such as 'closed' that ParseStatus normalises). Re-read and
+            // report the authoritative value rather than claiming a write that did not happen.
+            if (affected == 0)
+            {
+                var observed = await ReadStatusAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+                return observed is null
+                    ? new SessionStatusMutationResult(SessionMutationOutcome.NotFound, SessionStatus.Active, default)
+                    : new SessionStatusMutationResult(SessionMutationOutcome.Conflict, observed.Value, updatedAt);
+            }
+
+            return new SessionStatusMutationResult(SessionMutationOutcome.Applied, newStatus, updatedAt);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads just the <c>status</c> column for a session, or <c>null</c> when the row does not exist.
+    /// The narrow mutations (#2132) use this instead of <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>
+    /// so a conflict probe never materialises the transcript or reaches into the conversation store.
+    /// </summary>
+    private static async Task<SessionStatus?> ReadStatusAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT status FROM sessions WHERE id = $sessionId";
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        var raw = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return raw is null ? null : ParseStatus(raw as string);
+    }
+
+    /// <summary>
+    /// Bumps only the <c>updated_at</c> column so an append is visible to listing/warmup queries
+    /// that order or filter on it, without rewriting any other field of the row.
+    /// </summary>
+    private static async Task TouchUpdatedAtAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        DateTimeOffset updatedAt,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE sessions SET updated_at = $updatedAt WHERE id = $sessionId";
+        command.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Routes appended entries through a detached <see cref="GatewaySession"/> so they get the same
+    /// write-time secret redaction the whole-aggregate save applies. Returns the redacted entries in
+    /// the caller's order.
+    /// </summary>
+    private List<SessionEntry> RedactForAppend(IReadOnlyList<SessionEntry> entries)
+    {
+        if (entries.Count == 0)
+            return [];
+
+        var scratch = new GatewaySession(new Session { SessionId = SessionId.From("redaction-scratch") }, _redactor);
+        scratch.AddEntries(entries);
+        return [.. scratch.GetHistorySnapshot()];
+    }
+
+    /// <inheritdoc />
     public override async Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
@@ -1323,6 +1534,38 @@ public sealed class SqliteSessionStore : SessionStoreBase
         deleteCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
         await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+        await WriteHistoryRowsAsync(connection, transaction, session.SessionId, session.GetHistorySnapshot(), cancellationToken)
+            .ConfigureAwait(false);
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Appends history rows for a session <b>without</b> deleting the existing ones (issue #2132).
+    /// This is the additive counterpart to <see cref="ReplaceHistoryAsync"/>; both share
+    /// <see cref="WriteHistoryRowsAsync"/> so the 14-column INSERT shape has exactly one definition.
+    /// </summary>
+    private static async Task InsertHistoryAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        CancellationToken cancellationToken)
+    {
+        await using var dbTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var transaction = (SqliteTransaction)dbTransaction;
+
+        await WriteHistoryRowsAsync(connection, transaction, sessionId, entries, cancellationToken).ConfigureAwait(false);
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task WriteHistoryRowsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        CancellationToken cancellationToken)
+    {
         // #1628: prepare the INSERT command + its parameters ONCE instead of recreating a
         // fresh SqliteCommand and re-adding all 13 parameters per row. Behaviour is identical
         // (same SQL, same parameter values, same order, same transaction + commit); only the
@@ -1334,7 +1577,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind)
             VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind)
             """;
-        insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
+        insertCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
         var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
         var pContent = insertCommand.Parameters.AddWithValue("$content", string.Empty);
         var pTimestamp = insertCommand.Parameters.AddWithValue("$timestamp", string.Empty);
@@ -1351,7 +1594,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         // default MessageKind.Message so legacy/default rows stay compact and read back as the default.
         var pMessageKind = insertCommand.Parameters.AddWithValue("$messageKind", DBNull.Value);
 
-        foreach (var entry in session.GetHistorySnapshot())
+        foreach (var entry in entries)
         {
             pRole.Value = entry.Role.Value;
             pContent.Value = entry.Content;
@@ -1371,8 +1614,6 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 : (object)DBNull.Value;
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private SqliteConnection CreateConnection()
