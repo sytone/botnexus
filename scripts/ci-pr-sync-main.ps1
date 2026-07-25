@@ -33,6 +33,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = 'Sytone/botnexus'
 . (Join-Path $PSScriptRoot 'repo/Remove-Worktree.ps1')
+. (Join-Path $PSScriptRoot 'repo/WorktreeSyncGuard.ps1')
 
 function Output-Result {
     param([bool]$Success, [string]$Message)
@@ -97,6 +98,17 @@ function Invoke-RebaseAndPush {
 }
 
 if ($worktreePath) {
+    # Issue #2330: NEVER rewrite history in a worktree that still has
+    # uncommitted work. Rebasing moves HEAD under an active worker, whose index
+    # then reflects the pre-rebase tree, so its next `git add -A` stages the
+    # incoming commits as deletions and its edits appear to silently revert.
+    # Refuse instead, and let the worker commit or stash first.
+    $status = git -C $worktreePath status --porcelain 2>&1
+    if (-not (Test-WorktreeIsIdle -StatusOutput $status)) {
+        Output-Result -Success $false -Message (Get-DirtyWorktreeSyncMessage -Branch $Branch -WorktreePath $worktreePath)
+        return
+    }
+
     # Ensure the worktree branch matches the remote tip before rebasing so a
     # locally-stale worktree does not resurrect old commits.
     $result = Invoke-RebaseAndPush -Dir $worktreePath
