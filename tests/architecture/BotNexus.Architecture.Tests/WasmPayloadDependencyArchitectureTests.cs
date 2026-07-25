@@ -384,7 +384,17 @@ public sealed class WasmPayloadDependencyArchitectureTests
     [Fact]
     public void DomainWire_StaysDependencyFree()
     {
-        var csproj = Path.Combine(RepoRoot, "src", "domain", "BotNexus.Domain.Wire", "BotNexus.Domain.Wire.csproj");
+        const string WireProject = "BotNexus.Domain.Wire";
+
+        // Vacuity pin: this test exists solely to police the BotNexus.Domain.Wire allowlist entry.
+        // If that entry is ever removed, this test must be removed with it rather than left quietly
+        // passing and guarding nothing.
+        AllowedProjectsInWasmClosure.ShouldContainKey(
+            WireProject,
+            $"{WireProject} is no longer allowlisted, so this guard has nothing to police. Remove " +
+            "this test alongside the allowlist entry - do not leave it passing vacuously.");
+
+        var csproj = Path.Combine(RepoRoot, "src", "domain", WireProject, WireProject + ".csproj");
         File.Exists(csproj).ShouldBeTrue(
             $"BotNexus.Domain.Wire project not found at {csproj}. It is allowlisted into the WASM " +
             "payload on the strict condition that it stays dependency-free; if it moved or was " +
