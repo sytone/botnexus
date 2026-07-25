@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>BotNexus.Integration.ConfigDiskE2E.Tests</RootNamespace>
+    <Description>
+      Physical-file end-to-end coverage for every platform config mutation path (#2066):
+      production writer -&gt; real config.json on disk -&gt; JSON configuration provider reload -&gt;
+      IOptionsMonitor/runtime consumer. No MockFileSystem: the disk is the point.
+    </Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Supplies the real Microsoft.Extensions.Configuration.Json provider, Options and DI that
+         the gateway host itself uses, so these tests reload config exactly as production does. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- config-disk seam: the REAL PlatformConfigWriter / PlatformConfigAgentWriter writing to a
+         REAL filesystem under a temporary BOTNEXUS_HOME, read back through the REAL
+         Microsoft.Extensions.Configuration JSON provider and IOptionsMonitor&lt;PlatformConfig&gt;. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

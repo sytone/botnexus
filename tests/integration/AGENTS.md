@@ -22,11 +22,21 @@ third-party billing API, wall-clock time. The local seam - the config writer,
 the SQLite store, the ASP.NET request pipeline, the SignalR hub - is **always
 real**.
 
-A temp-file-backed `IFileSystem` (`MockFileSystem` from
+An in-memory `IFileSystem` (`MockFileSystem` from
 `TestableIO.System.IO.Abstractions.TestingHelpers`) is **not** a mock of the
-seam: it is a deterministic stand-in for the out-of-scope disk. The component
-under test (e.g. `PlatformConfigWriter`) is still the real production type
-running its real logic.
+seam *when the disk is genuinely out of scope*: it is a deterministic stand-in,
+and the component under test is still the real production type running its real
+logic.
+
+> **But when the disk IS the seam, `MockFileSystem` does not qualify.** (#2066)
+
+If the behaviour under test depends on OS semantics - atomic replace, temp-file
+staging and cleanup, file locking, last-write timestamps, physical backups,
+file-watcher-driven `IConfiguration` reload, or two writers racing on one inode -
+an in-memory filesystem cannot observe it, and a test that uses one is a **unit**
+test. Put it in the owning unit-test project and label it as such. The
+integration acceptance bar for those behaviours is a real filesystem under a
+temporary `BOTNEXUS_HOME`.
 
 ## Naming & layout convention
 
@@ -34,7 +44,7 @@ running its real logic.
 - One clearly-named project **per seam**, named
   `BotNexus.Integration.<Seam>.Tests` (folder-per-seam is equivalent).
 - The `<Seam>` segment names the boundary, not a class:
-  - `ConfigSave`   - config `GET -> edit -> PUT` round-trip through the real writer
+  - `ConfigDiskE2E` - config mutation through the real writer onto a real disk
   - `SessionStore` - session persistence through the real store
   - `Conversation` - conversation REST + SignalR through the real pipeline/hub
   - `ProviderHttp`  - provider client through a real HTTP pipeline
@@ -47,13 +57,27 @@ into an unrelated unit-test project.
 
 ## Current seams
 
-| Seam        | Project                                   | Real component under test | Out-of-scope stand-in |
-|-------------|-------------------------------------------|---------------------------|-----------------------|
-| config-save | `BotNexus.Integration.ConfigSave.Tests`   | `PlatformConfigWriter`    | temp-file `IFileSystem` |
+| Seam        | Project                                     | Real component under test | Out-of-scope stand-in |
+|-------------|---------------------------------------------|---------------------------|-----------------------|
+| config-disk | `BotNexus.Integration.ConfigDiskE2E.Tests`  | `PlatformConfigWriter`, `PlatformConfigAgentWriter`, `ConfigBackupService`, the JSON configuration provider and `IOptionsMonitor<PlatformConfig>` | none - real disk, real watcher |
 
-The config-save seam is the canonical example: `ConfigSaveRoundTripTests`
-drives the real `PlatformConfigWriter` through the exact `GET -> redact ->
-edit -> PUT` flow the Configuration UI uses, with the same
-`ConfigSecretMerge.Redact` the controller applies. It reproduces the #1954 /
-#1955 data-loss bugs and locks in the fix - none of which a writer mock could
-have caught.
+The config-disk seam is the canonical example. It drives every production config
+mutation entry point across the full chain:
+
+```
+UI/API/CLI/tool/service -> production writer -> physical config.json
+  -> JSON provider reload -> IOptionsMonitor / runtime consumer
+```
+
+Each scenario seeds a maximal realistic config, performs one mutation, and diffs
+the whole before/after document so that **only the intended semantic delta** is
+permitted - which is how collateral-damage bugs (#1954 dropped subtrees, #1955
+clobbered secrets) get caught rather than hoped away. It also covers backups,
+temp-file cleanup, reload acknowledgement, rejected validation, secrets,
+unknown/extension JSON, `agents.defaults`, collections, and concurrent writers.
+
+This project replaced `BotNexus.Integration.ConfigSave.Tests`, which described
+itself as a real round trip but ran on `MockFileSystem`. Those tests were not
+deleted: they were migrated to
+`tests/gateway/BotNexus.Gateway.Tests/Configuration/ConfigSaveMergeUnitTests.cs`
+and relabelled as the unit tests they always were. Do not re-promote them.
