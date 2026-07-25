@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
@@ -58,6 +59,29 @@ public abstract class ChannelAdapterBase : IChannelAdapter
 
     /// <inheritdoc />
     public bool IsRunning => _isRunning;
+
+    /// <summary>
+    /// Whether this adapter is a user-visible surface that must redact the delimited internal
+    /// runtime-context envelope from outbound text before delivery (#1430).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/> so internal, agent-to-agent and transcript-shaped
+    /// surfaces keep the block (they legitimately want it for debugging and self-diagnosis).
+    /// Concrete user-facing adapters (SignalR/portal, Telegram, TUI) opt in by overriding this.
+    /// The strip itself is guarded - see <see cref="RuntimeContextRedactor"/>.
+    /// </remarks>
+    protected virtual bool StripsRuntimeContext => false;
+
+    /// <summary>
+    /// Projects assistant text onto this channel's user-visible surface, applying the guarded
+    /// runtime-context strip when <see cref="StripsRuntimeContext"/> is enabled. Returns the input
+    /// unchanged for internal surfaces and whenever the delimiters are absent or unbalanced.
+    /// </summary>
+    /// <param name="text">The outbound text about to be written to the channel.</param>
+    /// <returns>The channel-projected text.</returns>
+    [return: NotNullIfNotNull(nameof(text))]
+    protected string? ProjectOutboundText(string? text)
+        => StripsRuntimeContext ? RuntimeContextRedactor.Strip(text) : text;
 
     /// <inheritdoc />
     public async Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default)

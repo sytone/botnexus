@@ -90,6 +90,12 @@ public sealed class TelegramChannelAdapter(
     /// <inheritdoc />
     public override bool SupportsInboundImages => true;
 
+    /// <summary>
+    /// Telegram chats are a user-visible surface, so the delimited internal runtime-context
+    /// envelope is redacted from outbound text before delivery (#1430).
+    /// </summary>
+    protected override bool StripsRuntimeContext => true;
+
     /// <inheritdoc />
     protected override async Task OnStartAsync(CancellationToken cancellationToken)
     {
@@ -192,7 +198,7 @@ public sealed class TelegramChannelAdapter(
     {
         if (runtime.Config.RichMessages)
         {
-            var richMarkdown = BuildOutboundMarkdown(message.Content, message.Metadata, message.DisplayPrefix);
+            var richMarkdown = BuildOutboundMarkdown(ProjectOutboundText(message.Content), message.Metadata, message.DisplayPrefix);
             try
             {
                 foreach (var chunk in TelegramMessageSplitter.SplitMarkdown(richMarkdown, Math.Max(1, runtime.Config.MaxRichMessageLength)))
@@ -214,7 +220,7 @@ public sealed class TelegramChannelAdapter(
         }
 
         // Legacy path: MarkdownV2 with an automatic plain-text fallback inside SendMessageAsync.
-        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
+        var formatted = BuildOutboundText(ProjectOutboundText(message.Content), message.Metadata, message.DisplayPrefix);
         foreach (var chunk in TelegramMessageSplitter.SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
             await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
     }
