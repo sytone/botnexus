@@ -11,6 +11,7 @@ param(
     [switch]$Hook,
 
     [System.Collections.IDictionary]$ValidationModeEnvironment,
+    [System.Collections.IDictionary]$LegacyFallbackEnvironment,
     [string]$AzureValidationScript = (Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'),
     [string]$LocalValidationScript = (Join-Path $PSScriptRoot 'Invoke-LocalValidation.ps1')
 )
@@ -24,6 +25,7 @@ $selectorParameters = @{
     LocalFallback = $LocalFallback
 }
 if ($null -ne $ValidationModeEnvironment) { $selectorParameters.EnvironmentValues = $ValidationModeEnvironment }
+if ($null -ne $LegacyFallbackEnvironment) { $selectorParameters.LegacyFallbackValues = $LegacyFallbackEnvironment }
 $selectedMode = Resolve-BotNexusValidationMode @selectorParameters
 $gateLabel = if ($Hook) { 'advisory pre-commit gate' } else { 'strict gate' }
 Write-Host "Validation mode: $selectedMode ($gateLabel)." -ForegroundColor Cyan
