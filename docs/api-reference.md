@@ -681,6 +681,99 @@ X-Api-Key: your-api-key
 - An extension that declares multiple types appears once per type in the response.
 - Extensions with no declared types use `"unknown"` as the type.
 
+### Extension Details
+
+**Endpoint:** `GET /api/extensions/details`
+
+**Description:** List loaded extensions with their full manifest details, including the configuration field schema each extension declares in its `botnexus-extension.json`. Unlike the flat `GET /api/extensions` listing, each extension appears exactly once regardless of how many types it declares.
+
+**Request:**
+```http
+GET /api/extensions/details
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "id": "botnexus-qmd",
+    "name": "QMD",
+    "version": "1.0.0",
+    "enabled": true,
+    "extensionTypes": ["tool"],
+    "registeredServices": ["IQmdSearchService"],
+    "configSchema": [
+      { "id": "enabled", "type": "bool", "default": "false", "required": false }
+    ],
+    "assemblyFileName": "BotNexus.Extensions.Qmd.dll"
+  }
+]
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Extension ID from the manifest |
+| `name` | string | Extension display name |
+| `version` | string | Extension version |
+| `enabled` | boolean | Whether the extension is enabled; a disabled extension is discovered but not loaded |
+| `extensionTypes` | string[] | Extension type identifiers declared in the manifest |
+| `registeredServices` | string[] | Service contract names registered by this extension |
+| `configSchema` | object[] | Configuration field schema declared by this extension (`id`, `type`, `default`, `required`, ...), used to validate operator config and apply defaults at startup |
+| `assemblyFileName` | string | Entry assembly filename (not full path) |
+
+### Extension Load Health
+
+**Endpoint:** `GET /api/extensions/health`
+
+**Description:** Report the outcome of the startup extension-load pass. This is the boot smoke gate's assertion surface: it turns a silent extension-assembly-load regression - which previously left `/health` green and surfaced only as a generic timeout - into an explicit, named failure.
+
+**Request:**
+```http
+GET /api/extensions/health
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK - every attempted extension loaded
+```json
+{
+  "status": "ok",
+  "loadedCount": 7,
+  "failedCount": 0,
+  "failed": []
+}
+```
+
+**Response:** 503 Service Unavailable - at least one extension failed to load
+```json
+{
+  "status": "failed",
+  "loadedCount": 6,
+  "failedCount": 1,
+  "failed": [
+    {
+      "id": "botnexus-qmd",
+      "error": "Could not load file or assembly 'BotNexus.Extensions.Qmd'"
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `"ok"` when every attempted extension loaded; otherwise `"failed"` |
+| `loadedCount` | int | Number of extensions that loaded successfully at boot |
+| `failedCount` | int | Number of extensions that failed to load at boot |
+| `failed` | object[] | Per-extension load failures; each entry carries the `id` that failed and the actual `error` (typically naming the missing or diverged assembly/type) |
+
+**Notes:**
+- The report reflects the **startup** load pass, so it is stable for the lifetime of the process.
+- The non-200 status code makes this endpoint usable directly as a container or deployment readiness probe.
+
 ---
 
 ## Chat
