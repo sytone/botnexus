@@ -263,6 +263,16 @@ Control tool approval and access:
 - **`alwaysApprove`**: Tools requiring user approval before execution
 - **`neverApprove`**: Trusted tools that skip approval
 - **`denied`**: Tools completely blocked (even if in `toolIds`)
+- **`askFallback`**: What to do when a tool requires approval but no approval workflow can service
+  the request. `allow` (default) permits execution and records an audited approval event; `deny`
+  fails closed and refuses the call with an `ask-fallback-deny` reason.
+- **`askFallbackAllow`**: Tools exempted from `askFallback: "deny"`, so a fail-closed agent can
+  keep a narrow set of tools working.
+
+> **Set `askFallback: "deny"` deliberately.** There is no interactive tool-approval workflow at the
+> gateway's `BeforeToolCall` seam yet, so `deny` makes every approval-required tool
+> (`exec`, `write`, `edit`, `process`, `bash` by default) unusable for that agent. Leave it unset
+> for unattended agents, cron jobs, and sub-agents.
 
 ### Sub-Agents
 

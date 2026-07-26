@@ -222,7 +222,11 @@ public static class GatewayServiceCollectionExtensions
         // Tool policy
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
-        services.AddSingleton<ToolPolicyHookHandler>();
+        services.AddSingleton<ToolPolicyHookHandler>(sp =>
+            new ToolPolicyHookHandler(
+                sp.GetRequiredService<DefaultToolPolicyProvider>(),
+                sp.GetRequiredService<ILogger<ToolPolicyHookHandler>>(),
+                sp.GetService<ISecurityEventSink>()));
         services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 

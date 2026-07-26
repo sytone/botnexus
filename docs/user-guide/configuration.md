@@ -224,6 +224,8 @@ The value supports `~` (home directory) and environment-variable expansion and i
 | `toolPolicy.alwaysApprove` | array | `[]` | Tools requiring approval before execution |
 | `toolPolicy.neverApprove` | array | `[]` | Trusted tools that skip approval |
 | `toolPolicy.denied` | array | `[]` | Tools completely blocked for this agent |
+| `toolPolicy.askFallback` | string | `allow` | Posture when approval is required but no approval workflow can service it: `allow` (execute, audited) or `deny` (fail closed with `ask-fallback-deny`). Leave unset for unattended agents |
+| `toolPolicy.askFallbackAllow` | array | `[]` | Tools exempted from `askFallback: "deny"` |
 | `fileAccess.allowedReadPaths` | array | `[]` | Paths the agent can read (exact or glob). Workspace always readable |
 | `fileAccess.allowedWritePaths` | array | `[]` | Paths the agent can write (exact or glob). Workspace always writable |
 | `fileAccess.deniedPaths` | array | `[]` | Paths explicitly denied even if otherwise allowed |

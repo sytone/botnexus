@@ -973,6 +973,28 @@
           "items": {
             "type": "string"
           }
+        },
+        "askFallback": {
+          "description": "Posture applied when a tool requires approval but no approval workflow can service the request. 'allow' (default) permits execution with an audit record; 'deny' fails closed with an ask-fallback-deny reason. Leave unset for unattended agents.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "allow",
+            "deny",
+            null
+          ]
+        },
+        "askFallbackAllow": {
+          "description": "Tools exempted from askFallback=deny; these fall back to allow instead of being refused.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

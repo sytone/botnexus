@@ -212,9 +212,9 @@ public sealed class ToolPolicyTests
     }
 
     [Fact]
-    public async Task HookHandler_DangerousButNotDenied_ReturnsNull()
+    public async Task HookHandler_DangerousButNotDenied_DefaultFallbackAllows_ReturnsNull()
     {
-        // Dangerous tools log a warning but don't deny (approval UI not yet built)
+        // #2391: the default askFallback posture is 'allow', which preserves unattended operation.
         var provider = CreateProvider();
         var handler = new ToolPolicyHookHandler(
             provider,
@@ -335,5 +335,235 @@ public sealed class ToolPolicyTests
 
         var result = await handler.HandleAsync(evt);
         result.ShouldBeNull("runtime-pinned ask_user must not be denied even when in deny-list");
+    }
+
+    // --- Issue #2391: approval fallback posture (askFallback) -------------------
+
+    /// <summary>Collecting sink so tests can assert the emitted approval-boundary events.</summary>
+    private sealed class CollectingSecurityEventSink : ISecurityEventSink
+    {
+        public List<SecurityEvent> Events { get; } = [];
+        public void Record(SecurityEvent securityEvent) => Events.Add(securityEvent);
+        public IReadOnlyList<SecurityEvent> Snapshot() => Events;
+        public int Count => Events.Count;
+        public void Clear() => Events.Clear();
+    }
+
+    private sealed class ThrowingSecurityEventSink : ISecurityEventSink
+    {
+        public void Record(SecurityEvent securityEvent) => throw new InvalidOperationException("sink fault");
+        public IReadOnlyList<SecurityEvent> Snapshot() => [];
+        public int Count => 0;
+        public void Clear() { }
+    }
+
+    private static PlatformConfig ConfigWithAskFallback(
+        string agentId,
+        string? askFallback,
+        List<string>? askFallbackAllow = null) =>
+        new()
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                [agentId] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig
+                    {
+                        AskFallback = askFallback,
+                        AskFallbackAllow = askFallbackAllow
+                    }
+                }
+            }
+        };
+
+    [Fact]
+    public void GetApprovalFallback_NoConfiguration_DefaultsToAllow()
+    {
+        var provider = CreateProvider();
+        provider.GetApprovalFallback("exec", "unconfigured-agent")
+            .ShouldBe(ToolApprovalFallback.Allow, "the default must preserve unattended operation");
+    }
+
+    [Fact]
+    public void GetApprovalFallback_NullAgent_DefaultsToAllow()
+    {
+        var provider = CreateProvider();
+        provider.GetApprovalFallback("exec").ShouldBe(ToolApprovalFallback.Allow);
+    }
+
+    [Theory]
+    [InlineData("deny", ToolApprovalFallback.Deny)]
+    [InlineData("DENY", ToolApprovalFallback.Deny)]
+    [InlineData("allow", ToolApprovalFallback.Allow)]
+    [InlineData("nonsense", ToolApprovalFallback.Allow)]
+    [InlineData("", ToolApprovalFallback.Allow)]
+    public void GetApprovalFallback_ConfiguredValue_ResolvesPosture(string configured, ToolApprovalFallback expected)
+    {
+        var provider = CreateProvider(ConfigWithAskFallback("a", configured));
+        provider.GetApprovalFallback("exec", "a").ShouldBe(expected);
+    }
+
+    [Fact]
+    public void GetApprovalFallback_ExemptedTool_ReturnsAllow_EvenUnderDeny()
+    {
+        var provider = CreateProvider(ConfigWithAskFallback("a", "deny", ["write"]));
+        provider.GetApprovalFallback("write", "a")
+            .ShouldBe(ToolApprovalFallback.Allow, "askFallbackAllow exempts a named tool");
+        provider.GetApprovalFallback("exec", "a").ShouldBe(ToolApprovalFallback.Deny);
+    }
+
+    /// <summary>
+    /// The core #2391 regression: an approval-required tool under askFallback=deny must NOT
+    /// silently execute. Before the fix the handler returned null here for every tool.
+    /// </summary>
+    [Theory]
+    [InlineData("exec")]
+    [InlineData("write")]
+    [InlineData("edit")]
+    [InlineData("bash")]
+    [InlineData("process")]
+    public async Task HookHandler_ApprovalRequired_AskFallbackDeny_DoesNotSilentlyExecute(string toolName)
+    {
+        var provider = CreateProvider(ConfigWithAskFallback("locked-agent", "deny"));
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("locked-agent"), toolName, "tc-fc",
+            new Dictionary<string, object?> { ["cmd"] = "rm -rf /" });
+
+        var result = await handler.HandleAsync(evt);
+
+        result.ShouldNotBeNull(
+            $"approval-required tool '{toolName}' must not fall through to execution under askFallback=deny");
+        var denied = result ?? throw new InvalidOperationException("Expected a result.");
+        denied.Denied.ShouldBeTrue();
+        var reason = denied.DenyReason ?? throw new InvalidOperationException("Expected a deny reason.");
+        reason.ShouldContain("ask-fallback-deny");
+        reason.ShouldContain(toolName);
+    }
+
+    [Fact]
+    public async Task HookHandler_ApprovalRequired_AskFallbackDeny_EmitsDenySecurityEvent()
+    {
+        var sink = new CollectingSecurityEventSink();
+        var provider = CreateProvider(ConfigWithAskFallback("locked-agent", "deny"));
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance,
+            sink);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("locked-agent"), "exec", "tc-ev",
+            new Dictionary<string, object?> { ["cmd"] = "whoami" });
+
+        await handler.HandleAsync(evt);
+
+        var recorded = sink.Events.ShouldHaveSingleItem();
+        recorded.Category.ShouldBe(SecurityEventCategory.Approval);
+        recorded.Policy.ShouldBe(SecurityPolicyDecision.Deny);
+        recorded.Outcome.ShouldBe(SecurityEventOutcome.Denied);
+        recorded.Severity.ShouldBe(SecurityEventSeverity.Medium);
+        var target = recorded.Target ?? throw new InvalidOperationException("Expected target.");
+        target.Reference.ShouldBe("exec");
+        // The actor id must be a pseudonym, never the raw agent id.
+        var actor = recorded.Actor ?? throw new InvalidOperationException("Expected actor.");
+        actor.Id.ShouldNotBe("locked-agent");
+    }
+
+    [Fact]
+    public async Task HookHandler_ApprovalRequired_AskFallbackAllow_EmitsAllowSecurityEventAndProceeds()
+    {
+        var sink = new CollectingSecurityEventSink();
+        var provider = CreateProvider();
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance,
+            sink);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("unattended-agent"), "exec", "tc-allow",
+            new Dictionary<string, object?> { ["cmd"] = "whoami" });
+
+        var result = await handler.HandleAsync(evt);
+
+        result.ShouldBeNull("the default posture must keep unattended automation working");
+        var recorded = sink.Events.ShouldHaveSingleItem();
+        recorded.Policy.ShouldBe(SecurityPolicyDecision.Allow);
+        recorded.Category.ShouldBe(SecurityEventCategory.Approval);
+    }
+
+    /// <summary>A safe tool is never subject to the approval fallback, even under deny.</summary>
+    [Fact]
+    public async Task HookHandler_SafeTool_AskFallbackDeny_StillAllowedAndEmitsNothing()
+    {
+        var sink = new CollectingSecurityEventSink();
+        var provider = CreateProvider(ConfigWithAskFallback("locked-agent", "deny"));
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance,
+            sink);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("locked-agent"), "read", "tc-safe",
+            new Dictionary<string, object?> { ["file"] = "readme.md" });
+
+        var result = await handler.HandleAsync(evt);
+
+        result.ShouldBeNull("safe tools never require approval");
+        sink.Events.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A per-agent NeverApprove entry short-circuits before the fallback, so a trusted tool keeps
+    /// working even when the agent is otherwise fail-closed.
+    /// </summary>
+    [Fact]
+    public async Task HookHandler_NeverApproveTool_AskFallbackDeny_StillAllowed()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["locked-agent"] = new AgentDefinitionConfig
+                {
+                    ToolPolicy = new ToolPolicyConfig
+                    {
+                        AskFallback = "deny",
+                        NeverApprove = ["write"]
+                    }
+                }
+            }
+        };
+        var provider = CreateProvider(config);
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance);
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("locked-agent"), "write", "tc-trusted",
+            new Dictionary<string, object?> { ["path"] = "a.txt" });
+
+        (await handler.HandleAsync(evt)).ShouldBeNull();
+    }
+
+    /// <summary>A faulting sink must never change the policy outcome.</summary>
+    [Fact]
+    public async Task HookHandler_FaultingSecurityEventSink_DoesNotChangeDenyOutcome()
+    {
+        var provider = CreateProvider(ConfigWithAskFallback("locked-agent", "deny"));
+        var handler = new ToolPolicyHookHandler(
+            provider,
+            NullLogger<ToolPolicyHookHandler>.Instance,
+            new ThrowingSecurityEventSink());
+
+        var evt = new BeforeToolCallEvent(
+            AgentId.From("locked-agent"), "exec", "tc-throw",
+            new Dictionary<string, object?> { ["cmd"] = "whoami" });
+
+        var result = await handler.HandleAsync(evt);
+        var denied = result ?? throw new InvalidOperationException("Expected a denied result.");
+        denied.Denied.ShouldBeTrue();
     }
 }
