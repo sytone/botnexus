@@ -497,7 +497,7 @@ public sealed class SignalRHubTests
         });
 
         var (requestId, task) = registry.Register(conversation.ConversationId, TimeSpan.FromMinutes(1));
-        var hub = CreateHub(conversationStore: conversationStore, askUserResponseRegistry: registry);
+        var hub = CreateHub(conversationStore: conversationStore, askUserPromptResolver: new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance));
 
         await hub.RespondToAskUser(conversation.ConversationId.Value, requestId, "staging", null, cancelled: false);
 
@@ -538,12 +538,17 @@ public sealed class SignalRHubTests
 
         var resumed = new List<AskUserRequest>();
         var resumer = new DelegatingResumer((req, _) => { resumed.Add(req); return Task.CompletedTask; });
+
+        // The #2322 resolver is the front door for every channel; with no live waiter it reports
+        // NoPendingPrompt, which is precisely what makes the hub fall through to the durable
+        // checkpoint path being exercised here.
+        var resolver = new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance);
         var checkpointService = new AskUserCheckpointService(
-            registry, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
+            resolver, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
 
         var hub = CreateHub(
             conversationStore: conversationStore,
-            askUserResponseRegistry: registry,
+            askUserPromptResolver: resolver,
             askUserCheckpointService: checkpointService);
 
         await hub.RespondToAskUser(conversation.ConversationId.Value, "req-restart", "resumed answer", null, cancelled: false);
@@ -1173,7 +1178,7 @@ public sealed class SignalRHubTests
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IConversationResetService? resetService = null,
         string connectionId = "conn-test",
@@ -1221,7 +1226,7 @@ public sealed class SignalRHubTests
             app,
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry,
+            askUserPromptResolver,
             askUserCheckpointService)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),

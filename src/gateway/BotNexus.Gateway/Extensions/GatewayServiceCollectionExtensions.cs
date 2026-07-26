@@ -187,6 +187,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
+        services.TryAddSingleton<IAskUserPromptResolver, AskUserPromptResolver>();
         // #2047: durable ask_user checkpoint resolution + restart resume. The resumer dispatches a
         // continuation turn through the router/orchestrator; the checkpoint service is the single
         // source of truth for resolving a response against persisted state; the hosted reconciliation

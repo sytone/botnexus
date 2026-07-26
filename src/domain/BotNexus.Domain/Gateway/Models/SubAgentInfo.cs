@@ -38,6 +38,15 @@ public sealed record SubAgentInfo
     public string? ChildAgentId { get; init; }
 
     /// <summary>
+    /// Gets the conversation this sub-agent run owns. Distinct from the parent's conversation
+    /// (issue #2338): a sub-agent run is a full conversation, so it gets its own id and is linked
+    /// back to its supervisor by <c>Conversation.ParentConversationId</c> rather than by sharing
+    /// the parent's identity. <c>null</c> only when no <c>IConversationStore</c> is wired (tests,
+    /// minimal hosts), in which case there is nothing to mint against.
+    /// </summary>
+    public ConversationId? ChildConversationId { get; init; }
+
+    /// <summary>
     /// Gets the delegated task assigned to the sub-agent.
     /// </summary>
     public required string Task { get; init; }

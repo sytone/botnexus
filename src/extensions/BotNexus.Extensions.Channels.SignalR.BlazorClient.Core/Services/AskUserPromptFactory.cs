@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -9,20 +9,27 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// <c>PendingAskUserJson</c> payload persisted on the conversation row.
 /// </summary>
 /// <remarks>
-/// This parsing was extracted verbatim from <see cref="GatewayEventHandler"/> (#1753). It is a set of
-/// pure functions with no dependency on client state (<c>IClientStateStore</c>), the hub connection, or a
-/// logger, so it lives in its own testable home shared by both consumers -- the event handler (live path)
-/// and <see cref="AgentInteractionService"/> (REST-hydrated persisted path) -- rather than being owned by
-/// the stateful event handler and reached into via a <c>public static</c> method.
+/// <para>
+/// As of #2322 this type is a thin client-side adapter. The reconciliation itself - metadata
+/// preference order, choice parsing, timeout arithmetic, persisted-payload tolerance - moved to
+/// <see cref="AskUserPromptNormalizer"/> in the shared dependency-free wire assembly
+/// (<c>BotNexus.Domain.Wire</c>), because that logic is channel-independent and Telegram,
+/// Discord, or a TUI cannot reference a Blazor client assembly. What remains here is only the
+/// projection onto the client's own view model (<see cref="AskUserPromptState"/>), which carries
+/// UI-only concerns such as <c>IsSubmitting</c>.
+/// </para>
+/// <para>
+/// WASM PAYLOAD NOTE (#2329, #2334): the normalizer is reached through <c>BotNexus.Domain.Wire</c>
+/// and NOT through <c>BotNexus.Domain</c>. The latter flows <c>Vogen</c> as a runtime asset, and
+/// every assembly this project can reach is downloaded by the browser.
+/// </para>
+/// <para>
+/// Behaviour is unchanged; the existing factory, hub, mobile, and hydration tests continue to
+/// assert it against this same surface.
+/// </para>
 /// </remarks>
 public static class AskUserPromptFactory
 {
-    private static readonly JsonSerializerOptions PersistedAskUserJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
     /// <summary>
     /// Builds a prompt from a live <c>UserInputRequired</c> stream event, preferring the flattened
     /// <see cref="AgentStreamEvent.Metadata"/> values and falling back to the structured
@@ -31,40 +38,13 @@ public static class AskUserPromptFactory
     /// </summary>
     public static bool TryBuildFromStreamEvent(AgentStreamEvent evt, [NotNullWhen(true)] out AskUserPromptState? prompt)
     {
+        ArgumentNullException.ThrowIfNull(evt);
+
         prompt = null;
-        var metadata = evt.Metadata;
-        var payload = evt.UserInputRequest;
-
-        var requestId = GetRequiredString(metadata, "requestId") ?? payload?.RequestId;
-        var conversationId = GetRequiredString(metadata, "conversationId") ?? payload?.ConversationId;
-        var promptText = GetRequiredString(metadata, "prompt") ?? payload?.Prompt;
-        var inputType = GetRequiredString(metadata, "inputType") ?? payload?.InputType;
-
-        if (string.IsNullOrWhiteSpace(requestId) ||
-            string.IsNullOrWhiteSpace(promptText) ||
-            string.IsNullOrWhiteSpace(inputType))
-        {
+        if (!AskUserPromptNormalizer.TryReconcile(evt.Metadata, ToPrompt(evt.UserInputRequest), out var normalized))
             return false;
-        }
 
-        var choices = ParseChoices(metadata, payload?.Choices);
-        var allowMultiple = GetBool(metadata, "allowMultiple") ?? payload?.AllowMultiple ?? false;
-        var allowFreeForm = GetBool(metadata, "allowFreeForm") ?? payload?.AllowFreeForm ?? false;
-        var timeout = GetString(metadata, "timeout") ?? payload?.Timeout;
-        var expiresAt = ParseExpiration(timeout);
-
-        prompt = new AskUserPromptState
-        {
-            RequestId = requestId,
-            ConversationId = conversationId ?? string.Empty,
-            Prompt = promptText,
-            InputType = inputType,
-            Choices = choices,
-            AllowMultiple = allowMultiple,
-            AllowFreeForm = allowFreeForm,
-            ExpiresAt = expiresAt
-        };
-
+        prompt = ToState(normalized);
         return true;
     }
 
@@ -72,175 +52,90 @@ public static class AskUserPromptFactory
     /// Rebuilds an <see cref="AskUserPromptState"/> from the durable <c>PendingAskUserJson</c> payload
     /// (a serialized <c>AskUserRequest</c>) persisted on the conversation row, so a reloaded, newly-opened,
     /// or mobile client that missed the live <c>UserInputRequired</c> event can hydrate the inline prompt
-    /// on connect (ask_user durability, #1488). The persisted shape uses the same camelCase field names as
-    /// the live <see cref="AskUserRequestPayload"/>, with the input type serialized as a string and the
-    /// timeout as an ISO duration; the extra session/agent fields are ignored. Returns false when the JSON
-    /// is missing, malformed, or lacks the required request id / prompt / input type.
+    /// on connect (ask_user durability, #1488). Returns false when the JSON is missing, malformed, or
+    /// lacks the required request id / prompt / input type.
     /// </summary>
     /// <param name="json">Raw persisted <c>AskUserRequest</c> JSON, or null/empty when no prompt is pending.</param>
     /// <param name="conversationId">The conversation being hydrated, used when the payload omits its own id.</param>
     /// <param name="prompt">The reconstructed prompt state on success.</param>
+    /// <remarks>
+    /// The conversation id stays a plain string on both sides of this call: the client's view
+    /// models address conversations by string key, and the shared wire model does too, so no
+    /// value-object conversion is needed (or possible) at this edge.
+    /// </remarks>
     public static bool TryBuildFromPersistedJson(
         string? json,
         string conversationId,
         [NotNullWhen(true)] out AskUserPromptState? prompt)
     {
         prompt = null;
-        if (string.IsNullOrWhiteSpace(json))
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId)
+            ? null
+            : conversationId;
+
+        if (!AskUserPromptNormalizer.TryBuildFromPersistedJson(json, normalizedConversationId, out var normalized))
             return false;
 
-        AskUserRequestPayload? payload;
-        try
-        {
-            payload = JsonSerializer.Deserialize<AskUserRequestPayload>(json, PersistedAskUserJsonOptions);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        prompt = ToState(normalized);
+        return true;
+    }
 
+    /// <summary>
+    /// Projects the client's own wire contract onto the shared prompt model so the domain
+    /// normalizer can reconcile it against the event metadata.
+    /// </summary>
+    private static AskUserPrompt? ToPrompt(AskUserRequestPayload? payload)
+    {
         if (payload is null)
-            return false;
+            return null;
 
-        var requestId = payload.RequestId;
-        var promptText = payload.Prompt;
-        var inputType = payload.InputType;
-        if (string.IsNullOrWhiteSpace(requestId) ||
-            string.IsNullOrWhiteSpace(promptText) ||
-            string.IsNullOrWhiteSpace(inputType))
+        // Required fields are validated by the normalizer against both sources together, so a
+        // payload missing them is still usable as a partial fallback: placeholders here are only
+        // ever surfaced when metadata supplies the real value.
+        return new AskUserPrompt
         {
-            return false;
-        }
-
-        // Prefer the conversation id carried in the payload, falling back to the conversation being
-        // hydrated so the prompt always binds to the tab the user is looking at.
-        var resolvedConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
-            ? conversationId
-            : payload.ConversationId!;
-
-        prompt = new AskUserPromptState
-        {
-            RequestId = requestId!,
-            ConversationId = resolvedConversationId,
-            Prompt = promptText!,
-            InputType = inputType!,
-            Choices = ParseChoices(metadata: null, payload.Choices),
+            RequestId = payload.RequestId ?? string.Empty,
+            ConversationId = string.IsNullOrWhiteSpace(payload.ConversationId)
+                ? null
+                : payload.ConversationId,
+            Prompt = payload.Prompt ?? string.Empty,
+            InputType = payload.InputType ?? string.Empty,
+            Choices = payload.Choices is { Count: > 0 }
+                ? payload.Choices
+                    .Where(choice => !string.IsNullOrWhiteSpace(choice.Value))
+                    .Select(choice => new AskUserPromptChoice(
+                        choice.Value!,
+                        string.IsNullOrWhiteSpace(choice.Label) ? choice.Value! : choice.Label!,
+                        choice.Description))
+                    .ToList()
+                : null,
             AllowMultiple = payload.AllowMultiple,
             AllowFreeForm = payload.AllowFreeForm,
             ExpiresAt = ParseExpiration(payload.Timeout)
         };
-
-        return true;
     }
 
-    private static string? GetRequiredString(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
+    private static AskUserPromptState ToState(AskUserPrompt prompt) => new()
     {
-        var value = GetString(metadata, key);
-        return string.IsNullOrWhiteSpace(value) ? null : value;
-    }
-
-    private static string? GetString(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
-    {
-        if (metadata is null || !metadata.TryGetValue(key, out var raw))
-            return null;
-
-        return raw.ValueKind == JsonValueKind.String ? raw.GetString() : raw.ToString();
-    }
-
-    private static bool? GetBool(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
-    {
-        if (metadata is null || !metadata.TryGetValue(key, out var raw))
-            return null;
-
-        return raw.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.String when bool.TryParse(raw.GetString(), out var parsed) => parsed,
-            _ => null
-        };
-    }
-
-    private static IReadOnlyList<AskUserChoiceState>? ParseChoices(
-        IReadOnlyDictionary<string, JsonElement>? metadata,
-        IReadOnlyList<AskUserChoicePayload>? fallbackChoices)
-    {
-        if (metadata is not null && metadata.TryGetValue("choices", out var rawChoices))
-        {
-            var parsed = ParseChoicesFromJson(rawChoices);
-            if (parsed is { Count: > 0 })
-                return parsed;
-        }
-
-        if (fallbackChoices is null || fallbackChoices.Count == 0)
-            return null;
-
-        return fallbackChoices
-            .Where(choice => !string.IsNullOrWhiteSpace(choice.Value))
-            .Select(choice => new AskUserChoiceState(
-                choice.Value!,
-                string.IsNullOrWhiteSpace(choice.Label) ? choice.Value! : choice.Label!,
-                choice.Description))
-            .ToList();
-    }
-
-    private static IReadOnlyList<AskUserChoiceState>? ParseChoicesFromJson(JsonElement rawChoices)
-    {
-        JsonElement choicesElement;
-        if (rawChoices.ValueKind == JsonValueKind.String)
-        {
-            var rawString = rawChoices.GetString();
-            if (string.IsNullOrWhiteSpace(rawString))
-                return null;
-
-            try
-            {
-                using var document = JsonDocument.Parse(rawString);
-                choicesElement = document.RootElement.Clone();
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
-        }
-        else
-        {
-            choicesElement = rawChoices;
-        }
-
-        if (choicesElement.ValueKind != JsonValueKind.Array)
-            return null;
-
-        var choices = new List<AskUserChoiceState>();
-        foreach (var choice in choicesElement.EnumerateArray())
-        {
-            var value = choice.TryGetProperty("value", out var valueElement)
-                ? valueElement.GetString()
-                : null;
-            if (string.IsNullOrWhiteSpace(value))
-                continue;
-
-            var label = choice.TryGetProperty("label", out var labelElement)
-                ? labelElement.GetString()
-                : null;
-            var description = choice.TryGetProperty("description", out var descriptionElement)
-                ? descriptionElement.GetString()
-                : null;
-
-            choices.Add(new AskUserChoiceState(
-                value,
-                string.IsNullOrWhiteSpace(label) ? value : label,
-                description));
-        }
-
-        return choices;
-    }
+        RequestId = prompt.RequestId,
+        // Both sides key conversations by string, so this is a straight copy with a null-empty
+        // normalisation. Pattern-matched rather than `??` chaining on a null-conditional to avoid
+        // the shape the P9-B-2 session fence bans repo-wide.
+        ConversationId = prompt is { ConversationId: { } promptConversationId } ? promptConversationId : string.Empty,
+        Prompt = prompt.Prompt,
+        InputType = prompt.InputType,
+        Choices = prompt.Choices?
+            .Select(choice => new AskUserChoiceState(choice.Value, choice.Label, choice.Description))
+            .ToList(),
+        AllowMultiple = prompt.AllowMultiple,
+        AllowFreeForm = prompt.AllowFreeForm,
+        ExpiresAt = prompt.ExpiresAt
+    };
 
     private static DateTimeOffset? ParseExpiration(string? timeout)
     {
         if (string.IsNullOrWhiteSpace(timeout) || !TimeSpan.TryParse(timeout, out var duration))
             return null;
-
         return DateTimeOffset.UtcNow.Add(duration);
     }
 }

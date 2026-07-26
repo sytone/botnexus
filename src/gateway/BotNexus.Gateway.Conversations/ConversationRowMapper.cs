@@ -56,6 +56,9 @@ internal static class ConversationRowMapper
             Initiator = DeserializeInitiator(GetNullableString(reader, "initiator")),
             Kind = ParseConversationKind(GetNullableString(reader, "kind")),
             Source = ParseConversationSource(GetOptionalString(reader, "source")),
+            // #2338: NULL (the value for every pre-existing row) means "top-level conversation".
+            ParentConversationId = ParseOptionalConversationId(GetOptionalString(reader, "parent_conversation_id")),
+            SpawningToolCallId = GetOptionalString(reader, "spawning_tool_call_id"),
             WorldId = GetNullableString(reader, "world_id") ?? string.Empty,
             IsPinned = !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             PinnedAt = GetNullableTimestamp(reader, "pinned_at"),
@@ -206,6 +209,13 @@ internal static class ConversationRowMapper
         => Enum.TryParse<ConversationSource>(value, ignoreCase: true, out var parsed)
             ? parsed
             : ConversationSource.Channel;
+
+    // #2338: hydrate the nested-run parent edge. NULL / empty is the overwhelmingly common case
+    // (every top-level conversation, and every row persisted before the column existed), and
+    // ConversationId's Vogen validation rejects blank values, so the blank check is load-bearing
+    // rather than defensive tidiness.
+    private static ConversationId? ParseOptionalConversationId(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : ConversationId.From(value);
 
     private static BindingMode ParseBindingMode(string? value)
         => Enum.TryParse<BindingMode>(value, ignoreCase: true, out var parsed)

@@ -178,6 +178,56 @@ public static class ConversationFactory
             timestamp);
 
     /// <summary>
+    /// Mints the conversation for a nested sub-agent run: a supervising agent delegated work to a
+    /// child, and that run is a conversation in its own right rather than a stream of foreign events
+    /// injected into the supervisor's thread (issue #2338).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="CreateForAgent"/> only in that the parent edge is <em>required</em>.
+    /// A sub-agent conversation without a parent is not a meaningful state: it would be unreachable
+    /// (it is deliberately not surfaced at top level in listings) and there would be nothing to
+    /// render its expandable card against. Making the edge a required parameter of the one factory
+    /// that mints these conversations is what keeps that guarantee structural rather than advisory.
+    /// </para>
+    /// <para>
+    /// <see cref="ConversationKind"/> is fixed to <see cref="ConversationKind.AgentSubAgent"/> and
+    /// <see cref="ConversationSource"/> to <see cref="ConversationSource.Agent"/>: unlike the general
+    /// agent origin, the pairing topology here does not vary.
+    /// </para>
+    /// </remarks>
+    /// <param name="conversationId">Identifier for the new child conversation - its own, never the parent's.</param>
+    /// <param name="agentId">The child (sub-)agent that owns the conversation.</param>
+    /// <param name="parentConversationId">The supervising conversation this run is nested under.</param>
+    /// <param name="spawningToolCallId">The parent-side tool call that spawned the run, when known.</param>
+    /// <param name="title">Human-readable title; blank values normalise to <c>"New conversation"</c>.</param>
+    /// <param name="initiator">The agent that spawned the run, when it resolves locally.</param>
+    /// <param name="purpose">Optional persisted description of the run's intent (typically the task).</param>
+    /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
+    public static Conversation CreateForSubAgent(
+        ConversationId conversationId,
+        AgentId agentId,
+        ConversationId parentConversationId,
+        string? spawningToolCallId = null,
+        string? title = null,
+        CitizenId? initiator = null,
+        string? purpose = null,
+        DateTimeOffset? timestamp = null)
+        => Create(
+            ConversationSource.Agent,
+            ConversationKind.AgentSubAgent,
+            conversationId,
+            agentId,
+            title,
+            initiator,
+            purpose,
+            instructions: null,
+            isDefault: false,
+            timestamp,
+            parentConversationId,
+            spawningToolCallId);
+
+    /// <summary>
     /// The single place a <see cref="Conversation"/> is constructed. Both provenance axes are required
     /// and come first so a future third axis is a one-signature change that no caller can skip.
     /// </summary>
@@ -191,7 +241,9 @@ public static class ConversationFactory
         string? purpose,
         string? instructions,
         bool isDefault,
-        DateTimeOffset? timestamp)
+        DateTimeOffset? timestamp,
+        ConversationId? parentConversationId = null,
+        string? spawningToolCallId = null)
     {
         // One clock read for both stamps: CreatedAt and UpdatedAt must never disagree at birth.
         var now = timestamp ?? DateTimeOffset.UtcNow;
@@ -209,7 +261,9 @@ public static class ConversationFactory
             UpdatedAt = now,
             Initiator = initiator,
             Kind = kind,
-            Source = source
+            Source = source,
+            ParentConversationId = parentConversationId,
+            SpawningToolCallId = spawningToolCallId
         };
     }
 }

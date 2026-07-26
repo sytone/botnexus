@@ -14,17 +14,18 @@ using Shouldly;
 namespace BotNexus.Gateway.Tests.Agents;
 
 /// <summary>
-/// RED tests proving the orphan-window bug in <see cref="DefaultSubAgentManager.SpawnAsync"/>:
-/// the parent-conversation pinning currently happens inside the fire-and-forget
-/// <c>Task.Run(...)</c> at the end of <c>SpawnAsync</c>. That creates a window where the
-/// child session exists with <c>ConversationId == null</c> — a real F-6 orphan caller
-/// like <see cref="ISessionStore.ListByConversationAsync"/> can't see it, and any
-/// concurrent reader (e.g. the canvas, the conversation list, /api/conversations history)
-/// sees a "ghost" session not linked to its parent conversation.
+/// Pins the F-6 eager-materialisation contract for <see cref="DefaultSubAgentManager.SpawnAsync"/>:
+/// the child session's <c>ConversationId</c> must be assigned on the synchronous spawn path, not
+/// inside the fire-and-forget <c>Task.Run(...)</c>. Lazy assignment leaves a window where the child
+/// session exists with <c>ConversationId == null</c> - a real F-6 orphan that
+/// <see cref="ISessionStore.ListByConversationAsync"/> cannot see, and that any concurrent reader
+/// (canvas, conversation list, /api/conversations history) observes as a ghost session.
 /// </summary>
 /// <remarks>
-/// These tests pin Phase 4 item 2 / F-6: <c>SubAgentSpawnRequest.InheritedConversationId</c>
-/// is required, and pinning must be eager (in <c>SpawnAsync</c> itself, not async-after).
+/// Since #2338 the value assigned is the child run's <em>own</em> minted conversation id, not the
+/// parent's: these tests therefore assert that the child session is bound to <em>something</em>
+/// eagerly and that it is explicitly NOT the parent's id. The parent link now lives on
+/// <c>Conversation.ParentConversationId</c> (see <c>SubAgentOwnConversationTests</c>).
 /// </remarks>
 public sealed class SubAgentEagerConversationPinTests
 {
@@ -61,7 +62,9 @@ public sealed class SubAgentEagerConversationPinTests
         events.IndexOf("create-session").ShouldBeLessThan(events.IndexOf("create-handle"));
         events.IndexOf("save-session").ShouldBeLessThan(events.IndexOf("create-handle"));
         childSession.SessionType.ShouldBe(SessionType.AgentSubAgent);
-        childSession.ConversationId.ShouldBe(ConversationId.From("conv-materialized"));
+        childSession.ConversationId.IsInitialized().ShouldBeTrue();
+        // #2338: the child owns its conversation; it must NOT be the parent's.
+        childSession.ConversationId.ShouldNotBe(ConversationId.From("conv-materialized"));
     }
 
     [Fact]
@@ -164,9 +167,10 @@ public sealed class SubAgentEagerConversationPinTests
         // Assert: the moment SpawnAsync returns, the child session must already be
         // pinned to the parent conversation. NO Task.Delay needed.
         pinnedSession.Session.ConversationId.IsInitialized().ShouldBeTrue(
-            "After SpawnAsync returns, the child session must already be bound to the parent conversation. " +
-            "If you needed Task.Delay(...) here, pinning is still lazy and the orphan-window bug remains.");
-        pinnedSession.Session.ConversationId.Value.ShouldBe("conv-99");
+            "After SpawnAsync returns, the child session must already be bound to its own conversation. " +
+            "If you needed Task.Delay(...) here, the binding is still lazy and the orphan-window bug remains.");
+        // #2338: distinct identity - the parent's id is the parent edge, not the child's id.
+        pinnedSession.Session.ConversationId.Value.ShouldNotBe("conv-99");
     }
 
     [Fact]
@@ -213,13 +217,15 @@ public sealed class SubAgentEagerConversationPinTests
         await manager.SpawnAsync(request);
         await promptInvoked.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        // Assert: the recorded order MUST start with the pin and only then prompt.
+        // Assert: the recorded order MUST start with the bind and only then prompt.
         events.ShouldNotBeEmpty();
-        events[0].ShouldBe("pin:conv-order",
-            "Conversation pinning must complete strictly before PromptAsync runs. " +
-            "Recorded order: " + string.Join(" -> ", events));
+        events[0].ShouldStartWith("pin:c_");
+        events[0].ShouldNotBe(
+            "pin:conv-order",
+            "Conversation binding must bind the child's OWN minted conversation id, never the " +
+            "parent's (#2338). Recorded order: " + string.Join(" -> ", events));
         events.ShouldContain("prompt");
-        events.IndexOf("pin:conv-order").ShouldBeLessThan(events.IndexOf("prompt"));
+        events.IndexOf(events[0]).ShouldBeLessThan(events.IndexOf("prompt"));
     }
 
     private static Mock<IAgentHandle> BuildHandle()

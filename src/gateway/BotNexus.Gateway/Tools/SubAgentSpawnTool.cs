@@ -107,6 +107,10 @@ public sealed class SubAgentSpawnTool(
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             InheritedConversationId = conversationId,
+            // #2338: binds the child conversation back to the exact spawn_subagent call so a channel
+            // can render the run as an expandable card in place of it, instead of guessing the
+            // association by timestamp.
+            SpawningToolCallId = toolCallId,
             Mode = mode,
             ShareWorkspace = shareWorkspace,
             GrantedPaths = grantedPaths
@@ -117,6 +121,9 @@ public sealed class SubAgentSpawnTool(
         {
             spawned.SubAgentId,
             SessionId = spawned.ChildSessionId,
+            // #2338: the run's own conversation id. This is what a channel expands to load the
+            // child's transcript on demand; it is deliberately NOT the caller's conversation id.
+            ConversationId = spawned.ChildConversationId,
             spawned.Status,
             spawned.Name
         }, JsonOptions);

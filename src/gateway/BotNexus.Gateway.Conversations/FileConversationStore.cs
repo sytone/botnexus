@@ -365,6 +365,9 @@ public sealed class FileConversationStore : IConversationStore
         var all = await ListAsync(null, ct).ConfigureAwait(false);
         return [.. all
             .Where(c => c.Status != ConversationStatus.Archived)
+            // #2338: nested sub-agent runs are reachable only through their parent's spawning tool
+            // call, so they never appear as top-level summaries.
+            .Where(c => c.ParentConversationId is null)
             .OrderByDescending(c => c.IsPinned)
             .ThenByDescending(c => c.PinnedAt)
             .ThenByDescending(c => c.UpdatedAt)

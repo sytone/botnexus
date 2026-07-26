@@ -38,4 +38,24 @@
     <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
   </ItemGroup>
 
+  <!-- #2322 / #2334: ask_user prompt reconciliation (AskUserPromptNormalizer) is shared by every
+       channel, and this client consumes it from BotNexus.Domain.Wire - referenced above - NOT from
+       BotNexus.Domain.
+
+       An earlier revision of this PR added a BotNexus.Domain ProjectReference here, justified as
+       "only a Vogen source-generator package reference, so it does not weigh down the WASM
+       payload". That justification was wrong, and BotNexus.Domain.csproj says so explicitly:
+       PrivateAssets="all" on Vogen was TRIED and EMPIRICALLY REJECTED there, because
+       Vogen.ValueObjectValidationException is a real runtime type caught by CitizenId.TryParse.
+       Vogen therefore flows as a RUNTIME asset and Vogen.SharedTypes.dll lands in the browser
+       download - which WasmPayloadDependencyArchitectureTests correctly failed on.
+
+       The fix is the one #2329 proposal 3 prescribes and the fence's own allowlist comment
+       demands: the shared ask_user wire shapes (AskUserPrompt, AskUserPromptChoice,
+       AskUserPromptNormalizer, AskUserPromptTextRenderer) live in the zero-dependency
+       BotNexus.Domain.Wire assembly, addressing conversations by plain string. The gateway maps
+       those strings to and from the typed Vogen ConversationId on the SERVER via
+       AskUserPromptProjection, which stays in BotNexus.Domain. Do NOT re-add a BotNexus.Domain
+       reference here, and do NOT allowlist it in the fence. -->
+
 </Project>

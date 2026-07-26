@@ -29,6 +29,14 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     public override bool SupportsToolDisplay => true;
     public override bool SupportsInboundImages => true;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The Blazor chat panel renders <c>ask_user</c> inline with choice buttons, multi-select,
+    /// and a cancel affordance, so SignalR is fully prompt-capable and never needs the
+    /// text-degraded fallback.
+    /// </remarks>
+    public override bool SupportsInteractivePrompts => true;
+
     protected override Task OnStartAsync(CancellationToken cancellationToken)
         => Task.CompletedTask;
 

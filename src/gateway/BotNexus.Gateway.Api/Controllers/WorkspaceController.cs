@@ -199,10 +199,25 @@ public sealed class WorkspaceController : ControllerBase
         int currentDepth)
     {
         var entries = new List<WorkspaceEntryDto>();
-        var fileSystemEntries = _fileSystem.Directory
-            .EnumerateFileSystemEntries(currentDirectory)
-            .OrderBy(path => _fileSystem.Directory.Exists(path) ? 0 : 1)
-            .ThenBy(path => _fileSystem.Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
+
+        // The directory may be removed between the caller's check and this enumeration
+        // (agents churn scratch files constantly); an absent directory yields no children.
+        List<string> fileSystemEntries;
+        try
+        {
+            fileSystemEntries = [.. _fileSystem.Directory
+                .EnumerateFileSystemEntries(currentDirectory)
+                .OrderBy(path => _fileSystem.Directory.Exists(path) ? 0 : 1)
+                .ThenBy(path => _fileSystem.Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)];
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return entries;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return entries;
+        }
 
         foreach (var entryPath in fileSystemEntries)
         {
@@ -227,13 +242,36 @@ public sealed class WorkspaceController : ControllerBase
                 continue;
             }
 
-            var info = _fileSystem.FileInfo.New(entryPath);
+            // An entry enumerated a moment ago can already be gone by the time it is stat'ed.
+            // Skip the vanished entry rather than failing the whole listing.
+            long size;
+            try
+            {
+                size = _fileSystem.FileInfo.New(entryPath).Length;
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                continue;
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
+
             entries.Add(new WorkspaceEntryDto
             {
                 Name = _fileSystem.Path.GetFileName(entryPath),
                 Path = relativePath,
                 Type = "file",
-                Size = info.Length
+                Size = size
             });
         }
 

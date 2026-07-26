@@ -63,6 +63,26 @@ public interface IChannelAdapter
     /// </summary>
     bool SupportsInboundImages { get; }
 
+    /// <summary>
+    /// Whether this channel can render a structured interactive prompt - discrete choice
+    /// affordances (buttons, a picker), multi-select, and an explicit cancel control - for an
+    /// <c>ask_user</c> checkpoint (#2322).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the signal the gateway needs to decide <em>how</em> to present a pending prompt.
+    /// An adapter returning <c>false</c> is not excluded from ask_user: the gateway degrades the
+    /// prompt to a numbered text list via
+    /// <see cref="BotNexus.Gateway.Abstractions.Models.AskUserPromptTextRenderer"/> so the user can
+    /// still answer, because the agent is genuinely blocked either way.
+    /// </para>
+    /// <para>
+    /// Defaults to <c>false</c> so existing adapters keep their current (text) behaviour without
+    /// change; an adapter opts in only once it can actually render the affordances.
+    /// </para>
+    /// </remarks>
+    bool SupportsInteractivePrompts => false;
+
     /// <summary>Whether the adapter is currently running and accepting messages.</summary>
     bool IsRunning { get; }
 

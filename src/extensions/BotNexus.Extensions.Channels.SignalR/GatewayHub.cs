@@ -52,7 +52,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IActivityBroadcaster _activity;
     private readonly IConversationRouter _conversationRouter;
     private readonly IConversationStore? _conversationStore;
-    private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
+    private readonly IAskUserPromptResolver? _askUserPromptResolver;
     private readonly IAskUserCheckpointService? _askUserCheckpointService;
     private readonly IGatewayHubApplicationService _app;
     private readonly ILogger<GatewayHub> _logger;
@@ -72,7 +72,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IGatewayHubApplicationService app,
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
         IWorldContext? worldContext = null)
@@ -85,7 +85,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _app = app;
         _logger = logger;
         _conversationStore = conversationStore;
-        _askUserResponseRegistry = askUserResponseRegistry;
+        _askUserPromptResolver = askUserPromptResolver;
         _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
@@ -190,6 +190,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// Completes a pending <c>ask_user</c> request for the active conversation without
     /// entering the normal session dispatch queue.
     /// </summary>
+    /// <remarks>
+    /// Since #2322 the hub is one caller of <see cref="IAskUserPromptResolver"/> among several,
+    /// not the owner of ask_user resolution. It keeps only the transport concerns that are
+    /// genuinely SignalR's - control-scope enforcement, the signalr-binding access check, and
+    /// translating the shared outcome into a <see cref="HubException"/>. Response normalisation
+    /// and the registry completion now live behind the resolver so every channel behaves alike.
+    /// </remarks>
     public async Task RespondToAskUser(
         string conversationId,
         string requestId,
@@ -199,7 +206,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(RespondToAskUser));
 
-        if (_askUserResponseRegistry is null || _conversationStore is null)
+        if (_askUserPromptResolver is null || _conversationStore is null)
             throw new HubException("ask_user response handling is not available.");
 
         if (string.IsNullOrWhiteSpace(conversationId))
@@ -217,36 +224,54 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (!hasSignalRBinding)
             throw new HubException("Caller does not have access to this conversation.");
 
-        var response = new AskUserResponse
-        {
-            RequestId = requestId.Trim(),
-            FreeFormText = string.IsNullOrWhiteSpace(freeFormText) ? null : freeFormText.Trim(),
-            SelectedValues = selectedValues is { Length: > 0 }
-                ? selectedValues
-                    .Where(value => !string.IsNullOrWhiteSpace(value))
-                    .Select(value => value.Trim())
-                    .ToArray()
-                : null,
-            WasCancelled = cancelled
-        };
+        var result = await _askUserPromptResolver.ResolveAsync(
+            new AskUserSubmission
+            {
+                ConversationId = normalizedConversationId,
+                RequestId = requestId,
+                FreeFormText = freeFormText,
+                SelectedValues = selectedValues,
+                Cancelled = cancelled,
+                OriginChannel = ChannelKey.From("signalr")
+            },
+            Context.ConnectionAborted);
 
-        // #2047: resolve through the durable checkpoint service so a response or cancellation
-        // resumes the conversation even after a gateway restart destroyed the in-memory waiter.
-        // The resolution is idempotent - a duplicate or cross-client submission for an
-        // already-resolved prompt is a no-op that must not throw or double-resume.
-        if (_askUserCheckpointService is not null)
+        if (result.Succeeded)
+            return;
+
+        // #2047: the resolver only knows about live in-memory waiters. When it reports that nothing
+        // is pending, the prompt may still exist as a durable checkpoint whose waiter was destroyed
+        // by a gateway restart, reload, or conversation switch. Fall through to the checkpoint
+        // service so the response still resolves and resumes the conversation from persisted state.
+        // Validation failures are NOT retried here: an empty or malformed submission is rejected by
+        // the #2322 seam for every channel alike, restart or not.
+        if (result.Status == AskUserResolutionStatus.NoPendingPrompt && _askUserCheckpointService is not null)
         {
+            var response = new AskUserResponse
+            {
+                RequestId = requestId,
+                FreeFormText = string.IsNullOrWhiteSpace(freeFormText) ? null : freeFormText.Trim(),
+                SelectedValues = selectedValues is { Length: > 0 }
+                    ? selectedValues.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).ToArray()
+                    : null,
+                WasCancelled = cancelled
+            };
+
             var outcome = await _askUserCheckpointService.ResolveAsync(
-                normalizedConversationId, response.RequestId, response, Context.ConnectionAborted);
+                normalizedConversationId, requestId, response, Context.ConnectionAborted);
+
             if (outcome == AskUserResolveOutcome.RequestIdMismatch)
                 throw new HubException("This ask_user prompt is no longer the active prompt for the conversation.");
-            // LiveCompleted / ResumedFromCheckpoint / NoPendingCheckpoint all resolve without error:
-            // NoPendingCheckpoint means the prompt was already answered or cancelled (idempotent).
+
+            // ResumedFromCheckpoint resolved from persisted state. NoPendingCheckpoint means the
+            // prompt was already answered or cancelled - a duplicate or cross-client submission,
+            // which is an idempotent no-op and must not throw or double-resume.
             return;
         }
 
-        if (!_askUserResponseRegistry.TryComplete(normalizedConversationId, response.RequestId, response))
-            throw new HubException("No matching ask_user request is pending for this conversation.");
+        throw new HubException(result.Status == AskUserResolutionStatus.InvalidSubmission
+            ? result.FailureReason ?? "The ask_user response was rejected."
+            : "No matching ask_user request is pending for this conversation.");
     }
 
     /// <summary>
