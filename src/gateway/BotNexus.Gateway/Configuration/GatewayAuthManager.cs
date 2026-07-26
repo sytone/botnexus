@@ -300,6 +300,9 @@ public sealed class GatewayAuthManager
 
         var json = JsonSerializer.Serialize(_entries, JsonOptions);
         _fileSystem.File.WriteAllText(_authFilePath, json);
+        // #2392: auth.json holds OAuth refresh/access tokens. Narrow it to the owner on every
+        // save, not just first create - a token refresh rewrites this file routinely.
+        SecureFilePermissions.RestrictToOwner(_fileSystem, _authFilePath);
     }
 
     private static bool TryGetProviderConfig(

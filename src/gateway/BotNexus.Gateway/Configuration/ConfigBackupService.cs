@@ -54,6 +54,11 @@ public sealed class ConfigBackupService
         var backupPath = _fileSystem.Path.Combine(_backupsDirectory, backupName);
 
         _fileSystem.File.Copy(configPath, backupPath, overwrite: true);
+        // #2392: a backup is a byte-for-byte copy of config.json, secrets included, so it needs
+        // the same owner-only narrowing as the live file. File.Copy does NOT carry the source
+        // permissions across on POSIX (the new file gets the process umask), so securing only
+        // config.json would leave up to MaxBackups readable copies of the same secrets behind.
+        SecureFilePermissions.RestrictToOwner(_fileSystem, backupPath);
 
         Prune();
     }
