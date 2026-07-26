@@ -63,4 +63,25 @@
     <Copy SourceFiles="@(MobileBlazorPublishFiles)" DestinationFolder="$(OutputPath)blazor-mobile\%(RecursiveDir)" />
   </Target>
 
+  <!-- Carry the bundled Blazor clients into the PUBLISH output as well (#2376).
+       The targets above copy into $(OutputPath), which serves `dotnet build` (and therefore
+       the local `botnexus gateway start` deploy, which copies from bin/). `dotnet publish`
+       computes its own file list and does NOT sweep arbitrary $(OutputPath) subdirectories,
+       so the container image — which publishes each extension — shipped the SignalR hub but
+       no blazor/ directory. SignalREndpointContributor probes for {extensionDir}/blazor and
+       silently skips portal registration when it is absent, giving a published image with a
+       working /hub/gateway and a 404 portal. Registering the files as ResolvedFileToPublish
+       keeps build and publish layouts identical. -->
+  <Target Name="PublishBundledBlazorClients" BeforeTargets="ComputeResolvedFilesToPublishList" DependsOnTargets="CopyBlazorClient;CopyMobileBlazorClient">
+    <ItemGroup>
+      <_BundledBlazorPublishFile Include="$(IntermediateOutputPath)blazor-publish\wwwroot\**" BundleFolder="blazor" />
+      <_BundledBlazorPublishFile Include="$(IntermediateOutputPath)blazor-mobile-publish\wwwroot\**" BundleFolder="blazor-mobile" />
+
+      <ResolvedFileToPublish Include="@(_BundledBlazorPublishFile)">
+        <RelativePath>%(_BundledBlazorPublishFile.BundleFolder)\%(_BundledBlazorPublishFile.RecursiveDir)%(_BundledBlazorPublishFile.Filename)%(_BundledBlazorPublishFile.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   </Project>

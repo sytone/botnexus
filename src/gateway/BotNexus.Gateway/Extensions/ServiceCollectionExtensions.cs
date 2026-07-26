@@ -54,7 +54,7 @@ public static class ServiceCollectionExtensions
         if (extensionsConfig?.Enabled is false)
             return [];
 
-        var extensionsPath = ResolveExtensionsPath(platformConfig, extensionsConfig, fileSystem);
+        var extensionsPath = ResolveExtensionsPath(extensionsConfig, fileSystem);
         var allDiscovered = await loader.DiscoverAsync(extensionsPath, ct);
 
         // Deduplicate by extension ID — if multiple directories contain the same ID,
@@ -115,10 +115,27 @@ public static class ServiceCollectionExtensions
         return results;
     }
 
-    private static string ResolveExtensionsPath(PlatformConfig config, ExtensionsConfig? extensionConfig, IFileSystem fileSystem)
+    /// <summary>
+    /// Environment variable overriding the extension probe root when config.json does not set one.
+    /// </summary>
+    /// <remarks>
+    /// Issue #2376: the container image bakes its extensions at <c>/app/extensions</c> because
+    /// <c>BOTNEXUS_HOME</c> (<c>/app/config</c>) is a declared <c>VOLUME</c> — anything written there
+    /// at build time is shadowed by the caller's mount on a stock <c>docker run</c>, so the default
+    /// <c>{home}/extensions</c> probe path resolved to an empty directory and the image shipped with
+    /// no SignalR hub, no portal, and an empty <c>/api/extensions</c>.
+    /// </remarks>
+    public const string ExtensionsPathEnvVar = "BOTNEXUS_EXTENSIONS_PATH";
+
+    internal static string ResolveExtensionsPath(ExtensionsConfig? extensionConfig, IFileSystem fileSystem)
     {
+        // Explicit configuration always wins.
         if (!string.IsNullOrWhiteSpace(extensionConfig?.Path))
             return Path.GetFullPath(extensionConfig.Path);
+
+        var environmentOverride = Environment.GetEnvironmentVariable(ExtensionsPathEnvVar);
+        if (!string.IsNullOrWhiteSpace(environmentOverride))
+            return Path.GetFullPath(environmentOverride);
 
         return Path.Combine(new BotNexusHome(fileSystem).RootPath, "extensions");
     }
