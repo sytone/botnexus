@@ -220,6 +220,12 @@ public sealed class GrepTool : IAgentTool
 
         targetPath ??= PathUtils.ResolvePath(rawPath, _workingDirectory, _fileSystem);
 
+        // Resolution above may have swapped a symlinked prefix for the link's real target. That resolution
+        // is the containment check and stays exactly as-is, but returning the resolved path would hand the
+        // agent paths outside the tree it actually named. Capture the requested root so display paths can
+        // be re-anchored onto it after enumeration. See issue #2384.
+        var requestedRoot = ResolveRequestedRoot(rawPath);
+
         if (!_fileSystem.Directory.Exists(targetPath) && !_fileSystem.File.Exists(targetPath))
         {
             return new AgentToolResult(
@@ -271,7 +277,9 @@ public sealed class GrepTool : IAgentTool
                         continue;
                     }
 
-                    var relativePath = PathUtils.GetRelativePath(file, _workingDirectory);
+                    var relativePath = PathUtils.GetRelativePath(
+                        ReanchorToRequestedRoot(file, targetPath, requestedRoot),
+                        _workingDirectory);
                     if (contextLines == 0)
                     {
                         matches.Add($"{relativePath}:{lineNumber}: {TruncateLine(allLines[lineNumber - 1])}");
@@ -362,6 +370,72 @@ public sealed class GrepTool : IAgentTool
         }
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, builder.ToString().TrimEnd())]);
+    }
+
+    /// <summary>
+    /// Computes the absolute form of the caller's requested path <em>without</em> following symlinks, so
+    /// result paths can be reported under the prefix the caller named. Returns <c>null</c> when the raw
+    /// path uses a form this re-anchoring cannot faithfully mirror (home-relative <c>~</c> paths, or a
+    /// path that does not exist as written), in which case the resolved path is reported unchanged.
+    /// </summary>
+    private string? ResolveRequestedRoot(string rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawPath) || rawPath.TrimStart().StartsWith('~'))
+        {
+            return null;
+        }
+
+        string candidate;
+        try
+        {
+            candidate = Path.GetFullPath(
+                Path.IsPathRooted(rawPath) ? rawPath : Path.Combine(_workingDirectory, rawPath));
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+        catch (PathTooLongException)
+        {
+            return null;
+        }
+
+        return _fileSystem.Directory.Exists(candidate) || _fileSystem.File.Exists(candidate)
+            ? candidate
+            : null;
+    }
+
+    /// <summary>
+    /// Maps a file discovered under the symlink-resolved <paramref name="targetPath"/> back onto the prefix
+    /// the caller asked about. Only the reported path changes - reading, access validation, and gitignore
+    /// checks all continue to use the resolved path. The file is returned unchanged when resolution did not
+    /// alter the prefix, when no requested root was captured, or when the file sits outside the resolved root.
+    /// </summary>
+    private static string ReanchorToRequestedRoot(string file, string targetPath, string? requestedRoot)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (requestedRoot is null || string.Equals(targetPath, requestedRoot, comparison))
+        {
+            return file;
+        }
+
+        var relative = Path.GetRelativePath(targetPath, file);
+        if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+        {
+            return file;
+        }
+
+        // A single-file request resolves targetPath to the file itself; anchor onto the requested file path.
+        return relative == "."
+            ? requestedRoot
+            : Path.Combine(requestedRoot, relative);
     }
 
     private IEnumerable<string> EnumerateCandidateFiles(string targetPath, string? include)
