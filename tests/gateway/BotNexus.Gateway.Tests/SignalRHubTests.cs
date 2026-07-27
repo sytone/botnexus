@@ -544,7 +544,7 @@ public sealed class SignalRHubTests
         // checkpoint path being exercised here.
         var resolver = new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance);
         var checkpointService = new AskUserCheckpointService(
-            registry, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
+            resolver, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
 
         var hub = CreateHub(
             conversationStore: conversationStore,

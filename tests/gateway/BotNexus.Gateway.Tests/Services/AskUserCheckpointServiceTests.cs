@@ -208,8 +208,11 @@ public sealed class AskUserCheckpointServiceTests
         out RecordingResumer resumer)
     {
         resumer = new RecordingResumer();
+        // The checkpoint service resolves live waiters through the #2322 resolver seam rather than
+        // touching the registry directly, so the real resolver is wired over the real registry here.
+        var resolver = new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance);
         return new AskUserCheckpointService(
-            registry,
+            resolver,
             store,
             NullLogger<AskUserCheckpointService>.Instance,
             resumer);

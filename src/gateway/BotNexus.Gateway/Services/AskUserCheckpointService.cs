@@ -29,7 +29,7 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private readonly IAskUserResponseRegistry _registry;
+    private readonly IAskUserPromptResolver _resolver;
     private readonly IConversationStore _conversationStore;
     private readonly IAskUserCheckpointResumer? _resumer;
     private readonly ILogger<AskUserCheckpointService> _logger;
@@ -42,22 +42,23 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
     /// <summary>
     /// Creates the checkpoint service.
     /// </summary>
-    /// <param name="registry">Live in-memory waiter registry (fast path when the original task survives).</param>
+    /// <param name="resolver">Channel-agnostic live resolution seam (#2322); owns the fast path when the
+    /// original blocked task survives, including validation and normalisation of the answer.</param>
     /// <param name="conversationStore">Durable conversation state that carries the pending prompt.</param>
     /// <param name="logger">Diagnostics logger.</param>
     /// <param name="resumer">Optional continuation dispatcher used for the restart/reload resume path.
     /// When omitted, a checkpoint can still be claimed and cleared but no continuation is dispatched
     /// (used by unit tests and hosts that have not wired resume).</param>
     public AskUserCheckpointService(
-        IAskUserResponseRegistry registry,
+        IAskUserPromptResolver resolver,
         IConversationStore conversationStore,
         ILogger<AskUserCheckpointService> logger,
         IAskUserCheckpointResumer? resumer = null)
     {
-        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(resolver);
         ArgumentNullException.ThrowIfNull(conversationStore);
         ArgumentNullException.ThrowIfNull(logger);
-        _registry = registry;
+        _resolver = resolver;
         _conversationStore = conversationStore;
         _logger = logger;
         _resumer = resumer;
@@ -76,10 +77,11 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
 
         var normalizedRequestId = requestId.Trim();
 
-        // Fast path: a live waiter still exists (no restart happened). Complete it in-process and
-        // let the tool's own finally clear the durable copy. This keeps the common case cheap and
+        // Fast path: a live waiter still exists (no restart happened). Resolution goes through the
+        // channel-agnostic resolver seam (#2322) so validation and normalisation stay in one place;
+        // the tool's own finally then clears the durable copy. This keeps the common case cheap and
         // avoids dispatching a redundant continuation.
-        if (_registry.TryComplete(conversationId, normalizedRequestId, response))
+        if (await TryResolveLiveAsync(conversationId, normalizedRequestId, response, cancellationToken).ConfigureAwait(false))
             return AskUserResolveOutcome.LiveCompleted;
 
         // Slow path: no live waiter. Resolve against durable state under a per-conversation gate so
@@ -88,9 +90,9 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Re-check the live registry inside the gate: a waiter may have raced in (or the durable
+            // Re-check the live path inside the gate: a waiter may have raced in (or the durable
             // claim may already have completed on another thread that then registered nothing).
-            if (_registry.TryComplete(conversationId, normalizedRequestId, response))
+            if (await TryResolveLiveAsync(conversationId, normalizedRequestId, response, cancellationToken).ConfigureAwait(false))
                 return AskUserResolveOutcome.LiveCompleted;
 
             var conversation = await _conversationStore.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
@@ -164,7 +166,7 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
         // Prefer the live registry's request id when a waiter is active; otherwise fall back to the
         // durable checkpoint so an inbound message after a restart is still captured as a response
         // (and not silently swallowed nor mis-dispatched as a fresh turn).
-        string? requestId = _registry.TryGetPendingRequestId(conversationId, out var liveRequestId)
+        string? requestId = _resolver.TryGetPendingRequestId(conversationId, out var liveRequestId)
             ? liveRequestId
             : await ReadDurableRequestIdAsync(conversationId, cancellationToken).ConfigureAwait(false);
 
@@ -179,6 +181,30 @@ public sealed class AskUserCheckpointService : IAskUserCheckpointService
 
         var outcome = await ResolveAsync(conversationId, requestId, response, cancellationToken).ConfigureAwait(false);
         return outcome is AskUserResolveOutcome.LiveCompleted or AskUserResolveOutcome.ResumedFromCheckpoint;
+    }
+
+    /// <summary>
+    /// Attempts live resolution through <see cref="IAskUserPromptResolver"/>. Returns false when no live
+    /// waiter is present (or the submission did not match it), which is the signal to fall through to the
+    /// durable checkpoint path rather than an error.
+    /// </summary>
+    private async Task<bool> TryResolveLiveAsync(
+        ConversationId conversationId,
+        string requestId,
+        AskUserResponse response,
+        CancellationToken cancellationToken)
+    {
+        var submission = new AskUserSubmission
+        {
+            ConversationId = conversationId,
+            RequestId = requestId,
+            FreeFormText = response.FreeFormText,
+            SelectedValues = response.SelectedValues,
+            Cancelled = response.WasCancelled
+        };
+
+        var result = await _resolver.ResolveAsync(submission, cancellationToken).ConfigureAwait(false);
+        return result.Succeeded;
     }
 
     private async Task<string?> ReadDurableRequestIdAsync(ConversationId conversationId, CancellationToken cancellationToken)
