@@ -466,32 +466,43 @@ internal static class ToolExecutor
     }
 
     /// <summary>
-    /// Returns a copy of <paramref name="args"/> where every boxed CLR numeric value (produced by
-    /// streaming tool-call argument parsing) is replaced with an equivalent <see cref="JsonElement"/>
-    /// number, so tool argument readers see a uniform <see cref="JsonElement"/> regardless of how the
-    /// provider boxed the value (issue #2415). Values that are already <see cref="JsonElement"/> or are
+    /// Returns a copy of <paramref name="args"/> where each boxed CLR number produced by streaming
+    /// tool-call argument parsing is replaced with an equivalent <see cref="JsonElement"/> number, so
+    /// tool argument readers see a uniform <see cref="JsonElement"/> regardless of how the provider
+    /// boxed the value (issue #2415). Values that are already <see cref="JsonElement"/> or are
     /// non-numeric are preserved verbatim. The original instance is returned when nothing needs
     /// normalising to avoid needless reallocation.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Only <see cref="long"/> and finite <see cref="double"/> are normalised: <c>StreamingJsonParser</c>
+    /// boxes JSON integers as <see cref="long"/> and non-integers as <see cref="double"/>, so those are
+    /// the only CLR numeric types a boxed JSON number can arrive as. A boxed <see cref="int"/> is left
+    /// untouched — every numeric tool argument reader already accepts <see cref="int"/> directly, and
+    /// rewriting it would needlessly perturb readers that pattern-match <c>is int</c>. A non-finite
+    /// <see cref="double"/> is left boxed because it has no JSON number representation, so the downstream
+    /// reader rejects it with a tool-level error rather than this seam throwing.
+    /// </para>
+    /// <para>
     /// Normalisation is intentionally top-level only. <c>StreamingJsonParser</c> maps nested JSON
     /// objects to nested <see cref="Dictionary{TKey, TValue}"/> instances, so a boxed number nested
     /// inside an object argument is not rewritten here; no current tool takes an object-valued numeric
     /// argument, so this is a latent limitation rather than a live gap.
+    /// </para>
     /// </remarks>
     private static IReadOnlyDictionary<string, object?> NormalizeBoxedNumbers(IReadOnlyDictionary<string, object?> args)
     {
-        var changed = false;
+        var needsNormalization = false;
         foreach (var value in args.Values)
         {
-            if (value is long or double or int or float or decimal)
+            if (value is long || (value is double d && double.IsFinite(d)))
             {
-                changed = true;
+                needsNormalization = true;
                 break;
             }
         }
 
-        if (!changed)
+        if (!needsNormalization)
         {
             return args;
         }
@@ -502,10 +513,7 @@ internal static class ToolExecutor
             normalized[key] = value switch
             {
                 long l => JsonSerializer.SerializeToElement(l),
-                int i => JsonSerializer.SerializeToElement(i),
-                double d => JsonSerializer.SerializeToElement(d),
-                float f => JsonSerializer.SerializeToElement(f),
-                decimal m => JsonSerializer.SerializeToElement(m),
+                double d when double.IsFinite(d) => JsonSerializer.SerializeToElement(d),
                 _ => value
             };
         }

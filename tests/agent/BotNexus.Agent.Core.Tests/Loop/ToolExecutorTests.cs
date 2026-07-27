@@ -176,6 +176,35 @@ public class ToolExecutorTests
         tool.CapturedCount.ShouldBe(600);
     }
 
+    // A boxed int is already accepted by every numeric tool argument reader, so the seam must leave it
+    // as a CLR int rather than rewriting it to a JsonElement — otherwise a reader that pattern-matches
+    // `is int` would silently stop seeing the value. StreamingJsonParser never boxes an int (it uses
+    // long), so this only guards non-streaming/programmatic callers, but the narrowing is deliberate.
+    [Fact]
+    public async Task ExecuteAsync_WhenNumericArgIsBoxedInt_IsLeftUnchangedForIsIntReaders()
+    {
+        var tool = new ArgCapturingTool("int_tool");
+        var context = new AgentContext(null, [], [tool]);
+        var assistant = new AssistantAgentMessage(
+            Content: string.Empty,
+            ToolCalls:
+            [
+                new ToolCallContent(
+                    "t1",
+                    "int_tool",
+                    new Dictionary<string, object?> { ["count"] = 600 })
+            ],
+            FinishReason: StopReason.ToolUse);
+        var config = TestHelpers.CreateTestConfig();
+
+        var results = await ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        results.ShouldHaveSingleItem();
+        results[0].IsError.ShouldBeFalse();
+        tool.CapturedCountClrType.ShouldBe(nameof(Int32));
+        tool.CapturedCountAsInt.ShouldBe(600);
+    }
+
     [Theory]
     [InlineData("bash", "Bash")]
     [InlineData("bash", "BASH")]
@@ -506,6 +535,8 @@ public class ToolExecutorTests
         public string Name => name;
         public string Label => name;
         public int? CapturedCount { get; private set; }
+        public int? CapturedCountAsInt { get; private set; }
+        public string? CapturedCountClrType { get; private set; }
         public Tool Definition => new(name, "arg capturing tool", Schema);
 
         public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
@@ -518,7 +549,10 @@ public class ToolExecutorTests
             CancellationToken cancellationToken = default,
             AgentToolUpdateCallback? onUpdate = null)
         {
-            CapturedCount = arguments.TryGetValue("count", out var raw) && raw is JsonElement { ValueKind: JsonValueKind.Number } element && element.TryGetInt32(out var value)
+            var hasCount = arguments.TryGetValue("count", out var raw);
+            CapturedCountClrType = hasCount ? raw?.GetType().Name : null;
+            CapturedCountAsInt = hasCount && raw is int boxedInt ? boxedInt : null;
+            CapturedCount = hasCount && raw is JsonElement { ValueKind: JsonValueKind.Number } element && element.TryGetInt32(out var value)
                 ? value
                 : null;
             return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
