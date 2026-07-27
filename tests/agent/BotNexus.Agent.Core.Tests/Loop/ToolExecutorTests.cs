@@ -203,6 +203,7 @@ public class ToolExecutorTests
         results[0].IsError.ShouldBeFalse();
         tool.CapturedCountClrType.ShouldBe(nameof(Int32));
         tool.CapturedCountAsInt.ShouldBe(600);
+        tool.CapturedCount.ShouldBeNull();
     }
 
     [Theory]
@@ -515,9 +516,10 @@ public class ToolExecutorTests
     }
 
     /// <summary>
-    /// Captures the dispatched <c>count</c> argument using the standard JsonElement-number reader idiom
-    /// every tool shares, so the test proves the dispatch seam normalised a boxed CLR long to a
-    /// <see cref="JsonElement"/> number.
+    /// Captures the dispatched <c>count</c> argument three ways — the raw CLR type name, an <c>is int</c>
+    /// read, and the standard JsonElement-number reader idiom every tool shares — so tests can prove both
+    /// that the dispatch seam normalises a boxed CLR <see cref="long"/> to a <see cref="JsonElement"/>
+    /// number and that a boxed <see cref="int"/> is left untouched for <c>is int</c> readers.
     /// </summary>
     private sealed class ArgCapturingTool(string name) : IAgentTool
     {

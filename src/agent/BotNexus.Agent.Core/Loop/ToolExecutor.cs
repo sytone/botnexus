@@ -438,8 +438,9 @@ internal static class ToolExecutor
     /// as CLR <see cref="long"/>/<see cref="double"/>, and a tool argument reader that only recognised
     /// <see cref="JsonElement"/> numbers rejected them, so a valid numeric argument (e.g. an
     /// <c>agent_converse</c> <c>timeoutSeconds</c>) failed unless an unrelated sibling argument
-    /// happened to trigger coercion (issue #2415). Non-numeric values keep their original CLR
-    /// representation so no other dispatch behaviour changes.
+    /// happened to trigger coercion (issue #2415). On the no-coercion path, non-numeric values keep
+    /// their original CLR representation so no other dispatch behaviour changes; when coercion fires,
+    /// every value is taken from the coerced <see cref="JsonElement"/>.
     /// </summary>
     private static IReadOnlyDictionary<string, object?> ApplyCoercedArguments(
         IReadOnlyDictionary<string, object?> rawArgs,
@@ -480,8 +481,9 @@ internal static class ToolExecutor
     /// the only CLR numeric types a boxed JSON number can arrive as. A boxed <see cref="int"/> is left
     /// untouched — every numeric tool argument reader already accepts <see cref="int"/> directly, and
     /// rewriting it would needlessly perturb readers that pattern-match <c>is int</c>. A non-finite
-    /// <see cref="double"/> is left boxed because it has no JSON number representation, so the downstream
-    /// reader rejects it with a tool-level error rather than this seam throwing.
+    /// <see cref="double"/> has no JSON number representation and is left boxed rather than serialised
+    /// here; this arm is unreachable in practice because <c>StreamingJsonParser</c> cannot produce
+    /// <c>NaN</c>/<c>Infinity</c> from JSON input.
     /// </para>
     /// <para>
     /// Normalisation is intentionally top-level only. <c>StreamingJsonParser</c> maps nested JSON
