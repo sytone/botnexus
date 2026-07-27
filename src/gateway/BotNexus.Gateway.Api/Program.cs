@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Api.Extensions;
+using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
@@ -56,18 +57,15 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.Host.UseSystemd();
 builder.Host.UseWindowsService();
 
+// The recent-log store must be registered before Serilog is configured: ConfigureGatewayLogging
+// resolves it to attach the sink that backs GET /api/logs/recent (issue #2390).
+builder.Services.AddGatewayRecentLogStore();
+
 builder.Host.UseSerilog((context, services, configuration) => configuration
-    .ReadFrom.Configuration(context.Configuration)
-    .ReadFrom.Services(services)
-    .Enrich.FromLogContext()
-    .Enrich.WithMachineName()
-    .Enrich.WithThreadId()
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
-        restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning)
-    .WriteTo.File(
-        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs", "botnexus-.log"),
-        rollingInterval: RollingInterval.Hour,
-        retainedFileCountLimit: 168),
+    .ConfigureGatewayLogging(
+        context.Configuration,
+        services,
+        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs")),
     preserveStaticLogger: true);
 
 var platformConfigPath = builder.Configuration["BotNexus:ConfigPath"];
