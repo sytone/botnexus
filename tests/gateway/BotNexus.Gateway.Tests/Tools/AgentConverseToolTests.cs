@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.AgentExchange;
@@ -315,6 +316,79 @@ public sealed class AgentConverseToolTests
 
         captured.Value.ShouldNotBeNull();
         captured.Value!.MaxTurns.ShouldBe(5);
+    }
+
+    // A JsonElement number wider than int (e.g. from a non-streaming provider that hands the tool a
+    // JsonElement directly) must be rejected rather than silently truncated.
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsJsonElementLongOverflow_Throws()
+    {
+        var tool = CreateTool();
+        var element = JsonSerializer.SerializeToElement(9_000_000_000L);
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = element
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentException>();
+        exception.Message.ShouldContain("must be an integer");
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsJsonElementIntegralDouble_UsesOverride()
+    {
+        var tool = CreateTool();
+        var element = JsonSerializer.SerializeToElement(240.0);
+
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = element
+        });
+
+        prepared["timeoutSeconds"].ShouldBe(240);
+        prepared["timeout"].ShouldBe(240);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMaxTurnsIsIntegralDouble_HonoursValue()
+    {
+        var (service, captured) = CreateCapturingService();
+        var options = new AgentExchangeOptions { MaxTurnsCeiling = 30 };
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"), options);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Iterate a few times",
+            ["maxTurns"] = 6.0
+        });
+
+        captured.Value.ShouldNotBeNull();
+        captured.Value!.MaxTurns.ShouldBe(6);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMaxTurnsIsBoxedLongOverflow_FallsBackToDefault()
+    {
+        var (service, captured) = CreateCapturingService();
+        var options = new AgentExchangeOptions { MaxTurnsCeiling = 30 };
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"), options);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Iterate a few times",
+            ["maxTurns"] = 9_000_000_000L
+        });
+
+        // Unparseable maxTurns falls back to the schema default of 1 (then clamped to >= 1).
+        captured.Value.ShouldNotBeNull();
+        captured.Value!.MaxTurns.ShouldBe(1);
     }
 
     [Fact]

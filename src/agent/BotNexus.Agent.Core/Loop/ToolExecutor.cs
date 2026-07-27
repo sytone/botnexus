@@ -473,6 +473,12 @@ internal static class ToolExecutor
     /// non-numeric are preserved verbatim. The original instance is returned when nothing needs
     /// normalising to avoid needless reallocation.
     /// </summary>
+    /// <remarks>
+    /// Normalisation is intentionally top-level only. <c>StreamingJsonParser</c> maps nested JSON
+    /// objects to nested <see cref="Dictionary{TKey, TValue}"/> instances, so a boxed number nested
+    /// inside an object argument is not rewritten here; no current tool takes an object-valued numeric
+    /// argument, so this is a latent limitation rather than a live gap.
+    /// </remarks>
     private static IReadOnlyDictionary<string, object?> NormalizeBoxedNumbers(IReadOnlyDictionary<string, object?> args)
     {
         var changed = false;
