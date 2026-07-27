@@ -3,19 +3,9 @@
 @implements IDisposable
 
 <div class="agent-panel" data-testid="agent-panel">
-    <header class="agent-panel-header">
-        <div class="agent-panel-avatar" aria-hidden="true">@AvatarGlyph</div>
-        <div class="agent-panel-meta" title="@AgentId">
-            <h2 class="agent-panel-title">@DisplayName</h2>
-            @if (!string.IsNullOrWhiteSpace(Description))
-            {
-                <span class="agent-panel-description">@Description</span>
-            }
-            <span class="agent-panel-id">@AgentId</span>
-        </div>
-        <span class="agent-panel-status @StatusCssClass" role="status" aria-live="polite">@StatusLabel</span>
-    </header>
-
+    @* #2441: the agent identity row moved into the portal top bar (see AgentIdentity.razor),
+       reclaiming a full row for the conversation. The run-state badge is small enough to ride
+       along on the tab strip, so the panel now starts directly with the tabs. *@
     <nav class="agent-tab-bar agent-panel-tab-strip" role="tablist" aria-label="Agent sections">
         @foreach (var tab in VisibleTabs)
         {
@@ -30,6 +20,7 @@
                 <span class="agent-tab-label">@tab.Label</span>
             </button>
         }
+        <span class="agent-panel-status @StatusCssClass" role="status" aria-live="polite">@StatusLabel</span>
     </nav>
 
     <div class="agent-tab-content">
@@ -84,12 +75,6 @@
     private bool? _lastIsSubAgent;
 
     private AgentState? Agent => Store.GetAgent(AgentId);
-    private string DisplayName => Agent?.DisplayName ?? AgentId;
-    // Prefer the agent's configured emoji; fall back to the default robot glyph
-    // when none is set. Mirrors the sidebar card (AgentDashboard.razor) so the
-    // header and list stay visually consistent.
-    private string AvatarGlyph => string.IsNullOrWhiteSpace(Agent?.Emoji) ? "\U0001F916" : Agent!.Emoji!;
-    private string? Description => Agent?.Description;
     private string StatusLabel => Agent?.IsConnected != true ? "Offline" : Agent?.IsStreaming == true ? "Running" : "Idle";
     private string StatusCssClass => Agent?.IsConnected != true ? "offline" : Agent?.IsStreaming == true ? "running" : "idle";
 
