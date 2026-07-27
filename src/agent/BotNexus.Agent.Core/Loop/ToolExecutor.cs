@@ -430,12 +430,16 @@ internal static class ToolExecutor
     }
 
     /// <summary>
-    /// Returns the dispatch arguments for the tool. When the validator coerced one or more
-    /// values (issue #1552), the coerced JSON object is unpacked back into a
-    /// <see cref="Dictionary{TKey, TValue}"/> (each value a cloned <see cref="JsonElement"/>,
-    /// which every tool argument reader already accepts) so the tool sees the corrected
-    /// shape. When nothing was coerced the original <paramref name="rawArgs"/> is returned
-    /// unchanged to avoid needless reallocation.
+    /// Projects the validated arguments into the shape dispatched to the tool. When the validator
+    /// coerced one or more losslessly-safe shape mismatches (issue #1552) the coerced JSON object is
+    /// unpacked into cloned <see cref="JsonElement"/> values (the shape every tool argument reader
+    /// already accepts). Independently — whether or not any coercion fired — boxed CLR numbers are
+    /// normalised to <see cref="JsonElement"/> numbers: streaming tool-call parsing boxes JSON numbers
+    /// as CLR <see cref="long"/>/<see cref="double"/>, and a tool argument reader that only recognised
+    /// <see cref="JsonElement"/> numbers rejected them, so a valid numeric argument (e.g. an
+    /// <c>agent_converse</c> <c>timeoutSeconds</c>) failed unless an unrelated sibling argument
+    /// happened to trigger coercion (issue #2415). Non-numeric values keep their original CLR
+    /// representation so no other dispatch behaviour changes.
     /// </summary>
     private static IReadOnlyDictionary<string, object?> ApplyCoercedArguments(
         IReadOnlyDictionary<string, object?> rawArgs,
@@ -443,13 +447,13 @@ internal static class ToolExecutor
     {
         if (coercedElement.ValueKind != JsonValueKind.Object)
         {
-            return rawArgs;
+            return NormalizeBoxedNumbers(rawArgs);
         }
 
         var original = JsonSerializer.SerializeToElement(rawArgs);
         if (string.Equals(original.GetRawText(), coercedElement.GetRawText(), StringComparison.Ordinal))
         {
-            return rawArgs;
+            return NormalizeBoxedNumbers(rawArgs);
         }
 
         var coercedArgs = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -459,6 +463,48 @@ internal static class ToolExecutor
         }
 
         return coercedArgs;
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="args"/> where every boxed CLR numeric value (produced by
+    /// streaming tool-call argument parsing) is replaced with an equivalent <see cref="JsonElement"/>
+    /// number, so tool argument readers see a uniform <see cref="JsonElement"/> regardless of how the
+    /// provider boxed the value (issue #2415). Values that are already <see cref="JsonElement"/> or are
+    /// non-numeric are preserved verbatim. The original instance is returned when nothing needs
+    /// normalising to avoid needless reallocation.
+    /// </summary>
+    private static IReadOnlyDictionary<string, object?> NormalizeBoxedNumbers(IReadOnlyDictionary<string, object?> args)
+    {
+        var changed = false;
+        foreach (var value in args.Values)
+        {
+            if (value is long or double or int or float or decimal)
+            {
+                changed = true;
+                break;
+            }
+        }
+
+        if (!changed)
+        {
+            return args;
+        }
+
+        var normalized = new Dictionary<string, object?>(args.Count, StringComparer.Ordinal);
+        foreach (var (key, value) in args)
+        {
+            normalized[key] = value switch
+            {
+                long l => JsonSerializer.SerializeToElement(l),
+                int i => JsonSerializer.SerializeToElement(i),
+                double d => JsonSerializer.SerializeToElement(d),
+                float f => JsonSerializer.SerializeToElement(f),
+                decimal m => JsonSerializer.SerializeToElement(m),
+                _ => value
+            };
+        }
+
+        return normalized;
     }
 
     private static async Task<ToolResultAgentMessage> EmitToolResultMessageAsync(

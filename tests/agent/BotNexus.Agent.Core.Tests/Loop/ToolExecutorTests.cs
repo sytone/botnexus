@@ -125,6 +125,57 @@ public class ToolExecutorTests
         tool.ExecuteCount.ShouldBe(0);
     }
 
+    // Streaming tool-call parsing boxes JSON integers as CLR long. The dispatch seam must normalise
+    // every argument to a JsonElement so a tool that reads JsonElement numbers works regardless of the
+    // original CLR box — even when no sibling argument triggers coercion (issue #2415).
+    [Fact]
+    public async Task ExecuteAsync_WhenNumericArgIsBoxedLong_DispatchesJsonElementNumber()
+    {
+        var tool = new ArgCapturingTool("int_tool");
+        var context = new AgentContext(null, [], [tool]);
+        var assistant = new AssistantAgentMessage(
+            Content: string.Empty,
+            ToolCalls:
+            [
+                new ToolCallContent(
+                    "t1",
+                    "int_tool",
+                    new Dictionary<string, object?> { ["count"] = 600L })
+            ],
+            FinishReason: StopReason.ToolUse);
+        var config = TestHelpers.CreateTestConfig();
+
+        var results = await ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        results.ShouldHaveSingleItem();
+        results[0].IsError.ShouldBeFalse();
+        tool.CapturedCount.ShouldBe(600);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenNumericArgIsBoxedLongWithCoercibleSibling_StillDispatchesJsonElementNumber()
+    {
+        var tool = new ArgCapturingTool("int_tool");
+        var context = new AgentContext(null, [], [tool]);
+        var assistant = new AssistantAgentMessage(
+            Content: string.Empty,
+            ToolCalls:
+            [
+                new ToolCallContent(
+                    "t1",
+                    "int_tool",
+                    new Dictionary<string, object?> { ["count"] = 600L, ["label"] = "42" })
+            ],
+            FinishReason: StopReason.ToolUse);
+        var config = TestHelpers.CreateTestConfig();
+
+        var results = await ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        results.ShouldHaveSingleItem();
+        results[0].IsError.ShouldBeFalse();
+        tool.CapturedCount.ShouldBe(600);
+    }
+
     [Theory]
     [InlineData("bash", "Bash")]
     [InlineData("bash", "BASH")]
@@ -430,6 +481,46 @@ public class ToolExecutorTests
             AgentToolUpdateCallback? onUpdate = null)
         {
             Interlocked.Increment(ref _executeCount);
+            return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
+        }
+    }
+
+    /// <summary>
+    /// Captures the dispatched <c>count</c> argument using the standard JsonElement-number reader idiom
+    /// every tool shares, so the test proves the dispatch seam normalised a boxed CLR long to a
+    /// <see cref="JsonElement"/> number.
+    /// </summary>
+    private sealed class ArgCapturingTool(string name) : IAgentTool
+    {
+        private static readonly JsonElement Schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "count": { "type": "integer" },
+                "label": { "type": "integer" }
+              },
+              "required": ["count"]
+            }
+            """).RootElement.Clone();
+
+        public string Name => name;
+        public string Label => name;
+        public int? CapturedCount { get; private set; }
+        public Tool Definition => new(name, "arg capturing tool", Schema);
+
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default) => Task.FromResult(arguments);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
+        {
+            CapturedCount = arguments.TryGetValue("count", out var raw) && raw is JsonElement { ValueKind: JsonValueKind.Number } element && element.TryGetInt32(out var value)
+                ? value
+                : null;
             return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
         }
     }
