@@ -1216,6 +1216,120 @@ X-Api-Key: your-api-key
 
 ---
 
+### Export Session Transcript (Markdown)
+
+**Endpoint:** `GET /api/sessions/{sessionId}/export/markdown`
+
+**Description:** Render the session's history as a downloadable markdown transcript document. When `gateway.transcriptExport.redactSecrets` is enabled, secret-shaped values are redacted during rendering.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/export/markdown
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — `text/markdown` file attachment named `session-{sessionId}.md`.
+
+**Error Responses:**
+- `204 No Content` — Session exists but has no renderable transcript
+- `404 Not Found` — Session does not exist
+
+---
+
+### List Live Sub-Agents for a Session
+
+**Endpoint:** `GET /api/sessions/{sessionId}/subagents`
+
+**Description:** List the **live runtime** sub-agent state for one parent session. Contrast with `GET /api/sessions/{sessionId}/subagents/history` (persisted rows, including finished runs) and the platform-wide `GET /api/subagents` feed.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/subagents
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "subAgentId": "sub-abc123",
+    "parentSessionId": "session-abc123",
+    "childSessionId": "session-sub-abc123",
+    "name": "docs-audit",
+    "parentAgentId": "farnsworth",
+    "childAgentId": "farnsworth",
+    "childConversationId": "conv-9f2",
+    "task": "Audit the API reference for missing endpoints",
+    "model": "claude-opus-5",
+    "archetype": "Researcher",
+    "status": "Running",
+    "startedAt": "2026-07-26T10:30:00Z",
+    "completedAt": null,
+    "turnsUsed": 4,
+    "resultSummary": null
+  }
+]
+```
+
+A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
+### Get Sub-Agent History for a Session
+
+**Endpoint:** `GET /api/sessions/{sessionId}/subagents/history`
+
+**Description:** Return persisted sub-agent session rows for the given parent session, ordered by start time ascending. Unlike the live listing above, this includes completed and failed runs.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/subagents/history
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — an array of the same `SubAgentSessionSummary` shape returned by [List Sub-Agent Runs](#list-sub-agent-runs), scoped to this parent session.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
+### Kill a Sub-Agent
+
+**Endpoint:** `DELETE /api/sessions/{sessionId}/subagents/{subAgentId}`
+
+**Description:** Terminate a sub-agent run owned by the specified session. This is a state mutation and enforces the same per-session caller-identity gate as Delete and Suspend, so a caller cannot terminate a run owned by a different caller.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+- `subAgentId` (string, path) — Sub-agent ID to terminate
+
+**Request:**
+```http
+DELETE /api/sessions/session-abc123/subagents/sub-abc123
+X-Api-Key: your-api-key
+```
+
+**Response:** 204 No Content
+
+**Error Responses:**
+- `403 Forbidden` — Caller does not own the session
+- `404 Not Found` — Session or sub-agent does not exist
+
+---
+
 ### Get Session Metadata
 
 **Endpoint:** `GET /api/sessions/{sessionId}/metadata`
@@ -1336,6 +1450,40 @@ X-Api-Key: your-api-key
 **Error Responses:**
 - `404 Not Found` — Session does not exist
 - `409 Conflict` — Session is not in `Suspended` state
+
+---
+
+### Seal Session
+
+**Endpoint:** `PATCH /api/sessions/{sessionId}/seal`
+
+**Description:** Seal a finished **sub-agent** session so it can never be reused. Only sessions whose type is a sub-agent session are eligible, and only once the run has ended — an `Active` or `Suspended` session cannot be sealed. The transition is a compare-and-set, so a concurrent transcript append is not rolled back and a competing seal/reset is reported rather than silently overwritten. Enforces the same per-session caller-identity gate as the metadata endpoints.
+
+**Parameters:**
+- `sessionId` (string, path) — Sub-agent session ID
+
+**Request:**
+```http
+PATCH /api/sessions/session-sub-abc123/seal
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "sessionId": "session-sub-abc123",
+  "status": "Sealed",
+  "updatedAt": "2026-07-26T10:42:00Z"
+}
+```
+
+**Response:** 204 No Content — Session is already sealed (idempotent).
+
+**Error Responses:**
+- `400 Bad Request` — Session is not a sub-agent session
+- `403 Forbidden` — Caller does not own the session
+- `404 Not Found` — Session does not exist
+- `409 Conflict` — Session is `Active`/`Suspended`, or is in another state that cannot transition to `Sealed`
 
 ---
 
