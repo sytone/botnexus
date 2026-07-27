@@ -32,6 +32,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = 'Sytone/botnexus'
+# Issue #2405: resolve the repository from the script's own location, never
+# from the caller's working directory. This script is routinely invoked by
+# absolute path from CI and from agent workspaces whose cwd is unrelated to
+# (or outside) any git repository; an unqualified `git` call then fails with
+# "fatal: not a git repository". Every git invocation below must therefore be
+# qualified with -C against $repoRoot or a specific worktree directory.
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'repo/Remove-Worktree.ps1')
 . (Join-Path $PSScriptRoot 'repo/WorktreeSyncGuard.ps1')
 
@@ -41,7 +48,7 @@ function Output-Result {
 }
 
 # Fetch latest from remote
-$fetchResult = git fetch origin main $Branch 2>&1
+$fetchResult = git -C $repoRoot fetch origin main $Branch 2>&1
 if ($LASTEXITCODE -ne 0) {
     Output-Result -Success $false -Message "Fetch failed: $fetchResult"
     return
@@ -49,9 +56,9 @@ if ($LASTEXITCODE -ne 0) {
 
 # Gate: only sync when the branch is actually behind main. A no-op sync
 # otherwise produces churn (and, under the old merge strategy, foreign-author
-# merge commits). `git rev-list --count origin/main ^origin/$Branch` counts
+# merge commits). A `rev-list --count origin/main ^origin/$Branch` counts
 # main commits the branch does not yet contain.
-$behindCount = (git rev-list --count "origin/$Branch..origin/main" 2>&1)
+$behindCount = (git -C $repoRoot rev-list --count "origin/$Branch..origin/main" 2>&1)
 if ($LASTEXITCODE -ne 0) {
     Output-Result -Success $false -Message "Could not determine behind count: $behindCount"
     return
@@ -64,7 +71,7 @@ if ($behind -eq 0) {
 }
 
 # Locate an existing worktree for this branch
-$worktrees = git worktree list --porcelain 2>$null
+$worktrees = git -C $repoRoot worktree list --porcelain 2>$null
 $worktreePath = $null
 $currentWorktree = $null
 foreach ($line in $worktrees -split "`n") {
@@ -116,11 +123,11 @@ if ($worktreePath) {
 } else {
     # No worktree — rebase in a temporary worktree tracking the remote branch.
     $tempBranch = "__sync-temp-$Branch"
-    git branch -f $tempBranch "origin/$Branch" 2>$null
+    git -C $repoRoot branch -f $tempBranch "origin/$Branch" 2>$null
 
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "botnexus-sync-$(Get-Random)"
     try {
-        git worktree add $tempDir $tempBranch 2>$null
+        git -C $repoRoot worktree add $tempDir $tempBranch 2>$null
         if ($LASTEXITCODE -ne 0) {
             Output-Result -Success $false -Message "Failed to create temporary worktree for sync."
             return
@@ -144,10 +151,10 @@ if ($worktreePath) {
         # Lock-aware cleanup: never delete the temp branch while the worktree
         # is still registered (Windows file locks otherwise leak a dangling
         # branch + registered-but-removed worktree). See issue #2104.
-        $cleanup = Remove-WorktreeSafely -RepoRoot (git rev-parse --show-toplevel).Trim() `
+        $cleanup = Remove-WorktreeSafely -RepoRoot (git -C $repoRoot rev-parse --show-toplevel | Out-String).Trim() `
             -WorktreePath $tempDir -DeleteBranch:$false -Force
         if ($cleanup.outcome -eq 'removed') {
-            git branch -D $tempBranch 2>$null
+            git -C $repoRoot branch -D $tempBranch 2>$null
         }
         else {
             Write-Warning "Skipping temp branch deletion; worktree '$tempDir' cleanup outcome: $($cleanup.outcome). Branch '$tempBranch' retained."
