@@ -51,24 +51,15 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     }
 
     /// <summary>
-    /// Checks whether the gateway process is currently running by reading the PID file
-    /// and verifying the process exists.
+    /// Checks whether the gateway process is currently running by reading the PID file and verifying
+    /// that the recorded process identity still matches the live process (see
+    /// <see cref="ResolveVerifiedProcessAsync"/>). An unverifiable or recycled PID counts as NOT running.
     /// </summary>
     public bool IsRunning(string? homePath = null)
     {
-        var pid = ReadPidAsync(ResolvePidFilePath(homePath)).GetAwaiter().GetResult();
-        if (pid is null)
-            return false;
-
-        try
-        {
-            var process = Process.GetProcessById(pid.Value);
-            return !process.HasExited;
-        }
-        catch
-        {
-            return false;
-        }
+        var pidFilePath = ResolvePidFilePath(homePath);
+        var (process, _, _) = ResolveVerifiedProcessAsync(pidFilePath).GetAwaiter().GetResult();
+        return process is not null;
     }
 
     /// <summary>
@@ -78,30 +69,18 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     public async Task<GatewayStartResult> StartAsync(GatewayStartOptions options, CancellationToken cancellationToken = default)
     {
         var pidFilePath = ResolvePidFilePath(options.HomePath);
-        // Check if already running
-        var existingPid = await ReadPidAsync(pidFilePath);
-        if (existingPid is not null)
+
+        // Check if already running. Anything that cannot be positively identified as our gateway is
+        // treated as a stale PID file and cleaned up by ResolveVerifiedProcessAsync — we never assume
+        // a live-but-unverified PID is the gateway, and we never signal it.
+        var (existingProcess, existingRecord, _) = await ResolveVerifiedProcessAsync(pidFilePath);
+        if (existingProcess is not null && existingRecord is not null)
         {
-            try
-            {
-                var existingProcess = Process.GetProcessById(existingPid.Value);
-                if (!existingProcess.HasExited)
-                {
-                    _logger.LogWarning("Gateway is already running with PID {Pid}", existingPid.Value);
-                    return new GatewayStartResult(
-                        Success: false,
-                        Pid: existingPid.Value,
-                        Message: $"Gateway is already running (PID {existingPid.Value})");
-                }
-            }
-            catch
-            {
-                // Process no longer exists (ArgumentException from GetProcessById) - clean up stale PID.
-                // This happens when the gateway crashed without cleaning up its PID file, or when the
-                // system has rebooted since the gateway last ran.
-                _logger.LogDebug("Cleaning up stale PID {Pid}", existingPid.Value);
-                await CleanupPidFileAsync(pidFilePath);
-            }
+            _logger.LogWarning("Gateway is already running with PID {Pid}", existingRecord.Pid);
+            return new GatewayStartResult(
+                Success: false,
+                Pid: existingRecord.Pid,
+                Message: $"Gateway is already running (PID {existingRecord.Pid})");
         }
 
         // Spawn the process — cross-platform detached launch.
@@ -159,8 +138,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         var pid = process.Id;
         _logger.LogInformation("Gateway process started with PID {Pid}", pid);
 
-        // Write PID file
-        await WritePidAsync(pidFilePath, pid);
+        // Write PID file WITH process identity so a later stop/status can prove the PID is still ours.
+        await WritePidAsync(pidFilePath, process);
 
         var healthUrl = options.HealthUrl ?? DefaultHealthUrl;
         var healthTimeout = options.ReadinessTimeout ?? TimeSpan.FromSeconds(60);
@@ -318,12 +297,18 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// <summary>
     /// Stops the gateway process by sending a hard kill signal, waiting up to 5 seconds
     /// for exit, then cleaning up the PID file.
+    /// <para>
+    /// The PID is only signalled after its recorded identity has been verified against the live
+    /// process (issue #2369). A recycled or unverifiable PID is cleaned up and reported as
+    /// not-running — it is NEVER killed.
+    /// </para>
     /// </summary>
     public async Task<GatewayStopResult> StopAsync(string? homePath = null, CancellationToken cancellationToken = default)
     {
         var pidFilePath = ResolvePidFilePath(homePath);
-        var pid = await ReadPidAsync(pidFilePath);
-        if (pid is null)
+        var (process, record, staleReason) = await ResolveVerifiedProcessAsync(pidFilePath);
+
+        if (record is null)
         {
             _logger.LogInformation("Gateway is not running (no PID file)");
             return new GatewayStopResult(
@@ -331,49 +316,35 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Message: "Gateway is not running");
         }
 
-        Process process;
-        try
+        if (process is null)
         {
-            process = Process.GetProcessById(pid.Value);
-        }
-        catch
-        {
-            _logger.LogInformation("Gateway process {Pid} no longer exists (cleaned stale PID)", pid.Value);
-            await CleanupPidFileAsync(pidFilePath);
+            _logger.LogInformation("Gateway is not running: {Reason}", staleReason);
             return new GatewayStopResult(
                 Success: true,
-                Message: $"Gateway was not running (cleaned stale PID {pid.Value})");
+                Message: $"Gateway was not running ({staleReason})");
         }
 
-        if (process.HasExited)
-        {
-            _logger.LogInformation("Gateway process {Pid} has already exited (cleaned stale PID)", pid.Value);
-            await CleanupPidFileAsync(pidFilePath);
-            return new GatewayStopResult(
-                Success: true,
-                Message: $"Gateway was not running (cleaned stale PID {pid.Value})");
-        }
-
-        _logger.LogInformation("Killing gateway process {Pid}", pid.Value);
+        var pid = record.Pid;
+        _logger.LogInformation("Killing gateway process {Pid}", pid);
 
         try
         {
             process.Kill();
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            _logger.LogError(ex, "Failed to kill gateway process {Pid}", pid.Value);
-            return new GatewayStopResult(
-                Success: false,
-                Message: $"Failed to kill gateway process {pid.Value}: {ex.Message}");
-        }
-        catch (InvalidOperationException)
-        {
-            _logger.LogWarning("Gateway process {Pid} already exited", pid.Value);
+            _logger.LogWarning(ex, "Gateway process {Pid} already exited", pid);
             await CleanupPidFileAsync(pidFilePath);
             return new GatewayStopResult(
                 Success: true,
-                Message: $"Gateway process {pid.Value} already exited");
+                Message: $"Gateway process {pid} already exited");
+        }
+        catch (Win32Exception ex)
+        {
+            _logger.LogError(ex, "Failed to kill gateway process {Pid}", pid);
+            return new GatewayStopResult(
+                Success: false,
+                Message: $"Failed to kill gateway process {pid}: {ex.Message}");
         }
 
         // Wait for process to exit after kill
@@ -383,35 +354,38 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             : await Task.Run(() => process.WaitForExit(timeoutMs), cancellationToken);
         if (!exited)
         {
-            _logger.LogWarning("Gateway process {Pid} did not exit within {Timeout}s", pid.Value, _waitForExitTimeout.TotalSeconds);
+            _logger.LogWarning("Gateway process {Pid} did not exit within {Timeout}s", pid, _waitForExitTimeout.TotalSeconds);
             // Do NOT clean up the PID file — the process is still running.
             // Returning success here would be incorrect and would allow StartAsync
             // to launch a second gateway that conflicts on the same port.
             return new GatewayStopResult(
                 Success: false,
-                Message: $"Gateway process {pid.Value} did not exit within {_waitForExitTimeout.TotalSeconds}s. It may still be running.");
+                Message: $"Gateway process {pid} did not exit within {_waitForExitTimeout.TotalSeconds}s. It may still be running.");
         }
         else
         {
-            _logger.LogInformation("Gateway process {Pid} exited", pid.Value);
+            _logger.LogInformation("Gateway process {Pid} exited", pid);
         }
 
         await CleanupPidFileAsync(pidFilePath);
 
         return new GatewayStopResult(
             Success: true,
-            Message: $"Gateway stopped (PID {pid.Value})");
+            Message: $"Gateway stopped (PID {pid})");
     }
 
     /// <summary>
-    /// Queries the current status of the gateway by reading the PID file,
-    /// checking if the process is alive, and computing uptime.
+    /// Queries the current status of the gateway by reading the PID file, verifying that the recorded
+    /// process identity still matches the live process, and computing uptime. A PID that has been
+    /// recycled onto a foreign process, or a legacy PID file with no identity, reports NotRunning
+    /// rather than falsely claiming the gateway is alive (issue #2369).
     /// </summary>
     public async Task<GatewayStatus> GetStatusAsync(string? homePath = null, CancellationToken cancellationToken = default)
     {
         var pidFilePath = ResolvePidFilePath(homePath);
-        var pid = await ReadPidAsync(pidFilePath);
-        if (pid is null)
+        var (process, record, staleReason) = await ResolveVerifiedProcessAsync(pidFilePath);
+
+        if (record is null)
         {
             return new GatewayStatus(
                 State: GatewayState.NotRunning,
@@ -420,98 +394,19 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Message: "No PID file found");
         }
 
-        Process process;
-        try
+        if (process is null)
         {
-            process = Process.GetProcessById(pid.Value);
-        }
-        catch
-        {
-            _logger.LogDebug("Gateway process {Pid} no longer exists (cleaning stale PID)", pid.Value);
-            await CleanupPidFileAsync(pidFilePath);
             return new GatewayStatus(
                 State: GatewayState.NotRunning,
                 Pid: null,
                 Uptime: null,
-                Message: $"Process {pid.Value} no longer exists (cleaned stale PID)");
+                Message: staleReason ?? $"Process {record.Pid} is not the gateway (cleaned stale PID)");
         }
 
-        if (process.HasExited)
-        {
-            _logger.LogDebug("Gateway process {Pid} has exited (cleaning stale PID)", pid.Value);
-            await CleanupPidFileAsync(pidFilePath);
-            return new GatewayStatus(
-                State: GatewayState.NotRunning,
-                Pid: null,
-                Uptime: null,
-                Message: $"Process {pid.Value} has exited (cleaned stale PID)");
-        }
-
-        // Guard against PID recycling: Windows may reuse a PID for an unrelated process after the
-        // original process exits. Without this check, we could incorrectly report "gateway running"
-        // when the PID now belongs to, say, notepad.exe. The gateway may run as:
-        //   - Self-contained executable: process name contains "BotNexus"
-        //   - Framework-dependent app: process name is "dotnet", main module path contains "BotNexus"
-        // We verify using both process name and main module path for maximum robustness.
-        string processName;
-        try
-        {
-            processName = process.ProcessName;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
-        {
-            _logger.LogWarning("Cannot read process name for PID {Pid}", pid.Value);
-            return new GatewayStatus(
-                State: GatewayState.Unknown,
-                Pid: pid.Value,
-                Uptime: null,
-                Message: $"Process {pid.Value} exists but name cannot be read");
-        }
-
-        // Check if this is actually our gateway process (PID recycling guard)
-        // The gateway may run as a self-contained exe (process name contains "BotNexus")
-        // or as a framework-dependent app (process name is "dotnet", but main module path contains "BotNexus")
-        bool isGatewayProcess = processName.Contains("BotNexus", StringComparison.OrdinalIgnoreCase);
-        if (!isGatewayProcess)
-        {
-            try
-            {
-                var mainModulePath = process.MainModule?.FileName ?? string.Empty;
-                // For framework-dependent apps, check if the dotnet host is running a BotNexus assembly
-                // We can't easily check the arguments, so accept any dotnet process that we intentionally started
-                // The PID file itself is the primary guard — we only write it when we start the process
-                isGatewayProcess = processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
-                    || mainModulePath.Contains("BotNexus", StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
-            {
-                // Can't read MainModule (e.g. 32-bit process on 64-bit OS, or insufficient permissions)
-                // Trust the PID file if we can't verify — false positives are better than false negatives
-                // since we only write the PID file when we spawn the gateway ourselves
-                isGatewayProcess = processName.Contains("dotnet", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
-        if (!isGatewayProcess)
-        {
-            _logger.LogWarning("PID {Pid} recycled (process name: {ProcessName}), cleaning stale PID", pid.Value, processName);
-            await CleanupPidFileAsync(pidFilePath);
-            return new GatewayStatus(
-                State: GatewayState.NotRunning,
-                Pid: null,
-                Uptime: null,
-                Message: $"PID {pid.Value} recycled (process is '{processName}', not gateway)");
-        }
-
-        TimeSpan? uptime = null;
-        try
-        {
-            uptime = DateTime.Now - process.StartTime;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
-        {
-            _logger.LogDebug("Cannot read start time for PID {Pid}", pid.Value);
-        }
+        // Uptime comes from the verified identity record, which is by definition the real start time.
+        TimeSpan? uptime = record.StartTimeUtc is null
+            ? null
+            : DateTime.UtcNow - record.StartTimeUtc.Value;
 
         // Probe the gateway HTTP endpoint to distinguish running+authenticated vs
         // running+no-auth (returns 401/403) vs running+unreachable (wrong port/not bound).
@@ -531,7 +426,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         return new GatewayStatus(
             State: GatewayState.Running,
-            Pid: pid.Value,
+            Pid: record.Pid,
             Uptime: uptime,
             Message: message,
             ProbeResult: probeResult);
@@ -574,10 +469,74 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     }
 
     /// <summary>
-    /// Reads the PID file and returns the PID if valid, or null if the file doesn't exist
-    /// or contains invalid data. Automatically cleans up stale PIDs.
+    /// Resolves the live gateway process for a PID file, verifying that the PID still belongs to the
+    /// exact process we recorded when we started it.
+    /// <para>
+    /// Security (issue #2369): a PID alone is not proof of identity. The OS recycles PIDs, so a stale
+    /// <c>gateway.pid</c> left by a crash, power loss or container restart can name an unrelated
+    /// process owned by the same user. Every caller that might kill or report on that PID goes
+    /// through here, and anything short of a positive identity match is treated as "stale, not
+    /// running": the PID file is removed and no signal is ever sent.
+    /// </para>
+    /// <para>
+    /// Legacy bare-PID files (just <c>1234</c>) carry no identity and are therefore deliberately
+    /// treated as unverifiable — never killed. The worst case is one manual gateway restart after
+    /// upgrading; the alternative is terminating a stranger's process.
+    /// </para>
     /// </summary>
-    private async Task<int?> ReadPidAsync(string pidFilePath)
+    /// <returns>
+    /// The live, positively-identified process, the parsed record (null when there was no PID file),
+    /// and a human-readable reason when the PID file was considered stale.
+    /// </returns>
+    private async Task<(Process? Process, GatewayPidRecord? Record, string? StaleReason)> ResolveVerifiedProcessAsync(string pidFilePath)
+    {
+        var record = await ReadPidRecordAsync(pidFilePath);
+        if (record is null)
+            return (null, null, null);
+
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(record.Pid);
+            if (process.HasExited)
+                throw new InvalidOperationException("Process has exited.");
+        }
+        catch
+        {
+            _logger.LogDebug("Gateway process {Pid} no longer exists (cleaning stale PID)", record.Pid);
+            await CleanupPidFileAsync(pidFilePath);
+            return (null, record, $"process {record.Pid} no longer exists (cleaned stale PID)");
+        }
+
+        var verification = GatewayPidFile.Verify(record, process);
+        switch (verification)
+        {
+            case GatewayIdentityMatch.Match:
+                return (process, record, null);
+
+            case GatewayIdentityMatch.Mismatch:
+                // The PID is alive but is NOT our gateway. Never signal it.
+                _logger.LogWarning(
+                    "PID {Pid} was recycled onto a different process; refusing to signal it and cleaning the stale PID file",
+                    record.Pid);
+                await CleanupPidFileAsync(pidFilePath);
+                return (null, record, $"PID {record.Pid} was recycled onto a different process (cleaned stale PID)");
+
+            default:
+                // Legacy bare-PID file, or the OS would not disclose the live process identity.
+                _logger.LogWarning(
+                    "PID file for {Pid} carries no verifiable process identity; refusing to signal it and cleaning the unverifiable PID file",
+                    record.Pid);
+                await CleanupPidFileAsync(pidFilePath);
+                return (null, record, $"PID {record.Pid} could not be verified as the gateway (cleaned unverifiable stale PID)");
+        }
+    }
+
+    /// <summary>
+    /// Reads and parses the PID file. Accepts both the identity-bearing JSON form and the legacy
+    /// bare-PID form. Returns null when the file is missing or its contents are unusable.
+    /// </summary>
+    private async Task<GatewayPidRecord?> ReadPidRecordAsync(string pidFilePath)
     {
         if (!File.Exists(pidFilePath))
             return null;
@@ -585,8 +544,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         try
         {
             var content = await File.ReadAllTextAsync(pidFilePath);
-            if (int.TryParse(content.Trim(), out var pid) && pid > 0)
-                return pid;
+            if (GatewayPidFile.TryParse(content, out var record) && record is not null)
+                return record;
 
             _logger.LogWarning("PID file contains invalid data: {Content}", content);
             await CleanupPidFileAsync(pidFilePath);
@@ -600,9 +559,11 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     }
 
     /// <summary>
-    /// Writes the PID to the PID file, creating the directory if necessary.
+    /// Writes the PID file with the spawned process's identity (PID, start time, process name and
+    /// main module path), creating the directory if necessary. The identity is what later allows
+    /// stop/status to prove the PID has not been recycled.
     /// </summary>
-    private async Task WritePidAsync(string pidFilePath, int pid)
+    private async Task WritePidAsync(string pidFilePath, Process process)
     {
         var directory = Path.GetDirectoryName(pidFilePath);
         if (directory is not null && !Directory.Exists(directory))
@@ -611,8 +572,9 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             _logger.LogDebug("Created directory {Directory}", directory);
         }
 
-        await File.WriteAllTextAsync(pidFilePath, pid.ToString());
-        _logger.LogDebug("Wrote PID {Pid} to {Path}", pid, pidFilePath);
+        var record = GatewayPidFile.Capture(process);
+        await File.WriteAllTextAsync(pidFilePath, GatewayPidFile.Serialize(record));
+        _logger.LogDebug("Wrote PID {Pid} (with process identity) to {Path}", record.Pid, pidFilePath);
     }
 
     /// <summary>

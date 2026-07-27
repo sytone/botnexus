@@ -11,11 +11,16 @@ namespace BotNexus.Persistence.Sqlite;
 /// which is why rollback journaling was requested instead of WAL.</param>
 /// <param name="WalAutocheckpoint">The <c>wal_autocheckpoint</c> page threshold applied when WAL was
 /// requested; <c>null</c> when WAL was not requested (network path).</param>
+/// <param name="JournalSizeLimitBytes">The <c>journal_size_limit</c> byte cap applied when WAL was
+/// requested, or <see cref="SqliteWalMaintenance.UnlimitedJournalSizeLimit"/> (-1) when the bound was
+/// explicitly disabled; <c>null</c> when WAL was not requested (network path). Without this cap a
+/// <c>-wal</c> file stays parked at its high-water mark for the life of the process (#2370).</param>
 public readonly record struct JournalModeResult(
     string RequestedMode,
     string EffectiveMode,
     bool IsNetworkPath,
-    int? WalAutocheckpoint)
+    int? WalAutocheckpoint,
+    long? JournalSizeLimitBytes = null)
 {
     /// <summary>
     /// <c>true</c> when the effective journal mode matches what was requested. When <c>false</c>

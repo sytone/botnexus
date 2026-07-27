@@ -430,20 +430,25 @@ public sealed class SessionsController : ControllerBase
         if (authorizationFailure is not null)
             return authorizationFailure;
 
+        var patch = new Dictionary<string, object?>();
         foreach (var property in metadataPatch.EnumerateObject())
         {
-            if (property.Value.ValueKind == JsonValueKind.Null)
-            {
-                session.Metadata.Remove(property.Name);
-                continue;
-            }
-
-            session.Metadata[property.Name] = ConvertJsonElement(property.Value);
+            // A JSON null means "remove this key"; the store's merge honours that convention.
+            patch[property.Name] = property.Value.ValueKind == JsonValueKind.Null
+                ? null
+                : ConvertJsonElement(property.Value);
         }
 
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, cancellationToken);
-        return Ok(session.Metadata);
+        // #2132: patch through the narrow atomic mutation instead of read-mutate-SaveAsync. The
+        // whole-aggregate save would rewrite the transcript from the snapshot read above, silently
+        // discarding any turn the agent appended while this request was in flight.
+        var result = await _sessions.PatchMetadataAsync(SessionId.From(sessionId), patch, cancellationToken);
+        return result.Outcome switch
+        {
+            SessionMutationOutcome.NotFound => NotFound(),
+            SessionMutationOutcome.Conflict => Conflict(new { error = "Session metadata could not be updated because the session changed concurrently." }),
+            _ => Ok(result.Metadata)
+        };
     }
 
     private ObjectResult? AuthorizeSessionCaller(GatewaySession session)
@@ -560,10 +565,21 @@ public sealed class SessionsController : ControllerBase
         if (session.Status != SessionStatus.Active)
             return Conflict(new { error = $"Cannot suspend session in '{session.Status}' state." });
 
-        session.Status = SessionStatus.Suspended;
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, cancellationToken);
-        return Ok(session);
+        // #2132: compare-and-set on the persisted status. The pre-check above is a fast, friendly
+        // rejection; this is the authoritative one, and it writes only the status column so a turn
+        // appended concurrently is not rolled back by a whole-aggregate save.
+        var transition = await _sessions.TransitionStatusAsync(
+            SessionId.From(sessionId),
+            [SessionStatus.Active],
+            SessionStatus.Suspended,
+            cancellationToken);
+
+        return transition.Outcome switch
+        {
+            SessionMutationOutcome.NotFound => NotFound(),
+            SessionMutationOutcome.Conflict => Conflict(new { error = $"Cannot suspend session in '{transition.Status}' state." }),
+            _ => Ok(await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken))
+        };
     }
 
     /// <summary>Resumes a suspended session.</summary>
@@ -588,10 +604,19 @@ public sealed class SessionsController : ControllerBase
         if (session.Status != SessionStatus.Suspended)
             return Conflict(new { error = $"Cannot resume session in '{session.Status}' state." });
 
-        session.Status = SessionStatus.Active;
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, cancellationToken);
-        return Ok(session);
+        // #2132: see Suspend - the authoritative check is the store-level compare-and-set.
+        var transition = await _sessions.TransitionStatusAsync(
+            SessionId.From(sessionId),
+            [SessionStatus.Suspended],
+            SessionStatus.Active,
+            cancellationToken);
+
+        return transition.Outcome switch
+        {
+            SessionMutationOutcome.NotFound => NotFound(),
+            SessionMutationOutcome.Conflict => Conflict(new { error = $"Cannot resume session in '{transition.Status}' state." }),
+            _ => Ok(await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken))
+        };
     }
 
     /// <summary>Seals a completed sub-agent session to prevent reuse.</summary>
@@ -632,10 +657,21 @@ public sealed class SessionsController : ControllerBase
         if (session.Status == SessionStatus.Sealed)
             return NoContent();
 
-        session.Status = SessionStatus.Sealed;
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, cancellationToken);
-        return Ok(new { sessionId = sid.Value, status = "Sealed", updatedAt = session.UpdatedAt });
+        // #2132: seal via compare-and-set so a concurrent transcript append is not rolled back and
+        // a competing seal/reset is reported rather than overwritten.
+        var transition = await _sessions.TransitionStatusAsync(
+            sid,
+            [SessionStatus.Expired],
+            SessionStatus.Sealed,
+            cancellationToken);
+
+        return transition.Outcome switch
+        {
+            SessionMutationOutcome.NotFound => NotFound(),
+            SessionMutationOutcome.Conflict when transition.Status == SessionStatus.Sealed => NoContent(),
+            SessionMutationOutcome.Conflict => Conflict(new { error = $"Cannot seal session in '{transition.Status}' state." }),
+            _ => Ok(new { sessionId = sid.Value, status = "Sealed", updatedAt = transition.UpdatedAt })
+        };
     }
 
     private static object? ConvertJsonElement(JsonElement element)

@@ -85,6 +85,150 @@ public interface ISessionStore
     }
 
     /// <summary>
+    /// Appends transcript entries to an existing session <b>without</b> rewriting the rest of the
+    /// aggregate (issue #2132). Use this instead of read-mutate-<see cref="SaveAsync(GatewaySession, CancellationToken)"/>
+    /// whenever the caller only needs to add turns: the whole-aggregate save replaces the complete
+    /// history plus the persisted metadata and status from the caller's snapshot, so a metadata
+    /// patch or lifecycle transition that landed in the read-write gap is silently lost.
+    /// </summary>
+    /// <remarks>
+    /// Conflict contract: appends are refused (<see cref="SessionMutationOutcome.Conflict"/>) when
+    /// the authoritative row is <see cref="SessionStatus.Sealed"/> or <see cref="SessionStatus.Expired"/>,
+    /// because those are terminal states a competing reset established deliberately and an append
+    /// would otherwise revive the transcript. Appends against Active or Suspended sessions always
+    /// apply and never conflict with a concurrent metadata patch - transcript and metadata are
+    /// disjoint state. The row is never created: a missing session yields
+    /// <see cref="SessionMutationOutcome.NotFound"/>.
+    /// </remarks>
+    /// <param name="sessionId">The session to append to.</param>
+    /// <param name="entries">The entries to append, in order. An empty sequence is a no-op that still reports the row's existence.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<SessionAppendMutationResult> AppendEntriesAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        return AppendEntriesDefaultAsync(this, sessionId, entries, cancellationToken);
+
+        // Default: re-read the authoritative session and append onto THAT instance, so a stale
+        // caller snapshot can never replace the complete history. Stores that can append rows
+        // without rewriting the aggregate (the SQLite store) override this.
+        static async Task<SessionAppendMutationResult> AppendEntriesDefaultAsync(
+            ISessionStore store,
+            SessionId sessionId,
+            IReadOnlyList<SessionEntry> entries,
+            CancellationToken cancellationToken)
+        {
+            var session = await store.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0);
+
+            if (SessionMutationPolicy.IsTerminal(session.Status))
+                return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
+
+            if (entries.Count == 0)
+                return new SessionAppendMutationResult(SessionMutationOutcome.Applied, 0);
+
+            session.AddEntries(entries);
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+        }
+    }
+
+    /// <summary>
+    /// Merges a metadata patch into an existing session <b>without</b> touching its transcript or
+    /// lifecycle status (issue #2132). Keys mapped to <c>null</c> are removed; all other keys are
+    /// added or overwritten. This is the write path the sessions API metadata endpoint uses so a
+    /// concurrent turn append is never rolled back by a stale aggregate save.
+    /// </summary>
+    /// <remarks>
+    /// The read of the current metadata and the write of the merged result happen under the store's
+    /// per-session lock, so two concurrent patches compose rather than clobber. Metadata edits never
+    /// conflict with transcript appends; they only report
+    /// <see cref="SessionMutationOutcome.NotFound"/> when the row is gone.
+    /// </remarks>
+    /// <param name="sessionId">The session whose metadata to patch.</param>
+    /// <param name="patch">Keys to add/update, or map a key to <c>null</c> to remove it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<SessionMetadataMutationResult> PatchMetadataAsync(
+        SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        return PatchMetadataDefaultAsync(this, sessionId, patch, cancellationToken);
+
+        // Default: merge onto the authoritative re-read, not the caller's snapshot.
+        static async Task<SessionMetadataMutationResult> PatchMetadataDefaultAsync(
+            ISessionStore store,
+            SessionId sessionId,
+            IReadOnlyDictionary<string, object?> patch,
+            CancellationToken cancellationToken)
+        {
+            var session = await store.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return SessionMetadataMutationResult.NotFound;
+
+            SessionMutationPolicy.ApplyMetadataPatch(session.Metadata, patch);
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            return new SessionMetadataMutationResult(
+                SessionMutationOutcome.Applied,
+                new Dictionary<string, object?>(session.Metadata));
+        }
+    }
+
+    /// <summary>
+    /// Atomically compare-and-sets the session's lifecycle status (issue #2132). The transition is
+    /// applied only when the authoritative persisted status is one of
+    /// <paramref name="expectedStatuses"/>, so a suspend/resume/seal computed from a snapshot that
+    /// another actor has already moved on from is refused instead of silently reverting them.
+    /// </summary>
+    /// <remarks>
+    /// The status column is written on its own: the transcript and metadata of the authoritative row
+    /// are left exactly as they stand, so a lifecycle change and a concurrent transcript append both
+    /// survive. On refusal the result carries the authoritative status the caller lost to, which is
+    /// what an HTTP caller needs for a meaningful 409.
+    /// </remarks>
+    /// <param name="sessionId">The session to transition.</param>
+    /// <param name="expectedStatuses">The statuses from which this transition is legal. Must not be empty.</param>
+    /// <param name="newStatus">The status to move to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<SessionStatusMutationResult> TransitionStatusAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionStatus> expectedStatuses,
+        SessionStatus newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedStatuses);
+        return TransitionStatusDefaultAsync(this, sessionId, expectedStatuses, newStatus, cancellationToken);
+
+        // Default: evaluate the compare-and-set against the authoritative re-read so a transition
+        // another actor already performed is reported as a conflict rather than reverted.
+        static async Task<SessionStatusMutationResult> TransitionStatusDefaultAsync(
+            ISessionStore store,
+            SessionId sessionId,
+            IReadOnlyList<SessionStatus> expectedStatuses,
+            SessionStatus newStatus,
+            CancellationToken cancellationToken)
+        {
+            var session = await store.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return new SessionStatusMutationResult(SessionMutationOutcome.NotFound, SessionStatus.Active, default);
+
+            if (!SessionMutationPolicy.CanTransition(expectedStatuses, session.Status))
+                return new SessionStatusMutationResult(SessionMutationOutcome.Conflict, session.Status, session.UpdatedAt);
+
+            session.Status = newStatus;
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            return new SessionStatusMutationResult(SessionMutationOutcome.Applied, newStatus, session.UpdatedAt);
+        }
+    }
+
+    /// <summary>
     /// Deletes a session and its history.
     /// </summary>
     Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);

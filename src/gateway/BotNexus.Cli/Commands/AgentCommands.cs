@@ -259,8 +259,7 @@ internal sealed class AgentCommands
         if (string.IsNullOrWhiteSpace(displayName))
             displayName = id;
 
-        config.Agents ??= new Dictionary<string, AgentDefinitionConfig>(StringComparer.OrdinalIgnoreCase);
-        config.Agents[id] = new AgentDefinitionConfig
+        var definition = new AgentDefinitionConfig
         {
             DisplayName = displayName,
             Description = string.IsNullOrWhiteSpace(description) ? null : description,
@@ -275,7 +274,7 @@ internal sealed class AgentCommands
             }
         };
 
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        var saveCode = await SetAgentEntryAsync(configPath, id, definition, verbose, cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -312,7 +311,7 @@ internal sealed class AgentCommands
             return 1;
         }
 
-        config.Agents[id] = new AgentDefinitionConfig
+        var definition = new AgentDefinitionConfig
         {
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
             Description = string.IsNullOrWhiteSpace(description) ? null : description,
@@ -328,7 +327,7 @@ internal sealed class AgentCommands
             }
         };
 
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        var saveCode = await SetAgentEntryAsync(configPath, id, definition, verbose, cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -368,8 +367,12 @@ internal sealed class AgentCommands
             AnsiConsole.MarkupLine($"[yellow]Warning:[/] Removing default agent [green]{Markup.Escape(matchedId)}[/]. Update gateway.defaultAgentId if needed.");
         }
 
-        config.Agents.Remove(matchedId);
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TryRemoveEntry(root, AgentsPath, matchedId, out var error) ? null : error,
+            "before-agent-remove",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -658,11 +661,23 @@ internal sealed class AgentCommands
             agent.SystemPromptFile = Path.GetRelativePath(homeDir, promptPath).Replace('\\', '/');
         }
 
-        if (exists)
-            config.Agents.Remove(existingKey);
-        config.Agents[targetId] = agent;
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root =>
+            {
+                // Import replaces the whole agent entry by design (it reconstructs a complete
+                // descriptor), so remove any differently-cased existing key first rather than
+                // leaving a duplicate sibling behind.
+                if (exists && !RawConfigPath.TryRemoveEntry(root, AgentsPath, existingKey, out var removeError))
+                    return removeError;
 
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+                return RawConfigPath.TrySetEntry(root, AgentsPath, targetId, ToNode(agent), out var setError)
+                    ? null
+                    : setError;
+            },
+            "before-agent-import",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -800,37 +815,36 @@ internal sealed class AgentCommands
         }
     }
 
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, bool verbose, CancellationToken cancellationToken)
-        => await SaveAndValidateAsync(config, PlatformConfigLoader.DefaultConfigPath, verbose, cancellationToken);
+    /// <summary>Raw-document path of the agents section.</summary>
+    private const string AgentsPath = "agents";
 
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, string configPath, bool verbose, CancellationToken cancellationToken)
+    private static readonly System.Text.Json.JsonSerializerOptions AgentNodeOptions = new()
     {
-        await WriteConfigAsync(config, configPath, cancellationToken);
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 
-        var reloaded = await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
-        var errors = PlatformConfigLoader.Validate(reloaded);
-        if (errors.Count > 0)
-        {
-            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
-            foreach (var error in errors)
-                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
-            return 1;
-        }
+    /// <summary>
+    /// Serializes a freshly-constructed agent definition to a raw JSON node. Used only for
+    /// <em>new</em> entries the CLI fully authors; existing entries are patched in place so
+    /// unknown child fields are never round-tripped through the typed graph (#2057).
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonNode ToNode(AgentDefinitionConfig agent)
+        => System.Text.Json.JsonSerializer.SerializeToNode(agent, AgentNodeOptions)
+           ?? new System.Text.Json.Nodes.JsonObject();
 
-        if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
-
-        return 0;
-    }
-
-    private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken, string reason = "before-config-write")
-    {
-        PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var fileSystem = new System.IO.Abstractions.FileSystem();
-        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
-        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-        await writer.UpdatePlatformConfigAsync(config, reason, cancellationToken);
-    }
+    private static async Task<int> SetAgentEntryAsync(
+        string configPath,
+        string agentId,
+        AgentDefinitionConfig agent,
+        bool verbose,
+        CancellationToken cancellationToken)
+        => await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TrySetEntry(root, AgentsPath, agentId, ToNode(agent), out var error) ? null : error,
+            "before-agent-update",
+            verbose,
+            cancellationToken);
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
         where TKey : notnull

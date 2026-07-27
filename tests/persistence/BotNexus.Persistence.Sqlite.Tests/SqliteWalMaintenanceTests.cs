@@ -170,4 +170,134 @@ public sealed class SqliteWalMaintenanceTests : IDisposable
             """;
         await cmd.ExecuteNonQueryAsync();
     }
+
+    [Fact]
+    public async Task ApplyJournalMode_LocalPath_AppliesDefaultJournalSizeLimitOf64MiB()
+    {
+        var dbPath = Path.Combine(_dir, "jsl-default.db");
+        var helper = CreateHelper(isNetwork: false);
+        await using var connection = await OpenAsync(dbPath);
+
+        var result = await helper.ApplyJournalModeAsync(connection, dbPath);
+
+        result.JournalSizeLimitBytes.ShouldBe(SqliteWalMaintenance.DefaultJournalSizeLimitBytes);
+        SqliteWalMaintenance.DefaultJournalSizeLimitBytes.ShouldBe(64L * 1024 * 1024);
+
+        // Read the pragma back so this asserts SQLite actually took the setting, not just that
+        // the helper echoed its own argument into the result.
+        (await QueryJournalSizeLimitAsync(connection))
+            .ShouldBe(SqliteWalMaintenance.DefaultJournalSizeLimitBytes);
+    }
+
+    [Fact]
+    public async Task ApplyJournalMode_LocalPath_AppliesConfiguredJournalSizeLimit()
+    {
+        var dbPath = Path.Combine(_dir, "jsl-configured.db");
+        var helper = CreateHelper(isNetwork: false);
+        await using var connection = await OpenAsync(dbPath);
+
+        const long configured = 8L * 1024 * 1024;
+        var result = await helper.ApplyJournalModeAsync(
+            connection, dbPath, journalSizeLimitBytes: configured);
+
+        result.JournalSizeLimitBytes.ShouldBe(configured);
+        (await QueryJournalSizeLimitAsync(connection)).ShouldBe(configured);
+    }
+
+    [Fact]
+    public async Task ApplyJournalMode_NegativeOneLimit_DisablesTheBoundAndIsSurfaced()
+    {
+        var dbPath = Path.Combine(_dir, "jsl-unlimited.db");
+        var helper = CreateHelper(isNetwork: false);
+        await using var connection = await OpenAsync(dbPath);
+
+        var result = await helper.ApplyJournalModeAsync(
+            connection, dbPath, journalSizeLimitBytes: SqliteWalMaintenance.UnlimitedJournalSizeLimit);
+
+        result.JournalSizeLimitBytes.ShouldBe(SqliteWalMaintenance.UnlimitedJournalSizeLimit);
+        (await QueryJournalSizeLimitAsync(connection))
+            .ShouldBe(SqliteWalMaintenance.UnlimitedJournalSizeLimit);
+    }
+
+    [Fact]
+    public async Task ApplyJournalMode_NetworkPath_DoesNotApplyJournalSizeLimit()
+    {
+        var dbPath = Path.Combine(_dir, "jsl-network.db");
+        var helper = CreateHelper(isNetwork: true);
+        await using var connection = await OpenAsync(dbPath);
+
+        var result = await helper.ApplyJournalModeAsync(connection, dbPath);
+
+        result.JournalSizeLimitBytes.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ApplyJournalMode_InvalidNegativeJournalSizeLimit_Throws()
+    {
+        var dbPath = Path.Combine(_dir, "jsl-invalid.db");
+        var helper = CreateHelper(isNetwork: false);
+        await using var connection = await OpenAsync(dbPath);
+
+        await Should.ThrowAsync<ArgumentOutOfRangeException>(() =>
+            helper.ApplyJournalModeAsync(connection, dbPath, journalSizeLimitBytes: -2));
+    }
+
+    [Fact]
+    public async Task ApplyJournalMode_BoundedLimit_ShrinksWalBackToTheBoundAfterCheckpoint()
+    {
+        // End-to-end proof of the bug in #2370: with a bounded journal_size_limit, a WAL that
+        // grew past the bound is truncated back to it when a checkpoint resets the log, instead
+        // of staying parked at its high-water mark for the life of the process.
+        var dbPath = Path.Combine(_dir, "jsl-shrink.db");
+        var helper = CreateHelper(isNetwork: false);
+        await using var connection = await OpenAsync(dbPath);
+
+        const long limit = 32 * 1024;
+        await helper.ApplyJournalModeAsync(
+            connection,
+            dbPath,
+            walAutocheckpoint: 0, // disable autocheckpoint so the WAL is free to balloon first
+            journalSizeLimitBytes: limit);
+
+        await GrowWalAsync(connection);
+        var walPath = dbPath + "-wal";
+        new FileInfo(walPath).Length.ShouldBeGreaterThan(limit);
+
+        await SqliteWalMaintenance.CheckpointAsync(connection, SqliteCheckpointMode.Passive);
+        // journal_size_limit is enforced when the WAL resets on the next commit after a full
+        // checkpoint, so drive one more small write.
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO big (v) VALUES ('tail');";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        new FileInfo(walPath).Refresh();
+        new FileInfo(walPath).Length.ShouldBeLessThanOrEqualTo(limit);
+    }
+
+    private static async Task<long> QueryJournalSizeLimitAsync(SqliteConnection connection)
+    {
+        await using var query = connection.CreateCommand();
+        query.CommandText = "PRAGMA journal_size_limit;";
+        return Convert.ToInt64(await query.ExecuteScalarAsync());
+    }
+
+    private static async Task GrowWalAsync(SqliteConnection connection)
+    {
+        await using (var create = connection.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE IF NOT EXISTS big (id INTEGER PRIMARY KEY, v TEXT);";
+            await create.ExecuteNonQueryAsync();
+        }
+
+        var payload = new string('x', 4096);
+        for (var i = 0; i < 200; i++)
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = "INSERT INTO big (v) VALUES ($v);";
+            cmd.Parameters.AddWithValue("$v", payload);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
 }

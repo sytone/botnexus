@@ -1,4 +1,7 @@
 using System.CommandLine;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -241,8 +244,14 @@ internal sealed class LocationsCommand
             AnsiConsole.MarkupLine($"[yellow]Warning:[/] Filesystem path [dim]{Markup.Escape(locationConfig.Path)}[/] does not exist.");
         }
 
-        config.Gateway.Locations[normalizedName] = locationConfig;
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TrySetEntry(root, LocationsPath, normalizedName, ToNode(locationConfig), out var error)
+                ? null
+                : error,
+            "before-locations-update",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -305,7 +314,23 @@ internal sealed class LocationsCommand
             return 1;
         }
 
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        // PATCH only the supplied fields so unknown child keys on the location entry survive.
+        var locationPatch = new JsonObject();
+        if (path is not null)
+            locationPatch["path"] = NullIfWhiteSpace(path);
+        if (endpoint is not null)
+            locationPatch["endpoint"] = NullIfWhiteSpace(endpoint);
+        if (description is not null)
+            locationPatch["description"] = NullIfWhiteSpace(description);
+
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TryPatchEntry(root, LocationsPath, matchedName, locationPatch, out var error)
+                ? null
+                : error,
+            "before-locations-update",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -343,8 +368,12 @@ internal sealed class LocationsCommand
                 AnsiConsole.MarkupLine($"  [yellow]\u2022[/] {Markup.Escape(reference)}");
         }
 
-        declaredLocations.Remove(matchedName);
-        var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
+        var saveCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            root => RawConfigPath.TryRemoveEntry(root, LocationsPath, matchedName, out var error) ? null : error,
+            "before-locations-update",
+            verbose,
+            cancellationToken);
         if (saveCode != 0)
             return saveCode;
 
@@ -484,37 +513,21 @@ internal sealed class LocationsCommand
         }
     }
 
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, bool verbose, CancellationToken cancellationToken)
-        => await SaveAndValidateAsync(config, PlatformConfigLoader.DefaultConfigPath, verbose, cancellationToken);
+    /// <summary>Raw-document path of the declared gateway locations section.</summary>
+    private const string LocationsPath = "gateway.locations";
 
-    private static async Task<int> SaveAndValidateAsync(PlatformConfig config, string configPath, bool verbose, CancellationToken cancellationToken)
+    private static readonly JsonSerializerOptions LocationNodeOptions = new()
     {
-        await WriteConfigAsync(config, configPath, cancellationToken);
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
 
-        var reloaded = await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
-        var errors = PlatformConfigLoader.Validate(reloaded);
-        if (errors.Count > 0)
-        {
-            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
-            foreach (var error in errors)
-                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
-            return 1;
-        }
-
-        if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
-
-        return 0;
-    }
-
-    private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
-    {
-        PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var fileSystem = new System.IO.Abstractions.FileSystem();
-        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
-        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-        await writer.UpdatePlatformConfigAsync(config, "before-locations-update", cancellationToken);
-    }
+    /// <summary>
+    /// Serializes a freshly-authored location entry to a raw JSON node. Only used when adding a
+    /// new entry; updates patch the on-disk entry so unknown child keys survive (#2057).
+    /// </summary>
+    private static JsonNode ToNode(LocationConfig location)
+        => JsonSerializer.SerializeToNode(location, LocationNodeOptions) ?? new JsonObject();
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
         where TKey : notnull

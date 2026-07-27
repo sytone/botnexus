@@ -84,7 +84,7 @@ Co-authored-by: agent-farnsworth[bot] <293187211+agent-farnsworth[bot]@users.nor
 
 ## PR body
 
-Use [`.github/pull_request_template.md`](../../.github/pull_request_template.md), which GitHub prefills.
+Use [`.github/pull_request_template.md`](https://github.com/Sytone/botnexus/blob/main/.github/pull_request_template.md), which GitHub prefills.
 Sections, in order:
 
 | Section | Required | Purpose |
@@ -95,6 +95,7 @@ Sections, in order:
 | **Anti-reinvention** | always | What existing seam this reuses, or why a new one was justified |
 | **Tests** | unless `docs`/`chore` | What each new test pins; the proven-red test for a fix |
 | **Validation** | always | Suites and counts, plus any suite skipped and why |
+| **UI evidence** | UI changes only | Screenshot/recording of the capability working with real agents |
 | **Risk & rollback** | always | Blast radius, undo path, explicit CI-integrity statement |
 | **Merge notes** | always | New files/stores, additive-vs-breaking surface, parallel-merge safety, out-of-scope |
 
@@ -109,6 +110,66 @@ Rules that matter more than the headings:
    is scope-matched. Deletions of already-merged files mean the branch is contaminated — rebuild it off a
    fresh `origin/main` rather than pushing.
 5. **Edit agent output before requesting review.** Agents are verbose. Cut anything the diff says better.
+
+## UI evidence
+
+A reviewer cannot tell from a `.razor` diff whether a UI change actually works. Any PR touching the
+rendered UI surface must include a **UI evidence** section with a screenshot or screen recording.
+
+The surface is detected by changed path:
+
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/**`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/**`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/**`
+- any `**/wwwroot/**`, `*.razor`, `*.razor.css`, `*.scss`
+
+Test projects are excluded — changing a bUnit test renders no user-visible UI.
+
+What makes the evidence useful:
+
+- **Exercise it with real generating agents and live conversations.** A still of an empty shell proves
+  the component mounts, not that it works. Streaming, incremental rendering, and state transitions are
+  exactly the behaviours a diff hides and a screenshot of an idle page does not show.
+- **Prefer a recording** for anything animated or progressive — token streaming, spinners, optimistic
+  updates, scroll anchoring, sub-agent panels updating in the background.
+- **Cover the states the reviewer cannot infer**: empty, loading/generating, populated, and error.
+- **Mobile and desktop** when the change touches both client projects.
+- If the change genuinely has no visible delta (a pure refactor), write
+  `No visible UI change — pure refactor` instead of attaching media. The guard accepts that as an
+  explicit opt-out; it does not accept silence.
+
+## Enforcement
+
+`.github/workflows/pr-conventions-guard.yml` checks every PR against these rules. It reuses the safety
+model of the sensitive-file guard: it runs on `pull_request_target` but checks out only the **trusted
+base copy** of its own script, reads changed files from the API rather than a working tree, and treats
+the PR title and body as inert text that is regex-matched and never executed.
+
+**The guard is currently warning-first (#2317).** It annotates the run and writes a job summary but does
+not fail the check, so the in-flight PR queue can drain before the format becomes mandatory. Enforcement
+flips by changing `ENFORCEMENT_MODE` to `"block"` in `.github/scripts/pr-conventions-guard.mjs`.
+
+| Check | On flip to blocking |
+|---|---|
+| Conventional-Commits title, lowercase, no trailing period, ≤ 72 chars | blocks |
+| Body contains `Closes #N` / `Refs #N` | blocks |
+| Required sections present for the change type | blocks |
+| `fix` PRs state a root cause | blocks |
+| UI-touching PRs carry visual evidence or an explicit no-visible-change note | blocks |
+| Numeric `Validated-by` evidence rather than "all tests pass" | advisory only |
+
+**Exemptions.** Automated external bot authors (Dependabot, Renovate, `github-actions[bot]`) are skipped:
+they open mechanical dependency PRs with no root cause or UI evidence to give. `agent-farnsworth[bot]` is
+deliberately **not** exempt — it authors most substantive changes here and is precisely what the guard
+exists to hold to the standard.
+
+**Waivers.** A maintainer (admin/maintain/write) can waive violations by commenting
+`/allow-pr-convention-exception <head-sha>`. The waiver is bound to the current head SHA, so pushing a new
+commit invalidates it.
+
+**One gap CI cannot close:** the squash body is typed into the merge-button textarea *after* every check
+has passed. Set the repository squash-merge default commit message to **"pull request title and
+description"** so a conformant PR body flows into the squash commit automatically.
 
 ## Reviewer inspection order
 

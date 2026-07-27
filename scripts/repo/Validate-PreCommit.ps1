@@ -4,6 +4,12 @@ param(
     [string]$WorktreePath = (Get-Location).Path,
     [string]$ValidationMode,
     [switch]$LocalFallback,
+
+    # Advisory pre-commit scope (#2331): impacted projects only, bounded per step, and a
+    # clean skip when another validation holds the global lock. The authoritative gate is
+    # unchanged and still runs at pre-push and in CI.
+    [switch]$Hook,
+
     [System.Collections.IDictionary]$ValidationModeEnvironment,
     [string]$AzureValidationScript = (Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'),
     [string]$LocalValidationScript = (Join-Path $PSScriptRoot 'Invoke-LocalValidation.ps1')
@@ -19,24 +25,35 @@ $selectorParameters = @{
 }
 if ($null -ne $ValidationModeEnvironment) { $selectorParameters.EnvironmentValues = $ValidationModeEnvironment }
 $selectedMode = Resolve-BotNexusValidationMode @selectorParameters
-Write-Host "Validation mode: $selectedMode (strict gate)." -ForegroundColor Cyan
+$gateLabel = if ($Hook) { 'advisory pre-commit gate' } else { 'strict gate' }
+Write-Host "Validation mode: $selectedMode ($gateLabel)." -ForegroundColor Cyan
 
 $repoRoot = (& git -C $WorktreePath rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
     throw "WorktreePath is not inside a git repository: $WorktreePath"
 }
 
-if ($selectedMode -eq 'local') {
-    # Content-addressed receipt fast path (issue #2143): if the exact staged candidate has
-    # already passed the current required strict policy, skip redundant build/test. Any
-    # missing, malformed, failed, stale, expired, or mismatched receipt fails closed by
-    # running the normal local gate below.
+# Content-addressed receipt fast path (issue #2143): if the exact staged candidate has
+# already passed the current required strict policy, skip redundant build/test. Any
+# missing, malformed, failed, stale, expired, or mismatched receipt fails closed by
+# running the normal gate below. This applies to the advisory hook too - it is the
+# common case where strict validation has just been run by hand.
+if ($selectedMode -eq 'local' -or $Hook) {
     Import-Module (Join-Path $PSScriptRoot 'ValidationReceipt.psm1') -Force
     $verification = Test-BotNexusValidationReceipt -WorktreePath $repoRoot -BaseRef $BaseRef -RequiredScopes @('strict')
     if ($verification.Match) {
         Write-Host "Content-addressed validation receipt matches the exact staged candidate; skipping redundant local validation. $($verification.Reason)" -ForegroundColor Green
         exit 0
     }
+
+    if ($Hook) {
+        # Impacted-only, bounded, and non-blocking on contention. A pre-commit gate that
+        # fails when someone else is validating simply trains everyone to use --no-verify.
+        Write-Host "No qualifying exact-content receipt ($($verification.Reason)); running the bounded impacted-only pre-commit gate." -ForegroundColor Yellow
+        & $LocalValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode hook -SkipOnLockContention
+        exit $LASTEXITCODE
+    }
+
     Write-Host "No qualifying exact-content receipt ($($verification.Reason)); running globally serialized local validation." -ForegroundColor Yellow
     & $LocalValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
     exit $LASTEXITCODE
