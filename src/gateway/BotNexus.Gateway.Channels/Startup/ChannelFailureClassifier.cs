@@ -63,6 +63,15 @@ public static class ChannelFailureClassifier
                 case IOException:
                     return ChannelFailureKind.Transient;
             }
+
+            // Azure SDK faults (ServiceBusException, RequestFailedException derivatives) carry
+            // their own retryability verdict on a public bool IsTransient. Honour it via the
+            // convention rather than referencing an Azure package here - this assembly must stay
+            // free of channel-specific types (#2386). Only a positive verdict short-circuits;
+            // IsTransient == false keeps walking and ultimately falls through to Terminal, so
+            // the fail-closed default is preserved.
+            if (TryReadIsTransient(current) == true)
+                return ChannelFailureKind.Transient;
         }
 
         return ChannelFailureKind.Terminal;
@@ -87,6 +96,22 @@ public static class ChannelFailureClassifier
         >= HttpStatusCode.InternalServerError => ChannelFailureKind.Transient, // 5xx
         _ => ChannelFailureKind.Terminal,
     };
+
+    /// <summary>
+    /// Reads a public instance <c>bool IsTransient</c> property when the exception exposes one.
+    /// </summary>
+    /// <returns>The declared verdict, or <see langword="null"/> when no such property exists.</returns>
+    private static bool? TryReadIsTransient(Exception exception)
+    {
+        var property = exception.GetType().GetProperty(
+            "IsTransient",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        if (property is null || property.PropertyType != typeof(bool) || !property.CanRead)
+            return null;
+
+        return property.GetValue(exception) as bool?;
+    }
 
     private static bool IsTransientSocketError(SocketError error) => error is
         SocketError.ConnectionReset or
