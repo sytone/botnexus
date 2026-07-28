@@ -1278,13 +1278,13 @@ public sealed class SessionsControllerTests
     public async Task List_UsesSummaryRead_NotFullHydration()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42) });
         var controller = new SessionsController(store.Object);
 
         await controller.List(null, cancellationToken: CancellationToken.None);
 
-        store.Verify(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once,
+        store.Verify(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once,
             "List must use the metadata-only summary read");
         store.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never,
             "List must not hydrate full transcripts via ListAsync");
@@ -1294,7 +1294,7 @@ public sealed class SessionsControllerTests
     public async Task List_ProjectsSummaryFields_IncludingMessageCount()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42, "c1") });
         var controller = new SessionsController(store.Object);
 
@@ -1313,7 +1313,7 @@ public sealed class SessionsControllerTests
     public async Task List_FiltersByAgentId()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 1), Summary("s2", "agent-b", SessionStatus.Active, 1) });
         var controller = new SessionsController(store.Object);
 
@@ -1326,7 +1326,7 @@ public sealed class SessionsControllerTests
     public async Task List_ExcludesInactiveByDefault_AndIncludesWhenRequested()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Summary("s-active", "agent-a", SessionStatus.Active, 1), Summary("s-sealed", "agent-a", SessionStatus.Sealed, 1) });
         var controller = new SessionsController(store.Object);
 
@@ -1361,7 +1361,7 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new SessionStoreUnavailableException("unavailable", new Exception("inner")));
 
         var controller = new SessionsController(store.Object);
@@ -1378,7 +1378,7 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<SessionSummary>());
 
         var controller = new SessionsController(store.Object);
