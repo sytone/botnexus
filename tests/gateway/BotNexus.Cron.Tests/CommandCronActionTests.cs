@@ -171,8 +171,13 @@ public sealed class CommandCronActionTests
             Metadata = effectiveMetadata
         };
 
+        // #2462: command firing now passes an authorization gate that fails closed without a
+        // tool policy provider. These tests exercise process/timeout behaviour, so the fixture
+        // supplies a permissive policy. Denial behaviour is covered in CommandCronAuthorizationTests.
         var services = new ServiceCollection()
             .AddLogging(b => b.AddConsole())
+            .AddSingleton<BotNexus.Gateway.Abstractions.Security.IToolPolicyProvider>(
+                new PermissiveToolPolicyProvider())
             .BuildServiceProvider();
 
         return new CronExecutionContext
@@ -183,5 +188,21 @@ public sealed class CommandCronActionTests
             TriggerType = CronTriggerType.Manual,
             Services = services
         };
+    }
+
+    /// <summary>Allows everything; used so these process-behaviour tests are not gated (#2462).</summary>
+    private sealed class PermissiveToolPolicyProvider
+        : BotNexus.Gateway.Abstractions.Security.IToolPolicyProvider
+    {
+        public BotNexus.Gateway.Abstractions.Security.ToolRiskLevel GetRiskLevel(string toolName)
+            => BotNexus.Gateway.Abstractions.Security.ToolRiskLevel.Safe;
+
+        public bool RequiresApproval(string toolName, string? agentId = null) => false;
+
+        public BotNexus.Gateway.Abstractions.Security.ToolApprovalFallback GetApprovalFallback(
+            string toolName, string? agentId = null)
+            => BotNexus.Gateway.Abstractions.Security.ToolApprovalFallback.Allow;
+
+        public IReadOnlyList<string> GetDeniedForHttp() => [];
     }
 }
