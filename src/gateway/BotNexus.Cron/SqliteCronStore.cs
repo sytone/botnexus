@@ -86,6 +86,14 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
                 CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id_started_at
                 ON cron_runs(job_id, started_at DESC);
+
+                -- #2477: a missed run's identity is (job_id, scheduled occurrence). Startup
+                -- detection rescans the same window after every restart because the missed
+                -- path never advances last_run_at, so the write must be idempotent. The index
+                -- is partial (status = 'missed') to leave real executions - which legitimately
+                -- may share a started_at instant - completely unconstrained.
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_cron_runs_missed_occurrence
+                ON cron_runs(job_id, started_at) WHERE status = 'missed';
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -503,6 +511,49 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await updateJob.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
             return run;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Idempotently records a terminal <c>missed</c> history row for a scheduled occurrence that
+    /// elapsed while the gateway was down. Returns <c>false</c> when the row already existed.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does <b>not</b> reuse <see cref="RecordRunStartAsync"/>: that method stamps a
+    /// fresh random <see cref="RunId"/> at the current wall-clock and advances the job's
+    /// <c>last_run_*</c> bookkeeping, both of which are wrong for a run that never executed. The
+    /// insert relies on the partial unique index <c>idx_cron_runs_missed_occurrence</c> plus
+    /// <c>INSERT OR IGNORE</c>, so concurrent or repeated startup scans converge on one row (#2477).
+    /// </remarks>
+    public async Task<bool> TryRecordMissedRunAsync(JobId jobId, DateTimeOffset scheduledOccurrenceUtc, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var occurrence = scheduledOccurrenceUtc.ToUniversalTime();
+
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT OR IGNORE INTO cron_runs (id, job_id, started_at, completed_at, status, error, session_id)
+                VALUES ($id, $jobId, $startedAt, $completedAt, $status, NULL, NULL)
+                """;
+            insert.Parameters.AddWithValue("$id", RunId.Create().Value);
+            insert.Parameters.AddWithValue("$jobId", jobId.Value);
+            insert.Parameters.AddWithValue("$startedAt", occurrence.ToString("O"));
+            insert.Parameters.AddWithValue("$completedAt", occurrence.ToString("O"));
+            insert.Parameters.AddWithValue("$status", CronRunStatus.Missed);
+            var rows = await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            return rows > 0;
         }
         finally
         {
