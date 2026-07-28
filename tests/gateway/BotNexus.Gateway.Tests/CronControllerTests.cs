@@ -439,6 +439,9 @@ public sealed class CronControllerTests
             return Task.FromResult<IReadOnlyList<CronRun>>(runs);
         }
 
+        public Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<CronRun>>(_runs.Values.Where(r => r.Status == CronRunStatus.Running).ToList());
+
         public Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
         {
             var toRemove = _runs.Values
