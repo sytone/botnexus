@@ -17,13 +17,15 @@ public class SessionCleanupServiceTests
     private static SessionCleanupService CreateService(
         ISessionStore store,
         SessionCleanupOptions options,
-        SessionLifecycleEvents? lifecycle = null)
+        SessionLifecycleEvents? lifecycle = null,
+        ISessionTurnTracker? turnTracker = null)
     {
         return new SessionCleanupService(
             store,
             Options.Create(options),
             NullLogger<SessionCleanupService>.Instance,
-            lifecycle);
+            lifecycle,
+            turnTracker);
     }
 
     private static GatewaySession CreateSession(
@@ -396,5 +398,146 @@ public class SessionCleanupServiceTests
 
         var kept = await store.GetAsync(SessionId.From("cron:job-4:20260101:abc"));
         kept.ShouldNotBeNull("cron noop pruning must be disabled when retention is null");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_DoesNotExpireActiveSession_WithInFlightRun()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("s-inflight", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddHours(-25));
+        await store.SaveAsync(session);
+
+        var tracker = new SessionTurnTracker();
+        using var scope = tracker.BeginTurn("s-inflight");
+
+        var options = new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(24) };
+        var service = CreateService(store, options, lifecycle: null, turnTracker: tracker);
+
+        await service.RunCleanupOnceAsync();
+
+        var kept = await store.GetAsync(SessionId.From("s-inflight"));
+        kept.ShouldNotBeNull();
+        kept!.Status.ShouldBe(SessionStatus.Active, "a session with an in-flight run must not be expired");
+        kept.ExpiresAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_PublishesNoLifecycleEvent_ForInFlightSession()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("s-inflight-evt", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddHours(-25));
+        await store.SaveAsync(session);
+
+        var lifecycle = new SessionLifecycleEvents(NullLogger<SessionLifecycleEvents>.Instance);
+        var events = new List<SessionLifecycleEvent>();
+        lifecycle.SessionChanged += (evt, ct) =>
+        {
+            events.Add(evt);
+            return Task.CompletedTask;
+        };
+
+        var tracker = new SessionTurnTracker();
+        using var scope = tracker.BeginTurn("s-inflight-evt");
+
+        var options = new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(24) };
+        var service = CreateService(store, options, lifecycle, tracker);
+
+        await service.RunCleanupOnceAsync();
+
+        events.ShouldBeEmpty("no lifecycle event may be published for a live session");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_ExpiresStaleSession_OnceItsRunCompletes()
+    {
+        var store = new InMemorySessionStore();
+        var session = CreateSession("s-run-done", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddHours(-25));
+        await store.SaveAsync(session);
+
+        var tracker = new SessionTurnTracker();
+        var scope = tracker.BeginTurn("s-run-done");
+
+        var options = new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(24) };
+        var service = CreateService(store, options, lifecycle: null, turnTracker: tracker);
+
+        await service.RunCleanupOnceAsync();
+        (await store.GetAsync(SessionId.From("s-run-done")))!.Status.ShouldBe(SessionStatus.Active);
+
+        scope.Dispose();
+        await service.RunCleanupOnceAsync();
+
+        var expired = await store.GetAsync(SessionId.From("s-run-done"));
+        expired.ShouldNotBeNull();
+        expired!.Status.ShouldBe(SessionStatus.Expired, "once the run completes the TTL sweep applies again");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_ExpiresOtherStaleSessions_WhileOneRunIsInFlight()
+    {
+        var store = new InMemorySessionStore();
+        await store.SaveAsync(CreateSession("s-live", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddHours(-25)));
+        await store.SaveAsync(CreateSession("s-idle", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddHours(-25)));
+
+        var tracker = new SessionTurnTracker();
+        using var scope = tracker.BeginTurn("s-live");
+
+        var options = new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(24) };
+        var service = CreateService(store, options, lifecycle: null, turnTracker: tracker);
+
+        await service.RunCleanupOnceAsync();
+
+        (await store.GetAsync(SessionId.From("s-live")))!.Status.ShouldBe(SessionStatus.Active);
+        (await store.GetAsync(SessionId.From("s-idle")))!.Status.ShouldBe(SessionStatus.Expired);
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_DoesNotDeleteSealedSession_WithInFlightRun()
+    {
+        var store = new InMemorySessionStore();
+        await store.SaveAsync(CreateSession("s-sealed-live", "agent-1", SessionStatus.Sealed,
+            DateTimeOffset.UtcNow.AddDays(-8)));
+
+        var tracker = new SessionTurnTracker();
+        using var scope = tracker.BeginTurn("s-sealed-live");
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromHours(24),
+            ClosedSessionRetention = TimeSpan.FromDays(7)
+        };
+        var service = CreateService(store, options, lifecycle: null, turnTracker: tracker);
+
+        await service.RunCleanupOnceAsync();
+
+        (await store.GetAsync(SessionId.From("s-sealed-live"))).ShouldNotBeNull(
+            "a sealed session with a live run must not be deleted out from under it");
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_DoesNotDeleteCronNoopSession_WithInFlightRun()
+    {
+        var store = new InMemorySessionStore();
+        await store.SaveAsync(CreateSession("cron:job-live:20260101:abc", "agent-1", SessionStatus.Active,
+            DateTimeOffset.UtcNow.AddDays(-8)));
+
+        var tracker = new SessionTurnTracker();
+        using var scope = tracker.BeginTurn("cron:job-live:20260101:abc");
+
+        var options = new SessionCleanupOptions
+        {
+            SessionTtl = TimeSpan.FromDays(999),
+            CronNoopRetention = TimeSpan.FromDays(7)
+        };
+        var service = CreateService(store, options, lifecycle: null, turnTracker: tracker);
+
+        await service.RunCleanupOnceAsync();
+
+        (await store.GetAsync(SessionId.From("cron:job-live:20260101:abc"))).ShouldNotBeNull(
+            "a cron session with a live run must not be pruned mid-run");
     }
 }
