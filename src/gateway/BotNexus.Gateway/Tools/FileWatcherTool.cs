@@ -3,7 +3,6 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Tools.Utils;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Options;
@@ -88,13 +87,6 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
         }
 
         fullPath ??= Path.GetFullPath(rawPath);
-
-        // Validation resolves symlinks for the containment check; that stays. Only the reported path is
-        // re-anchored onto the prefix the caller named. See issue #2404.
-        var displayPath = PathDisplay.Reanchor(
-            fullPath,
-            fullPath,
-            PathDisplay.ResolveRequestedRoot(rawPath, Directory.GetCurrentDirectory()));
         var directory = Path.GetDirectoryName(fullPath);
         var fileName = Path.GetFileName(fullPath);
 
@@ -108,10 +100,10 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
         if (eventType is "modified" or "deleted")
         {
             if (!File.Exists(fullPath))
-                return TextResult($"Error: file '{displayPath}' does not exist. Use event type 'created' or 'any' to watch for file creation.");
+                return TextResult($"Error: file '{fullPath}' does not exist. Use event type 'created' or 'any' to watch for file creation.");
         }
 
-        onUpdate?.Invoke(TextResult($"Watching '{displayPath}' for {eventType} event (timeout: {timeout}s)..."));
+        onUpdate?.Invoke(TextResult($"Watching '{fullPath}' for {eventType} event (timeout: {timeout}s)..."));
 
         var stopwatch = Stopwatch.StartNew();
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -176,9 +168,9 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
 
             return result switch
             {
-                "timeout" => TextResult($"Timeout after {timeout} seconds — no change detected on '{displayPath}'."),
+                "timeout" => TextResult($"Timeout after {timeout} seconds — no change detected on '{fullPath}'."),
                 "cancelled" => TextResult($"Watch cancelled after {elapsed} seconds. No change detected."),
-                _ => TextResult($"File {result}: '{displayPath}' (after {elapsed} seconds).")
+                _ => TextResult($"File {result}: '{fullPath}' (after {elapsed} seconds).")
             };
         }
         finally

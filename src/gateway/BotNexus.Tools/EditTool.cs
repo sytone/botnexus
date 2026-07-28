@@ -206,9 +206,7 @@ public sealed class EditTool : IAgentTool
             var originalLineEnding = DetectLineEnding(original);
             var normalizedOriginal = original.NormalizeLineEndings();
             var resolved = ResolveReplacements(normalizedOriginal, edits);
-            var relativePath = PathUtils.GetRelativePath(
-                PathDisplay.Reanchor(fullPath, fullPath, PathDisplay.ResolveRequestedRoot(rawPath, _workingDirectory, _fileSystem)),
-                _workingDirectory);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
 
             // Issue #2100: an edit whose resolved target text already equals its replacement is an
             // idempotent no-op. Separate those from the edits that actually change bytes so an

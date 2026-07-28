@@ -6,16 +6,25 @@ using BotNexus.Tools;
 namespace BotNexus.Gateway.Tests.Tools;
 
 /// <summary>
-/// Regression coverage for issue #2404. Path validation resolves symlinks before the containment check and
-/// that must stay exactly as-is — it is the security boundary. What must NOT leak is the resolved path in the
-/// text handed back to the agent: a caller who asked about <c>link/</c> has to see results under <c>link/</c>,
-/// not under the link's real target, otherwise the model follows reported paths out of the tree it reasoned
-/// about.
+/// Characterisation coverage for issue #2404. The audit found <strong>no leak</strong>: no path-returning tool
+/// emits symlink-resolved display paths, so no production change was required. These tests lock that in.
 /// </summary>
 /// <remarks>
-/// Every test here ends in an unconditional assertion. <see cref="SymlinkFixture.CreateDirectoryLink"/> throws
-/// when it cannot create a link, so setup failure fails the test loudly rather than passing vacuously — no
-/// early return, no conditional skip, no catch-and-continue.
+/// <para>
+/// Issue #2404 predicted that <c>DefaultPathValidator.ValidateAndResolve</c> returns a symlink-resolved path
+/// which tools then emit verbatim. That premise is incorrect. <c>ValidateAndResolve</c> resolves links only to
+/// <em>check</em> containment (the <c>ResolvePathFollowingLinks</c> second phase added by #2448) and then
+/// returns <c>resolvedPath</c> — the lexically-normalised, <em>link-preserving</em> form of the caller's own
+/// path. Validate against the real target, return what the caller named: the split this issue asks for is
+/// already how the validator behaves.
+/// </para>
+/// <para>
+/// These tests are therefore regression guards rather than bug fixes. They were verified to be non-vacuous by
+/// mutating <c>ValidateAndResolve</c> to <c>return linkResolvedPath;</c> — the glob, read, and agent-files
+/// tests then fail with paths under <c>real/</c> instead of <c>link/</c>. Every test ends in an unconditional
+/// assertion, and <see cref="SymlinkFixture.CreateDirectoryLink"/> throws when it cannot create a link, so
+/// setup failure fails loudly rather than passing vacuously — no early return, no skip, no catch-and-continue.
+/// </para>
 /// </remarks>
 public sealed class ToolDisplayPathSymlinkTests : IDisposable
 {

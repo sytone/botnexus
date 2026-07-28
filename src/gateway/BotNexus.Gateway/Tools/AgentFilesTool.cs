@@ -5,7 +5,6 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Abstractions.Security;
-using BotNexus.Tools.Utils;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -124,21 +123,10 @@ public sealed class AgentFilesTool : IAgentTool
             return Task.FromResult(TextResult($"Error: cannot resolve path '{rawPath}'."));
         }
 
-        // Validation resolves symlinks for the containment check; that stays. Report paths under the prefix
-        // the caller named so the agent stays in the tree it asked about. See issue #2404.
-        var displayPath = PathDisplay.Reanchor(
-            fullPath,
-            fullPath,
-            PathDisplay.ResolveRequestedRoot(rawPath, _fileSystem.Directory.GetCurrentDirectory(), _fileSystem));
-
         // Reduce a file path to its containing directory so the walk starts from a directory.
         var startDir = _fileSystem.Directory.Exists(fullPath)
             ? fullPath
             : _fileSystem.Path.GetDirectoryName(fullPath);
-
-        var displayStartDir = _fileSystem.Directory.Exists(fullPath)
-            ? displayPath
-            : _fileSystem.Path.GetDirectoryName(displayPath);
 
         if (string.IsNullOrEmpty(startDir))
             return Task.FromResult(TextResult($"Error: cannot determine a directory for path '{rawPath}'."));
@@ -147,15 +135,15 @@ public sealed class AgentFilesTool : IAgentTool
         if (files.Count == 0)
         {
             return Task.FromResult(TextResult(
-                $"No AGENTS.md files found from '{displayStartDir}' up to the repository root."));
+                $"No AGENTS.md files found from '{startDir}' up to the repository root."));
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"Found {files.Count} AGENTS.md file(s) for '{displayStartDir}' (most general first):");
+        sb.AppendLine($"Found {files.Count} AGENTS.md file(s) for '{startDir}' (most general first):");
         sb.AppendLine();
         foreach (var (filePath, content) in files)
         {
-            sb.AppendLine($"<!-- AGENTS.md: {PathDisplay.Reanchor(filePath, startDir, displayStartDir)} -->");
+            sb.AppendLine($"<!-- AGENTS.md: {filePath} -->");
             sb.AppendLine(content);
             sb.AppendLine();
         }

@@ -131,11 +131,6 @@ public sealed class GlobTool : IAgentTool
 
         baseDirectory ??= PathUtils.ResolvePath(rawPath, _workingDirectory, _fileSystem);
 
-        // Validation above may have swapped a symlinked prefix for the link's real target. That resolution is
-        // the containment check and stays exactly as-is; only the reported paths are re-anchored onto the
-        // prefix the caller named. See issue #2404.
-        var requestedRoot = PathDisplay.ResolveRequestedRoot(rawPath, _workingDirectory, _fileSystem);
-
         if (!_fileSystem.Directory.Exists(baseDirectory))
         {
             throw new DirectoryNotFoundException($"Base directory '{baseDirectory}' does not exist.");
@@ -155,9 +150,7 @@ public sealed class GlobTool : IAgentTool
         var matches = allMatches
             .Where(path => !ignoredPaths.Contains(path))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(path => PathUtils.GetRelativePath(
-                PathDisplay.Reanchor(path, baseDirectory, requestedRoot),
-                _workingDirectory))
+            .Select(path => PathUtils.GetRelativePath(path, _workingDirectory))
             .ToList();
 
         if (matches.Count == 0)
