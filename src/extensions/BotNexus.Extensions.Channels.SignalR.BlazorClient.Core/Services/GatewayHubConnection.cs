@@ -281,9 +281,17 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     public async Task<SendMessageResult> SteerAsync(string agentId, string sessionId, string content, string? conversationId)
         => await _connection!.InvokeAsync<SendMessageResult>("Steer", agentId, sessionId, content, conversationId);
 
+    /// <summary>Steer an in-progress agent response, carrying draft attachments (#2484).</summary>
+    public async Task<SendMessageResult> SteerWithMediaAsync(string agentId, string sessionId, string content, IReadOnlyList<MediaContentPartDto> parts, string? conversationId)
+        => await _connection!.InvokeAsync<SendMessageResult>("SteerWithMedia", agentId, sessionId, content, parts, conversationId);
+
     /// <summary>Send a follow-up message into an existing session.</summary>
     public async Task FollowUpAsync(string agentId, string sessionId, string content)
         => await _connection!.InvokeAsync("FollowUp", agentId, sessionId, content);
+
+    /// <summary>Send a follow-up message carrying draft attachments (#2484).</summary>
+    public async Task FollowUpWithMediaAsync(string agentId, string sessionId, string content, IReadOnlyList<MediaContentPartDto> parts)
+        => await _connection!.InvokeAsync("FollowUpWithMedia", agentId, sessionId, content, parts);
 
     /// <summary>Abort an in-progress agent response.</summary>
     public async Task AbortAsync(string agentId, string sessionId)
@@ -293,6 +301,11 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <returns><c>true</c> when the interrupt was delivered to a live handle; <c>false</c> when the agent was idle.</returns>
     public async Task<bool> InterruptAndSteerAsync(string agentId, string sessionId, string message)
         => await _connection!.InvokeAsync<bool>("InterruptAndSteer", agentId, sessionId, message);
+
+    /// <summary>Atomically abort the current turn and redirect, carrying draft attachments (#2484).</summary>
+    /// <returns><c>true</c> when the interrupt was delivered to a live handle; <c>false</c> when the agent was idle.</returns>
+    public async Task<bool> InterruptAndSteerWithMediaAsync(string agentId, string sessionId, string message, IReadOnlyList<MediaContentPartDto> parts)
+        => await _connection!.InvokeAsync<bool>("InterruptAndSteerWithMedia", agentId, sessionId, message, parts);
 
     /// <summary>Reset (archive) a session and start fresh.</summary>
     public async Task ResetSessionAsync(string agentId, string sessionId)

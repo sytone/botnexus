@@ -135,7 +135,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         return true;
     }
 
-    public async Task SteerAsync(string agentId, string content)
+    public Task SteerAsync(string agentId, string content) => SteerAsync(agentId, content, []);
+
+    /// <inheritdoc />
+    public async Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
         if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
             return;
@@ -148,7 +151,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var result = await _hub.SteerAsync(agentId, sessionId, content, convId);
+            // #2484: route through the media overload whenever the composer had draft attachments,
+            // exactly as SendMessageAsync does, so steering no longer silently discards them.
+            var result = attachments.Count == 0
+                ? await _hub.SteerAsync(agentId, sessionId, content, convId)
+                : await _hub.SteerWithMediaAsync(agentId, sessionId, content,
+                    attachments.Select(ToContentPart).ToArray(), convId);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convId);
             await RefreshConversationsForAgentAsync(agentId);
         }
@@ -158,7 +166,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
-    public async Task FollowUpAsync(string agentId, string content)
+    public Task FollowUpAsync(string agentId, string content) => FollowUpAsync(agentId, content, []);
+
+    /// <inheritdoc />
+    public async Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
         if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
             return;
@@ -171,7 +182,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            await _hub.FollowUpAsync(agentId, sessionId, content);
+            if (attachments.Count == 0)
+                await _hub.FollowUpAsync(agentId, sessionId, content);
+            else
+                await _hub.FollowUpWithMediaAsync(agentId, sessionId, content,
+                    attachments.Select(ToContentPart).ToArray());
         }
         catch (Exception ex)
         {
@@ -223,9 +238,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     // ── Session management ────────────────────────────────────────────────
 
 
-    public async Task InterruptAndSteerAsync(string agentId, string message)
+    public Task InterruptAndSteerAsync(string agentId, string message) => InterruptAndSteerAsync(agentId, message, []);
+
+    /// <inheritdoc />
+    public async Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments)
     {
-        if (string.IsNullOrWhiteSpace(message)) return;
+        if (string.IsNullOrWhiteSpace(message) && attachments.Count == 0) return;
         if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
             return;
 
@@ -233,7 +251,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var delivered = await _hub.InterruptAndSteerAsync(agentId, sessionId, message);
+            var delivered = attachments.Count == 0
+                ? await _hub.InterruptAndSteerAsync(agentId, sessionId, message)
+                : await _hub.InterruptAndSteerWithMediaAsync(agentId, sessionId, message,
+                    attachments.Select(ToContentPart).ToArray());
             if (!delivered)
                 AppendError(agentId, "Interrupt not delivered - agent was not running.");
         }

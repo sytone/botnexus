@@ -1251,17 +1251,22 @@ private bool IsStreaming =>
         }
     }
 
-    private async Task SendMessage()
+    // #2484: the send family (Send / Steer / Follow Up / Redirect) shares ONE draft-consumption
+    // envelope so a future fifth path cannot be added that silently ignores _attachments. Each
+    // path supplies only its dispatch delegate; snapshot, guard, clear and error handling live here.
+    private async Task DispatchDraftAsync(Func<string, IReadOnlyList<DraftAttachment>, Task> dispatch)
     {
         var text = _inputText?.Trim() ?? string.Empty;
         if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return;
         var attachments = _attachments.ToArray();
         _inputText = ""; _attachments.Clear(); _attachmentError = null; _showCommandPalette = false; _forceScrollNext = true;
-        if (attachments.Length == 0)
-            await Interaction.SendMessageAsync(AgentId, text);
-        else
-            await Interaction.SendMessageAsync(AgentId, text, attachments);
+        await dispatch(text, attachments);
     }
+
+    private Task SendMessage()
+        => DispatchDraftAsync((text, attachments) => attachments.Count == 0
+            ? Interaction.SendMessageAsync(AgentId, text)
+            : Interaction.SendMessageAsync(AgentId, text, attachments));
 
     private async Task HandleFilesSelected(InputFileChangeEventArgs e)
     {
@@ -1294,36 +1299,24 @@ private bool IsStreaming =>
     private void RemoveAttachment(DraftAttachment attachment) { _attachments.Remove(attachment); _attachmentError = null; }
     private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
-    private async Task SteerAgent()
-    {
-        var text = _inputText?.Trim();
-        if (string.IsNullOrEmpty(text) || !IsConnected)
-            return;
+    private Task SteerAgent()
+        => DispatchDraftAsync((text, attachments) => Interaction.SteerAsync(AgentId, text, attachments));
 
-        _inputText = "";
-        await Interaction.SteerAsync(AgentId, text);
-    }
-
-    private async Task FollowUpAgent()
-    {
-        var text = _inputText?.Trim();
-        if (string.IsNullOrEmpty(text) || !IsConnected)
-            return;
-
-        _inputText = "";
-        UpdateCommandPalette();
-        await Interaction.FollowUpAsync(AgentId, text);
-    }
+    private Task FollowUpAgent()
+        => DispatchDraftAsync(async (text, attachments) =>
+        {
+            UpdateCommandPalette();
+            await Interaction.FollowUpAsync(AgentId, text, attachments);
+        });
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
-    private async Task InterruptAndSteer()
-    {
-        var message = _inputText.Trim();
-        if (string.IsNullOrWhiteSpace(message)) return;
-        _inputText = "";
-        UpdateCommandPalette();
-        await Interaction.InterruptAndSteerAsync(AgentId, message);
-    }
+
+    private Task InterruptAndSteer()
+        => DispatchDraftAsync(async (text, attachments) =>
+        {
+            UpdateCommandPalette();
+            await Interaction.InterruptAndSteerAsync(AgentId, text, attachments);
+        });
 
     // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.
     // Fetches and prepends the next older page, preserving the visual scroll position so the view

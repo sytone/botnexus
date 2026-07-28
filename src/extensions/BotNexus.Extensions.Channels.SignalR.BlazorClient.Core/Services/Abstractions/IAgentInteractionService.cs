@@ -12,9 +12,18 @@ public interface IAgentInteractionService
     /// <summary>Sends optional text plus validated generic attachments through the existing content-parts seam.</summary>
     Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
     Task SteerAsync(string agentId, string content);
+
+    /// <summary>Steers with optional draft attachments, matching the send media overload (#2484).</summary>
+    Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
     Task FollowUpAsync(string agentId, string content);
+
+    /// <summary>Follows up with optional draft attachments, matching the send media overload (#2484).</summary>
+    Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
     Task AbortAsync(string agentId);
     Task InterruptAndSteerAsync(string agentId, string message);
+
+    /// <summary>Redirects with optional draft attachments, matching the send media overload (#2484).</summary>
+    Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments);
     Task ResetSessionAsync(string agentId);
     Task<CompactSessionResult?> CompactSessionAsync(string agentId);
     Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true);
