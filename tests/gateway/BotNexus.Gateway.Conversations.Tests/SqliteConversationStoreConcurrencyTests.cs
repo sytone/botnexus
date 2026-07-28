@@ -24,6 +24,48 @@ namespace BotNexus.Gateway.Conversations.Tests;
 /// </remarks>
 public sealed class SqliteConversationStoreConcurrencyTests
 {
+    [Theory]
+    [InlineData("pin")]
+    [InlineData("archive")]
+    public async Task NarrowMutation_RefreshesTheCachedRevision_SoTheNextReaderCanStillSave(string mutation)
+    {
+        // Regression: narrow mutations bump `version` in SQL and then rewrite the in-memory cache
+        // entry from the pre-mutation clone. When that clone kept its stale Version, the very next
+        // GetAsync (a cache HIT, so no disk read to correct it) handed back a snapshot whose
+        // compare-and-swap could never match - so a legitimate, uncontended save failed with
+        // ConversationConcurrencyException. This is asserted on the OBSERVABLE (the save succeeds
+        // and the write lands) rather than on Version itself, because a broken implementation is
+        // one that rejects a valid write, not merely one that reports an odd number.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var conversation = NewConversation("agent-cache", "cached title");
+        await store.CreateAsync(conversation);
+        var id = conversation.ConversationId;
+
+        // Warm the cache so the post-mutation GetAsync below is served from memory.
+        (await store.GetAsync(id)).ShouldNotBeNull();
+
+        if (mutation == "pin")
+        {
+            await store.PinAsync(id, pin: true);
+        }
+        else
+        {
+            await store.ArchiveAsync(id);
+        }
+
+        // Single reader, no competing writer: this save must be accepted.
+        var fresh = await store.GetAsync(id);
+        fresh.ShouldNotBeNull();
+        fresh!.Title = "title after narrow mutation";
+        await store.SaveAsync(fresh);
+
+        var reloaded = await fixture.CreateStore().GetAsync(id);
+        reloaded.ShouldNotBeNull();
+        reloaded!.Title.ShouldBe("title after narrow mutation");
+    }
+
     [Fact]
     public async Task StaleTitleSave_CannotClearAConcurrentPin()
     {

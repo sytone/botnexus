@@ -409,6 +409,10 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Status = ConversationStatus.Archived;
                 archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
+                // #2131: the UPDATE above bumped the persisted revision, so the cached clone must
+                // track it. Leaving the stale version here hands the next reader a snapshot whose
+                // compare-and-swap can never succeed.
+                archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
         }
@@ -485,6 +489,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Status = ConversationStatus.Archived;
                 archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
+                // #2131: keep the cached revision in step with the row bumped above.
+                archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
         }
@@ -615,6 +621,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 updated.IsPinned = pin;
                 updated.PinnedAt = pinnedAt;
                 updated.UpdatedAt = now;
+                // #2131: keep the cached revision in step with the row bumped above.
+                updated.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, updated);
             }
         }
