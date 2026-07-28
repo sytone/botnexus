@@ -111,6 +111,14 @@ public static class ServiceCollectionExtensions
             results.Add(result);
         }
 
+        // All extensions are registered now, so the full service graph is present. Remove any
+        // extension service the host container cannot activate before it is resolved as part of a
+        // startup set (IEnumerable<IAgentTool>, IEnumerable<IAgentToolContributor>, hosted services,
+        // etc.). Without this a single un-activatable extension implementation aborts host startup
+        // (issue #2220): the CLI then shows only a generic health-check timeout. The loader logs a
+        // warning per pruned service.
+        loader.PruneUnconstructableExtensionServices();
+
         services.Replace(ServiceDescriptor.Singleton<IExtensionLoader>(loader));
         return results;
     }
