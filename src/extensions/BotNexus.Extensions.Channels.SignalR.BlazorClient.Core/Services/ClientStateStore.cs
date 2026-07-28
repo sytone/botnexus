@@ -221,9 +221,9 @@ public sealed class ClientStateStore : IClientStateStore
                 existing.CreatedAt = dto.CreatedAt;
                 existing.UpdatedAt = dto.UpdatedAt;
 
-                // Source/Kind are deliberately NOT refreshed here: they are init-only, write-once
-                // origin signals (#2304). A conversation cannot change why it exists or who is in
-                // it, so a refresh must never be able to rewrite them.
+                // Source/Kind/Visibility are deliberately NOT refreshed here: they are init-only,
+                // write-once signals (#2304, #2340). A conversation cannot change why it exists, who
+                // is in it, or whether a user may see it, so a refresh must never rewrite them.
             }
             else
             {
@@ -239,7 +239,9 @@ public sealed class ClientStateStore : IClientStateStore
                     UpdatedAt = dto.UpdatedAt,
                     // Immutable origin signal, seeded once straight from the server payload (#2304).
                     Source = ConversationOrigin.ParseSource(dto.Source),
-                    Kind = ConversationOrigin.ParseKind(dto.Kind)
+                    Kind = ConversationOrigin.ParseKind(dto.Kind),
+                    // Immutable visibility signal, seeded once from the server payload (#2340).
+                    Visibility = ConversationOrigin.ParseVisibility(dto.Visibility)
                 };
             }
         }

@@ -36,10 +36,13 @@ else
     var activeConvId = activeAgent?.ActiveConversationId;
     var messages = activeConvId is not null ? Store.GetMessages(activeConvId) : [];
     var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
-    var conversations = activeAgent?.Conversations.Values
-        .Where(c => c.Status == "Active")
-        .OrderForDisplay()
-        .ToList() ?? [];
+    @* #2327: the picker groups exactly as the desktop sidebar does (Pinned / Conversations /
+       Scheduled) via the shared PortalConversationGrouping helper, so the two form factors cannot
+       drift. Native <optgroup> keeps the OS touch picker rather than replacing it with a
+       bottom-sheet. Empty groups are dropped by the helper, so no empty <optgroup> is emitted. *@
+    var conversationGroups = PortalConversationGrouping.ForPicker(
+        activeAgent?.Conversations.Values.Where(c => c.Status == "Active") ?? [],
+        Store.ActiveSelectionSource);
     <div class="mobile-app">
         <!-- DISCONNECTED INDICATOR -->
         @if (!PortalLoad.IsSignalRConnected)
@@ -60,9 +63,14 @@ else
                 }
             </select>
             <select @key="Store.ActiveAgentId" class="conv-select" value="@activeConvId" @onchange="OnConvChanged">
-                @foreach (var conv in conversations)
+                @foreach (var group in conversationGroups)
                 {
-                    <option value="@conv.ConversationId">@conv.Title</option>
+                    <optgroup label="@group.Label">
+                        @foreach (var conv in group.Conversations)
+                        {
+                            <option value="@conv.ConversationId">@conv.Title</option>
+                        }
+                    </optgroup>
                 }
             </select>
             <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh" data-testid="refresh-btn" title="Refresh conversations">

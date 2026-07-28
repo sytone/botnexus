@@ -22,9 +22,16 @@ namespace BotNexus.Architecture.Tests;
 ///     the dropdown. It would also silently make cron conversations writable.
 ///   </item>
 ///   <item>
-///     <b>Rule 2 — no origin inference.</b> No production code may re-derive conversation origin
+///     <b>Rule 2 - no origin inference.</b> No production code may re-derive conversation origin
 ///     from an id substring (a <c>cron:</c>/<c>cronconv:</c>-style prefix probe). Origin is a
 ///     modelled field; inference is per-surface, lossy and drifts.
+///   </item>
+///   <item>
+///     <b>Rule 2b - no visibility inference (#2340).</b> No client surface may decide whether a
+///     conversation is user-visible from an <c>internal:</c> id prefix. Visibility is the
+///     write-once, server-stamped <c>ConversationVisibility</c>. This rule replaced the single
+///     allowlisted exception that previously kept Rule 2 from being absolute; the fence now has
+///     ZERO inference exceptions.
 ///   </item>
 ///   <item>
 ///     <b>Rule 3 — no reintroduction.</b> The identifiers <c>IsVirtualSession</c> and
@@ -65,6 +72,23 @@ public sealed class ConversationSourceArchitectureTests
     }
 
     /// <summary>
+    /// The visibility axis added by #2340, held to the same write-once contract as
+    /// <see cref="Conversation.Source"/>.
+    /// </summary>
+    [Fact]
+    public void Conversation_Visibility_IsInitOnly()
+    {
+        AssertInitOnly(
+            typeof(Conversation),
+            nameof(Conversation.Visibility),
+            "Conversation.Visibility is stamped once at creation by ConversationFactory (#2340) and " +
+            "decides whether a row may ever be rendered to a user. A `set` setter would let a later " +
+            "write - or an inbound event - surface a runtime bookkeeping thread in the user's " +
+            "sidebar, or silently vanish a real conversation from it. Both failure modes are silent, " +
+            "which is exactly why the id-prefix probe this field replaced had to go.");
+    }
+
+    /// <summary>
     /// The client mirror. Reflected over by name because the architecture test project does not
     /// (and should not) reference the Blazor client assembly — the client type is located through
     /// the already-referenced client Core assembly only if present, otherwise the source-level
@@ -86,7 +110,7 @@ public sealed class ConversationSourceArchitectureTests
 
         var source = StripComments(File.ReadAllText(file));
 
-        foreach (var member in new[] { "Source", "Kind" })
+        foreach (var member in new[] { "Source", "Kind", "Visibility" })
         {
             Regex.IsMatch(source, $@"public\s+Conversation{member}\s+{member}\s*{{\s*get;\s*init;")
                 .ShouldBeTrue(
@@ -158,12 +182,90 @@ public sealed class ConversationSourceArchitectureTests
         // And it must NOT fire on unrelated id handling, so the fence stays usable.
         foreach (var benign in new[]
         {
-            "conversation.ConversationId.StartsWith(\"internal:\", StringComparison.OrdinalIgnoreCase)",
             "var convId = $\"subagent-session:{subAgentId}\";",
+            "if (conversationId.Length == 0) return;",
         })
         {
             OriginPrefixProbe().IsMatch(benign).ShouldBeFalse(
                 $"Rule 2's detector must not fire on unrelated id handling: {benign}");
+        }
+    }
+
+    // ── Rule 2b: no visibility inference from id substrings (#2340) ────────────
+
+    /// <summary>
+    /// The companion to Rule 2 for the <em>visibility</em> axis. Until #2340 the portal decided
+    /// whether to hide a runtime-internal bookkeeping thread by probing the conversation id for an
+    /// <c>internal:</c> prefix - the last id-substring probe in client rendering code, and the sole
+    /// allowlisted exception that stopped the inference fence from being absolute. It is now the
+    /// write-once, server-stamped <c>ConversationVisibility</c>, and this rule makes the exception
+    /// impossible to reintroduce.
+    /// </summary>
+    /// <remarks>
+    /// Kept as a separate rule rather than folded into Rule 2's regex because the two bans have
+    /// different rationales and must fail with different messages: Rule 2 is about "why does this
+    /// conversation exist", this is about "who may see it". Merging them would produce a failure
+    /// message that misdescribes whichever violation actually fired.
+    /// </remarks>
+    [Fact]
+    public void ClientSurfaces_DoNotInferConversationVisibilityFromIdSubstrings()
+    {
+        var violations = new List<string>();
+
+        foreach (var file in ClientSourceFiles())
+        {
+            var stripped = StripComments(File.ReadAllText(file));
+            foreach (Match match in VisibilityPrefixProbe().Matches(stripped))
+            {
+                violations.Add($"  {Rel(file)}: {match.Value.Trim()}");
+            }
+        }
+
+        violations.ShouldBeEmpty(
+            "Client surfaces must not decide whether a conversation is user-visible by probing a " +
+            "conversation-id substring (an `internal:` prefix test). Visibility is the server-" +
+            "stamped, write-once ConversationVisibility, surfaced on every conversation payload " +
+            "(#2340). A conversation id is an OPAQUE identifier: keying rendering on its text is a " +
+            "hidden coupling between id-minting code and rendering code that nothing enforces, and " +
+            "it fails silently in BOTH directions - an internal bookkeeping thread appears in the " +
+            "user's sidebar, or a real conversation vanishes from it.\nViolations:\n"
+            + string.Join("\n", violations));
+    }
+
+    /// <summary>
+    /// Anti-vacuity for Rule 2b, mirroring <see cref="OriginInferenceDetector_IsNotVacuous"/>: the
+    /// detector must match the exact probe shape #2340 deleted, and must not fire on benign code.
+    /// </summary>
+    [Fact]
+    public void VisibilityInferenceDetector_IsNotVacuous()
+    {
+        ClientSourceFiles().Count.ShouldBeGreaterThan(
+            50,
+            "Rule 2b's scan should be reading the whole client tree; a near-empty file set means " +
+            "the path resolution broke and the fence silently stopped guarding anything.");
+
+        foreach (var deleted in new[]
+        {
+            "conversation.ConversationId.StartsWith(\"internal:\", StringComparison.OrdinalIgnoreCase)",
+            "c.ConversationId.StartsWith(\"internal:\", StringComparison.Ordinal)",
+            "conversationId.Contains(\"internal:\")",
+            "id.IndexOf(\"internal:\", StringComparison.Ordinal)",
+        })
+        {
+            VisibilityPrefixProbe().IsMatch(deleted).ShouldBeTrue(
+                $"Rule 2b's detector must match the deleted probe shape: {deleted}");
+        }
+
+        // The bare channel key "internal" (no colon) is unrelated and must stay usable.
+        foreach (var benign in new[]
+        {
+            "ChannelType = ChannelKey.From(\"internal\");",
+            "var convId = $\"subagent-session:{subAgentId}\";",
+            "return conversation.Visibility != ConversationVisibility.InternalHidden;",
+        })
+        {
+            VisibilityPrefixProbe().IsMatch(benign).ShouldBeFalse(
+                $"Rule 2b's detector must not fire on legitimate code: {benign}");
         }
     }
 
@@ -216,6 +318,17 @@ public sealed class ConversationSourceArchitectureTests
 
     private static readonly Regex s_originPrefixProbe = new(
         @"\b\w*(?:[Ii]d|sid)\b\s*(?:is\s+\{[^}]*\}\s*\w+\s*)?\.\s*(?:StartsWith|Contains|IndexOf|TrimStart)\s*\(\s*""cron(?:conv)?:",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Matches "probe an id-ish expression for the runtime-internal namespace prefix" (#2340).
+    /// Requires BOTH an id-shaped receiver AND the <c>"internal:"</c> literal <em>with</em> its
+    /// colon, so the many legitimate uses of the bare channel key <c>"internal"</c> are untouched.
+    /// </summary>
+    private static Regex VisibilityPrefixProbe() => s_visibilityPrefixProbe;
+
+    private static readonly Regex s_visibilityPrefixProbe = new(
+        @"\b\w*(?:[Ii]d|sid)\b\s*(?:is\s+\{[^}]*\}\s*\w+\s*)?\.\s*(?:StartsWith|Contains|IndexOf|TrimStart)\s*\(\s*""internal:",
         RegexOptions.Compiled);
 
     private static void AssertInitOnly(Type type, string propertyName, string because)

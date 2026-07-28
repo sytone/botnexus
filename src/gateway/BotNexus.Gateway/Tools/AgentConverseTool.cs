@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -154,14 +155,8 @@ public sealed class AgentConverseTool(
         if (!arguments.TryGetValue("timeoutSeconds", out var rawTimeout) || rawTimeout is null)
             return DefaultTimeoutSeconds;
 
-        var parsed = rawTimeout switch
-        {
-            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var value) => value,
-            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var value) => value,
-            int value => value,
-            string text when int.TryParse(text, out var value) => value,
-            _ => throw new ArgumentException("timeoutSeconds must be an integer.", nameof(arguments))
-        };
+        if (!TryReadInt32(rawTimeout, out var parsed))
+            throw new ArgumentException("timeoutSeconds must be an integer.", nameof(arguments));
 
         if (parsed < 1)
             throw new ArgumentOutOfRangeException(nameof(arguments), "timeoutSeconds must be at least 1 second.");
@@ -170,19 +165,71 @@ public sealed class AgentConverseTool(
     }
 
     private static int ReadInt(IReadOnlyDictionary<string, object?> args, string key, int defaultValue)
-    {
-        if (!args.TryGetValue(key, out var value) || value is null)
-            return defaultValue;
+        => args.TryGetValue(key, out var value) && value is not null && TryReadInt32(value, out var parsed)
+            ? parsed
+            : defaultValue;
 
-        return value switch
+    /// <summary>
+    /// Reads a losslessly-safe <see cref="int"/> from a tool argument value regardless of how the
+    /// provider boxed the underlying JSON number. Streaming tool-call parsing boxes JSON integers as
+    /// CLR <see cref="long"/> and non-integers as <see cref="double"/>, so a switch that only handled
+    /// <see cref="JsonElement"/>/<see cref="int"/>/<see cref="string"/> rejected a valid boxed
+    /// <c>timeoutSeconds</c> (issue #2415). A value is accepted only when it round-trips to
+    /// <see cref="int"/> without loss.
+    /// </summary>
+    private static bool TryReadInt32(object value, out int result)
+    {
+        switch (value)
         {
-            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var parsed) => parsed,
-            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var parsed) => parsed,
-            int parsed => parsed,
-            string text when int.TryParse(text, out var parsed) => parsed,
-            _ => defaultValue
-        };
+            case int i:
+                result = i;
+                return true;
+            case long l when l is >= int.MinValue and <= int.MaxValue:
+                result = (int)l;
+                return true;
+            case double d when IsIntegralInt32(d):
+                result = (int)d;
+                return true;
+            case JsonElement { ValueKind: JsonValueKind.Number } element:
+                return TryReadJsonNumber(element, out result);
+            case JsonElement { ValueKind: JsonValueKind.String } element:
+                return TryParseInt32(element.GetString(), out result);
+            case string text:
+                return TryParseInt32(text, out result);
+            default:
+                result = 0;
+                return false;
+        }
     }
+
+    private static bool TryReadJsonNumber(JsonElement element, out int result)
+    {
+        if (element.TryGetInt32(out result))
+            return true;
+
+        if (element.TryGetInt64(out var l) && l is >= int.MinValue and <= int.MaxValue)
+        {
+            result = (int)l;
+            return true;
+        }
+
+        if (element.TryGetDouble(out var d) && IsIntegralInt32(d))
+        {
+            result = (int)d;
+            return true;
+        }
+
+        result = 0;
+        return false;
+    }
+
+    private static bool IsIntegralInt32(double value)
+        => double.IsFinite(value)
+           && value % 1d == 0d
+           && value is >= int.MinValue and <= int.MaxValue;
+
+    private static bool TryParseInt32(string? text, out int result)
+        => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

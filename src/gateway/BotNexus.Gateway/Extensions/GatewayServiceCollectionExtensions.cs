@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Persistence.Sqlite;
@@ -178,6 +179,14 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
         services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
+        // Channel-neutral conversation event seam (#2085). Registered here so gateway code can
+        // publish conversation facts today; sinks are supplied by channel extensions as the
+        // migration slices land. With zero registered sinks publication is a no-op, so this
+        // registration is inert until an extension opts in.
+        services.TryAddSingleton<ConversationEventPublisherOptions>();
+        services.TryAddSingleton<ConversationEventPublisher>();
+        services.TryAddSingleton<IConversationEventPublisher>(serviceProvider =>
+            serviceProvider.GetRequiredService<ConversationEventPublisher>());
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<ISessionWriteLock, SessionWriteLock>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
@@ -229,7 +238,11 @@ public static class GatewayServiceCollectionExtensions
         // Tool policy
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
-        services.AddSingleton<ToolPolicyHookHandler>();
+        services.AddSingleton<ToolPolicyHookHandler>(sp =>
+            new ToolPolicyHookHandler(
+                sp.GetRequiredService<DefaultToolPolicyProvider>(),
+                sp.GetRequiredService<ILogger<ToolPolicyHookHandler>>(),
+                sp.GetService<ISecurityEventSink>()));
         services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 

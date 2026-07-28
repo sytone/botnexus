@@ -2,23 +2,38 @@ using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
-namespace BotNexus.Integration.ConfigSave.Tests;
+namespace BotNexus.Gateway.Tests.Configuration;
 
 /// <summary>
-/// Real GET -> edit -> PUT round-trip tests that exercise the actual
-/// <see cref="PlatformConfigWriter"/> against a temp-file-backed file system,
-/// with the SAME redaction (<see cref="ConfigSecretMerge.Redact"/>) the
-/// ConfigController serves. These reproduce the data-loss bugs #1954 / #1955
-/// that the earlier mock-based tests hid, and lock in the fix.
+/// Unit tests for the JSON merge and secret-restore logic <see cref="PlatformConfigWriter"/>
+/// applies on the config-UI <c>GET -&gt; redact -&gt; edit -&gt; PUT</c> path. They lock in the
+/// #1954 (dropped subtrees) and #1955 (clobbered secrets) fixes.
 /// </summary>
-public sealed class ConfigSaveRoundTripTests : IDisposable
+/// <remarks>
+/// <para>
+/// These were previously filed as <c>BotNexus.Integration.ConfigSave.Tests</c> and described as
+/// "real round trips". They are not: they run against <see cref="MockFileSystem"/>, so they can
+/// only validate the in-memory JSON transformation. They cannot observe OS replacement semantics,
+/// atomic temp-file staging and cleanup, physical backups, file locking, configuration-provider
+/// reload, or any downstream <c>IOptionsMonitor</c> consumer - which is exactly why a merge bug
+/// that survived them was still able to reach disk (#2066).
+/// </para>
+/// <para>
+/// They are retained here, honestly labelled as unit tests, because the merge algebra they cover
+/// is genuinely worth pinning cheaply and deterministically. The integration acceptance bar lives
+/// in <c>tests/integration/BotNexus.Integration.ConfigDiskE2E.Tests</c>, which drives the same
+/// writer against a real filesystem under a temporary <c>BOTNEXUS_HOME</c>. Do not re-promote
+/// these to integration tests.
+/// </para>
+/// </remarks>
+public sealed class ConfigSaveMergeUnitTests : IDisposable
 {
     private readonly string _rootPath = Path.Combine(
-        Path.GetTempPath(), "botnexus-config-roundtrip-tests", Guid.NewGuid().ToString("N"));
+        Path.GetTempPath(), "botnexus-config-merge-unit-tests", Guid.NewGuid().ToString("N"));
     private readonly string _configPath;
     private readonly MockFileSystem _fileSystem;
 
-    public ConfigSaveRoundTripTests()
+    public ConfigSaveMergeUnitTests()
     {
         _fileSystem = new MockFileSystem();
         _fileSystem.Directory.CreateDirectory(_rootPath);
@@ -58,10 +73,10 @@ public sealed class ConfigSaveRoundTripTests : IDisposable
         """;
 
     /// <summary>
-    /// Simulates the full UI flow: read the section, redact it (what GET returns),
-    /// edit one unrelated field, and PUT the whole redacted section back. Asserts
-    /// the real secrets survive (#1955) and the telegram/serviceBus subtrees the
-    /// redacted payload carried survive (#1954), all through the real writer.
+    /// Exercises the merge algebra of the full UI flow: read the section, redact it (what GET
+    /// returns), edit one unrelated field, and PUT the whole redacted section back. Asserts the
+    /// real secrets survive (#1955) and the telegram/serviceBus subtrees the redacted payload
+    /// carried survive (#1954).
     /// </summary>
     [Fact]
     public async Task GetEditPut_RoundTrip_PreservesSecretsAndChannelSubtrees()
@@ -88,7 +103,7 @@ public sealed class ConfigSaveRoundTripTests : IDisposable
         // --- PUT: send the redacted gateway section back verbatim. ---
         await writer.UpdateSectionAsync("gateway", gatewayForUi.DeepClone());
 
-        // --- Assert on-disk state. ---
+        // --- Assert on the resulting document. ---
         var after = await writer.ReadAsync();
         var gateway = after["gateway"]!;
 
@@ -105,9 +120,9 @@ public sealed class ConfigSaveRoundTripTests : IDisposable
     }
 
     /// <summary>
-    /// A save that binds through a typed model omitting subtrees (telegram bots,
-    /// serviceBus queues) must NOT drop them (#1954). Simulate by PUTting a
-    /// channels section that only carries a scalar edit, omitting the bots/queues.
+    /// A save that binds through a typed model omitting subtrees (telegram bots, serviceBus
+    /// queues) must NOT drop them (#1954). Simulate by PUTting a channels section that only
+    /// carries a scalar edit, omitting the bots/queues.
     /// </summary>
     [Fact]
     public async Task PutChannels_WithOmittedSubtrees_KeepsExistingBotsAndQueues()

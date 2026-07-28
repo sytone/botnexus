@@ -193,6 +193,48 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
         return DangerousTools.Contains(toolName);
     }
 
+    /// <summary>
+    /// The default posture when a tool requires approval but no approval workflow can service the
+    /// request. <see cref="ToolApprovalFallback.Allow"/> reproduces the historical behaviour and is
+    /// what unattended agents, cron jobs, and sub-agents depend on (issue #2391).
+    /// </summary>
+    internal const ToolApprovalFallback DefaultApprovalFallback = ToolApprovalFallback.Allow;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Resolution order: the per-agent <c>askFallbackAllow</c> exemption list wins, then the
+    /// per-agent <c>askFallback</c> value, then <see cref="DefaultApprovalFallback"/>. An
+    /// unrecognised configured value is treated as <see cref="ToolApprovalFallback.Allow"/> and
+    /// logged: a typo must not silently brick an agent's dangerous tools.
+    /// </remarks>
+    public ToolApprovalFallback GetApprovalFallback(string toolName, string? agentId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+
+        if (agentId is null)
+            return DefaultApprovalFallback;
+
+        var agentPolicy = GetAgentToolPolicy(agentId);
+        if (agentPolicy?.AskFallback is not { Length: > 0 } configured)
+            return DefaultApprovalFallback;
+
+        // A per-tool exemption keeps a narrow set of tools working under a fail-closed agent.
+        if (agentPolicy.AskFallbackAllow?.Contains(toolName, StringComparer.OrdinalIgnoreCase) == true)
+            return ToolApprovalFallback.Allow;
+
+        if (string.Equals(configured, "deny", StringComparison.OrdinalIgnoreCase))
+            return ToolApprovalFallback.Deny;
+
+        if (!string.Equals(configured, "allow", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Unrecognised askFallback value '{Value}' for agent {AgentId}; expected 'allow' or 'deny'. Treating as 'allow'.",
+                configured, agentId);
+        }
+
+        return ToolApprovalFallback.Allow;
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<string> GetDeniedForHttp() => HttpDeniedTools;
 

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.AgentExchange;
@@ -178,6 +179,216 @@ public sealed class AgentConverseToolTests
         });
 
         prepared["maxTurns"].ShouldBe(7);
+    }
+
+    // Streaming tool-call parsing boxes JSON integers as CLR long and non-integers as double
+    // (StreamingJsonParser). Before issue #2415 the timeout switch only matched JsonElement/int/string,
+    // so a valid boxed timeoutSeconds was rejected with "must be an integer". These reproduce that path.
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsBoxedLong_UsesOverride()
+    {
+        var tool = CreateTool();
+
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 600L
+        });
+
+        prepared["timeoutSeconds"].ShouldBe(600);
+        prepared["timeout"].ShouldBe(600);
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsIntegralDouble_UsesOverride()
+    {
+        var tool = CreateTool();
+
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 600.0
+        });
+
+        prepared["timeoutSeconds"].ShouldBe(600);
+        prepared["timeout"].ShouldBe(600);
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutBoxedLongExceedsMaximum_ClampsExecutorBudget()
+    {
+        var tool = CreateTool();
+
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 5000L
+        });
+
+        prepared["timeoutSeconds"].ShouldBe(1800);
+        prepared["timeout"].ShouldBe(1800);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public async Task PrepareArgumentsAsync_WhenTimeoutBoxedLongBelowMinimum_Throws(long timeoutSeconds)
+    {
+        var tool = CreateTool();
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = timeoutSeconds
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentOutOfRangeException>();
+        exception.Message.ShouldContain("at least 1 second");
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsFractionalDouble_Throws()
+    {
+        var tool = CreateTool();
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 600.5
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentException>();
+        exception.Message.ShouldContain("must be an integer");
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutOverflowsInt32_Throws()
+    {
+        var tool = CreateTool();
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 3_000_000_000L
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentException>();
+        exception.Message.ShouldContain("must be an integer");
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsNonFinite_Throws(double timeoutSeconds)
+    {
+        var tool = CreateTool();
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = timeoutSeconds
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentException>();
+        exception.Message.ShouldContain("must be an integer");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMaxTurnsIsBoxedLong_HonoursValueInsteadOfDefaulting()
+    {
+        var (service, captured) = CreateCapturingService();
+        var options = new AgentExchangeOptions { MaxTurnsCeiling = 30 };
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"), options);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Iterate a few times",
+            ["maxTurns"] = 5L
+        });
+
+        captured.Value.ShouldNotBeNull();
+        captured.Value!.MaxTurns.ShouldBe(5);
+    }
+
+    // A JsonElement number wider than int (e.g. from a non-streaming provider that hands the tool a
+    // JsonElement directly) must be rejected rather than silently truncated.
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsJsonElementLongOverflow_Throws()
+    {
+        var tool = CreateTool();
+        var element = JsonSerializer.SerializeToElement(9_000_000_000L);
+
+        Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = element
+        });
+
+        var exception = await action.ShouldThrowAsync<ArgumentException>();
+        exception.Message.ShouldContain("must be an integer");
+    }
+
+    [Fact]
+    public async Task PrepareArgumentsAsync_WhenTimeoutIsJsonElementIntegralDouble_UsesOverride()
+    {
+        var tool = CreateTool();
+        var element = JsonSerializer.SerializeToElement(240.0);
+
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = element
+        });
+
+        prepared["timeoutSeconds"].ShouldBe(240);
+        prepared["timeout"].ShouldBe(240);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMaxTurnsIsIntegralDouble_HonoursValue()
+    {
+        var (service, captured) = CreateCapturingService();
+        var options = new AgentExchangeOptions { MaxTurnsCeiling = 30 };
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"), options);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Iterate a few times",
+            ["maxTurns"] = 6.0
+        });
+
+        captured.Value.ShouldNotBeNull();
+        captured.Value!.MaxTurns.ShouldBe(6);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMaxTurnsIsBoxedLongOverflow_FallsBackToDefault()
+    {
+        var (service, captured) = CreateCapturingService();
+        var options = new AgentExchangeOptions { MaxTurnsCeiling = 30 };
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"), options);
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Iterate a few times",
+            ["maxTurns"] = 9_000_000_000L
+        });
+
+        // Unparseable maxTurns falls back to the schema default of 1 (then clamped to >= 1).
+        captured.Value.ShouldNotBeNull();
+        captured.Value!.MaxTurns.ShouldBe(1);
     }
 
     [Fact]

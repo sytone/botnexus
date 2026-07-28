@@ -26,9 +26,14 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// <see cref="ConversationKind"/> is fixed where the origin path determines it (channel, cron and
 /// webhook conversations are always <see cref="ConversationKind.HumanAgent"/>) and is a <em>required</em>
 /// parameter on <see cref="CreateForAgent"/>, the one origin where the pairing topology genuinely varies
-/// (peer converse vs sub-agent supervision vs an agent minting a user-facing conversation). The private
-/// <see cref="Create"/> core takes both axes positionally and first, so a new provenance axis can only be
-/// added by editing one signature that every caller already funnels through.
+/// (peer converse vs sub-agent supervision vs an agent minting a user-facing conversation).
+/// <see cref="ConversationVisibility"/> (#2340) is likewise fixed to
+/// <see cref="ConversationVisibility.UserFacing"/> on the channel/cron/webhook paths - a conversation a
+/// human or an external system triggered is by definition something the user may see - and is an
+/// optional parameter on <see cref="CreateForAgent"/>, the only path that can legitimately mint a
+/// runtime bookkeeping thread. The private
+/// <see cref="Create"/> core takes all three axes positionally and first, so a new provenance axis can
+/// only be added by editing one signature that every caller already funnels through.
 /// </para>
 /// <para>
 /// <b>Centralised invariants.</b> Id is caller-supplied (several paths need a deterministic id - the
@@ -70,6 +75,7 @@ public static class ConversationFactory
         => Create(
             ConversationSource.Channel,
             ConversationKind.HumanAgent,
+            ConversationVisibility.UserFacing,
             conversationId,
             agentId,
             title,
@@ -98,6 +104,7 @@ public static class ConversationFactory
         => Create(
             ConversationSource.Cron,
             ConversationKind.HumanAgent,
+            ConversationVisibility.UserFacing,
             conversationId,
             agentId,
             title,
@@ -127,6 +134,7 @@ public static class ConversationFactory
         => Create(
             ConversationSource.Webhook,
             ConversationKind.HumanAgent,
+            ConversationVisibility.UserFacing,
             conversationId,
             agentId,
             title,
@@ -156,6 +164,12 @@ public static class ConversationFactory
     /// whose source citizens do not exist in the local registries.
     /// </param>
     /// <param name="purpose">Optional persisted description of the conversation's intent.</param>
+    /// <param name="visibility">
+    /// Who may see the conversation (#2340). Defaults to <see cref="ConversationVisibility.UserFacing"/>.
+    /// Pass <see cref="ConversationVisibility.InternalHidden"/> for a runtime bookkeeping thread that
+    /// must never reach a user's conversation list. This is the ONLY sanctioned way to mark a
+    /// conversation hidden; rendering surfaces read the stamped field and never probe the id text.
+    /// </param>
     /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
     public static Conversation CreateForAgent(
         ConversationKind kind,
@@ -164,10 +178,12 @@ public static class ConversationFactory
         string? title = null,
         CitizenId? initiator = null,
         string? purpose = null,
+        ConversationVisibility visibility = ConversationVisibility.UserFacing,
         DateTimeOffset? timestamp = null)
         => Create(
             ConversationSource.Agent,
             kind,
+            visibility,
             conversationId,
             agentId,
             title,
@@ -216,6 +232,7 @@ public static class ConversationFactory
         => Create(
             ConversationSource.Agent,
             ConversationKind.AgentSubAgent,
+            ConversationVisibility.UserFacing,
             conversationId,
             agentId,
             title,
@@ -228,12 +245,14 @@ public static class ConversationFactory
             spawningToolCallId);
 
     /// <summary>
-    /// The single place a <see cref="Conversation"/> is constructed. Both provenance axes are required
-    /// and come first so a future third axis is a one-signature change that no caller can skip.
+    /// The single place a <see cref="Conversation"/> is constructed. All three provenance axes are
+    /// required and come first so a future fourth axis is a one-signature change that no caller can
+    /// skip.
     /// </summary>
     private static Conversation Create(
         ConversationSource source,
         ConversationKind kind,
+        ConversationVisibility visibility,
         ConversationId conversationId,
         AgentId agentId,
         string? title,
@@ -263,7 +282,8 @@ public static class ConversationFactory
             Kind = kind,
             Source = source,
             ParentConversationId = parentConversationId,
-            SpawningToolCallId = spawningToolCallId
+            SpawningToolCallId = spawningToolCallId,
+            Visibility = visibility
         };
     }
 }

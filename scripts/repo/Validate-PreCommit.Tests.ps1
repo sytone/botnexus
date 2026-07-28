@@ -19,6 +19,30 @@ function Assert-Equal([object]$Expected, [object]$Actual, [string]$Message) {
     if ($Expected -ne $Actual) { $failures.Add("$Message Expected '$Expected', got '$Actual'.") }
 }
 
+function Assert-Match([string]$Pattern, [string[]]$Output, [string]$Message) {
+    $joined = ($Output -join "`n")
+    if ($joined -notmatch $Pattern) {
+        $failures.Add("$Message Expected output matching '$Pattern', got: $joined")
+    }
+}
+
+# Every call routes through here so no test block can accidentally read ambient
+# Process/User/Machine configuration (#2400). Both the mode selector AND the legacy
+# BOTNEXUS_VALIDATION_LOCAL_FALLBACK escape hatch are injected as empty three-scope
+# maps. Output is captured so assertions can prove which branch was actually taken
+# rather than inferring it from an exit code that many paths share.
+function Invoke-ValidationScript {
+    param([hashtable]$Parameters)
+
+    $arguments = @{} + $Parameters
+    $arguments.ValidationModeEnvironment = [ordered]@{ Process = $null; User = $null; Machine = $null }
+    $arguments.LegacyFallbackEnvironment = [ordered]@{ Process = $null; User = $null; Machine = $null }
+    $global:LASTEXITCODE = 0
+    $output = & $validationScript @arguments *>&1 | ForEach-Object { [string]$_ }
+    $script:scenariosExercised++
+    return [pscustomobject]@{ Output = @($output); ExitCode = $LASTEXITCODE }
+}
+
 function Invoke-IsolatedGit {
     param([string[]]$Arguments)
 
@@ -106,11 +130,22 @@ if ($entrypointSource -notmatch "playwright\.log" -or
 }
 
 $repositories = [Collections.Generic.List[string]]::new()
-$originalFallbackEnvironment = $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK
-$originalModeEnvironment = $env:BOTNEXUS_VALIDATION_MODE
-Remove-Item Env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK -ErrorAction SilentlyContinue
-Remove-Item Env:BOTNEXUS_VALIDATION_MODE -ErrorAction SilentlyContinue
-$noValidationModeEnvironment = [ordered]@{ Process = $null; User = $null; Machine = $null }
+# Scenario counter: proves the block below actually ran. If an early throw skips the
+# scenarios, this stays low and the run is reported RED instead of vacuously green.
+$script:scenariosExercised = 0
+$expectedScenarioCount = 7
+# Clear git's per-invocation environment for the duration of the run. When this test is
+# executed FROM the pre-commit hook, git exports GIT_INDEX_FILE/GIT_DIR/GIT_PREFIX etc.
+# Those leak into the fixture repositories and make Get-WorktreeValidationFingerprint
+# read the OUTER repository's index, so every fixture receipt mismatches and the
+# receipt-bypass scenarios never execute their branch. The values are restored in the
+# finally block below from $gitEnvironment (#2400).
+foreach ($name in $gitLocalEnvironmentNames) {
+    # Remove-Item, not SetEnvironmentVariable($name, $null): PowerShell binds $null to the
+    # string overload as an EMPTY STRING, and git treats an empty GIT_DIR as a real (broken)
+    # value rather than an absent one.
+    if (-not [string]::IsNullOrWhiteSpace($name)) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+}
 try {
     # Exact-content receipts are authoritative only for selected remote validation.
     $repo = New-TestRepository; $repositories.Add($repo)
@@ -118,18 +153,21 @@ try {
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
     Write-Receipt $repo
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 0 $LASTEXITCODE 'Matching remote receipt should pass.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal 0 $result.ExitCode 'Matching remote receipt should pass.'
     Assert-Equal $false (Test-Path $marker) 'Matching remote receipt should bypass redundant validation.'
+    Assert-Match 'Validation mode: remote' $result.Output 'Matching remote receipt should resolve remote mode despite ambient configuration.'
+    Assert-Match 'skipping redundant remote validation' $result.Output 'The receipt-bypass branch must be genuinely evaluated, not skipped.'
 
     # Local is the operational default and runs the globally serialized strict gate.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 0 $LASTEXITCODE 'Default local validation should pass.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local }
+    Assert-Equal 0 $result.ExitCode 'Default local validation should pass.'
     Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Default validation should select local only.'
+    Assert-Match 'Validation mode: local' $result.Output 'Default validation should resolve local mode.'
 
     # Exact-content receipts are authoritative and bypass remote work.
     $repo = New-TestRepository; $repositories.Add($repo)
@@ -137,9 +175,10 @@ try {
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
     Write-Receipt $repo
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 0 $LASTEXITCODE 'Matching receipt should pass.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal 0 $result.ExitCode 'Matching receipt should pass.'
     Assert-Equal $false (Test-Path $marker) 'Matching receipt should bypass redundant validation.'
+    Assert-Match 'skipping redundant remote validation' $result.Output 'The receipt-bypass branch must be genuinely evaluated, not skipped.'
 
     # Any content change invalidates the receipt when remote mode is selected.
     $repo = New-TestRepository; $repositories.Add($repo); Write-Receipt $repo
@@ -147,60 +186,66 @@ try {
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 0 $LASTEXITCODE 'Selected remote validation should pass.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal 0 $result.ExitCode 'Selected remote validation should pass.'
     Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Stale receipt should select Azure only.'
+    Assert-Match 'does not match the exact candidate' $result.Output 'Receipt staleness must be genuinely evaluated, not skipped.'
 
     # Local fallback is opt-in and uses a cross-process serialization lock.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -LocalFallback -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 0 $LASTEXITCODE 'Explicit local fallback should pass.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; LocalFallback = $true }
+    Assert-Equal 0 $result.ExitCode 'Explicit local fallback should pass.'
     Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Explicit fallback should not attempt Azure first.'
+    Assert-Match 'Validation mode: local' $result.Output 'Explicit fallback should resolve local mode.'
 
     # The durable selector can choose remote validation without removing local support.
+    # The selector value is INJECTED rather than written to $env:, so this scenario neither
+    # depends on nor races ambient machine state (#2400).
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    $env:BOTNEXUS_VALIDATION_MODE = 'remote'
-    try {
-        & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local
-    }
-    finally {
-        Remove-Item Env:BOTNEXUS_VALIDATION_MODE -ErrorAction SilentlyContinue
-    }
+    $script:scenariosExercised++
+    $global:LASTEXITCODE = 0
+    $selectorOutput = @(& $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationModeEnvironment ([ordered]@{ Process = 'remote'; User = $null; Machine = $null }) -LegacyFallbackEnvironment ([ordered]@{ Process = $null; User = $null; Machine = $null }) *>&1 | ForEach-Object { [string]$_ })
     Assert-Equal 9 $LASTEXITCODE 'Environment-selected remote validation should preserve failure.'
     Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Environment selector should choose remote only.'
+    Assert-Match 'Validation mode: remote' $selectorOutput 'Environment selector must genuinely resolve remote mode.'
 
     # A failed authoritative remote run must not silently fall back locally.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker 9
     $local = New-CommandScript $repo 'local.ps1' $marker
-    & $validationScript -WorktreePath $repo -AzureValidationScript $remote -LocalValidationScript $local -ValidationMode remote -ValidationModeEnvironment $noValidationModeEnvironment
-    Assert-Equal 9 $LASTEXITCODE 'Remote failure should be preserved.'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal 9 $result.ExitCode 'Remote failure should be preserved.'
     Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Remote failure must not silently run local validation.'
 }
 finally {
-    if ($null -ne $originalFallbackEnvironment) { $env:BOTNEXUS_VALIDATION_LOCAL_FALLBACK = $originalFallbackEnvironment }
-    if ($null -ne $originalModeEnvironment) { $env:BOTNEXUS_VALIDATION_MODE = $originalModeEnvironment }
     foreach ($repository in $repositories) {
         Remove-Item $repository -Recurse -Force -ErrorAction SilentlyContinue
     }
     foreach ($entry in $gitEnvironment.GetEnumerator()) {
-        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+        if ($null -eq $entry.Value) { Remove-Item "Env:$($entry.Key)" -ErrorAction SilentlyContinue }
+        else { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') }
     }
+}
+
+if ($scenariosExercised -ne $expectedScenarioCount) {
+    $failures.Add("Vacuous run guard: expected $expectedScenarioCount validation scenarios to execute, but only $scenariosExercised ran.")
 }
 
 if ($failures.Count -gt 0) {
     $failures | ForEach-Object { Write-Error $_ -ErrorAction Continue }
+    Write-Host "Validate-PreCommit tests FAILED ($($failures.Count) failure(s) across $scenariosExercised scenario(s))." -ForegroundColor Red
     exit 1
 }
 
-Write-Host 'Validate-PreCommit tests passed.' -ForegroundColor Green
+Write-Host "Validate-PreCommit tests passed ($scenariosExercised scenarios, 0 failures)." -ForegroundColor Green
 exit 0
+
 
 

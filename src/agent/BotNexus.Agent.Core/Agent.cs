@@ -70,8 +70,24 @@ public sealed class Agent
         _state.Messages = initial?.Messages ?? [];
 
         _steeringQueue = new PendingMessageQueue(options.SteeringMode);
-        _followUpQueue = new PendingMessageQueue(options.FollowUpMode);
+        _followUpQueue = new PendingMessageQueue(options.FollowUpMode)
+        {
+            Capacity = DefaultFollowUpQueueCapacity
+        };
     }
+
+    /// <summary>
+    /// Default bound on undrained follow-up messages (#2438).
+    /// </summary>
+    /// <remarks>
+    /// 64 is chosen as "far above any legitimate human or orchestration burst, far below
+    /// anything that could exhaust memory". A person queueing follow-ups behind one turn
+    /// realistically sends single digits; sub-agent completion fan-in is bounded by the
+    /// concurrent sub-agent cap, which is an order of magnitude below this. Anything that
+    /// reaches 64 undrained follow-ups is a runaway producer, and refusing it loudly is the
+    /// correct outcome. The bound is per-agent, not global.
+    /// </remarks>
+    public const int DefaultFollowUpQueueCapacity = 64;
 
     /// <summary>
     /// Gets the current agent state.
@@ -103,6 +119,22 @@ public sealed class Agent
     /// Gets a value indicating whether steering or follow-up messages are queued.
     /// </summary>
     public bool HasQueuedMessages => _steeringQueue.HasItems || _followUpQueue.HasItems;
+
+    /// <summary>
+    /// Gets or sets the maximum number of undrained follow-up messages the agent will hold.
+    /// Zero means unbounded.
+    /// </summary>
+    /// <remarks>
+    /// Bounding exists so a producer that can enqueue faster than turns complete (a portal
+    /// user hammering follow-up, a webhook fan-in) cannot grow the pending set without limit
+    /// while one long turn is in flight (#2438). Enqueue past the bound throws
+    /// <see cref="PendingMessageQueueFullException"/>; it never silently drops.
+    /// </remarks>
+    public int FollowUpQueueCapacity
+    {
+        get => _followUpQueue.Capacity;
+        set => _followUpQueue.Capacity = value;
+    }
 
     /// <summary>
     /// Gets or sets the queue consumption mode for steering messages.
@@ -317,6 +349,25 @@ public sealed class Agent
     /// Clears all enqueued follow-up messages.
     /// </summary>
     public void ClearFollowUpQueue() => _followUpQueue.Clear();
+
+    /// <summary>
+    /// Atomically takes back a previously enqueued follow-up message by reference identity.
+    /// </summary>
+    /// <param name="message">The exact instance previously passed to <see cref="FollowUp"/>.</param>
+    /// <returns><c>true</c> when the message was still pending and has been removed.</returns>
+    /// <remarks>
+    /// Exists so a caller that enqueued a follow-up against a run which then settled without
+    /// consuming it can reclaim the message and re-deliver it, rather than leaving it stranded
+    /// in an idle agent's queue that will never be drained again (#2438). The removal is atomic
+    /// against the run loop's own drain, so the message is taken by exactly one of the two -
+    /// never both, never neither. Reference identity means only the caller's own instance is
+    /// reclaimed; concurrently queued follow-ups from other producers are untouched.
+    /// </remarks>
+    public bool TryReclaimFollowUp(AgentMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        return _followUpQueue.TryRemove(message);
+    }
 
     /// <summary>
     /// Clears both steering and follow-up message queues.

@@ -66,7 +66,8 @@ if (-not $lock.Acquired) {
         Write-Host "Another BotNexus validation held the global lock for $($lock.WaitedSeconds)s; skipping this advisory run. Full validation still runs at pre-push and in CI." -ForegroundColor Yellow
         exit 0
     }
-    Write-Host "Another BotNexus local validation is still running after $($lock.WaitedSeconds)s: $($lock.Path)" -ForegroundColor Red
+    $ownerDetail = if ($null -ne $lock.Owner) { "PID $($lock.Owner.Pid) on $($lock.Owner.Machine), held since $($lock.Owner.AcquiredUtc)" } else { 'an unidentified process (no owner record)' }
+    Write-Host "Another BotNexus local validation is still running after $($lock.WaitedSeconds)s: $($lock.Path) is held by $ownerDetail (owner state: $($lock.OwnerState)). If that process is gone, delete the file to clear the tombstone." -ForegroundColor Red
     exit 1
 }
 
@@ -164,6 +165,8 @@ try {
     exit 0
 }
 finally {
-    if ($null -ne $lock.Handle) { $lock.Handle.Dispose() }
-    Remove-Item $lock.Path -Force -ErrorAction SilentlyContinue
+    # Idempotent: Get-BotNexusValidationLock also registered this same release on
+    # PowerShell.Exiting and AppDomain ProcessExit, because a `finally` alone is skipped
+    # by an abrupt exit and stranded the lock for every later worker (issue #2393).
+    Remove-BotNexusValidationLock -Lock $lock
 }

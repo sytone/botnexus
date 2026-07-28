@@ -595,6 +595,8 @@ internal sealed class ProviderCommand
             Directory.CreateDirectory(directory);
 
         File.WriteAllText(authPath, JsonSerializer.Serialize(entries, WriteJsonOptions));
+        // #2392: auth.json holds OAuth refresh/access tokens - restrict to the owner.
+        SecureFilePermissions.RestrictToOwner(authPath);
     }
 
     private static async Task<PlatformConfig> LoadOrCreateConfigAsync(CancellationToken cancellationToken)

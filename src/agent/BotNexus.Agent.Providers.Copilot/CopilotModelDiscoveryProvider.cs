@@ -243,56 +243,24 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// <summary>
     /// Determines if a model supports reasoning/thinking based on family and id.
     /// </summary>
-    public static bool IsReasoningModel(string id, string family)
-    {
-        // Claude 4+ and Sonnet 4.5+ support thinking
-        if (id.StartsWith("claude-opus-4", StringComparison.OrdinalIgnoreCase) ||
-            id.StartsWith("claude-sonnet-4", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // GPT-5+ supports reasoning
-        if (id.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // o-series models
-        if (id.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
-            id.StartsWith("o4", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Gemini 3+
-        if (id.StartsWith("gemini-3", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Grok code
-        if (id.StartsWith("grok-code", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return false;
-    }
+    /// <param name="id">The discovered model id.</param>
+    /// <param name="family">The advertised family (unused; the id carries the version).</param>
+    /// <returns>True when the model supports reasoning.</returns>
+    public static bool IsReasoningModel(string id, string family) =>
+        // #2374: one shared parsed family+version gate, so a discovered model and a config-declared
+        // model of the same generation can never disagree.
+        ModelCapabilityHeuristics.IsReasoningModel(id);
 
     /// <summary>
     /// Determines if a model supports extra-high thinking budget.
     /// </summary>
-    public static bool SupportsExtraHighThinking(string id, string family)
-    {
-        // Claude Opus 4.6+ supports extra high
-        if (id.StartsWith("claude-opus-4.", StringComparison.OrdinalIgnoreCase))
-        {
-            var versionPart = id.AsSpan()["claude-opus-4.".Length..];
-            if (versionPart.Length > 0 && char.IsDigit(versionPart[0]) && versionPart[0] >= '6')
-                return true;
-        }
-
-        // GPT 5.2+
-        if (id.StartsWith("gpt-5.", StringComparison.OrdinalIgnoreCase))
-        {
-            var versionPart = id.AsSpan()["gpt-5.".Length..];
-            if (versionPart.Length > 0 && char.IsDigit(versionPart[0]) && versionPart[0] >= '2')
-                return true;
-        }
-
-        return false;
-    }
+    /// <param name="id">The discovered model id.</param>
+    /// <param name="family">The advertised family (unused; the id carries the version).</param>
+    /// <returns>True when the model supports the ExtraHigh / Max thinking tiers.</returns>
+    public static bool SupportsExtraHighThinking(string id, string family) =>
+        // #2374: the old character-wise prefix parse could not see "claude-opus-5" at all and
+        // mis-ordered "claude-opus-4.50". The shared parser compares numerically.
+        ModelCapabilityHeuristics.SupportsExtraHighThinking(id);
 
     private static IReadOnlyList<string> ResolveInputModalities(CopilotModelInfo info)
     {

@@ -90,38 +90,85 @@ public sealed class TelegramChannelAdapter(
     /// <inheritdoc />
     public override bool SupportsInboundImages => true;
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Telegram chats are a user-visible surface, so the delimited internal runtime-context
+    /// envelope is redacted from outbound text before delivery (#1430).
+    /// </summary>
+    protected override bool StripsRuntimeContext => true;
+
+    /// <summary>
+    /// Starts every configured bot that is not already started.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Resumable by construction (#2447).</b> Bots are started in sequence, so a failure on the
+    /// Nth bot used to abort the whole method while bots 1..N-1 were already polling. The gateway
+    /// then recorded the adapter as failed even though live pollers remained running. Retrying
+    /// that start would have launched a <em>second</em> <c>getUpdates</c> loop on an already-live
+    /// bot token - precisely the duplicate-poller condition behind the 2026-07-24 HTTP 409 storm.
+    /// </para>
+    /// <para>
+    /// Each bot runtime therefore owns a one-way start latch. A bot that has already started is
+    /// skipped on every subsequent call, so a retry only starts the bots that never got going.
+    /// The latch is the guarantee - not the call ordering - and it is released only by
+    /// <see cref="OnStopAsync"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Shutdown token.</param>
     protected override async Task OnStartAsync(CancellationToken cancellationToken)
     {
         EnsureBotsInitialized();
 
         foreach (var runtime in _bots.Values)
         {
-            if (!string.IsNullOrWhiteSpace(runtime.Config.WebhookUrl))
+            // Already live from a previous (partially successful) start attempt - never restart it.
+            if (!runtime.TryBeginStart())
             {
-                await runtime.ApiClient.SetWebhookAsync(runtime.Config.WebhookUrl, runtime.WebhookSecret, cancellationToken);
-                _logger.LogInformation(
-                    "{DisplayName} bot '{BotName}' configured webhook mode at {WebhookUrl} (secret-token authentication enabled)",
+                _logger.LogDebug(
+                    "{DisplayName} bot '{BotName}' is already started; skipping (resumed start).",
                     DisplayName,
-                    runtime.BotName,
-                    runtime.Config.WebhookUrl);
+                    runtime.BotName);
                 continue;
             }
 
-            await runtime.ApiClient.DeleteWebhookAsync(cancellationToken);
+            var committed = false;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(runtime.Config.WebhookUrl))
+                {
+                    await runtime.ApiClient.SetWebhookAsync(runtime.Config.WebhookUrl, runtime.WebhookSecret, cancellationToken);
+                    committed = true;
+                    _logger.LogInformation(
+                        "{DisplayName} bot '{BotName}' configured webhook mode at {WebhookUrl} (secret-token authentication enabled)",
+                        DisplayName,
+                        runtime.BotName,
+                        runtime.Config.WebhookUrl);
+                    continue;
+                }
 
-            runtime.PollingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            runtime.PollingTask = Task.Run(
-                () => RunPollingLoopAsync(runtime, Math.Max(1, runtime.Config.PollingTimeoutSeconds), runtime.PollingCancellation.Token),
-                CancellationToken.None);
+                await runtime.ApiClient.DeleteWebhookAsync(cancellationToken);
 
-            _logger.LogInformation(
-                "{DisplayName} bot '{BotName}' polling mode started (AgentId: {AgentId}, AllowedChatCount: {AllowedChatCount}, PollingTimeoutSeconds: {PollingTimeoutSeconds})",
-                DisplayName,
-                runtime.BotName,
-                runtime.Config.AgentId ?? "<default-router>",
-                runtime.Config.AllowedChatIds.Count,
-                Math.Max(1, runtime.Config.PollingTimeoutSeconds));
+                runtime.PollingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                runtime.PollingTask = Task.Run(
+                    () => RunPollingLoopAsync(runtime, Math.Max(1, runtime.Config.PollingTimeoutSeconds), runtime.PollingCancellation.Token),
+                    CancellationToken.None);
+                committed = true;
+
+                _logger.LogInformation(
+                    "{DisplayName} bot '{BotName}' polling mode started (AgentId: {AgentId}, AllowedChatCount: {AllowedChatCount}, PollingTimeoutSeconds: {PollingTimeoutSeconds})",
+                    DisplayName,
+                    runtime.BotName,
+                    runtime.Config.AgentId ?? "<default-router>",
+                    runtime.Config.AllowedChatIds.Count,
+                    Math.Max(1, runtime.Config.PollingTimeoutSeconds));
+            }
+            finally
+            {
+                // This bot never reached a live state, so release its latch and let a later retry
+                // try again. Bots that DID commit keep the latch and are skipped on retry.
+                if (!committed)
+                    runtime.AbandonStart();
+            }
         }
     }
 
@@ -148,6 +195,9 @@ public sealed class TelegramChannelAdapter(
             runtime.PollingCancellation?.Dispose();
             runtime.StreamingStates.Clear();
             runtime.LastErrorReplyUtcByChat.Clear();
+
+            // Release the start latch so a legitimate restart is not silently a no-op.
+            runtime.AbandonStart();
         }
 
         _bots.Clear();
@@ -192,7 +242,7 @@ public sealed class TelegramChannelAdapter(
     {
         if (runtime.Config.RichMessages)
         {
-            var richMarkdown = BuildOutboundMarkdown(message.Content, message.Metadata, message.DisplayPrefix);
+            var richMarkdown = BuildOutboundMarkdown(ProjectOutboundText(message.Content), message.Metadata, message.DisplayPrefix);
             try
             {
                 foreach (var chunk in TelegramMessageSplitter.SplitMarkdown(richMarkdown, Math.Max(1, runtime.Config.MaxRichMessageLength)))
@@ -214,7 +264,7 @@ public sealed class TelegramChannelAdapter(
         }
 
         // Legacy path: MarkdownV2 with an automatic plain-text fallback inside SendMessageAsync.
-        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
+        var formatted = BuildOutboundText(ProjectOutboundText(message.Content), message.Metadata, message.DisplayPrefix);
         foreach (var chunk in TelegramMessageSplitter.SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
             await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
     }
@@ -1011,6 +1061,23 @@ public sealed class TelegramChannelAdapter(
         public ConcurrentDictionary<long, DateTimeOffset> LastErrorReplyUtcByChat { get; } = new();
         public CancellationTokenSource? PollingCancellation { get; set; }
         public Task? PollingTask { get; set; }
+
+        // 0 = not started, 1 = start claimed. Interlocked so the latch holds even if two starts
+        // ever race; the guarantee that a live bot token is never polled twice must not depend on
+        // the caller happening to be sequential (#2447).
+        private int _startClaimed;
+
+        /// <summary>
+        /// Atomically claims the right to start this bot. Returns <see langword="false"/> when the
+        /// bot is already started (or a start is in flight), in which case the caller MUST skip it.
+        /// </summary>
+        public bool TryBeginStart() => Interlocked.CompareExchange(ref _startClaimed, 1, 0) == 0;
+
+        /// <summary>
+        /// Releases a claim taken by <see cref="TryBeginStart"/> when the start did not reach a
+        /// live state, so a later retry may attempt this bot again.
+        /// </summary>
+        public void AbandonStart() => Interlocked.Exchange(ref _startClaimed, 0);
     }
 
     private sealed class StreamingState(long chatId, int? messageThreadId)

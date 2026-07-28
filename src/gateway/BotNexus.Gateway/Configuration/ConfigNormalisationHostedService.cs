@@ -81,7 +81,11 @@ internal sealed class ConfigNormalisationHostedService(
             try
             {
                 await _fileSystem.File.WriteAllTextAsync(tempPath, updatedJson, cancellationToken).ConfigureAwait(false);
+                // #2392: same owner-only narrowing as PlatformConfigWriter - this is a second
+                // atomic-rewrite seam for the very same secret-bearing config.json.
+                SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
                 _fileSystem.File.Move(tempPath, configPath, overwrite: true);
+                SecureFilePermissions.RestrictToOwner(_fileSystem, configPath);
             }
             catch
             {

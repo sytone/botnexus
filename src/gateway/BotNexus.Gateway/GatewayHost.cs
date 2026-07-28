@@ -2,6 +2,7 @@ using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Channels.Startup;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -179,6 +180,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// </summary>
     public IInboundMessageOrchestrator Orchestrator => _orchestrator;
 
+    /// <summary>
+    /// Per-adapter startup outcomes recorded by the most recent host start (#2447).
+    /// </summary>
+    /// <remarks>
+    /// Empty until <c>ExecuteAsync</c> has run its startup pass. This is the honest signal that
+    /// distinguishes adapters CONFIGURED from adapters actually STARTED: an adapter whose start
+    /// failed after its bounded retries appears here with <c>Started == false</c> and the
+    /// classified failure, rather than being silently folded into a single success count.
+    /// </remarks>
+    public IReadOnlyList<ChannelStartOutcome> ChannelStartOutcomes => _channelStartOutcomes;
+
+    private IReadOnlyList<ChannelStartOutcome> _channelStartOutcomes = [];
+
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -189,20 +203,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             return;
         }
 
-        foreach (var channel in _channelManager.Adapters)
-        {
-            try
-            {
-                await channel.StartAsync(this, stoppingToken);
-                _logger.LogInformation("Started channel adapter: {ChannelType} ({DisplayName})", channel.ChannelType, channel.DisplayName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to start channel adapter: {ChannelType}", channel.ChannelType);
-            }
-        }
+        // #2447: adapter start is retried with bounded, classification-aware backoff. A single
+        // transient upstream 502 used to disable a channel for the whole process lifetime because
+        // start was one-shot (catch, log, move on) - and the host still reported success.
+        var startupCoordinator = new ChannelStartupCoordinator(_logger);
+        var startOutcomes = await startupCoordinator.StartAllAsync(_channelManager.Adapters, this, stoppingToken);
 
-        _logger.LogInformation("Gateway started with {ChannelCount} channel adapter(s)", _channelManager.Adapters.Count);
+        _channelStartOutcomes = startOutcomes;
+
+        var degraded = startOutcomes.Any(o => !o.Started);
+        if (degraded)
+            _logger.LogWarning("{Summary}", ChannelStartupCoordinator.DescribeStartup(startOutcomes));
+        else
+            _logger.LogInformation("{Summary}", ChannelStartupCoordinator.DescribeStartup(startOutcomes));
 
         try { await Task.Delay(Timeout.Infinite, stoppingToken); }
         catch (OperationCanceledException) { }

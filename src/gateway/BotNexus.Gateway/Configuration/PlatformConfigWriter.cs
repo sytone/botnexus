@@ -289,7 +289,19 @@ public sealed class PlatformConfigWriter
         try
         {
             await _fileSystem.File.WriteAllTextAsync(tempPath, json, ct);
+
+            // #2392: config.json carries provider API keys and channel bot tokens, so it must not
+            // inherit a default umask/parent-ACL that leaves it group- or world-readable.
+            //
+            // Restrict TWICE, deliberately:
+            //  - before the move, so the file is never owner-readable-only *after* it is already
+            //    visible at its final path (no window where a broad-permission config.json exists);
+            //  - after the move, because the semantics of replacing an existing destination differ
+            //    per platform, and this is a REWRITE path, not a first-create path - a fix applied
+            //    only when the file is first created would leave every subsequent save wrong.
+            SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
             _fileSystem.File.Move(tempPath, _configPath, overwrite: true);
+            SecureFilePermissions.RestrictToOwner(_fileSystem, _configPath);
         }
         finally
         {

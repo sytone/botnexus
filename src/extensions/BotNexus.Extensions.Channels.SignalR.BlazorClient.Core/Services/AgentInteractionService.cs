@@ -314,7 +314,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 // Immutable origin signal, seeded once straight from the server payload (#2304).
                 Source = ConversationOrigin.ParseSource(dto.Source),
                 Kind = ConversationOrigin.ParseKind(dto.Kind),
-                HistoryLoaded = true // brand new — nothing to load
+                // Immutable visibility signal, seeded once from the server payload (#2340).
+                Visibility = ConversationOrigin.ParseVisibility(dto.Visibility),
+                HistoryLoaded = true // brand new - nothing to load
             };
 
             if (select)

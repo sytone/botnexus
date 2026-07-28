@@ -22,9 +22,10 @@ public static class GatewayApiServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddBotNexusGatewayApi(this IServiceCollection services)
     {
-        services.AddSingleton<IRecentLogStore, InMemoryRecentLogStore>();
-        services.AddSingleton<ILoggerProvider>(serviceProvider =>
-            new RecentLogEntryLoggerProvider(serviceProvider.GetRequiredService<IRecentLogStore>()));
+        // The recent-log buffer is fed by a Serilog sink (see GatewaySerilogConfiguration), not by
+        // a DI ILoggerProvider: UseSerilog replaces the host ILoggerFactory, so a provider
+        // registered here would never be attached and the buffer stayed empty (issue #2390).
+        services.AddGatewayRecentLogStore();
         services.AddSingleton<CronTrigger>();
         services.AddSingleton<CronSessionStartupReconciler>();
         services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<CronSessionStartupReconciler>());

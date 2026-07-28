@@ -672,13 +672,16 @@
 
     private static bool IsUserFacingConversation(ConversationState conversation)
     {
-        // Hides the runtime's internal "internal:*" bookkeeping threads. This is an explicit
-        // NAMESPACE reservation on the conversation id, not origin inference: it answers "is this
-        // row a runtime-internal artefact?", never "why does this conversation exist?". The origin
-        // question is answered solely by the immutable server-supplied Source/Kind (#2305).
-        // Backend contract still wanted for full fidelity: explicit conversation visibility
-        // (e.g., user-facing | inspectable-readonly | internal-hidden).
-        return !conversation.ConversationId.StartsWith("internal:", StringComparison.OrdinalIgnoreCase);
+        // #2340: hiding runtime-internal bookkeeping threads now reads the first-class, server-
+        // stamped, write-once ConversationVisibility instead of probing the conversation id for an
+        // "internal:" prefix. That probe was the LAST id-substring test in client rendering code and
+        // the sole allowlisted exception to the origin-inference fence, which is now absolute.
+        //
+        // Visibility is a genuinely separate axis from origin - "who may see it" vs "why it exists"
+        // - so it is its own field rather than an overload of Source. InspectableReadOnly rows are
+        // deliberately still listed: they are visible-but-not-writable, and write gating is the
+        // independent job of ConversationRenderProjection.
+        return conversation.Visibility != ConversationVisibility.InternalHidden;
     }
 
     // #2305 (epic #2300): grouping derives ONLY from the immutable server-supplied origin signal via

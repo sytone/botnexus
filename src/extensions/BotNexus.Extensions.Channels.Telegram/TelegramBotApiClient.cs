@@ -309,7 +309,13 @@ public sealed class TelegramBotApiClient(
                 throw new TelegramMarkdownParseException($"Telegram rejected MarkdownV2 for {methodName}: {body}");
 
             if (!response.IsSuccessStatusCode)
-                throw new HttpRequestException($"Telegram API call '{methodName}' failed ({(int)response.StatusCode}): {body}");
+                // Carry the status code on the exception, not only in the message text. Callers
+                // (notably ChannelFailureClassifier, #2447) must be able to tell a momentary 502
+                // from a revoked-token 401 without parsing prose.
+                throw new HttpRequestException(
+                    $"Telegram API call '{methodName}' failed ({(int)response.StatusCode}): {body}",
+                    inner: null,
+                    response.StatusCode);
 
             var apiResponse = JsonSerializer.Deserialize<TelegramApiResponse<T>>(body, JsonOptions)
                 ?? throw new InvalidOperationException($"Telegram API '{methodName}' returned an invalid response payload.");

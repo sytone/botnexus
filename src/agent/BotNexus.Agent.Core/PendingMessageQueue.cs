@@ -23,6 +23,18 @@ internal sealed class PendingMessageQueue
     /// </summary>
     public QueueMode Mode { get; set; }
 
+    /// <summary>
+    /// Maximum number of undrained messages this queue will hold. Zero (the default)
+    /// means unbounded, preserving the historical behaviour for the steering queue.
+    /// </summary>
+    /// <remarks>
+    /// A bounded queue exists so a runaway producer cannot grow the pending set without
+    /// limit while a single long-running turn is in flight (#2438). Overflow is an
+    /// explicit, observable rejection - <see cref="PendingMessageQueueFullException"/> -
+    /// never a silent drop, so the caller can tell the sender their message was refused.
+    /// </remarks>
+    public int Capacity { get; set; }
+
     public bool HasItems
     {
         get
@@ -38,10 +50,20 @@ internal sealed class PendingMessageQueue
     /// Executes enqueue.
     /// </summary>
     /// <param name="message">The message.</param>
+    /// <exception cref="PendingMessageQueueFullException">
+    /// The queue is bounded (<see cref="Capacity"/> greater than zero) and already full.
+    /// The message is NOT enqueued; rejecting loudly is deliberate so the boundary that
+    /// accepted it can report the refusal rather than discard the message silently.
+    /// </exception>
     public void Enqueue(AgentMessage message)
     {
         lock (_lock)
         {
+            if (Capacity > 0 && _messages.Count >= Capacity)
+            {
+                throw new PendingMessageQueueFullException(Capacity);
+            }
+
             _messages.Add(message);
         }
     }
@@ -69,6 +91,34 @@ internal sealed class PendingMessageQueue
             var first = _messages[0];
             _messages.RemoveAt(0);
             return [first];
+        }
+    }
+
+    /// <summary>
+    /// Atomically removes a specific pending message by reference identity.
+    /// </summary>
+    /// <param name="message">The exact instance previously passed to <see cref="Enqueue"/>.</param>
+    /// <returns><c>true</c> when the instance was still pending and has been removed.</returns>
+    /// <remarks>
+    /// Used to take back a follow-up that was enqueued against a run which settled before the
+    /// loop drained it (#2438). Reference identity is deliberate: a blanket drain would steal
+    /// messages enqueued by other producers, so only the caller's own instance is reclaimed.
+    /// </remarks>
+    public bool TryRemove(AgentMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        lock (_lock)
+        {
+            for (var i = 0; i < _messages.Count; i++)
+            {
+                if (ReferenceEquals(_messages[i], message))
+                {
+                    _messages.RemoveAt(i);
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

@@ -112,6 +112,40 @@ public interface IAgentHandle : IAsyncDisposable
     Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Queues <paramref name="message"/> as a follow-up <em>only</em> if a run is currently in
+    /// flight, and reports whether it was queued.
+    /// </summary>
+    /// <param name="message">The follow-up text to queue.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// <c>true</c> when a run was in flight and the message is queued for delivery after it
+    /// settles; <c>false</c> when the agent was idle (or became idle before the queued message
+    /// could be claimed), in which case the message has NOT been queued and the caller must
+    /// deliver it as an ordinary inbound message instead.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// This is the primitive that makes hub-level follow-up correct (#2438). Doing the same thing
+    /// as <c>if (handle.IsRunning) FollowUpAsync(...) else Send(...)</c> at the call site is racy:
+    /// the run can settle between the check and the enqueue, leaving the message stranded in an
+    /// idle agent's follow-up queue which is never drained again. Implementations must close that
+    /// window - enqueue first, then re-verify the run is still live, and take the message back if
+    /// it is not.
+    /// </para>
+    /// <para>
+    /// Overflow of the bounded follow-up queue surfaces as an exception, never as a silent drop.
+    /// </para>
+    /// <para>
+    /// The default implementation is the best a handle with no visibility into its own run
+    /// lifecycle can do: it reports "not queued" so the caller falls back to a normal send. Any
+    /// handle that really owns a follow-up queue MUST override this with the atomic
+    /// enqueue-then-reverify form.
+    /// </para>
+    /// </remarks>
+    Task<bool> TryFollowUpWhileRunningAsync(string message, CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Atomically aborts the current agent run (if any) and injects a new steering direction.
     /// The new direction is queued immediately after abort completes so the agent resumes
     /// with the redirected goal rather than continuing the abandoned turn.

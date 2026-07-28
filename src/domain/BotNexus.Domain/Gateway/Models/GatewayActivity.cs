@@ -108,5 +108,11 @@ public enum GatewayActivityType
     SteeringInjected,
 
     /// <summary>A steering message arrived but agent was not running; queued as normal message.</summary>
-    SteeringQueued
+    SteeringQueued,
+
+    /// <summary>
+    /// A follow-up message was held because a run was in flight; it will be injected as a user
+    /// message once that run settles (#2438).
+    /// </summary>
+    FollowUpQueued
 }

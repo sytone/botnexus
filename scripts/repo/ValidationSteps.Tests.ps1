@@ -81,10 +81,13 @@ try {
     Assert-True ($contended.WaitedSeconds -ge 0.5) 'A contended acquisition must actually wait for the bounded timeout.'
 
     # Contention resolves: once the holder releases, a waiter acquires within its budget.
-    $lock.Handle.Dispose()
+    # Release goes through Remove-BotNexusValidationLock (#2393): disposing the handle alone
+    # leaves the owner record on disk, which is exactly the stranded-tombstone state the
+    # liveness reaper now has to classify.
+    Remove-BotNexusValidationLock -Lock $lock
     $reacquired = Get-BotNexusValidationLock -TimeoutSeconds 5 -PollMilliseconds 50 -LockPath $lockPath
     Assert-Equal $true $reacquired.Acquired 'A waiter must acquire the lock once the holder releases it.'
-    $reacquired.Handle.Dispose()
+    Remove-BotNexusValidationLock -Lock $reacquired
 
     # --- Wiring assertions on the callers -----------------------------------
 

@@ -62,21 +62,8 @@ public readonly record struct DynamicModelCapabilities(
     {
         ArgumentNullException.ThrowIfNull(modelId);
 
-        if (modelId.StartsWith("claude-opus-4", StringComparison.OrdinalIgnoreCase) ||
-            modelId.StartsWith("claude-sonnet-4", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (modelId.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (modelId.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
-            modelId.StartsWith("o4", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (modelId.StartsWith("gemini-3", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (modelId.StartsWith("grok-code", StringComparison.OrdinalIgnoreCase))
+        // #2374: family+version gating lives in one shared place now.
+        if (ModelCapabilityHeuristics.IsReasoningModel(modelId))
             return true;
 
         // Backward-compatible name hint retained from the pre-PBI6 dynamic-registration path.
@@ -97,21 +84,9 @@ public readonly record struct DynamicModelCapabilities(
     {
         ArgumentNullException.ThrowIfNull(modelId);
 
-        if (modelId.StartsWith("claude-opus-4.", StringComparison.OrdinalIgnoreCase))
-        {
-            var versionPart = modelId.AsSpan()["claude-opus-4.".Length..];
-            if (versionPart.Length > 0 && char.IsDigit(versionPart[0]) && versionPart[0] >= '6')
-                return true;
-        }
-
-        if (modelId.StartsWith("gpt-5.", StringComparison.OrdinalIgnoreCase))
-        {
-            var versionPart = modelId.AsSpan()["gpt-5.".Length..];
-            if (versionPart.Length > 0 && char.IsDigit(versionPart[0]) && versionPart[0] >= '2')
-                return true;
-        }
-
-        return false;
+        // #2374: shared numeric comparison; previously a character-wise prefix parse that could not
+        // classify claude-opus-5 and mis-ordered claude-opus-4.50.
+        return ModelCapabilityHeuristics.SupportsExtraHighThinking(modelId);
     }
 
     /// <summary>

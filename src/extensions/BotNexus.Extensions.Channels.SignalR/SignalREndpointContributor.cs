@@ -1,9 +1,12 @@
+using System.Globalization;
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
+using Microsoft.Net.Http.Headers;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -88,11 +91,38 @@ public class SignalREndpointContributor : IEndpointContributor
                     fileProvider, subPath, context.Request.Headers.AcceptEncoding);
                 var fileToServe = encodedFile ?? fileInfo;
 
+                var cacheControl = ResolveCacheControl(subPath);
+
                 context.Response.ContentType = contentType;
                 if (encoding is not null)
                     context.Response.Headers.ContentEncoding = encoding;
                 context.Response.Headers.Vary = "Accept-Encoding";
-                context.Response.Headers.CacheControl = ResolveCacheControl(subPath);
+                context.Response.Headers.CacheControl = cacheControl;
+
+                // Fingerprinted assets are immutable and never revalidated, so a validator
+                // would be dead weight. Everything else is served under no-cache, which only
+                // *permits* a conditional GET -- without a validator the browser has nothing
+                // to put in If-None-Match, so every revalidation re-downloads the full body.
+                // Emitting one lets us answer 304 instead. See #2413.
+                if (cacheControl == RevalidateCacheControl)
+                {
+                    var etag = BuildEntityTag(fileToServe);
+                    context.Response.Headers.ETag = etag;
+                    context.Response.Headers.LastModified =
+                        fileToServe.LastModified.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture);
+
+                    if (IsNotModified(context.Request, etag, fileToServe.LastModified))
+                    {
+                        // A 304 carries validators and caching headers but no body, and must
+                        // not advertise a Content-Length/Content-Encoding for a body it omits.
+                        context.Response.StatusCode = StatusCodes.Status304NotModified;
+                        context.Response.Headers.Remove(HeaderNames.ContentEncoding);
+                        context.Response.ContentType = null;
+                        context.Response.ContentLength = null;
+                        return;
+                    }
+                }
+
                 context.Response.ContentLength = fileToServe.Length;
                 await using var stream = fileToServe.CreateReadStream();
                 await stream.CopyToAsync(context.Response.Body);
@@ -118,8 +148,11 @@ public class SignalREndpointContributor : IEndpointContributor
     // runtime re-download entirely. Everything else (index.html, appsettings.json,
     // manifests, hand-authored css/js) is served under a stable path and MUST revalidate
     // so a new deployment is picked up immediately -> no-cache (store but always
-    // revalidate). We intentionally do not emit ETags: the immutable set does not need
-    // them, and the mutable set already round-trips a conditional GET via no-cache.
+    // revalidate). The immutable set carries no validator (it is never revalidated); the
+    // mutable set gets an ETag + Last-Modified so the revalidation no-cache mandates can
+    // actually settle as a 304 rather than a full re-download (#2413).
+    internal const string RevalidateCacheControl = "no-cache";
+
     internal static string ResolveCacheControl(string subPath)
     {
         // Fingerprinted framework assets live under _framework/ and carry a content hash
@@ -132,7 +165,55 @@ public class SignalREndpointContributor : IEndpointContributor
 
         return isFingerprinted
             ? "public, max-age=31536000, immutable"
-            : "no-cache";
+            : RevalidateCacheControl;
+    }
+
+    // Builds a weak validator for a revalidated asset. It is derived from the file that is
+    // ACTUALLY served (the .br/.gz sibling when one was selected), not the identity file, so
+    // two encodings of the same resource never share a tag. Weak is correct here: last-write
+    // plus length identifies the deployed bytes without hashing megabytes on every request.
+    internal static string BuildEntityTag(IFileInfo file) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"W/\"{file.LastModified.ToUniversalTime().Ticks:x}-{file.Length:x}\"");
+
+    // Honours If-None-Match, falling back to If-Modified-Since only when no If-None-Match was
+    // sent (RFC 9110: an entity-tag comparison always wins over a date comparison). Both the
+    // stored and request timestamps are truncated to whole seconds because HTTP-date has
+    // one-second resolution -- comparing raw ticks would never match a date we just emitted.
+    internal static bool IsNotModified(HttpRequest request, string etag, DateTimeOffset lastModified)
+    {
+        var ifNoneMatch = request.Headers.IfNoneMatch;
+        if (ifNoneMatch.Count > 0)
+        {
+            foreach (var value in ifNoneMatch)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                foreach (var candidate in value.Split(','))
+                {
+                    var trimmed = candidate.Trim();
+                    if (trimmed == "*" || string.Equals(trimmed, etag, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        var ifModifiedSince = request.Headers.IfModifiedSince.ToString();
+        if (!string.IsNullOrWhiteSpace(ifModifiedSince)
+            && DateTimeOffset.TryParse(
+                ifModifiedSince, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var since))
+        {
+            var stored = new DateTimeOffset(
+                lastModified.ToUniversalTime().Ticks - (lastModified.ToUniversalTime().Ticks % TimeSpan.TicksPerSecond),
+                TimeSpan.Zero);
+            return stored <= since;
+        }
+
+        return false;
     }
 
     // Blazor fingerprints assets by inserting a base36 content hash segment between the

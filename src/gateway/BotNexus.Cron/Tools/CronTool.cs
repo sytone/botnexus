@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
@@ -10,7 +11,8 @@ public sealed class CronTool(
     ICronStore cronStore,
     CronScheduler scheduler,
     AgentId agentId,
-    bool allowCrossAgentCron = false) : IAgentTool
+    bool allowCrossAgentCron = false,
+    ModelRegistry? modelRegistry = null) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
 
@@ -41,7 +43,7 @@ public sealed class CronTool(
                   "description": "Template parameter values for templateName (for create/update).",
                   "additionalProperties": { "type": "string" }
                 },
-                "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id." },
+                "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id. Validated against the model registry at create/update time; an unknown id is rejected with the available models." },
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
                 "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." }
               },
@@ -134,6 +136,9 @@ public sealed class CronTool(
         }
         catch { /* invalid schedule — will be caught by scheduler */ }
 
+        var model = ReadString(arguments, "model");
+        EnsureModelResolvable(model);
+
         var targetAgentIdString = ReadString(arguments, "agentId");
         var targetAgentId = ResolveTargetAgentId(targetAgentIdString, _agentId);
 
@@ -147,7 +152,7 @@ public sealed class CronTool(
             Message = message,
             TemplateName = templateName,
             TemplateParameters = ReadStringMap(arguments, "templateParameters"),
-            Model = ReadString(arguments, "model"),
+            Model = model,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
@@ -177,6 +182,12 @@ public sealed class CronTool(
             : existing.TemplateParameters;
         EnsurePromptSource(newMessage, newTemplateName);
 
+        // Only a caller-supplied override is preflighted. An update that leaves Model alone must
+        // not be blocked by a pre-existing bad value, or a job whose model was decommissioned
+        // after creation could never be edited (not even to fix the model itself).
+        var requestedModel = ReadString(arguments, "model");
+        EnsureModelResolvable(requestedModel);
+
         var newAgentIdString = ReadString(arguments, "agentId");
         var newAgentId = string.IsNullOrWhiteSpace(newAgentIdString)
             ? existing.AgentId
@@ -190,7 +201,7 @@ public sealed class CronTool(
             Message = newMessage,
             TemplateName = newTemplateName,
             TemplateParameters = newTemplateParameters,
-            Model = ReadString(arguments, "model") ?? existing.Model,
+            Model = requestedModel ?? existing.Model,
             AgentId = newAgentId,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
         };
@@ -259,6 +270,15 @@ public sealed class CronTool(
 
         var runs = await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+    }
+
+    // #2373: reject an unresolvable model override at create/update time rather than letting the
+    // job silently fail on every fire. When no populated registry is available the override is
+    // accepted unchanged - "cannot verify" must never become "reject".
+    private void EnsureModelResolvable(string? model)
+    {
+        if (CronModelPreflight.ClassifyRejection(modelRegistry, model) is { } reason)
+            throw new ArgumentException(reason);
     }
 
     // Scopes the target agent for create/update. When cross-agent cron is disabled (the

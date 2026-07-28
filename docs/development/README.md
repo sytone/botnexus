@@ -37,6 +37,11 @@ This directory contains detailed documentation for developers working on or exte
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
 - **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene
 
+### Security
+
+- **[security-sensitive-file-guard.md](security-sensitive-file-guard.md)** — Guard rails around edits to security-sensitive files
+- **[downloaded-payload-verification.md](downloaded-payload-verification.md)** — #2372 verify-before-execute rule for any downloaded install/update payload
+
 ---
 
 ## For Newcomers

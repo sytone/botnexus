@@ -59,6 +59,14 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     private readonly Lock _sync = new();
     private readonly Dictionary<string, LoadedExtensionRuntime> _loaded = new(StringComparer.OrdinalIgnoreCase);
 
+    // Every (contract, implementation) pair this loader auto-registers into the host container.
+    // Extension services are resolved as sets during startup (e.g. IEnumerable<IAgentTool>,
+    // IEnumerable<IAgentToolContributor>); if any one cannot be activated by the container the
+    // whole enumeration throws and aborts the host. After all extensions load we probe these
+    // against the built container and prune the un-activatable ones. See
+    // PruneUnconstructableExtensionServices and issue #2220.
+    private readonly List<(Type Contract, Type Implementation)> _registeredExtensionServices = [];
+
     public AssemblyLoadContextExtensionLoader(
         IServiceCollection services,
         IHookDispatcher hookDispatcher,
@@ -421,10 +429,91 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             }
 
             registered.Add($"{contract.Name}->{implementation.FullName}");
+            _registeredExtensionServices.Add((contract, implementation));
         }
 
         return registered;
     }
+
+    /// <summary>
+    /// Probes every extension service this loader registered against the fully-configured host
+    /// container and removes any whose implementation has no constructor the container can satisfy.
+    /// This must run after all extensions have loaded (so the whole service graph is present) and
+    /// before the host is built. It exists because extension services are resolved as sets during
+    /// startup — <c>IEnumerable&lt;IAgentTool&gt;</c>, <c>IEnumerable&lt;IAgentToolContributor&gt;</c>,
+    /// hosted services, channel adapters, notifiers — and DI set resolution is all-or-nothing: a
+    /// single un-activatable implementation (for example a session-scoped tool whose backend is not
+    /// a registered service, or a contributor with a bare <c>string</c> constructor parameter) throws
+    /// and aborts host startup, surfacing only as a generic health-check timeout. Pruning turns that
+    /// fatal boot failure into a logged warning and a gateway that still starts (issue #2220).
+    /// </summary>
+    /// <returns>The pruned registrations, for boot-report/diagnostic surfacing.</returns>
+    public IReadOnlyList<(Type Contract, Type Implementation, string Reason)> PruneUnconstructableExtensionServices()
+    {
+        List<(Type Contract, Type Implementation, string Reason)> pruned = [];
+        if (_registeredExtensionServices.Count == 0)
+            return pruned;
+
+        using var probeProvider = _services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = false,
+            ValidateScopes = false
+        });
+
+        // IServiceProviderIsService reports registration without constructing anything, so this
+        // check is side-effect-free (it does not eagerly build any singleton).
+        var isService = probeProvider.GetService<IServiceProviderIsService>();
+        if (isService is null)
+            return pruned;
+
+        foreach (var (contract, implementation) in _registeredExtensionServices)
+        {
+            if (HasContainerSatisfiableConstructor(implementation, isService))
+                continue;
+
+            for (var i = _services.Count - 1; i >= 0; i--)
+            {
+                var descriptor = _services[i];
+                if (descriptor.ServiceType == contract && descriptor.ImplementationType == implementation)
+                    _services.RemoveAt(i);
+            }
+
+            const string reason = "no public constructor whose parameters are all resolvable from the host container";
+            pruned.Add((contract, implementation, reason));
+            _logger.LogWarning(
+                "Pruned extension service registration '{Contract}->{Implementation}' because it cannot be activated by the host container ({Reason}). The gateway will start without it.",
+                contract.Name,
+                implementation.FullName,
+                reason);
+        }
+
+        return pruned;
+    }
+
+    /// <summary>
+    /// Mirrors the constructor selection the DI container performs: the greediest public
+    /// constructor whose every parameter is either a registered service, an
+    /// <see cref="IServiceProvider"/>, or has a default value. Uses the actual container
+    /// registrations (via <paramref name="isService"/>) rather than assuming any interface is
+    /// resolvable — the assumption that broke <c>DataStoreTool</c> whose <c>IDataStoreBackend</c>
+    /// parameter is a per-session type that is never registered as a host service.
+    /// </summary>
+    internal static bool HasContainerSatisfiableConstructor(Type implementation, IServiceProviderIsService isService)
+    {
+        var constructors = implementation.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
+        foreach (var constructor in constructors.OrderByDescending(c => c.GetParameters().Length))
+        {
+            if (constructor.GetParameters().All(parameter => IsContainerResolvableParameter(parameter, isService)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsContainerResolvableParameter(ParameterInfo parameter, IServiceProviderIsService isService)
+        => parameter.HasDefaultValue
+            || parameter.ParameterType == typeof(IServiceProvider)
+            || isService.IsService(parameter.ParameterType);
 
     private static IReadOnlyList<Type> GetLoadableTypes(Assembly assembly)
     {

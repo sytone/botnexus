@@ -882,6 +882,27 @@ public sealed class ToolPolicyConfig
 
     /// <summary>Tools completely blocked for this agent.</summary>
     public List<string>? Denied { get; set; }
+
+    /// <summary>
+    /// Posture applied when a tool requires approval but no approval workflow can service the
+    /// request (issue #2391). Accepted values are <c>allow</c> (default, historical behaviour --
+    /// execution proceeds with an audit record) and <c>deny</c> (fail closed -- the call is
+    /// refused with an <c>ask-fallback-deny</c> reason).
+    /// </summary>
+    /// <remarks>
+    /// Leave unset for unattended agents, cron jobs, and sub-agents: there is no interactive
+    /// tool-approval workflow at the <c>BeforeToolCall</c> seam, so <c>deny</c> makes every
+    /// approval-required tool unusable for that agent. Set it deliberately for agents whose
+    /// dangerous tools should never run without a human in the loop.
+    /// </remarks>
+    public string? AskFallback { get; set; }
+
+    /// <summary>
+    /// Tools exempted from <see cref="AskFallback"/> when it is <c>deny</c>. An approval-required
+    /// tool named here falls back to <c>allow</c> instead of being refused, so a fail-closed agent
+    /// can still keep a narrow set of tools working.
+    /// </summary>
+    public List<string>? AskFallbackAllow { get; set; }
 }
 
 /// <summary>Controls what sessions an agent can access via the session tool.</summary>

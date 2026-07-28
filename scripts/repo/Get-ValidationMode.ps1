@@ -16,12 +16,31 @@ function Get-BotNexusValidationModeEnvironment {
     return $values
 }
 
+function Get-BotNexusLegacyFallbackEnvironment {
+    [CmdletBinding()]
+    param()
+
+    $values = [ordered]@{}
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+        try {
+            $values[$scope] = [Environment]::GetEnvironmentVariable('BOTNEXUS_VALIDATION_LOCAL_FALLBACK', $scope)
+        }
+        catch [PlatformNotSupportedException] {
+            $values[$scope] = $null
+        }
+    }
+    return $values
+}
+
 function Resolve-BotNexusValidationMode {
     [CmdletBinding()]
     param(
         [string]$RequestedMode,
         [switch]$LocalFallback,
-        [System.Collections.IDictionary]$EnvironmentValues = (Get-BotNexusValidationModeEnvironment)
+        [System.Collections.IDictionary]$EnvironmentValues = (Get-BotNexusValidationModeEnvironment),
+        # Injected alongside $EnvironmentValues so callers (notably the self-test) can be
+        # made fully independent of ambient Process/User/Machine configuration (#2400).
+        [System.Collections.IDictionary]$LegacyFallbackValues = (Get-BotNexusLegacyFallbackEnvironment)
     )
 
     if ($LocalFallback -and -not [string]::IsNullOrWhiteSpace($RequestedMode)) {
@@ -43,9 +62,7 @@ function Resolve-BotNexusValidationMode {
     # Preserve the previous hook escape hatch while callers migrate to the named selector.
     if ([string]::IsNullOrWhiteSpace($candidate)) {
         foreach ($scope in @('Process', 'User', 'Machine')) {
-            try { $legacy = [Environment]::GetEnvironmentVariable('BOTNEXUS_VALIDATION_LOCAL_FALLBACK', $scope) }
-            catch [PlatformNotSupportedException] { $legacy = $null }
-            if ($legacy -eq '1') { return 'local' }
+            if ($LegacyFallbackValues.Contains($scope) -and [string]$LegacyFallbackValues[$scope] -eq '1') { return 'local' }
         }
     }
 

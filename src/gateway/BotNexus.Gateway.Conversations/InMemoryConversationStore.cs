@@ -349,6 +349,7 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.Purpose,
             c.Kind.ToString(),
             c.Source.ToString(),
+            c.Visibility.ToString(),
             c.IsPinned,
             c.PinnedAt,
             c.Participants.Select(p => new ParticipantSummary(

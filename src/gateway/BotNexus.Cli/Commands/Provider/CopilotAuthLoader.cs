@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Cli.Commands;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Provider;
 
@@ -101,6 +102,8 @@ internal static class CopilotAuthLoader
                 Directory.CreateDirectory(Path.GetDirectoryName(authPath)!);
                 await File.WriteAllTextAsync(authPath, JsonSerializer.Serialize(entries, JsonOptions), cancellationToken)
                     .ConfigureAwait(false);
+                // #2392: the refreshed OAuth tokens just written must not be group/world readable.
+                SecureFilePermissions.RestrictToOwner(authPath);
             }
             catch
             {

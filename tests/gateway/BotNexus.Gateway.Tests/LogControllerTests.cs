@@ -2,6 +2,7 @@ using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Logging;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Serilog;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -11,8 +12,11 @@ public sealed class LogControllerTests
     public void GetRecent_WhenClientLogsPosted_ReturnsMostRecentEntries()
     {
         var store = new InMemoryRecentLogStore();
-        using var loggerFactory = LoggerFactory.Create(builder =>
-            builder.AddProvider(new RecentLogEntryLoggerProvider(store)));
+        using var serilogLogger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(new RecentLogStoreSink(store))
+            .CreateLogger();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddSerilog(serilogLogger));
         var controller = new LogController(loggerFactory.CreateLogger<LogController>(), store);
 
         controller.Post(new ClientLogEntry("info", "first", "{}", "1", null));

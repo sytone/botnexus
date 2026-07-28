@@ -12,8 +12,21 @@ public sealed class SessionCleanupService(
     ISessionStore sessionStore,
     IOptions<SessionCleanupOptions> optionsAccessor,
     ILogger<SessionCleanupService> logger,
-    SessionLifecycleEvents? lifecycleEvents = null) : BackgroundService
+    SessionLifecycleEvents? lifecycleEvents = null,
+    ISessionTurnTracker? turnTracker = null) : BackgroundService
 {
+    private readonly ISessionTurnTracker? _turnTracker = turnTracker;
+
+    /// <summary>
+    /// Returns <c>true</c> when the session currently has a live, in-flight agent run and must
+    /// therefore be left alone by the sweep. <see cref="GatewaySession.UpdatedAt"/> only advances
+    /// on <i>message</i> activity, so an hour-plus agent turn can cross the TTL without touching
+    /// it; expiring or deleting such a session would pull it out from under the running turn
+    /// (#2395). An in-flight run is treated as an activity signal that refreshes the TTL: the
+    /// session simply becomes eligible again on the next sweep after its run completes.
+    /// </summary>
+    private bool HasInFlightRun(GatewaySession session) =>
+        _turnTracker is not null && _turnTracker.HasLiveTurn(session.SessionId.Value);
     private readonly ISessionStore _sessionStore = sessionStore;
     private readonly ILogger<SessionCleanupService> _logger = logger;
     private readonly SessionLifecycleEvents? _lifecycleEvents = lifecycleEvents;
@@ -51,6 +64,14 @@ public sealed class SessionCleanupService(
         foreach (var session in sessions)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (HasInFlightRun(session))
+            {
+                _logger.LogDebug(
+                    "Skipping session cleanup for {SessionId}: an agent run is in flight.",
+                    session.SessionId.Value);
+                continue;
+            }
 
             if (session.Status == SessionStatus.Active && now - session.UpdatedAt > ttl)
             {

@@ -346,6 +346,21 @@ public sealed class ConversationState
     public ConversationKind Kind { get; init; } = ConversationKind.HumanAgent;
 
     /// <summary>
+    /// Who may see this conversation, supplied by the server on every conversation payload (#2340).
+    /// <c>init</c>-only for the same reason as <see cref="Source"/>: an inbound SignalR event must
+    /// never be able to make a runtime bookkeeping thread appear in the user's sidebar, nor make a
+    /// real conversation vanish from it.
+    /// </summary>
+    /// <remarks>
+    /// This replaces the last id-prefix probe in client rendering code - a
+    /// <c>ConversationId.StartsWith("internal:")</c> test that was the sole allowlisted exception to
+    /// the origin-inference fence. Visibility is a genuinely different axis from origin (<c>who may
+    /// see it</c> vs <c>why it exists</c>), which is why it is its own field rather than an
+    /// overload of <see cref="Source"/>.
+    /// </remarks>
+    public ConversationVisibility Visibility { get; init; } = ConversationVisibility.UserFacing;
+
+    /// <summary>
     /// The deterministic render projection for this conversation under the supplied selection
     /// source. The single approved way to ask "is this read-only / does it show a composer / how is
     /// it grouped" — see <see cref="ConversationRenderProjection"/>.

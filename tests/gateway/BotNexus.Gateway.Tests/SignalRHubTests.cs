@@ -1165,7 +1165,13 @@ public sealed class SignalRHubTests
             logger: logger);
     }
 
-    private static GatewayHub CreateHub(
+    /// <summary>
+    /// Shared hub composition root for the test assembly. Exposed (was private) so
+    /// follow-up queueing tests in <see cref="GatewayHubFollowUpQueueTests"/> compose a hub the
+    /// same way rather than forking a second, drifting builder. Visibility change only - no
+    /// behaviour or assertion in this file is affected.
+    /// </summary>
+    internal static GatewayHub CreateHub(
         IHubCallerClients<IGatewayHubClient>? clients = null,
         IGroupManager? groups = null,
         ISessionStore? sessions = null,

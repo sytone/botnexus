@@ -45,6 +45,12 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
     /// <inheritdoc />
     public override bool SupportsToolDisplay => true;
 
+    /// <summary>
+    /// The terminal UI renders directly to the operator's console - a user-visible surface - so
+    /// the delimited internal runtime-context envelope is redacted before write (#1430).
+    /// </summary>
+    protected override bool StripsRuntimeContext => true;
+
     /// <inheritdoc />
     protected override Task OnStartAsync(CancellationToken cancellationToken)
     {
@@ -92,7 +98,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             _logger.LogDebug("{DisplayName} send requested while adapter is not running", DisplayName);
         }
 
-        return Console.Out.WriteLineAsync($"[{DisplayName}:{message.ChannelAddress.Value}] {message.Content}");
+        return Console.Out.WriteLineAsync($"[{DisplayName}:{message.ChannelAddress.Value}] {ProjectOutboundText(message.Content)}");
     }
 
     /// <summary>

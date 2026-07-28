@@ -316,7 +316,7 @@ public sealed class ExecTool : IAgentTool
                 }
             }
 
-            var exitCode = termination == "exit" ? process.ExitCode : -1;
+            var exitCode = ResolveExitCode(TryGetProcessExitCode(process));
 
             var message = termination switch
             {
@@ -688,7 +688,69 @@ public sealed class ExecTool : IAgentTool
         }
     }
 
+    /// <summary>
+    /// Sentinel reported in <see cref="ExecToolDetails.ExitCode"/> when the operating system never
+    /// produced a numeric status for the child (for example the process was still running when we
+    /// gave up on it, so <see cref="Process.ExitCode"/> is not readable). It is deliberately a single
+    /// value for every such case: the reason a run ended is carried by
+    /// <see cref="ExecToolDetails.Termination"/>, never encoded into the number.
+    /// </summary>
+    internal const int UnknownExitCode = -1;
+
+    /// <summary>
+    /// Maps the operating system's view of a finished child process onto the numeric status reported
+    /// to callers. Mirrors the upstream <c>resolveSubprocessExitCode</c> contract: whenever the OS gave
+    /// us a real status it wins, including the POSIX <c>128 + signum</c> values .NET surfaces on Linux
+    /// for signal deaths (137 = SIGKILL, e.g. the OOM killer). This matters because a timeout kill and
+    /// an OOM kill are different incidents, and collapsing both to a sentinel destroys that evidence.
+    /// The termination reason is intentionally NOT an input here - it stays a separate field so a
+    /// consumer can correlate the two rather than reverse-engineer one from the other.
+    /// </summary>
+    /// <param name="processExitCode">
+    /// The status read from the child, or <see langword="null"/> when none was available.
+    /// </param>
+    /// <returns>The real status when known, otherwise <see cref="UnknownExitCode"/>.</returns>
+    internal static int ResolveExitCode(int? processExitCode) => processExitCode ?? UnknownExitCode;
+
+    /// <summary>
+    /// Reads <see cref="Process.ExitCode"/> defensively. After a timeout or cancellation we kill the
+    /// child and then race it: the kill may not have been reaped yet, in which case the property throws
+    /// <see cref="InvalidOperationException"/>. Returning <see langword="null"/> keeps that race off the
+    /// caller's crash path while still preserving the status in the common case where the child has
+    /// already gone (which is where the signal-derived <c>128 + signum</c> codes live).
+    /// Exposed internally so the throwing path is directly testable.
+    /// </summary>
+    /// <returns>The child's status, or <see langword="null"/> if it is not readable yet.</returns>
+    internal static int? TryGetProcessExitCode(Process process)
+    {
+        try
+        {
+            return process.HasExited ? process.ExitCode : null;
+        }
+        catch (InvalidOperationException)
+        {
+            // Process was never started, or was already disposed/detached - no status to report.
+            return null;
+        }
+        catch (SystemException)
+        {
+            // Platform-level failure reading the status (e.g. Win32Exception on a handle we lost).
+            return null;
+        }
+    }
+
     /// <summary>Details metadata returned alongside the tool result (not sent to the LLM).</summary>
+    /// <param name="ExitCode">
+    /// The child's real operating-system status when one was available, preserved verbatim - including
+    /// POSIX <c>128 + signum</c> signal deaths such as 137 (SIGKILL). Only when no status could be read
+    /// at all is <see cref="UnknownExitCode"/> (-1) reported. Never infer why a run ended from this
+    /// number; use <paramref name="Termination"/>.
+    /// </param>
+    /// <param name="Termination">
+    /// The authoritative classifier for how the run ended: <c>exit</c>, <c>timeout</c>,
+    /// <c>no-output-timeout</c>, or <c>cancelled</c>. Independent of <paramref name="ExitCode"/>.
+    /// </param>
+    /// <param name="Pid">The child's process id for background launches, otherwise <see langword="null"/>.</param>
     public sealed record ExecToolDetails(int ExitCode, string Termination, int? Pid = null);
 
     /// <summary>Tracks background processes launched by the exec tool.</summary>

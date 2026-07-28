@@ -11,6 +11,23 @@ RUN dotnet restore src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj
 RUN dotnet publish src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj \
     -c Release -o /app/publish --no-restore
 
+# Publish the first-party extensions into an image-resident probe directory (#2376).
+# Publishing only the gateway shipped an image with NO extensions at all: no SignalR
+# hub, therefore no portal and no realtime channel, and GET /api/extensions returned [].
+# Extensions are discovered per-directory from a manifest, so each extension gets its own
+# self-contained output folder mirroring the local `botnexus gateway start` deploy layout.
+# The manifest is copied explicitly rather than relying on each csproj declaring it as a
+# Content item, because several extension projects do not.
+RUN set -eux; \
+    for manifest in $(find src/extensions -name botnexus-extension.json); do \
+        projectDir=$(dirname "$manifest"); \
+        project=$(find "$projectDir" -maxdepth 1 -name '*.csproj' | head -n 1); \
+        [ -n "$project" ] || continue; \
+        name=$(basename "$projectDir"); \
+        dotnet publish "$project" -c Release -o "/app/extensions/$name"; \
+        cp "$manifest" "/app/extensions/$name/botnexus-extension.json"; \
+    done
+
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
@@ -25,10 +42,19 @@ RUN apt-get update \
 
 COPY --from=build /app/publish .
 
+# Extensions live on the image itself, NOT under /app/config. /app/config is a declared
+# VOLUME, so anything baked there is shadowed by the caller's mount on a stock `docker run`
+# and the gateway starts with zero extensions. See issue #2376.
+COPY --from=build /app/extensions ./extensions
+
 # BOTNEXUS_HOME is the config directory; mount a volume here with your config.json (and optionally auth.json).
 # API keys can also be supplied via environment variables (e.g. GITHUB_TOKEN, OPENAI_API_KEY).
 ENV BOTNEXUS_HOME=/app/config
 ENV BOTNEXUS_DATA_DIR=/app/data
+# Extension probe root. Overrides the default {BOTNEXUS_HOME}/extensions so the shipped
+# extensions are discovered even when /app/config is mounted. An explicit
+# gateway.extensions.path in config.json still wins over this.
+ENV BOTNEXUS_EXTENSIONS_PATH=/app/extensions
 ENV ASPNETCORE_URLS=http://+:5000
 ENV ASPNETCORE_ENVIRONMENT=Production
 
