@@ -508,31 +508,80 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
-    /// Executes follow up.
+    /// Holds <paramref name="content"/> until the agent's current run settles, then injects it as
+    /// a user message that drives the next turn. When the agent is idle there is nothing to wait
+    /// for, so the content is dispatched immediately as an ordinary inbound message.
     /// </summary>
     /// <param name="agentId">The agent id.</param>
     /// <param name="sessionId">The session id.</param>
-    /// <param name="content">The content.</param>
-    /// <returns>The follow up result.</returns>
+    /// <param name="content">The follow-up text.</param>
+    /// <returns>A task that completes once the follow-up has been accepted (queued or dispatched).</returns>
+    /// <remarks>
+    /// <para>
+    /// A follow-up is NOT a steer. A steer interrupts the in-flight turn; a follow-up waits for it
+    /// (#2438). Before this method routed through the follow-up queue it called
+    /// <see cref="DispatchMessageAsync"/> with kind <c>"message"</c> - identical to a normal send -
+    /// so a follow-up issued mid-turn was pushed straight at a running agent. That is the concrete
+    /// producer of the <c>InvalidOperationException: Agent is already running</c> loss described in
+    /// #2388, and it also rendered the message in the transcript above the in-flight turn.
+    /// </para>
+    /// <para>
+    /// The running/idle decision is made atomically inside
+    /// <see cref="IAgentHandle.TryFollowUpWhileRunningAsync"/>, not with an <c>IsRunning</c> check
+    /// here: checking at this layer would let the run settle between the check and the enqueue and
+    /// strand the message in a queue that is never drained again.
+    /// </para>
+    /// <para>
+    /// Overflow of the bounded follow-up queue is NOT swallowed. It propagates into
+    /// <see cref="SafeDispatchAsync"/>, which publishes an <see cref="GatewayActivityType.Error"/>
+    /// activity to the caller, so a refused follow-up is visible rather than silently discarded.
+    /// </para>
+    /// </remarks>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
         EnsureControlScope(nameof(FollowUp));
         var ctx = ResolveCallContext(agentId, sessionId);
         var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
-        _ = SafeDispatchAsync(
+        _ = LastFollowUpDispatch = SafeDispatchAsync(
             async () =>
             {
                 // Late-subscribe by conversation so stream events emitted by the
                 // follow-up reach the connection even if SubscribeAll has not been
                 // invoked recently. #682
                 await SubscribeInternalAsync(ctx.SessionId);
+
+                // Only a live handle can be holding a run. No handle at all means idle by
+                // definition, and deliberately does NOT conjure one (mirrors the Steer
+                // dead-letter guard): a phantom idle handle's follow-up queue is never drained.
+                var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
+                if (handle is not null
+                    && await handle.TryFollowUpWhileRunningAsync(content, CancellationToken.None))
+                {
+                    await PublishActivityAsync(
+                        ctx.AgentId,
+                        ctx.SessionId,
+                        GatewayActivityType.FollowUpQueued,
+                        CancellationToken.None,
+                        message: "Follow-up queued; it will be delivered when the current turn completes.");
+                    return;
+                }
+
+                // Idle agent: nothing to wait for, so a follow-up is just a normal prompt.
                 await DispatchMessageAsync(ctx.AgentId, ctx.SessionId, content, "message", connectionId);
             },
             ctx.AgentId,
             ctx.SessionId);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// The most recent <see cref="FollowUp"/> background dispatch, exposed to the test assembly
+    /// only. <see cref="FollowUp"/> is fire-and-forget by contract (the hub method returns as soon
+    /// as the work is scheduled), so without this handle a test cannot await the queue-vs-dispatch
+    /// decision without sleeping. Never read by production code.
+    /// </summary>
+    internal Task? LastFollowUpDispatch { get; private set; }
 
     /// <summary>
     /// Executes abort.

@@ -1310,6 +1310,43 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Closes the check-then-enqueue race (#2438) by enqueueing FIRST and only then re-reading
+    /// the run status. Ordering argument:
+    /// <list type="bullet">
+    /// <item>If the run is still live after the enqueue, the loop has not yet reached its
+    /// post-run drain point, so it will observe the message. Queued.</item>
+    /// <item>If the run has settled, the loop's final drain either already took the message -
+    /// in which case <c>TryReclaimFollowUp</c> fails and we correctly report queued - or it did
+    /// not, in which case we reclaim it and report not-queued so the caller sends it normally.
+    /// The reclaim is done under the queue's own lock, so exactly one of the two wins.</item>
+    /// </list>
+    /// The message is therefore delivered exactly once and never stranded.
+    /// </remarks>
+    public Task<bool> TryFollowUpWhileRunningAsync(string message, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
+        if (!IsRunning)
+            return Task.FromResult(false);
+
+        var queued = new AgentCoreUserMessage(message);
+
+        // Enqueue unconditionally; a PendingMessageQueueFullException from the bounded queue
+        // propagates to the caller by design - overflow is a visible refusal, not a drop.
+        _agent.FollowUp(queued);
+
+        if (IsRunning)
+            return Task.FromResult(true);
+
+        // The run settled between the first check and the enqueue. Either the loop's final drain
+        // already claimed our message (reclaim fails -> it IS being delivered) or it did not
+        // (reclaim succeeds -> we own it again and the caller must send it normally).
+        var reclaimed = _agent.TryReclaimFollowUp(queued);
+        return Task.FromResult(!reclaimed);
+    }
+
+    /// <inheritdoc />
     public Task<bool> PingAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(_agent.Status != AgentStatus.Aborting);
 
