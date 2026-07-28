@@ -5449,6 +5449,33 @@ h3.conversation-title.editable:hover {
     color: #fff;
 }
 
+/*
+ * Origin badges (#2385, epic #2300). One colour per origination trigger so the eye can group rows
+ * without reading the label. Deliberately distinct hues rather than shades of the cron blue: these
+ * answer different questions (a webhook run and a sub-agent supervision thread have nothing in
+ * common), and shades would read as intensity rather than category. The ordinary human/channel case
+ * renders no badge at all, so the palette only ever appears on rows that carry real signal.
+ */
+.activity-badge-webhook {
+    background: var(--accent-webhook, #6b5a8a);
+    color: #fff;
+}
+
+.activity-badge-subagent {
+    background: var(--accent-subagent, #3f6b57);
+    color: #fff;
+}
+
+.activity-badge-a2a {
+    background: var(--accent-a2a, #7a5c3a);
+    color: #fff;
+}
+
+.activity-badge-agent {
+    background: var(--accent-agent, #5a5a6b);
+    color: #fff;
+}
+
 .activity-status {
     font-size: 0.8rem;
     text-transform: capitalize;

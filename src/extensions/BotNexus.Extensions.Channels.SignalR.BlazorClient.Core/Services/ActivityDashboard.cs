@@ -74,7 +74,16 @@ public sealed record ActivityDashboardFilter(
 /// rather than just the owner.
 /// </param>
 /// <param name="ChannelCount">Number of channel bindings - a secondary recency/reach signal.</param>
-/// <param name="IsCron">Whether this is a cron/scheduled conversation.</param>
+/// <param name="Source">
+/// The server-stamped origination trigger (epic #2300) - <em>why</em> this conversation exists.
+/// Carried as the typed enum rather than collapsed to a single bool so the row can answer more than
+/// "is it cron": a webhook run, an agent-minted conversation and a human DM are distinguishable.
+/// </param>
+/// <param name="Kind">
+/// The server-stamped citizen pairing (epic #2300) - <em>who</em> is talking to whom. Orthogonal to
+/// <paramref name="Source"/>; together they disambiguate every origination case, which is what the
+/// row badge renders.
+/// </param>
 public sealed record ActivityRow(
     string ConversationId,
     string OwningAgentId,
@@ -83,7 +92,17 @@ public sealed record ActivityRow(
     DateTimeOffset LastActivity,
     IReadOnlyList<string> InvolvedAgents,
     int ChannelCount,
-    bool IsCron);
+    ConversationSource Source,
+    ConversationKind Kind)
+{
+    /// <summary>
+    /// Whether this is a cron/scheduled conversation. Computed from <see cref="Source"/> rather than
+    /// stored, so widening the row to the typed origin cannot let the flag and the enum disagree -
+    /// the exact drift class epic #2300 exists to remove. Existing call sites (the scheduled stat
+    /// card, the cron row class) keep working unchanged.
+    /// </summary>
+    public bool IsCron => Source == ConversationSource.Cron;
+}
 
 /// <summary>
 /// At-a-glance summary of the currently-projected dashboard rows: how much work is live, how many
@@ -180,6 +199,8 @@ public static class ActivityDashboardProjection
             .Select(c => new
             {
                 Dto = c,
+                Source = ConversationOrigin.ParseSource(c.Source),
+                Kind = ConversationOrigin.ParseKind(c.Kind),
                 IsCron = IsCronConversation(c),
                 Agents = InvolvedAgents(c)
             })
@@ -198,7 +219,8 @@ public static class ActivityDashboardProjection
                 x.Dto.UpdatedAt,
                 x.Agents,
                 x.Dto.BindingCount,
-                x.IsCron))
+                x.Source,
+                x.Kind))
             .ToList();
     }
 
@@ -237,6 +259,59 @@ public static class ActivityDashboardProjection
             distinctAgents.Count,
             scheduled,
             latest == DateTimeOffset.MinValue ? null : latest);
+    }
+
+    /// <summary>
+    /// Renders the human-readable origin badge for a row: the short answer to "why does this
+    /// conversation exist, and between whom?". Returns <see langword="null"/> for the ordinary
+    /// human-on-a-channel case so the common row stays unbadged and the badges that <em>are</em>
+    /// shown carry signal instead of decorating every line.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ConversationSource.Agent"/> is deliberately coarse server-side, so this is where
+    /// <see cref="ConversationKind"/> earns its keep: peer converse and sub-agent supervision are the
+    /// two agent-minted cases a reader most needs to tell apart, and they differ only by kind.
+    /// A human/channel conversation that nonetheless carries a non-default kind (an agent pulled into
+    /// a human thread) is still badged, because the pairing is the surprising part.
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    /// <returns>The badge text, or <see langword="null"/> when no badge should render.</returns>
+    public static string? OriginLabel(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        return (row.Source, row.Kind) switch
+        {
+            (ConversationSource.Cron, _) => "Scheduled",
+            (ConversationSource.Webhook, _) => "Webhook",
+            (ConversationSource.Agent, ConversationKind.AgentSubAgent) => "Sub-agent",
+            (ConversationSource.Agent, ConversationKind.AgentAgent) => "Agent-to-agent",
+            (ConversationSource.Agent, _) => "Agent-initiated",
+            (ConversationSource.Channel, ConversationKind.AgentSubAgent) => "Sub-agent",
+            (ConversationSource.Channel, ConversationKind.AgentAgent) => "Agent-to-agent",
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// CSS modifier suffix for the origin badge, so each origin gets its own colour treatment without
+    /// the component string-matching on the display label (which would couple styling to copy).
+    /// </summary>
+    /// <param name="row">A projected dashboard row.</param>
+    /// <returns>A lowercase, hyphen-free modifier token, or <see langword="null"/> when unbadged.</returns>
+    public static string? OriginModifier(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        return OriginLabel(row) switch
+        {
+            "Scheduled" => "cron",
+            "Webhook" => "webhook",
+            "Sub-agent" => "subagent",
+            "Agent-to-agent" => "a2a",
+            "Agent-initiated" => "agent",
+            _ => null
+        };
     }
 
     private static bool MatchesStatus(string status, ActivityStatusFilter filter) => filter switch
