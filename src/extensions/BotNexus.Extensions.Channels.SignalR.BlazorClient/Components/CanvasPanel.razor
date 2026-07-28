@@ -1,6 +1,7 @@
 @inject IClientStateStore Store
 @inject IJSRuntime JS
 @inject HttpClient Http
+@inject IServiceProvider Services
 @implements IAsyncDisposable
 
 <div class="canvas-panel" data-testid="canvas-panel">
@@ -132,13 +133,40 @@
              *   const all = await canvasState.getAll();       // { counter: 42 }
              *   await canvasState.delete('counter');
              *   await canvasState.clear();
+             *
+             * submitToAgent hands control back to the agent that rendered this canvas (#2449):
+             *   await canvasState.submitToAgent({
+             *     prompt: 'The user has completed the review form.',
+             *     instructions: 'Read canvas state keys answer1..answer5.'
+             *   });
+             * It injects a USER turn into the conversation that owns this canvas. The target
+             * conversation is derived by the host - it cannot be named from here, and it can never
+             * be another conversation, a session, or another agent.
+             *
+             * USER-INITIATED ONLY. Call it from a click or an explicit user action. Do NOT call it
+             * from setTimeout/setInterval, from a render or reactive path, or automatically on
+             * load. There is no throttle: a loop here is a loop the user pays for.
+             *
+             * The prompt is INSTRUCTION TEXT ONLY - it must not carry canvas data. Put data in
+             * canvas state with set() and tell the agent which keys to read back. The length bound
+             * is an arbitrary guardrail, not a contract; it comfortably fits instruction text.
+             *
+             * Rejects when the agent is mid-turn (an explicit "agent is busy" error, not a silent
+             * drop) or when the prompt is empty or over the bound.
              */
             window.canvasState = {
                 get: function(key) { return request('canvas-state-get', { key: key }); },
                 set: function(key, value) { return request('canvas-state-set', { key: key, value: value }); },
                 delete: function(key) { return request('canvas-state-delete', { key: key }); },
                 getAll: function() { return request('canvas-state-get-all', {}); },
-                clear: function() { return request('canvas-state-clear', {}); }
+                clear: function() { return request('canvas-state-clear', {}); },
+                submitToAgent: function(options) {
+                    options = options || {};
+                    return request('canvas-state-submit', {
+                        prompt: options.prompt,
+                        instructions: options.instructions
+                    });
+                }
             };
 
             window.dispatchEvent(new Event('canvasStateReady'));
@@ -259,6 +287,33 @@
                         }
                     }
                     await RespondRaw(requestId, "true");
+                    break;
+                }
+
+                case "canvas-state-submit":
+                {
+                    // #2449. The prompt/instructions are the ONLY iframe-supplied values consumed
+                    // here; the target conversation is this component's own ConversationId binding.
+                    // A conversation id present in the message payload is deliberately ignored.
+                    var prompt = message.TryGetProperty("prompt", out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? p.GetString()
+                        : null;
+                    var instructions = message.TryGetProperty("instructions", out var i) && i.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? i.GetString()
+                        : null;
+
+                    var interaction = Services.GetService(typeof(IAgentInteractionService)) as IAgentInteractionService;
+                    if (interaction is null)
+                    {
+                        await Respond(requestId, error: "Canvas submission is unavailable in this host.");
+                        break;
+                    }
+
+                    var submitResult = await interaction.SubmitCanvasPromptAsync(AgentId, conversationId, prompt, instructions);
+                    if (submitResult.Accepted)
+                        await RespondRaw(requestId, "true");
+                    else
+                        await Respond(requestId, error: submitResult.Reason);
                     break;
                 }
 

@@ -273,6 +273,14 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         return await _connection!.InvokeAsync<SendMessageResult>("SendMessage", agentId, channelType, content, conversationId);
     }
 
+    /// <summary>
+    /// Submits a canvas <c>submitToAgent</c> click into a specific conversation (#2449). Distinct
+    /// from <see cref="SendMessageAsync"/> so the SERVER stamps the canvas provenance kind from the
+    /// hub verb that was invoked, rather than trusting a client-supplied provenance field.
+    /// </summary>
+    public async Task<SendMessageResult> SubmitCanvasPromptAsync(string agentId, string channelType, string content, string conversationId)
+        => await _connection!.InvokeAsync<SendMessageResult>("SubmitCanvasPrompt", agentId, channelType, content, conversationId);
+
     /// <summary>Sends optional text and generic content parts to a specific conversation.</summary>
     public async Task<SendMessageResult> SendMessageWithMediaAsync(string agentId, string channelType, string content, IReadOnlyList<MediaContentPartDto> parts, string? conversationId = null)
         => await _connection!.InvokeAsync<SendMessageResult>("SendMessageWithMedia", agentId, channelType, content, parts, conversationId);

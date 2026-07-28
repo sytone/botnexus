@@ -101,6 +101,95 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Security contract for the canvas <c>submitToAgent</c> verb (#2449):
+    /// <list type="bullet">
+    /// <item><description><b>Conversation scoping.</b> The target is <paramref name="conversationId"/>,
+    /// which the host component passes from its OWN <c>ConversationId</c> binding. No conversation id
+    /// ever travels in the iframe message payload, so a canvas cannot name a target. The id is then
+    /// re-checked against the agent's own conversation set, so even a mis-wired host cannot reach a
+    /// conversation this agent does not own.</description></item>
+    /// <item><description><b>Role and provenance integrity.</b> The turn is a genuine USER turn -
+    /// there is no role parameter to forge - and it is emitted through the dedicated
+    /// <c>SubmitCanvasPrompt</c> hub verb, which stamps <c>MessageKind.CanvasSubmission</c>
+    /// SERVER-side from the verb that was invoked. Provenance is therefore a typed field the client
+    /// cannot spoof, reusing the #2300 provenance vocabulary at message level rather than a literal
+    /// stamped into the text. Content is still control-character stripped so it cannot fabricate
+    /// extra transcript lines.</description></item>
+    /// <item><description><b>Mid-turn (degraded, pending #2438).</b> When the bound conversation
+    /// already has an active turn the submission is REJECTED here with an explicit "agent is busy"
+    /// reason, before it reaches the transport. It is not queued and not silently dropped: an
+    /// inbound message arriving mid-run is currently lost server-side (#2388) and the follow-up
+    /// queue that would defer it (#2438) does not exist yet. When #2438 lands this path should
+    /// enqueue instead of refusing.</description></item>
+    /// <item><description><b>Bounds.</b> Prompt and instruction length are capped by an arbitrary
+    /// guardrail (see <see cref="CanvasSubmitGuards.MaxPromptLength"/>). There is deliberately no
+    /// rate limiting, in-flight tracking or content inspection.</description></item>
+    /// </list>
+    /// </remarks>
+    public async Task<CanvasSubmitResult> SubmitCanvasPromptAsync(
+        string agentId,
+        string conversationId,
+        string? prompt,
+        string? instructions)
+    {
+        var agent = _store.GetAgent(agentId);
+        if (agent is null)
+            return CanvasSubmitResult.Rejected("Unknown agent.");
+
+        // Conversation scoping: the canvas may only post to a conversation this agent owns, and the
+        // id itself came from the host binding rather than the iframe payload.
+        if (string.IsNullOrWhiteSpace(conversationId) || !agent.Conversations.TryGetValue(conversationId, out var conv))
+            return CanvasSubmitResult.Rejected("Canvas is not bound to a conversation on this agent.");
+
+        var safePrompt = CanvasSubmitGuards.TryNormalise(prompt, CanvasSubmitGuards.MaxPromptLength);
+        if (safePrompt is null)
+            return CanvasSubmitResult.Rejected(
+                $"Prompt must be non-empty and at most {CanvasSubmitGuards.MaxPromptLength} characters.");
+
+        string? safeInstructions = null;
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            safeInstructions = CanvasSubmitGuards.TryNormalise(instructions, CanvasSubmitGuards.MaxInstructionsLength);
+            if (safeInstructions is null)
+                return CanvasSubmitResult.Rejected(
+                    $"Instructions must be at most {CanvasSubmitGuards.MaxInstructionsLength} characters.");
+        }
+
+        if (conv.StreamState.IsTurnActive)
+            return CanvasSubmitResult.Rejected("Agent is already running; try again when the current turn finishes.");
+
+        var now = DateTimeOffset.UtcNow;
+        var content = CanvasSubmitGuards.ComposeContent(safePrompt, safeInstructions);
+
+        // Local echo on the same append path the composer uses, so the injected turn is rendered as
+        // a User row in the conversation that owns the canvas. The canvas provenance kind mirrors
+        // what the server will stamp on the persisted turn.
+        conv.AppendMessage(new ChatMessage("User", content, now) { Kind = CanvasSubmissionKind });
+        _store.NotifyChanged();
+
+        try
+        {
+            var result = await _hub.SubmitCanvasPromptAsync(agentId, agent.ChannelType ?? "signalr", content, conversationId);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: conversationId);
+            await RefreshConversationsForAgentAsync(agentId);
+            return CanvasSubmitResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Canvas submitToAgent failed for {ConversationId}", Sanitise(conversationId));
+            return CanvasSubmitResult.Rejected($"Submit failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Wire value of <c>MessageKind.CanvasSubmission</c> (#2449), used to stamp the local echo so it
+    /// matches the kind the server persists. Declared here as a literal because the BlazorClient.Core
+    /// project does not reference BotNexus.Domain; the value is pinned by test.
+    /// </summary>
+    public const string CanvasSubmissionKind = "canvas-submission";
+
     /// <summary>
     /// Resolves the (conversationId, sessionId) pair that a conversation-targeted action
     /// (steer, follow-up, abort, redirect, reset, compact) must act on, anchored to the
