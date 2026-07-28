@@ -64,6 +64,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'RecoveryPrompt.psm1') -Force
+
 function Write-Section([string]$Title) {
     Write-Host ''
     Write-Host "=== $Title ===" -ForegroundColor Cyan
@@ -139,7 +141,7 @@ if ($apphost.Count -gt 0) {
     Write-Host "No gateway process detected." -ForegroundColor Red
 }
 try {
-    $port = $GatewayUrl -replace '.*:(\d+).*', '$1'
+    $port = Get-GatewayPort -GatewayUrl $GatewayUrl
     $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($conn) {
         Add-Report "Port ${port}: LISTENING (owning PID $($conn.OwningProcess))"
@@ -271,57 +273,26 @@ if (-not $Yes) {
     }
 }
 
-# Platform-aware priming prompt.
-$prompt = @"
-You are helping recover the BotNexus gateway, which is currently DOWN (its /health
-endpoint is not returning 200). The built-in BotNexus helper agent (Nexus Trailguide)
-cannot help because the gateway that hosts it is the thing that is down -- so you are
-the break-glass assistant.
+$gatewayPort = Get-GatewayPort -GatewayUrl $GatewayUrl
+$prompt = New-RecoveryPrimingPrompt -RepoPath $RepoPath -ConfigDir $ConfigDir -HealthUrl $healthUrl -GatewayPort $gatewayPort -ReportPath $reportPath
 
-ABOUT BOTNEXUS
-- BotNexus is a .NET 10 application: a Blazor Server UI + SignalR messaging gateway that
-  hosts AI agents. Repo root is this directory ($RepoPath).
-- The gateway is launched by the CLI ('botnexus.exe', a dotnet global tool). Startup runs
-  either the native apphost 'BotNexus.Gateway.Api.exe' or 'dotnet BotNexus.Gateway.Api.dll'.
-- Config/state lives under '$ConfigDir': logs/ (hourly 'botnexus-YYYYMMDDHH.log'),
-  extensions/ (deployed extension folders), agents/, sessions/, secrets/.
-- Health endpoint: $healthUrl. The CLI only shows a generic 10s health-check timeout,
-  which HIDES the real fault -- always read the newest log for the true exception.
-
-KNOWN RECURRING CRASH CLASS (check this first)
-- Extensions are loaded in an isolated ExtensionAssemblyLoadContext
-  (src/gateway/BotNexus.Gateway/Extensions/ExtensionAssemblyLoadContext.cs).
-- If an extension ships a PRIVATE copy of an assembly that defines a host-registered
-  contract (e.g. IConfiguration, IFileSystem via System.IO.Abstractions), the type identity
-  diverges from the host, DI stops recognising it, and the HOST ABORTS ON STARTUP.
-  Signature: "System.InvalidOperationException: Body was inferred..." or a
-  FileNotFoundException / "Could not load file or assembly ...".
-- Fix pattern: add the assembly to the host-shared allow-list in
-  ExtensionAssemblyLoadContext (HostAssemblies). See PR #2218 and issue #2184 for precedent.
-- Tracking issues for a permanent fix: #2219 (categorical unification) and #2220 (boot smoke gate).
-
-A DIAGNOSTIC REPORT HAS ALREADY BEEN GATHERED for you at:
-  $reportPath
-Read it first -- it has the /health result, process/port state, the newest log's
-ERR/FTL lines, the deployed extension set, and git HEAD.
-
-WHAT I NEED FROM YOU
-1. Read the diagnostic report and the newest gateway log to identify the real fault.
-2. Explain the root cause in plain terms.
-3. If it is the extension load-context class above (or any clear regression), propose a
-   minimal fix, and offer to file a GitHub issue on sytone/botnexus (use 'gh') and/or open
-   a PR following the repo's worktree + Conventional Commits workflow (see AGENTS.md).
-4. Do NOT restart, rebuild, or push anything without asking me to confirm first.
-
-Start by reading $reportPath and the newest log under $ConfigDir/logs, then tell me what broke.
-"@
+# The handoff must be a session, not a one-shot: --prompt exits after completion, which
+# cannot support the read -> hypothesise -> narrow loop recovery needs (issue #2455).
+$copilotHelp = try { (& $copilot.Source --help 2>&1 | Out-String) } catch { '' }
+if (-not (Test-CopilotInteractiveSupport -HelpText $copilotHelp)) {
+    Write-Host ''
+    Write-Host "The installed GitHub Copilot CLI ($($copilot.Source)) does not support the" -ForegroundColor Red
+    Write-Host "--interactive flag, so it cannot host a recovery session. Upgrade the Copilot CLI," -ForegroundColor Red
+    Write-Host "or work the report manually: $reportPath" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ''
-Write-Host "Launching Copilot interactively with a platform-aware prompt..." -ForegroundColor Cyan
+Write-Host "Launching an interactive Copilot session primed with a platform-aware prompt..." -ForegroundColor Cyan
 Write-Host "(Report path: $reportPath)" -ForegroundColor DarkGray
 Push-Location $RepoPath
 try {
-    & $copilot.Source --add-dir $ConfigDir --prompt $prompt
+    & $copilot.Source @(Get-CopilotInteractiveArgument -ConfigDir $ConfigDir -Prompt $prompt)
 } finally {
     Pop-Location
 }
