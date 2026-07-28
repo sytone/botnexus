@@ -51,6 +51,8 @@ internal static class ConversationRowMapper
             Metadata = DeserializeMetadata(GetNullableString(reader, "metadata"), conversationId, logger),
             CreatedAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("created_at"))),
             UpdatedAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("updated_at"))),
+            // #2131: the optimistic-concurrency revision the caller's snapshot is pinned to.
+            Version = GetVersion(reader),
             Instructions = GetNullableString(reader, "instructions"),
             CanvasHtml = GetNullableString(reader, "canvas_html"),
             Initiator = DeserializeInitiator(GetNullableString(reader, "initiator")),
@@ -152,6 +154,23 @@ internal static class ConversationRowMapper
         LastInboundAt = reader.IsDBNull(offset + 7) ? null : ParseTimestamp(reader.GetString(offset + 7)),
         LastOutboundAt = reader.IsDBNull(offset + 8) ? null : ParseTimestamp(reader.GetString(offset + 8))
     };
+
+    /// <summary>
+    /// Reads the #2131 optimistic-concurrency revision. The column is NOT NULL DEFAULT 1, so a
+    /// persisted row is always at 1 or higher; the fallback exists only for a projection that
+    /// predates the migration (never produced by this store's own SELECTs).
+    /// </summary>
+    private static long GetVersion(SqliteDataReader reader)
+    {
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            if (!string.Equals(reader.GetName(i), "version", StringComparison.OrdinalIgnoreCase))
+                continue;
+            return reader.IsDBNull(i) ? 1L : reader.GetInt64(i);
+        }
+
+        return 1L;
+    }
 
     private static string? GetNullableString(SqliteDataReader reader, string column)
     {
