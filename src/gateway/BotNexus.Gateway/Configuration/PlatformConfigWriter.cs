@@ -1,4 +1,4 @@
-using System.IO.Abstractions;
+﻿using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -300,13 +300,62 @@ public sealed class PlatformConfigWriter
             //    per platform, and this is a REWRITE path, not a first-create path - a fix applied
             //    only when the file is first created would leave every subsequent save wrong.
             SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
-            _fileSystem.File.Move(tempPath, _configPath, overwrite: true);
+            await ReplaceWithRetryAsync(tempPath, ct);
             SecureFilePermissions.RestrictToOwner(_fileSystem, _configPath);
         }
         finally
         {
             if (_fileSystem.File.Exists(tempPath))
                 _fileSystem.File.Delete(tempPath);
+        }
+    }
+
+    // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when
+    // ANY other handle is open on the destination - even one opened with the maximal
+    // FileShare.ReadWrite | FileShare.Delete that the configuration provider's reload watcher
+    // uses. The gateway registers config.json with AddJsonFile(reloadOnChange: true), so it is
+    // routinely its own competing reader; a measured probe lost 29 of 40 saves.
+    //
+    // Two mitigations, in order:
+    //  1) Prefer File.Replace, which maps to Win32 ReplaceFile semantics and tolerates readers
+    //     that opened the destination with delete sharing. Replace requires the destination to
+    //     exist, so a first-create still uses Move.
+    //  2) Wrap both in a bounded retry with backoff, because a reader that opened WITHOUT delete
+    //     sharing still blocks the swap momentarily and that window is short.
+    //
+    // Atomicity is unchanged: the staged temp file is still swapped in as a single operation, and
+    // the final failure is rethrown rather than swallowed so a lost edit can never be mistaken
+    // for a successful save.
+    private const int ReplaceAttempts = 10;
+
+    private async Task ReplaceWithRetryAsync(string tempPath, CancellationToken ct)
+    {
+        var delayMs = 5;
+        for (var attempt = 1; ; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (_fileSystem.File.Exists(_configPath))
+                {
+                    _fileSystem.File.Replace(
+                        tempPath, _configPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                }
+                else
+                {
+                    _fileSystem.File.Move(tempPath, _configPath, overwrite: true);
+                }
+
+                return;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                if (attempt >= ReplaceAttempts)
+                    throw;
+            }
+
+            await Task.Delay(delayMs, ct);
+            delayMs = Math.Min(delayMs * 2, 100);
         }
     }
 
