@@ -537,6 +537,29 @@ public sealed class CronControllerTests
             return Task.FromResult<IReadOnlyList<CronRun>>(runs);
         }
 
+        // #2477: idempotent by (jobId, scheduled occurrence) - a repeat scan must not add a row.
+        public Task<bool> TryRecordMissedRunAsync(JobId jobId, DateTimeOffset scheduledOccurrenceUtc, CancellationToken ct = default)
+        {
+            var occurrence = scheduledOccurrenceUtc.ToUniversalTime();
+            if (_runs.Values.Any(r => r.JobId == jobId
+                && r.Status == CronRunStatus.Missed
+                && r.StartedAt.ToUniversalTime() == occurrence))
+            {
+                return Task.FromResult(false);
+            }
+
+            var run = new CronRun
+            {
+                Id = RunId.Create(),
+                JobId = jobId,
+                StartedAt = occurrence,
+                CompletedAt = occurrence,
+                Status = CronRunStatus.Missed
+            };
+            _runs[run.Id.Value] = run;
+            return Task.FromResult(true);
+        }
+
         public Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<CronRun>>(_runs.Values.Where(r => r.Status == CronRunStatus.Running).ToList());
 
