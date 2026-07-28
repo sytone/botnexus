@@ -47,6 +47,20 @@ Returns `200 OK` with a JSON array of conversation summaries (active only).
 Returns `200 OK` with the full conversation (including channel bindings), or
 `404 Not Found`.
 
+The response carries the three provenance axes a client needs to render a conversation
+without inference, each emitted as the enum **name** (matching the existing string
+convention already used for `status`):
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `kind` | `HumanAgent`, `AgentAgent`, `AgentSubAgent` | pairing topology - who is talking to whom |
+| `source` | `Channel`, `Cron`, `Webhook`, `Agent` | origination trigger - why the conversation exists |
+| `visibility` | `UserFacing`, `InspectableReadOnly`, `InternalHidden` | who may see the row |
+
+All three are stamped once at creation and are never re-written. `visibility` defaults to
+`UserFacing`, so conversations persisted before the field existed remain visible. See
+[Conversation Provenance](../features/conversation-provenance.md) for the full model.
+
 ### `POST /api/conversations`
 
 Creates a conversation. Body fields: `agentId` (required), `title`, `purpose`,

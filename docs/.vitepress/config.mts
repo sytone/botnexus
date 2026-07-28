@@ -162,6 +162,7 @@ export default defineConfig({
           { text: 'Triggers and Federation', link: '/development/triggers-and-federation' },
           { text: 'WebUI Connection', link: '/development/webui-connection' },
           { text: 'Security-Sensitive File Guard', link: '/development/security-sensitive-file-guard' },
+          { text: 'Downloaded Payload Verification', link: '/development/downloaded-payload-verification' },
           { text: 'Git Worktree Config Hardening', link: '/development/git-worktree-config-hardening' },
           { text: 'Gateway Crash Diagnostics', link: '/development/gateway-crash-diagnostics' },
           { text: 'Running Impacted Tests', link: '/development/running-tests' },
