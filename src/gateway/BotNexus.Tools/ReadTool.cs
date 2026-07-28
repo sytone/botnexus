@@ -146,6 +146,13 @@ public sealed class ReadTool : IAgentTool
 
         resolvedPath ??= PathUtils.ResolvePath(relativePath, _workingDirectory, _fileSystem);
 
+        // Validation may have swapped a symlinked prefix for the link's real target. Keep that resolution for
+        // all filesystem access, but report paths under the prefix the caller named. See issue #2404.
+        var displayPath = PathDisplay.Reanchor(
+            resolvedPath,
+            resolvedPath,
+            PathDisplay.ResolveRequestedRoot(relativePath, _workingDirectory, _fileSystem));
+
         if (_fileSystem.File.Exists(resolvedPath))
         {
             var bytes = _fileSystem.File.ReadAllBytes(resolvedPath);
@@ -177,7 +184,7 @@ public sealed class ReadTool : IAgentTool
 
         if (_fileSystem.Directory.Exists(resolvedPath))
         {
-            var listing = ListDirectory(resolvedPath, _fileSystem);
+            var listing = ListDirectory(resolvedPath, displayPath, _fileSystem);
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, listing)]);
         }
 
@@ -304,7 +311,7 @@ public sealed class ReadTool : IAgentTool
         return false;
     }
 
-    private static string ListDirectory(string fullPath, IFileSystem fileSystem)
+    private static string ListDirectory(string fullPath, string displayPath, IFileSystem fileSystem)
     {
         var root = Path.GetFullPath(fullPath);
         var entries = fileSystem.Directory
@@ -319,7 +326,7 @@ public sealed class ReadTool : IAgentTool
             .ToList();
 
         return entries.Count == 0
-            ? $"Directory '{root}' is empty (within depth 2)."
+            ? $"Directory '{displayPath}' is empty (within depth 2)."
             : string.Join(Environment.NewLine, entries);
     }
 
