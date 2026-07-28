@@ -82,4 +82,5 @@ public sealed record SessionCompactionOutcome(
     int EntriesPreserved,
     int TokensBefore,
     int TokensAfter,
-    string? FailureReason);
+    string? FailureReason,
+    string? SkipReason = null);
