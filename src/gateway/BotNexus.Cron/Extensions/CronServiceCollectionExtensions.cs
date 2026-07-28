@@ -33,6 +33,9 @@ public static class CronServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentPromptAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, HeartbeatAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, WebhookAction>());
+        // #2462: firing-time authorization seam for command cron jobs. Registered here so
+        // CommandCronAction resolves a real authorizer instead of a local fallback instance.
+        services.TryAddSingleton<ICommandCronAuthorizer, ToolPolicyCommandCronAuthorizer>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, CommandCronAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, MemoryDreamingCronAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, SkillReviewCronAction>());
