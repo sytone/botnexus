@@ -13,7 +13,22 @@ namespace BotNexus.Cli.Commands;
 internal class UpdateCommand
 {
     private const int CancelledExitCode = 130;
+
+    /// <summary>
+    /// Distinct exit code for "the deployment repo has uncommitted changes and we refused to touch
+    /// them". Deliberately not 1: cron and scripted callers need to tell a dirty deployment tree
+    /// apart from an auth or network failure without string-matching git output.
+    /// </summary>
+    internal const int DirtyWorkingTreeExitCode = 3;
+
     private readonly IGatewayProcessManager _processManager;
+
+    /// <summary>
+    /// How to handle uncommitted changes in the deployment repo before pulling. Set from the
+    /// <c>--stash</c> / <c>--force</c> options. Defaults to <see cref="DirtyTreeMode.Abort"/> so
+    /// the safe behaviour (never destroy the user's work) is what you get when you say nothing.
+    /// </summary>
+    internal DirtyTreeMode DirtyTreeHandling { get; set; } = DirtyTreeMode.Abort;
 
     public UpdateCommand(IGatewayProcessManager processManager)
     {
@@ -24,11 +39,15 @@ internal class UpdateCommand
     {
         var sourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
         var portOption = new Option<int>("--port", () => 5005, "Gateway port.");
+        var stashOption = new Option<bool>("--stash", () => false, "If the repo has uncommitted changes, stash them (recoverable) and continue.");
+        var forceOption = new Option<bool>("--force", () => false, "If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive.");
 
         var command = new Command("update", "Pull latest source, build, and restart the BotNexus gateway.")
         {
             sourceOption,
-            portOption
+            portOption,
+            stashOption,
+            forceOption
         };
 
         command.SetHandler(async context =>
@@ -37,8 +56,19 @@ internal class UpdateCommand
             var target = context.ParseResult.GetValueForOption(targetOption);
             var port = context.ParseResult.GetValueForOption(portOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var stash = context.ParseResult.GetValueForOption(stashOption);
+            var force = context.ParseResult.GetValueForOption(forceOption);
             var repoRoot = CliPaths.ResolveSource(source);
             var home = CliPaths.ResolveTarget(target);
+
+            if (stash && force)
+            {
+                AnsiConsole.MarkupLine("[red]✗[/] --stash and --force cannot be combined.");
+                context.ExitCode = 2;
+                return;
+            }
+
+            DirtyTreeHandling = force ? DirtyTreeMode.Force : stash ? DirtyTreeMode.Stash : DirtyTreeMode.Abort;
             context.ExitCode = await ExecuteAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
         });
 
@@ -174,6 +204,12 @@ internal class UpdateCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
+        // Step 0: never run `git pull` blind at a deployment repo that has uncommitted work in it.
+        // A raw git abort mid-update leaves the gateway on the old build with no guidance (#2492).
+        var preflight = await EnsureWorkingTreeReadyAsync(repoRoot, cancellationToken);
+        if (preflight != 0)
+            return preflight;
+
         // Step 1: git pull
         string beforeSha;
         string afterSha;
@@ -236,11 +272,11 @@ internal class UpdateCommand
 
         if (pullResult.ExitCode != 0)
         {
-            AnsiConsole.MarkupLine("[red]✗[/] git pull failed.");
+            var kind = ClassifyPullFailure(pullResult.FailureDetail);
+            AnsiConsole.MarkupLine($"[red]✗[/] {PullFailureHeadline(kind)}");
             if (!string.IsNullOrWhiteSpace(pullResult.FailureDetail))
                 AnsiConsole.MarkupLine($"[dim]{Markup.Escape(pullResult.FailureDetail)}[/]");
-            else
-                AnsiConsole.MarkupLine("[yellow]⚠[/] Check network, auth, or repo path.");
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] {PullFailureRemediation(kind, repoRoot)}");
 
             return pullResult.ExitCode;
         }
@@ -400,6 +436,265 @@ internal class UpdateCommand
             return 1;
         }
     }
+
+    /// <summary>
+    /// Pre-flight guard for the deployment repo working tree. The deployment repo is a deployed
+    /// artifact, not a dev worktree, so uncommitted changes there are almost always accidental.
+    /// We refuse to run <c>git pull</c> over them and instead report every dirty path plus a
+    /// copy-pasteable remediation. Nothing is ever discarded unless the user explicitly asked
+    /// (via <c>--force</c> or the interactive prompt), and stashes are named and reported so the
+    /// work is always recoverable.
+    /// Returns 0 to continue, otherwise the exit code the update should terminate with.
+    /// </summary>
+    protected virtual async Task<int> EnsureWorkingTreeReadyAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var status = await GetWorkingTreeStatusAsync(repoRoot, cancellationToken);
+        if (status.WasCanceled)
+        {
+            AnsiConsole.MarkupLine("[yellow]\u26a0[/] Update cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (status.ExitCode != 0)
+        {
+            // Could not read status (not a repo, git missing). Let the pull path report it.
+            return 0;
+        }
+
+        if (status.DirtyPaths.Count == 0)
+        {
+            if (status.UntrackedPaths.Count > 0)
+                AnsiConsole.MarkupLine($"[dim]{status.UntrackedPaths.Count} untracked file(s) in the repo; these do not block the update.[/]");
+            return 0;
+        }
+
+        var mode = DirtyTreeHandling;
+        if (mode == DirtyTreeMode.Abort && AnsiConsole.Profile.Capabilities.Interactive)
+            mode = PromptDirtyTreeChoice(status.DirtyPaths);
+
+        switch (mode)
+        {
+            case DirtyTreeMode.Stash:
+                return await StashDirtyTreeAsync(repoRoot, status.DirtyPaths, cancellationToken);
+            case DirtyTreeMode.Force:
+                return await DiscardDirtyTreeAsync(repoRoot, status.DirtyPaths, cancellationToken);
+            default:
+                PrintDirtyTreeAbort(repoRoot, status.DirtyPaths);
+                return DirtyWorkingTreeExitCode;
+        }
+    }
+
+    private static void PrintDirtyTreeAbort(string repoRoot, IReadOnlyList<string> dirtyPaths)
+    {
+        AnsiConsole.MarkupLine($"[red]\u2717[/] Update aborted: {dirtyPaths.Count} uncommitted change(s) in the deployment repo.");
+        foreach (var path in dirtyPaths)
+            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+        AnsiConsole.MarkupLine("[yellow]\u26a0[/] Your local changes were left untouched. Choose one:");
+        AnsiConsole.MarkupLine("  [dim]botnexus update --stash[/]   keep them (saved to a named stash, recoverable)");
+        AnsiConsole.MarkupLine("  [dim]botnexus update --force[/]   discard tracked-file changes and update");
+        AnsiConsole.MarkupLine($"  [dim]git -C \"{Markup.Escape(repoRoot)}\" commit -am \"local changes\"[/]   keep them as a commit");
+    }
+
+    private async Task<int> StashDirtyTreeAsync(string repoRoot, IReadOnlyList<string> dirtyPaths, CancellationToken cancellationToken)
+    {
+        var label = $"botnexus-update-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
+        var result = await StashChangesAsync(repoRoot, label, cancellationToken);
+        if (result.WasCanceled)
+        {
+            AnsiConsole.MarkupLine("[yellow]\u26a0[/] Update cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (result.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine("[red]\u2717[/] Could not stash local changes; update aborted.");
+            if (!string.IsNullOrWhiteSpace(result.FailureDetail))
+                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(result.FailureDetail)}[/]");
+            return DirtyWorkingTreeExitCode;
+        }
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Stashed {dirtyPaths.Count} local change(s) as [yellow]{Markup.Escape(label)}[/]");
+        AnsiConsole.MarkupLine($"  [dim]git -C \"{Markup.Escape(repoRoot)}\" stash apply stash^{{/{Markup.Escape(label)}}}[/]   to restore them");
+        return 0;
+    }
+
+    private async Task<int> DiscardDirtyTreeAsync(string repoRoot, IReadOnlyList<string> dirtyPaths, CancellationToken cancellationToken)
+    {
+        AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Discarding {dirtyPaths.Count} local change(s) in the deployment repo (--force):");
+        foreach (var path in dirtyPaths)
+            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+
+        var result = await DiscardChangesAsync(repoRoot, cancellationToken);
+        if (result.WasCanceled)
+        {
+            AnsiConsole.MarkupLine("[yellow]\u26a0[/] Update cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (result.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine("[red]\u2717[/] Could not discard local changes; update aborted.");
+            if (!string.IsNullOrWhiteSpace(result.FailureDetail))
+                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(result.FailureDetail)}[/]");
+            return DirtyWorkingTreeExitCode;
+        }
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Discarded {dirtyPaths.Count} local change(s)");
+        return 0;
+    }
+
+    /// <summary>
+    /// Interactive stash/discard/abort choice. Protected virtual so tests can script the answer
+    /// without a TTY. Defaults to abort, which is the non-destructive answer.
+    /// </summary>
+    protected virtual DirtyTreeMode PromptDirtyTreeChoice(IReadOnlyList<string> dirtyPaths)
+    {
+        AnsiConsole.MarkupLine($"[yellow]\u26a0[/] The deployment repo has {dirtyPaths.Count} uncommitted change(s):");
+        foreach (var path in dirtyPaths)
+            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+
+        const string stash = "Stash them (recoverable) and continue";
+        const string discard = "Discard local changes and continue";
+        const string abort = "Abort the update";
+
+        var choice = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("How do you want to proceed?")
+                .AddChoices(stash, discard, abort));
+
+        return choice switch
+        {
+            stash => DirtyTreeMode.Stash,
+            discard => DirtyTreeMode.Force,
+            _ => DirtyTreeMode.Abort
+        };
+    }
+
+    protected virtual Task<GitStatusResult> GetWorkingTreeStatusAsync(string repoRoot, CancellationToken cancellationToken)
+        => GetWorkingTreeStatusCoreAsync(repoRoot, cancellationToken);
+
+    private static async Task<GitStatusResult> GetWorkingTreeStatusCoreAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var result = await RunGitAsync(repoRoot, "status --porcelain", captureOutput: true, cancellationToken);
+        if (result.WasCanceled)
+            return new GitStatusResult(CancelledExitCode, Array.Empty<string>(), Array.Empty<string>(), null, true);
+        if (!result.Started)
+            return new GitStatusResult(1, Array.Empty<string>(), Array.Empty<string>(), "Failed to start git process.", false);
+        if (result.ExitCode != 0)
+        {
+            var details = FirstNonEmptyLine(result.Stderr) ?? FirstNonEmptyLine(result.Stdout);
+            return new GitStatusResult(result.ExitCode, Array.Empty<string>(), Array.Empty<string>(), details, false);
+        }
+
+        return ParsePorcelainStatus(result.Stdout);
+    }
+
+    /// <summary>
+    /// Splits <c>git status --porcelain</c> output into changes that would block a pull (tracked
+    /// modifications, staged changes, deletions, renames) and untracked files, which do not.
+    /// </summary>
+    internal static GitStatusResult ParsePorcelainStatus(string porcelain)
+    {
+        var dirty = new List<string>();
+        var untracked = new List<string>();
+
+        foreach (var raw in porcelain.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (raw.Length < 4)
+                continue;
+
+            var code = raw[..2];
+            var path = raw[3..].Trim();
+            if (path.Length == 0)
+                continue;
+
+            if (code == "??")
+                untracked.Add(path);
+            else
+                dirty.Add(path);
+        }
+
+        return new GitStatusResult(0, dirty, untracked, null, false);
+    }
+
+    protected virtual Task<GitCommandResult> StashChangesAsync(string repoRoot, string label, CancellationToken cancellationToken)
+        => RunGitSimpleAsync(repoRoot, $"stash push -m \"{label}\"", cancellationToken);
+
+    protected virtual Task<GitCommandResult> DiscardChangesAsync(string repoRoot, CancellationToken cancellationToken)
+        => RunGitSimpleAsync(repoRoot, "reset --hard HEAD", cancellationToken);
+
+    private static async Task<GitCommandResult> RunGitSimpleAsync(string repoRoot, string arguments, CancellationToken cancellationToken)
+    {
+        var result = await RunGitAsync(repoRoot, arguments, captureOutput: true, cancellationToken);
+        if (result.WasCanceled)
+            return new GitCommandResult(CancelledExitCode, null, true);
+        if (!result.Started)
+            return new GitCommandResult(1, "Failed to start git process.", false);
+        if (result.ExitCode == 0)
+            return new GitCommandResult(0, null, false);
+
+        var details = FirstNonEmptyLine(result.Stderr) ?? FirstNonEmptyLine(result.Stdout);
+        return new GitCommandResult(result.ExitCode, details, false);
+    }
+
+    /// <summary>
+    /// Classifies a git pull failure so the user gets a remediation rather than a raw git line.
+    /// A dirty tree, a diverged branch, an auth rejection and a network outage need four different
+    /// answers and previously surfaced identically (#2492).
+    /// </summary>
+    internal static GitPullFailureKind ClassifyPullFailure(string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+            return GitPullFailureKind.Other;
+
+        var text = detail.ToLowerInvariant();
+
+        if (text.Contains("local changes", StringComparison.Ordinal)
+            || text.Contains("would be overwritten", StringComparison.Ordinal)
+            || text.Contains("commit your changes or stash them", StringComparison.Ordinal))
+            return GitPullFailureKind.DirtyTree;
+
+        if (text.Contains("diverged", StringComparison.Ordinal)
+            || text.Contains("non-fast-forward", StringComparison.Ordinal)
+            || text.Contains("automatic merge failed", StringComparison.Ordinal)
+            || text.Contains("fix conflicts", StringComparison.Ordinal))
+            return GitPullFailureKind.Diverged;
+
+        if (text.Contains("authentication failed", StringComparison.Ordinal)
+            || text.Contains("permission denied", StringComparison.Ordinal)
+            || text.Contains("could not read username", StringComparison.Ordinal)
+            || text.Contains("invalid username or password", StringComparison.Ordinal)
+            || text.Contains("access denied", StringComparison.Ordinal))
+            return GitPullFailureKind.Auth;
+
+        if (text.Contains("could not resolve host", StringComparison.Ordinal)
+            || text.Contains("connection timed out", StringComparison.Ordinal)
+            || text.Contains("connection refused", StringComparison.Ordinal)
+            || text.Contains("network is unreachable", StringComparison.Ordinal)
+            || text.Contains("failed to connect", StringComparison.Ordinal)
+            || text.Contains("unable to access", StringComparison.Ordinal))
+            return GitPullFailureKind.Network;
+
+        return GitPullFailureKind.Other;
+    }
+
+    internal static string PullFailureHeadline(GitPullFailureKind kind) => kind switch
+    {
+        GitPullFailureKind.DirtyTree => "git pull failed: local changes would be overwritten.",
+        GitPullFailureKind.Diverged => "git pull failed: the local branch has diverged from origin/main.",
+        GitPullFailureKind.Auth => "git pull failed: the remote rejected authentication.",
+        GitPullFailureKind.Network => "git pull failed: could not reach the remote.",
+        _ => "git pull failed."
+    };
+
+    internal static string PullFailureRemediation(GitPullFailureKind kind, string repoRoot) => kind switch
+    {
+        GitPullFailureKind.DirtyTree => "Re-run with botnexus update --stash to keep your changes, or --force to discard them.",
+        GitPullFailureKind.Diverged => $"Resolve manually: git -C \"{repoRoot}\" status, then merge or reset to origin/main.",
+        GitPullFailureKind.Auth => "Check your git credentials or credential helper for the origin remote.",
+        GitPullFailureKind.Network => "Check network connectivity and that the origin remote is reachable.",
+        _ => "Check network, auth, or repo path."
+    };
 
     protected virtual Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
         => RunGitPullCoreAsync(repoRoot, verbose, cancellationToken);
@@ -734,6 +1029,38 @@ internal class UpdateCommand
     /// (issue #1536) and all CLI call sites share one implementation.
     /// </summary>
     internal static bool IsPortAvailable(int port) => ServeCommand.IsPortAvailable(port);
+
+    /// <summary>How uncommitted changes in the deployment repo should be handled before pulling.</summary>
+    internal enum DirtyTreeMode
+    {
+        /// <summary>Do not touch the user's work; report and exit non-zero.</summary>
+        Abort,
+        /// <summary>Save the work to a named, reported, recoverable stash and continue.</summary>
+        Stash,
+        /// <summary>Explicitly discard tracked-file changes and continue.</summary>
+        Force
+    }
+
+    /// <summary>Classification of a <c>git pull</c> failure, used to pick a remediation message.</summary>
+    internal enum GitPullFailureKind
+    {
+        DirtyTree,
+        Diverged,
+        Auth,
+        Network,
+        Other
+    }
+
+    /// <summary>
+    /// Parsed <c>git status --porcelain</c> result. <paramref name="DirtyPaths"/> are changes that
+    /// would block a pull; <paramref name="UntrackedPaths"/> are reported but never block.
+    /// </summary>
+    internal readonly record struct GitStatusResult(
+        int ExitCode,
+        IReadOnlyList<string> DirtyPaths,
+        IReadOnlyList<string> UntrackedPaths,
+        string? FailureDetail,
+        bool WasCanceled);
 
     internal readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
     internal readonly record struct GitCommandResult(int ExitCode, string? FailureDetail, bool WasCanceled);

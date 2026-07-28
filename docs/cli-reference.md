@@ -1886,7 +1886,38 @@ botnexus update [COMMAND] [OPTIONS]
 |--------|-----------|-------------|
 | `--source <DIR>` | `update`, `check` | Path to the BotNexus repository root. Defaults to `~/botnexus`. |
 | `--port <PORT>` | `update` | Gateway port to restart against. Defaults to `5005`. |
+| `--stash` | `update` | If the repo has uncommitted changes, stash them to a named, recoverable stash and continue. |
+| `--force` | `update` | If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive. |
 | `--verbose` | `update`, `check` | Show detailed update output. |
+
+`--stash` and `--force` cannot be combined (exit code `2`).
+
+### Uncommitted changes in the deployment repo
+
+The repo that `update` pulls into (`~/botnexus` by default) is a *deployed artifact*, not a
+development worktree, so local edits there are usually accidental. Before pulling, `update` runs
+`git status --porcelain` and acts on the result:
+
+- **Clean** - proceeds normally. Untracked files are reported but never block the update.
+- **Dirty, interactive** - lists every dirty path and prompts: stash / discard / abort.
+- **Dirty, non-interactive** - exits `3` with the dirty file list and copy-pasteable remediation.
+  Nothing is modified.
+
+`--stash` saves the work as `botnexus-update-<timestamp>` and prints the `git stash apply`
+command to restore it. The stash is **not** re-applied automatically after the pull, because a
+silent re-apply is how you get a surprise conflict in the middle of a gateway restart.
+
+Pull failures are classified (dirty tree / diverged / auth / network / other) and each gets its
+own remediation line instead of a raw git error.
+
+### Exit Codes (for `update`)
+
+| Code | Meaning |
+|------|--------|
+| `0` | Update applied |
+| `2` | Conflicting options (`--stash` with `--force`) |
+| `3` | Deployment repo has uncommitted changes; nothing was modified |
+| `130` | Cancelled |
 
 ### Exit Codes (for `update check`)
 
@@ -1904,6 +1935,12 @@ botnexus update check
 
 # Pull, build, and restart the gateway
 botnexus update
+
+# Update when the deployment repo has local edits you want to keep
+botnexus update --stash
+
+# Update and throw away local edits in the deployment repo
+botnexus update --force
 ```
 
 ---
