@@ -529,6 +529,12 @@ app.UseCors(GatewayCorsPolicy);
 // emitted automatically by the middleware.
 app.UseResponseCompression();
 app.UseSerilogRequestLogging();
+
+// #2387: single central seam for cancellation. Placed inside request logging so a client abort is
+// observed by Serilog as a plain 499 response rather than an unhandled exception logged at Error
+// and reported as 500. Cancellation NOT tied to HttpContext.RequestAborted is deliberately
+// rethrown so it still surfaces as an error.
+app.UseMiddleware<RequestCancellationMiddleware>();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
 app.UseMiddleware<RateLimitingMiddleware>();
