@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -979,12 +979,58 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <summary>
+    /// Server page size used when walking <c>GET /api/sessions</c>. The endpoint pages with a
+    /// default of 50 and a hard cap of 200 (#2411/#2468) and reports no total, so the only way to
+    /// obtain the complete roster is to request the maximum page and keep going until the server
+    /// returns a short page (#2499).
+    /// </summary>
+    private const int SessionPageSize = 200;
+
+    /// <summary>
+    /// Hard stop on the paging walk so a misbehaving server that keeps returning full pages can
+    /// never spin the portal forever. 200 * 200 = 40,000 sessions, far beyond any real store.
+    /// </summary>
+    private const int MaxSessionPages = 200;
+
+    /// <summary>
+    /// Reads every session page for <paramref name="agentId"/> (or all agents when null),
+    /// stopping on the first short or empty page.
+    /// </summary>
+    private async Task<List<SessionSummary>> LoadAllSessionsAsync(
+        string? agentId,
+        CancellationToken cancellationToken)
+    {
+        var all = new List<SessionSummary>();
+        for (var page = 0; page < MaxSessionPages; page++)
+        {
+            var batch = await _restClient.GetSessionsAsync(
+                agentId,
+                SessionPageSize,
+                all.Count,
+                cancellationToken);
+
+            // Only an EMPTY page is a reliable terminator. The server clamps the requested limit to
+            // its own maximum, so a page shorter than SessionPageSize does NOT imply exhaustion -
+            // treating it as such is precisely how the portal would silently truncate again the
+            // next time the server-side cap changes. Cost of correctness: one trailing empty request.
+            if (batch.Count == 0)
+                break;
+
+            all.AddRange(batch);
+        }
+
+        return all;
+    }
+
     private async Task RefreshConversationsForAgentAsync(string agentId)
     {
         try
         {
             var listTask = _restClient.GetConversationsAsync(agentId);
-            var sessionsTask = _restClient.GetSessionsAsync(agentId);
+            // #2499: page until exhausted. Per-agent totals are usually under the page size, but the
+            // endpoint pages unconditionally, so a single call is an unbounded assumption either way.
+            var sessionsTask = LoadAllSessionsAsync(agentId, CancellationToken.None);
             await Task.WhenAll(listTask, sessionsTask);
 
             var list = listTask.Result;

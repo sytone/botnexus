@@ -1,4 +1,4 @@
-using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+﻿using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -13,9 +13,11 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 /// </summary>
 public sealed class SessionPagingTests
 {
-    /// <summary>Total sessions the fake server holds: three pages at a 200 cap would be one page,
-    /// so the fake honours whatever limit the caller asks for and we size the corpus to force
-    /// at least three round trips at any sane page size.</summary>
+    /// <summary>
+    /// Total sessions the fake server holds. The fake caps every page at 50 - the real endpoint's
+    /// default - regardless of the limit the client asks for, so 107 sessions require exactly three
+    /// round trips (50 @ 0, 50 @ 50, 7 @ 100) and a non-paging consumer sees only the first 50.
+    /// </summary>
     private const int TotalSessions = 107;
 
     /// <summary>
@@ -28,7 +30,7 @@ public sealed class SessionPagingTests
         string agentId,
         int total,
         int serverDefaultLimit = 50,
-        int serverMaxLimit = 200)
+        int serverMaxLimit = 50)
     {
         var requests = new List<(int? Limit, int Offset)>();
         var all = Enumerable.Range(0, total)
@@ -92,10 +94,8 @@ public sealed class SessionPagingTests
             $"it registered {registered} of {TotalSessions} sessions.");
 
         // Paging must advance the offset monotonically and stop on the short page.
-        requests.Count.ShouldBeGreaterThan(1);
-        requests[0].Offset.ShouldBe(0);
-        for (var i = 1; i < requests.Count; i++)
-            requests[i].Offset.ShouldBeGreaterThan(requests[i - 1].Offset);
+        // 50 @ 0, 50 @ 50, 7 @ 100, then the trailing empty probe at 107 that proves exhaustion.
+        requests.Select(r => r.Offset).ShouldBe(new[] { 0, 50, 100, 107 });
     }
 
     /// <summary>
@@ -133,9 +133,8 @@ public sealed class SessionPagingTests
             "RefreshConversationsForAgentAsync must page GET /api/sessions until a short page is " +
             $"returned; it registered {registered} of {TotalSessions} sessions.");
 
-        requests.Count.ShouldBeGreaterThan(1);
         requests.ShouldAllBe(r => r.Limit != null);
-        requests[0].Offset.ShouldBe(0);
+        requests.Select(r => r.Offset).ShouldBe(new[] { 0, 50, 100, 107 });
     }
 
     /// <summary>
@@ -158,15 +157,16 @@ public sealed class SessionPagingTests
         restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
             .Returns(new List<ConversationSummaryDto>());
 
-        // 400 == exactly two full pages at the 200 server cap.
-        var requests = StubPagedSessions(restClient, "agent-1", 400);
+        // 100 == exactly two full pages at the 50 server cap, so the walk only stops via the
+        // trailing empty page - the boundary a naive "stop on short page" loop would get wrong.
+        var requests = StubPagedSessions(restClient, "agent-1", 100);
 
         await service.InitializeAsync("http://localhost:5000/hub/gateway");
 
-        var registered = Enumerable.Range(0, 400)
+        var registered = Enumerable.Range(0, 100)
             .Count(i => store.TryResolveAgentBySession($"sess-{i:D4}", out _));
 
-        registered.ShouldBe(400);
+        registered.ShouldBe(100);
         requests.Count.ShouldBeLessThan(10, "the paging loop must terminate, not spin.");
     }
 }
