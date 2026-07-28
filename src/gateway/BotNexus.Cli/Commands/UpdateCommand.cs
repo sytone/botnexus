@@ -114,6 +114,27 @@ internal class UpdateCommand
         if (pullResult != 0)
             return pullResult;
 
+        // Step 1b: if the pull genuinely changed nothing, there is nothing to build and no
+        // reason to bounce the gateway. Previously this case still stopped the gateway, ran a
+        // full solution build and restarted - minutes of downtime to produce byte-identical
+        // output.
+        //
+        // CONSERVATIVE BY CONSTRUCTION: this is NOT a "did anything change" heuristic over
+        // build inputs, and it does not try to reason about which sources are newer than which
+        // binaries. It skips ONLY when all four of these hold:
+        //   1. HEAD did not move across the pull,
+        //   2. the working tree is clean (no uncommitted edit could be waiting to compile),
+        //   3. git status was actually readable (an unreadable status is treated as dirty),
+        //   4. the gateway binary that would be launched already exists on disk.
+        // Anything else - any doubt at all - falls through to the full stop/build/deploy/restart
+        // path. A slow update is recoverable; a stale binary after a "successful" update is the
+        // silent-failure class this repo has been fighting.
+        if (await CanSkipRebuildAsync(repoRoot, cancellationToken))
+        {
+            AnsiConsole.MarkupLine("[green]\u2713[/] Nothing to rebuild; gateway left running.");
+            return 0;
+        }
+
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         GatewayStopResult stopResult;
         if (interactive)
@@ -245,6 +266,10 @@ internal class UpdateCommand
             return pullResult.ExitCode;
         }
 
+        // Record whether this pull actually moved HEAD. Only a successful pull that left HEAD
+        // exactly where it was can qualify the update for the no-rebuild fast path.
+        LastPullWasNoOp = beforeSha == afterSha && !string.IsNullOrEmpty(beforeSha);
+
         if (beforeSha == afterSha)
         {
             AnsiConsole.MarkupLine($"[green]✓[/] Already up to date ([dim]{Markup.Escape(Short(beforeSha))}[/])");
@@ -333,7 +358,7 @@ internal class UpdateCommand
             return 1;
         }
 
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        var gatewayDll = ResolveGatewayBinaryPath(repoRoot);
         if (!File.Exists(gatewayDll))
         {
             AnsiConsole.MarkupLine($"[red]✗[/] Gateway binary not found: [dim]{Markup.Escape(gatewayDll)}[/]");
@@ -734,6 +759,72 @@ internal class UpdateCommand
     /// (issue #1536) and all CLI call sites share one implementation.
     /// </summary>
     internal static bool IsPortAvailable(int port) => ServeCommand.IsPortAvailable(port);
+
+    /// <summary>
+    /// Whether the update can return without stopping, rebuilding, deploying and restarting the
+    /// gateway. See the call site in <c>ExecuteAsync</c> for the full reasoning; in short this
+    /// returns <c>true</c> only when the repository provably did not move and the artefact that
+    /// would be launched already exists. Every uncertain case returns <c>false</c> (= build).
+    /// </summary>
+    protected virtual async Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        // The pull step records whether HEAD moved. If it did, always build.
+        if (!LastPullWasNoOp)
+            return false;
+
+        // An unreadable or dirty working tree means uncommitted source could be waiting to be
+        // compiled into the deployed binary. Build.
+        var status = await GetWorkingTreeCleanlinessAsync(repoRoot, cancellationToken);
+        if (status != WorkingTreeCleanliness.Clean)
+            return false;
+
+        // If the binary we would start is not there, we obviously have to build it.
+        return File.Exists(ResolveGatewayBinaryPath(repoRoot));
+    }
+
+    /// <summary>
+    /// Path of the gateway assembly that <c>RunRestartAsync</c> launches. Centralised so the
+    /// skip decision and the start decision can never disagree about which file matters.
+    /// </summary>
+    internal static string ResolveGatewayBinaryPath(string repoRoot)
+        => Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+
+    /// <summary>
+    /// Set by the pull step: true only when <c>git pull</c> succeeded AND HEAD did not move.
+    /// Defaults to <c>false</c> so a code path that never ran the pull step cannot accidentally
+    /// be treated as "nothing changed".
+    /// </summary>
+    protected bool LastPullWasNoOp { get; set; }
+
+    /// <summary>Tri-state working-tree result; anything other than Clean forces a build.</summary>
+    internal enum WorkingTreeCleanliness
+    {
+        /// <summary>git status succeeded and reported no tracked modifications.</summary>
+        Clean,
+
+        /// <summary>git status succeeded and reported tracked modifications.</summary>
+        Dirty,
+
+        /// <summary>git status could not be read at all; treated as dirty.</summary>
+        Unknown
+    }
+
+    /// <summary>
+    /// Reads the tracked-file cleanliness of the repo. Untracked files are ignored - they are
+    /// not build inputs for any project and never block a pull - but every tracked modification
+    /// and every failure to read status counts against skipping.
+    /// Protected virtual so tests can script the answer without a real repository.
+    /// </summary>
+    protected virtual async Task<WorkingTreeCleanliness> GetWorkingTreeCleanlinessAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var result = await RunGitAsync(repoRoot, "status --porcelain --untracked-files=no", captureOutput: true, cancellationToken);
+        if (result.WasCanceled || !result.Started || result.ExitCode != 0)
+            return WorkingTreeCleanliness.Unknown;
+
+        return string.IsNullOrWhiteSpace(result.Stdout)
+            ? WorkingTreeCleanliness.Clean
+            : WorkingTreeCleanliness.Dirty;
+    }
 
     internal readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
     internal readonly record struct GitCommandResult(int ExitCode, string? FailureDetail, bool WasCanceled);
