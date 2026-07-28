@@ -204,10 +204,26 @@ public sealed class ExecTool : IAgentTool
             }
         }
 
+        // Re-check cancellation immediately before Start(). Everything above - command resolution,
+        // PowerShell preflight, working-directory resolution and environment merging - can take arbitrary
+        // time, so a token cancelled during that window must not be allowed to spawn a child at all.
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start process.");
+        }
+
+        StartedTestHook?.Invoke(process);
+
+        // Cancellation observed after Start() - the child is live. Kill the entire process tree via the
+        // existing TryKill path and propagate; the process is never registered in BackgroundProcesses, so
+        // it cannot outlive its turn or count against MaxBackgroundProcesses.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            TryKill(process);
+            throw new OperationCanceledException(cancellationToken);
         }
 
         if (background)
@@ -334,6 +350,13 @@ public sealed class ExecTool : IAgentTool
                 new ExecToolDetails(exitCode, termination));
         }
     }
+
+    /// <summary>
+    /// Test-only seam invoked immediately after the OS process is started and before the post-start
+    /// cancellation check. Lets tests deterministically exercise the "cancelled after start" branch
+    /// and observe the resulting PID. Always null in production.
+    /// </summary>
+    internal static Action<Process>? StartedTestHook { get; set; }
 
     /// <summary>
     /// Gets information about tracked background processes.
