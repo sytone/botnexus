@@ -1300,22 +1300,28 @@ private bool IsStreaming =>
     private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private Task SteerAgent()
-        => DispatchDraftAsync((text, attachments) => Interaction.SteerAsync(AgentId, text, attachments));
+        => DispatchDraftAsync((text, attachments) => attachments.Count == 0
+            ? Interaction.SteerAsync(AgentId, text)
+            : Interaction.SteerAsync(AgentId, text, attachments));
 
     private Task FollowUpAgent()
-        => DispatchDraftAsync(async (text, attachments) =>
+        => DispatchDraftAsync((text, attachments) =>
         {
             UpdateCommandPalette();
-            await Interaction.FollowUpAsync(AgentId, text, attachments);
+            return attachments.Count == 0
+                ? Interaction.FollowUpAsync(AgentId, text)
+                : Interaction.FollowUpAsync(AgentId, text, attachments);
         });
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
 
     private Task InterruptAndSteer()
-        => DispatchDraftAsync(async (text, attachments) =>
+        => DispatchDraftAsync((text, attachments) =>
         {
             UpdateCommandPalette();
-            await Interaction.InterruptAndSteerAsync(AgentId, text, attachments);
+            return attachments.Count == 0
+                ? Interaction.InterruptAndSteerAsync(AgentId, text)
+                : Interaction.InterruptAndSteerAsync(AgentId, text, attachments);
         });
 
     // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.

@@ -496,9 +496,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         });
         await _sessions.SaveAsync(session, Context.ConnectionAborted);
 
-        // Inject into agent's steering queue, carrying the composed multimodal message so image
-        // attachments reach the vision path instead of being dropped (#2484).
-        await handle.SteerAsync(composed, Context.ConnectionAborted);
+        // Inject into agent's steering queue. With no attachments this stays on the string
+        // overload (unchanged behaviour); with attachments the composed multimodal message is
+        // injected so image parts reach the vision path instead of being dropped (#2484).
+        if (parts.Count == 0)
+            await handle.SteerAsync(normalizedContent, Context.ConnectionAborted);
+        else
+            await handle.SteerAsync(composed, Context.ConnectionAborted);
 
         await PublishActivityAsync(
             ctx.AgentId,
@@ -549,9 +553,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (handle is null)
             return false;
 
-        await handle.InterruptAndSteerAsync(
-            AgentUserMessageComposer.Compose(message ?? string.Empty, parts),
-            Context.ConnectionAborted);
+        if (parts.Count == 0)
+            await handle.InterruptAndSteerAsync(message, Context.ConnectionAborted);
+        else
+            await handle.InterruptAndSteerAsync(
+                AgentUserMessageComposer.Compose(message ?? string.Empty, parts),
+                Context.ConnectionAborted);
         return true;
     }
 
@@ -626,7 +633,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 // dead-letter guard): a phantom idle handle's follow-up queue is never drained.
                 var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
                 if (handle is not null
-                    && await handle.TryFollowUpWhileRunningAsync(composed, CancellationToken.None))
+                    && await (parts.Count == 0
+                        ? handle.TryFollowUpWhileRunningAsync(normalizedContent, CancellationToken.None)
+                        : handle.TryFollowUpWhileRunningAsync(composed, CancellationToken.None)))
                 {
                     await PublishActivityAsync(
                         ctx.AgentId,
