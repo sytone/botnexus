@@ -53,63 +53,56 @@ public sealed class SessionListPaginationTests : IDisposable
     private SqliteSessionStore CreateStore()
         => new(_connectionString, NullLogger<SqliteSessionStore>.Instance, _conversations);
 
-    // Controller: clamping contract.
+    // Controller: clamping contract. #2532 moved the filter into the store, so the controller now
+    // calls ListSummaryPageAsync and passes the clamped window inside a SessionSummaryQuery. These
+    // tests assert the same clamping behaviour they always did, read off the new call.
+
+    private static Mock<ISessionStore> StoreCapturing(out Func<SessionSummaryQuery?> observed)
+    {
+        var store = new Mock<ISessionStore>();
+        SessionSummaryQuery? captured = null;
+        store.Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<SessionSummaryQuery, CancellationToken>((query, _) => captured = query)
+            .ReturnsAsync(SessionSummaryPage.Empty);
+        observed = () => captured;
+        return store;
+    }
 
     [Fact]
     public async Task List_WhenLimitOmitted_RequestsStoreDefaultOfFifty()
     {
-        var store = new Mock<ISessionStore>();
-        int? observedLimit = -1;
-        var observedOffset = -1;
-        store.Setup(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Callback<DateTimeOffset, int?, int, CancellationToken>((_, limit, offset, _) =>
-            {
-                observedLimit = limit;
-                observedOffset = offset;
-            })
-            .ReturnsAsync(Array.Empty<SessionSummary>());
+        var store = StoreCapturing(out var observed);
         var controller = new SessionsController(store.Object);
 
         var result = await controller.List(null, cancellationToken: CancellationToken.None);
 
         result.ShouldBeOfType<OkObjectResult>();
-        observedLimit.ShouldBe(50, "an omitted limit must default to 50, not to unbounded");
-        observedOffset.ShouldBe(0);
+        observed()!.Limit.ShouldBe(50, "an omitted limit must default to 50, not to unbounded");
+        observed()!.Offset.ShouldBe(0);
     }
 
     [Fact]
     public async Task List_WhenLimitExceedsMaximum_ClampsToTwoHundred()
     {
-        var store = new Mock<ISessionStore>();
-        int? observedLimit = -1;
-        store.Setup(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Callback<DateTimeOffset, int?, int, CancellationToken>((_, limit, _, _) => observedLimit = limit)
-            .ReturnsAsync(Array.Empty<SessionSummary>());
+        var store = StoreCapturing(out var observed);
         var controller = new SessionsController(store.Object);
 
         var result = await controller.List(null, limit: 100_000, cancellationToken: CancellationToken.None);
 
         result.ShouldBeOfType<OkObjectResult>();
-        observedLimit.ShouldBe(200, "limit must clamp to the in-file maximum of 200");
+        observed()!.Limit.ShouldBe(200, "limit must clamp to the in-file maximum of 200");
     }
 
     [Fact]
     public async Task List_PassesExplicitOffsetThroughToStore()
     {
-        var store = new Mock<ISessionStore>();
-        var observedOffset = -1;
-        store.Setup(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Callback<DateTimeOffset, int?, int, CancellationToken>((_, _, offset, _) => observedOffset = offset)
-            .ReturnsAsync(Array.Empty<SessionSummary>());
+        var store = StoreCapturing(out var observed);
         var controller = new SessionsController(store.Object);
 
         var result = await controller.List(null, offset: 25, cancellationToken: CancellationToken.None);
 
         result.ShouldBeOfType<OkObjectResult>();
-        observedOffset.ShouldBe(25);
+        observed()!.Offset.ShouldBe(25);
     }
 
     [Fact]
@@ -121,8 +114,7 @@ public sealed class SessionListPaginationTests : IDisposable
         var result = await controller.List(null, offset: -1, cancellationToken: CancellationToken.None);
 
         result.ShouldBeOfType<BadRequestObjectResult>();
-        store.Verify(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+        store.Verify(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a rejected request must not reach the store");
     }
@@ -136,8 +128,7 @@ public sealed class SessionListPaginationTests : IDisposable
         var result = await controller.List(null, limit: 0, cancellationToken: CancellationToken.None);
 
         result.ShouldBeOfType<BadRequestObjectResult>();
-        store.Verify(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+        store.Verify(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a rejected request must not reach the store");
     }
@@ -145,18 +136,202 @@ public sealed class SessionListPaginationTests : IDisposable
     [Fact]
     public async Task List_NeverRequestsUnboundedPage()
     {
-        var store = new Mock<ISessionStore>();
-        int? observedLimit = null;
-        store.Setup(s => s.ListSummariesAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Callback<DateTimeOffset, int?, int, CancellationToken>((_, limit, _, _) => observedLimit = limit)
-            .ReturnsAsync(Array.Empty<SessionSummary>());
+        var store = StoreCapturing(out var observed);
         var controller = new SessionsController(store.Object);
 
         _ = await controller.List(null, cancellationToken: CancellationToken.None);
 
-        observedLimit.ShouldNotBeNull(
+        observed()!.Limit.ShouldNotBeNull(
             "null means the explicit unbounded opt-in; the REST list endpoint must never use it");
+    }
+
+    // #2532 AC1: the filter must travel WITH the window, into the store.
+
+    [Fact]
+    public async Task List_PushesAgentAndStatusFilterIntoTheStoreQuery()
+    {
+        var store = StoreCapturing(out var observed);
+        var controller = new SessionsController(store.Object);
+
+        _ = await controller.List("agent-a", cancellationToken: CancellationToken.None);
+
+        var query = observed()!;
+        query.AgentId.ShouldBe(
+            "agent-a",
+            "the agent predicate must reach the store so limit/offset address the FILTERED set (#2532 AC1)");
+        query.IncludeInactive.ShouldBeFalse(
+            "the status predicate must reach the store too, for the same reason");
+    }
+
+    [Fact]
+    public async Task List_PushesIncludeInactiveIntoTheStoreQuery()
+    {
+        var store = StoreCapturing(out var observed);
+        var controller = new SessionsController(store.Object);
+
+        _ = await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None);
+
+        observed()!.IncludeInactive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task List_PushesConversationFilterIntoTheStoreQuery()
+    {
+        var store = StoreCapturing(out var observed);
+        var controller = new SessionsController(store.Object);
+
+        _ = await controller.List("agent-a", conversationId: "c1", cancellationToken: CancellationToken.None);
+
+        observed()!.ConversationId.ShouldBe("c1", "#2532 AC3: conversation-scoped reads are a store predicate");
+    }
+
+    // #2532 AC5: the response must carry an explicit exhaustion signal.
+
+    [Fact]
+    public async Task List_ResponseExposesTotalCountAndHasMore()
+    {
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage([], TotalCount: 107, HasMore: true));
+        var controller = new SessionsController(store.Object);
+
+        var ok = (await controller.List(null, cancellationToken: CancellationToken.None)) as OkObjectResult;
+
+        var json = System.Text.Json.JsonSerializer.Serialize(ok!.Value);
+        json.ShouldContain("\"totalCount\":107");
+        json.ShouldContain("\"hasMore\":true");
+    }
+
+    // SQLite store: filter-then-window, with a real LIMIT/OFFSET over the filtered set.
+
+    /// <summary>
+    /// #2532 AC1, at the store. With sessions for two agents interleaved, a page requested for one
+    /// agent must be a page of THAT AGENT'S rows - not a page of the raw table that happens to
+    /// contain some of them. This is the store-level statement of the coordinate-space bug.
+    /// </summary>
+    [Fact]
+    public async Task ListSummaryPageAsync_OffsetAddressesTheFilteredSet_NotTheWholeTable()
+    {
+        var now = DateTimeOffset.UtcNow;
+        // Interleave so that any page of the RAW table mixes the two agents.
+        for (var i = 0; i < 10; i++)
+        {
+            await SeedSessionAsync($"a-{i:D2}", now.AddMinutes(-(i * 2)), "agent-a");
+            await SeedSessionAsync($"b-{i:D2}", now.AddMinutes(-(i * 2) - 1), "agent-b");
+        }
+
+        var store = CreateStore();
+
+        var first = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 4, Offset: 0));
+        first.Items.Select(s => s.SessionId).ShouldBe(new[] { "a-00", "a-01", "a-02", "a-03" });
+        first.TotalCount.ShouldBe(10, "the total is the size of the FILTERED set");
+        first.HasMore.ShouldBeTrue();
+
+        // Offset 4 must skip four of AGENT-A's rows, not four raw table rows (which would land on
+        // a-02 because agent-b's rows are interleaved).
+        var second = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 4, Offset: 4));
+        second.Items.Select(s => s.SessionId).ShouldBe(new[] { "a-04", "a-05", "a-06", "a-07" });
+        second.HasMore.ShouldBeTrue();
+
+        var last = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 4, Offset: 8));
+        last.Items.Select(s => s.SessionId).ShouldBe(new[] { "a-08", "a-09" });
+        last.HasMore.ShouldBeFalse("the filtered set is exhausted");
+
+        last.Items.ShouldAllBe(s => s.AgentId == "agent-a");
+    }
+
+    /// <summary>
+    /// The whole roster for one agent must be walkable in exactly ceil(N/pageSize) requests, with
+    /// no duplicates and no omissions, when the store holds far more rows for other agents.
+    /// </summary>
+    [Fact]
+    public async Task ListSummaryPageAsync_WalkingTheFilteredSet_VisitsEveryRowExactlyOnce()
+    {
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 7; i++)
+            await SeedSessionAsync($"w-{i:D2}", now.AddMinutes(-i), "agent-a");
+        for (var i = 0; i < 40; i++)
+            await SeedSessionAsync($"noise-{i:D2}", now.AddMinutes(-i), "agent-b");
+
+        var store = CreateStore();
+
+        var seen = new List<string>();
+        var requests = 0;
+        var hasMore = true;
+        while (hasMore)
+        {
+            var page = await store.ListSummaryPageAsync(
+                new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 3, Offset: seen.Count));
+            requests++;
+            seen.AddRange(page.Items.Select(s => s.SessionId));
+            hasMore = page.HasMore;
+            requests.ShouldBeLessThan(20, "the walk must terminate");
+        }
+
+        requests.ShouldBe(3, "ceil(7/3) == 3 - the walk must not crawl through agent-b's rows");
+        seen.Distinct().Count().ShouldBe(7);
+        seen.ShouldBe(Enumerable.Range(0, 7).Select(i => $"w-{i:D2}").ToArray());
+    }
+
+    /// <summary>
+    /// Status filtering is a store predicate too, so the total and the page both reflect it.
+    /// </summary>
+    [Fact]
+    public async Task ListSummaryPageAsync_ExcludesInactiveByDefault_AndCountsAccordingly()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await SeedSessionAsync("s-active", now.AddMinutes(-1), "agent-a");
+        await SeedSessionAsync("s-sealed", now.AddMinutes(-2), "agent-a", SessionStatus.Sealed);
+        await SeedSessionAsync("s-expired", now.AddMinutes(-3), "agent-a", SessionStatus.Expired);
+
+        var store = CreateStore();
+
+        var active = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 50));
+        active.Items.Select(s => s.SessionId).ShouldBe(new[] { "s-active" });
+        active.TotalCount.ShouldBe(1, "the total must count the FILTERED set, not the table");
+
+        var all = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", IncludeInactive: true, Limit: 50));
+        all.TotalCount.ShouldBe(3);
+        all.Items.Count.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// The InMemory/File base-store default must expose the identical filter-then-window contract,
+    /// so a differently-configured gateway cannot silently page differently.
+    /// </summary>
+    [Fact]
+    public async Task InMemoryStore_ListSummaryPageAsync_AppliesFilterBeforeWindow()
+    {
+        var store = new InMemorySessionStore();
+        foreach (var id in new[] { "m-a1", "m-a2", "m-a3" })
+        {
+            var session = await store.GetOrCreateAsync(SessionId.From(id), AgentId.From("agent-a"));
+            await store.SaveAsync(session);
+        }
+
+        foreach (var id in new[] { "m-b1", "m-b2", "m-b3", "m-b4" })
+        {
+            var session = await store.GetOrCreateAsync(SessionId.From(id), AgentId.From("agent-b"));
+            await store.SaveAsync(session);
+        }
+
+        var page = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 2, Offset: 0));
+
+        page.TotalCount.ShouldBe(3, "total counts agent-a's sessions only");
+        page.Items.Count.ShouldBe(2);
+        page.Items.ShouldAllBe(s => s.AgentId == "agent-a");
+        page.HasMore.ShouldBeTrue();
+
+        var tail = await store.ListSummaryPageAsync(
+            new SessionSummaryQuery(DateTimeOffset.MinValue, AgentId: "agent-a", Limit: 2, Offset: 2));
+        tail.Items.Count.ShouldBe(1);
+        tail.HasMore.ShouldBeFalse();
     }
 
     // SQLite store: real LIMIT/OFFSET.
@@ -261,19 +436,23 @@ public sealed class SessionListPaginationTests : IDisposable
         all.Count.ShouldBe(3);
     }
 
-    private async Task SeedSessionAsync(string sessionId, DateTimeOffset updatedAt)
+    private async Task SeedSessionAsync(
+        string sessionId,
+        DateTimeOffset updatedAt,
+        string agentId = "agent-a",
+        SessionStatus status = SessionStatus.Active)
     {
         var conversationId = ConversationId.Create();
         await _conversations.CreateAsync(new Conversation
         {
             ConversationId = conversationId,
-            AgentId = AgentId.From("agent-a")
+            AgentId = AgentId.From(agentId)
         });
 
         var store = CreateStore();
-        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId));
         session.Session.ConversationId = conversationId;
-        session.Status = SessionStatus.Active;
+        session.Status = status;
         session.AddEntries(new[]
         {
             new SessionEntry
