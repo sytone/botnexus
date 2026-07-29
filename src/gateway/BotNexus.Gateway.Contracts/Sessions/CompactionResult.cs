@@ -64,11 +64,11 @@ public sealed record CompactionResult
     /// <summary>
     /// #2460: stable machine-readable code naming WHICH precondition/branch caused this compaction
     /// to abort without mutating history. Null when <see cref="Succeeded"/> is true. See
-    /// <see cref="CompactionSkipReasons"/> for the defined values. Without this the "Aborted"
+    /// <see cref="CompactionSkipReason"/> for the defined values. Without this the "Aborted"
     /// outcome logged by the coordinator was undiagnosable from logs alone, hiding a repeating
     /// no-op abort loop.
     /// </summary>
-    public string? SkipReason { get; init; }
+    public CompactionSkipReason? SkipReason { get; init; }
 
     /// <summary>
     /// Builds a "skipped / aborted" result (history unchanged): <see cref="Succeeded"/> = false,
@@ -82,14 +82,14 @@ public sealed record CompactionResult
     /// <param name="entriesPreserved">Entries that would have been preserved verbatim.</param>
     /// <param name="tokensBefore">LLM-visible token count before the (skipped) compaction.</param>
     /// <param name="tokensAfter">LLM-visible token count after (equal to <paramref name="tokensBefore"/> since history is unchanged).</param>
-    /// <param name="skipReason">#2460: stable code naming the abort branch (see <see cref="CompactionSkipReasons"/>).</param>
+    /// <param name="skipReason">#2460: stable code naming the abort branch (see <see cref="CompactionSkipReason"/>).</param>
     public static CompactionResult Skipped(
         long snapshotDestructiveVersion = 0,
         int snapshotHistoryCount = 0,
         int entriesPreserved = 0,
         int tokensBefore = 0,
         int tokensAfter = 0,
-        string? skipReason = null) => new()
+        CompactionSkipReason? skipReason = null) => new()
         {
             Summary = string.Empty,
             Succeeded = false,

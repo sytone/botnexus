@@ -259,20 +259,34 @@ public interface ISessionStore
     /// The default implementation maps from <see cref="ListAsync"/>, which still materialises
     /// history; it exists so non-SQLite stores (File, InMemory, test doubles) keep working.
     /// The SQLite store overrides this with a metadata-only query that derives
-    /// <c>MessageCount</c> from a <c>COUNT(*)</c> aggregate rather than reading entries.
+    /// <c>MessageCount</c> from a <c>COUNT(*)</c> aggregate rather than reading entries and
+    /// applies the window as a real <c>LIMIT</c>/<c>OFFSET</c>.
+    /// </para>
+    /// <para>
+    /// Issue #2411: the returned page is bounded by <paramref name="limit"/>. Passing
+    /// <c>null</c> is the <b>explicit</b> unbounded opt-in and is reserved for background
+    /// callers that genuinely need the whole set (session warmup, cron signal folds).
+    /// Request-scoped callers must always pass a bound - an unbounded collection read grows
+    /// monotonically with session count on a long-lived gateway.
     /// </para>
     /// </remarks>
     /// <param name="updatedAfter">Lower bound (inclusive) on session <c>UpdatedAt</c>.</param>
+    /// <param name="limit">Maximum number of summaries to return, or <c>null</c> to opt in to an unbounded read.</param>
+    /// <param name="offset">Number of matching summaries to skip, newest first. Negative values are treated as zero.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
         DateTimeOffset updatedAfter,
+        int? limit = null,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
-        return sessions
-            .Where(session => session.UpdatedAt >= updatedAfter)
-            .Select(SessionSummary.FromSession)
-            .ToList();
+        return SessionSummaryWindow.Apply(
+            sessions
+                .Where(session => session.UpdatedAt >= updatedAfter)
+                .Select(SessionSummary.FromSession),
+            limit,
+            offset);
     }
 
     /// <summary>
