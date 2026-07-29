@@ -1,4 +1,4 @@
-namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// All portal REST traffic. Nothing else.
@@ -47,9 +47,21 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken cancellationToken = default);
 
-    /// <summary>GET /api/sessions?agentId={agentId}</summary>
+    /// <summary>
+    /// GET /api/sessions?agentId={agentId}&amp;limit={limit}&amp;offset={offset}
+    /// </summary>
+    /// <remarks>
+    /// The server-side endpoint pages this collection (default 50, max 200 per #2411/#2468) and
+    /// returns a bare JSON array, so a caller that ignores <paramref name="limit"/> /
+    /// <paramref name="offset"/> silently receives a truncated roster with no error signal (#2499).
+    /// Callers that need the complete set must page until a short page is returned.
+    /// Both paging arguments are optional so existing call sites stay source-compatible; when
+    /// <paramref name="limit"/> is null no <c>limit</c> query argument is sent and the server default applies.
+    /// </remarks>
     Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
         string? agentId = null,
+        int? limit = null,
+        int offset = 0,
         CancellationToken cancellationToken = default);
 
     /// <summary>GET /api/sessions/{sessionId}/history?limit={limit}&amp;offset={offset}</summary>

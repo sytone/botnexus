@@ -125,7 +125,10 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
 
             // One transcript-free query for every agent, then bucket in memory. The store
             // never materialises session history here (issue #1581).
-            var summaries = await _sessionStore.ListSummariesAsync(ComputeUpdatedAfter(options), ct);
+            // limit: null is the explicit unbounded opt-in (#2411). Warmup buckets every agent
+            // in one pass, so a page would leave later agents with an empty cache entry.
+            var summaries = await _sessionStore.ListSummariesAsync(
+                ComputeUpdatedAfter(options), limit: null, offset: 0, ct);
             var byAgent = summaries
                 .GroupBy(static summary => summary.AgentId, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
@@ -153,7 +156,10 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         try
         {
             var options = _options.Value;
-            var summaries = await _sessionStore.ListSummariesAsync(ComputeUpdatedAfter(options), ct);
+            // limit: null is the explicit unbounded opt-in (#2411): this agent's summaries are
+            // selected by filtering the window, so a pre-truncated page could miss them.
+            var summaries = await _sessionStore.ListSummariesAsync(
+                ComputeUpdatedAfter(options), limit: null, offset: 0, ct);
             var agentSummaries = summaries
                 .Where(summary => string.Equals(summary.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
                 .ToArray();

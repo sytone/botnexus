@@ -97,6 +97,7 @@
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ExecApprovalRequest))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionOptions))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionResult))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionSkipReason))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ExistenceQuery))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionCompactor))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ISessionLifecycleEvents))]

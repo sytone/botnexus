@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Integration.ConfigDiskE2E.Tests;
@@ -56,13 +56,11 @@ public sealed class ConfigConcurrentWriterDiskTests
     /// is what makes it a tested guarantee rather than a comment.
     /// </summary>
     /// <remarks>
-    /// The reader here also exposes #2357: on Windows, <c>File.Move(..., overwrite: true)</c>
-    /// throws <see cref="UnauthorizedAccessException"/> when any handle is open on the
-    /// destination, even one opened with <c>FileShare.ReadWrite | FileShare.Delete</c>. Writes are
-    /// therefore counted rather than assumed to succeed, and the failure count is asserted
-    /// non-negatively so this test measures the <em>integrity</em> property (never torn) without
-    /// silently depending on the availability defect that #2357 tracks. When #2357 is fixed,
-    /// tighten <c>writeFailures</c> to zero.
+    /// The reader here also covers #2357: on Windows, <c>File.Move(..., overwrite: true)</c> threw
+    /// <see cref="UnauthorizedAccessException"/> when any handle was open on the destination, even
+    /// one opened with <c>FileShare.ReadWrite | FileShare.Delete</c>. Now that the writer replaces
+    /// via <c>File.Replace</c> under a bounded retry, this test asserts the availability property
+    /// alongside the integrity one: no write may fail under a concurrent reader.
     /// </remarks>
     [Fact]
     public async Task ConcurrentWriters_NeverExposeATornFileToReaders()
@@ -127,7 +125,7 @@ public sealed class ConfigConcurrentWriterDiskTests
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
-                // #2357: the replace loses to an open reader handle. Availability, not integrity.
+                // #2357 regression guard: counted, then asserted to be zero below.
                 writeFailures++;
             }
         }
@@ -137,7 +135,7 @@ public sealed class ConfigConcurrentWriterDiskTests
 
         tornReads.ShouldBe(0, "atomic replacement must never expose a partially written config");
         successfulReads.ShouldBeGreaterThan(0, "the reader must have actually observed the file");
-        writeFailures.ShouldBeLessThan(30, "at least some writes must complete under contention");
+        writeFailures.ShouldBe(0, "#2357: no config save may fail because a reader holds the file");
 
         // The surviving document must still be intact regardless of how many writes lost the race.
         home.ReadFromDisk()["providers"]!["github-copilot"]!["apiKey"]!.GetValue<string>()

@@ -73,13 +73,18 @@ public sealed class AgentPanelStatusTests : IAsyncLifetime
         var panel = page.Locator("[data-testid='agent-panel']").First;
         await panel.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
 
-        var title = (await panel.Locator(".agent-panel-title").TextContentAsync() ?? "").Trim();
-        var idLabel = (await panel.Locator(".agent-panel-id").TextContentAsync() ?? "").Trim();
+        // #2441: the identity block moved out of the agent panel and into the portal top bar,
+        // so the assertions follow the markup rather than being dropped.
+        var identity = page.Locator("[data-testid='agent-identity']").First;
+        await identity.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+
+        var title = (await identity.Locator(".agent-panel-title").TextContentAsync() ?? "").Trim();
+        var idLabel = (await identity.Locator(".agent-panel-id").TextContentAsync() ?? "").Trim();
 
         _out.WriteLine($"Title={title} ID={idLabel}");
 
-        Assert.False(string.IsNullOrWhiteSpace(title), "Agent panel title should show a display name.");
-        Assert.False(string.IsNullOrWhiteSpace(idLabel), "Agent panel should show the agent ID sub-label.");
+        Assert.False(string.IsNullOrWhiteSpace(title), "Top bar identity should show a display name.");
+        Assert.False(string.IsNullOrWhiteSpace(idLabel), "Top bar identity should carry the agent ID for hover reveal.");
         Assert.True(idLabel.Equals(agentId, StringComparison.OrdinalIgnoreCase),
             $"Agent ID label should match '{agentId}', got '{idLabel}'.");
     }

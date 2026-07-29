@@ -149,6 +149,7 @@ nav:
       - Watchdog Setup: guides/watchdog-setup.md
   - Features:
       - Sub-Agent Spawning: features/sub-agent-spawning.md`n      - Session Consistency Monitor: features/session-consistency.md
+      - Hybrid Memory Retrieval: features/hybrid-memory-retrieval.md
   - Extensions:
       - Extension Development: extension-development.md
       - Extension Telemetry: extensions/telemetry.md

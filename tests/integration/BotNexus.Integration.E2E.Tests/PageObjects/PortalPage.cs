@@ -21,7 +21,8 @@ public sealed class PortalPage
     public ILocator SidebarChatLink     => Page.Locator(".sidebar-nav-item").Filter(new LocatorFilterOptions { HasTextString = "Chat" }).First;
     public ILocator SidebarAgentsLink   => Page.Locator(".sidebar-nav-item").Filter(new LocatorFilterOptions { HasTextString = "Agents" }).First;
     public ILocator SidebarConfigLink   => Page.Locator(".sidebar-nav-item").Filter(new LocatorFilterOptions { HasTextString = "Configuration" }).First;
-    public ILocator ConnectionStatus    => Page.Locator(".sidebar-connection").First;
+    // #2441: the connection indicator moved from the sidebar into the top bar as a dot.
+    public ILocator ConnectionStatus    => Page.Locator("[data-testid='connection-status']").First;
     public ILocator RestartGatewayBtn   => Page.Locator(".restart-btn").First;
 
     // ── Banner ────────────────────────────────────────────────────────────

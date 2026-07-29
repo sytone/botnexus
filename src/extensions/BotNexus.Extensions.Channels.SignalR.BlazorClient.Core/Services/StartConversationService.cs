@@ -82,13 +82,18 @@ public sealed class StartConversationService : IStartConversationService
         //    override is per-conversation and durable (not a one-shot for the first message), so every
         //    subsequent turn in this conversation also runs on the selected model.
         var overrideModel = ResolveOverride(request.SelectedModel, request.AgentDefaultModel);
-        if (overrideModel is not null)
+        var overrideThinking = string.IsNullOrWhiteSpace(request.SelectedThinking) ? null : request.SelectedThinking.Trim();
+        var overrideContext = request.SelectedContextWindow;
+        if (overrideModel is not null || overrideThinking is not null || overrideContext is not null)
         {
             try
             {
                 var updated = await _restClient.SetConversationOverrideAsync(
                     conversationId,
-                    new SetConversationOverrideRequestDto(Model: overrideModel),
+                    new SetConversationOverrideRequestDto(
+                        Model: overrideModel,
+                        Thinking: overrideThinking,
+                        ContextWindow: overrideContext),
                     cancellationToken).ConfigureAwait(false);
 
                 if (updated is null)

@@ -42,12 +42,15 @@ Returns `200 OK` with the `CronJob`, or `404 Not Found` when it does not exist.
 
 ### `POST /api/cron`
 
-Creates a cron job from the request body (a `CronJob`). If `createdAt` is omitted it
-is set server-side to the current UTC time. The `actionType` value `agent-chat` is
+Creates a cron job from the request body. `id` is **optional**: when omitted the server
+generates one, consistent with how `createdAt` already defaults to the current UTC time.
+An explicitly supplied `id` is honoured unchanged. The `actionType` value `agent-chat` is
 normalised to `agent-prompt`.
 
 Validation:
 
+- `name` is required, else `400 Bad Request`.
+- `schedule` is required, else `400 Bad Request`.
 - `nextRunAt`, when present, must fall between `1970-01-01` and `9000-01-01`, else
   `400 Bad Request`.
 - `createdAt`, when present, must fall within the same range, else `400 Bad Request`.
@@ -114,4 +117,27 @@ X-Api-Key: <key>
 ```
 201 Created
 Location: /api/cron/daily-briefing
+```
+
+**Create a command (script) job without supplying an id**
+
+```http
+POST /api/cron
+Content-Type: application/json
+X-Api-Key: <key>
+
+{
+  "name": "Disk space check",
+  "schedule": "0 * * * *",
+  "actionType": "command",
+  "shellCommand": "pwsh -NoProfile -File ./scripts/check-disk.ps1",
+  "enabled": true
+}
+```
+
+**Response**
+
+```
+201 Created
+Location: /api/cron/3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c
 ```

@@ -113,6 +113,7 @@
     <PackageVersion Include="TestableIO.System.IO.Abstractions.Wrappers" Version="22.1.1" />
 
     <!-- Audio -->
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.1" />
     <PackageVersion Include="Whisper.net" Version="1.8.0" />
     <PackageVersion Include="Whisper.net.Runtime" Version="1.8.0" />
   </ItemGroup>

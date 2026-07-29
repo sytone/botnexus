@@ -9,6 +9,12 @@ public sealed class CronOptions
     public bool Enabled { get; set; } = true;
     public int TickIntervalSeconds { get; set; } = 60;
     public int DefaultJobTimeoutSeconds { get; set; } = 3600;
+
+    /// <summary>
+    /// How far a run's started_at may deviate from now (in either direction) before the scheduler
+    /// treats a still-<c>running</c> row as orphaned and stamps it as an error (#2410). Default: 24h.
+    /// </summary>
+    public int OrphanedRunThresholdSeconds { get; set; } = 86400;
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }

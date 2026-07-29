@@ -61,4 +61,13 @@ public interface ICronStore
     /// regardless of age, so in-progress work is preserved. Returns the number of rows deleted.
     /// </summary>
     Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lists every run still stamped <see cref="CronRunStatus.Running"/>, newest first. Used by the
+    /// scheduler's orphaned-run reaper (#2410): a run whose owning process died without a terminal
+    /// write stays <c>running</c> forever, which also makes it permanently immune to
+    /// <see cref="PurgeRunsOlderThanAsync"/>. Implementers must return non-terminal rows only -
+    /// the caller decides which of them are too old (or too far in the future) to be genuine.
+    /// </summary>
+    Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default);
 }

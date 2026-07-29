@@ -323,7 +323,8 @@ public sealed class SqliteConversationStore : IConversationStore
             StampWorldId(conversation);
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
-            await SaveConversationAsync(connection, conversation, upsert: false, ct).ConfigureAwait(false);
+            await SaveConversationAsync(connection, conversation, upsert: false, expectedVersion: 0, ct).ConfigureAwait(false);
+            conversation.Version = 1;
             _cache.Set(conversation.ConversationId.Value, CloneConversation(conversation));
             return CloneConversation(conversation);
         }
@@ -351,7 +352,21 @@ public sealed class SqliteConversationStore : IConversationStore
 
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
-            await SaveConversationAsync(connection, updated, upsert: true, ct).ConfigureAwait(false);
+            // #2131: compare-and-swap on the revision the caller's snapshot was read at. A stale
+            // whole-aggregate save is rejected outright rather than silently overwriting fields a
+            // narrow mutation committed after that read.
+            var newVersion = await SaveConversationAsync(connection, updated, upsert: true, conversation.Version, ct).ConfigureAwait(false);
+            if (newVersion is null)
+            {
+                // The committed row moved on. Evict the cache so the caller's retry re-reads the
+                // winning state rather than the snapshot it is holding.
+                _cache.Remove(updated.ConversationId.Value);
+                var actual = await ReadVersionAsync(connection, updated.ConversationId, ct).ConfigureAwait(false);
+                throw new ConversationConcurrencyException(updated.ConversationId.Value, conversation.Version, actual);
+            }
+
+            updated.Version = newVersion.Value;
+            conversation.Version = newVersion.Value;
             _cache.Set(updated.ConversationId.Value, CloneConversation(updated));
         }
         finally
@@ -379,7 +394,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 UPDATE conversations
                 SET status = $status,
                     active_session_id = NULL,
-                    updated_at = $updatedAt
+                    updated_at = $updatedAt,
+                    version = version + 1
                 WHERE id = $id
                 """;
             command.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
@@ -393,6 +409,10 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Status = ConversationStatus.Archived;
                 archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
+                // #2131: the UPDATE above bumped the persisted revision, so the cached clone must
+                // track it. Leaving the stale version here hands the next reader a snapshot whose
+                // compare-and-swap can never succeed.
+                archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
         }
@@ -435,7 +455,8 @@ public sealed class SqliteConversationStore : IConversationStore
                     UPDATE conversations
                     SET status = $status,
                         active_session_id = NULL,
-                        updated_at = $updatedAt
+                        updated_at = $updatedAt,
+                        version = version + 1
                     WHERE id = $id
                     """;
                 archive.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
@@ -468,6 +489,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Status = ConversationStatus.Archived;
                 archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
+                // #2131: keep the cached revision in step with the row bumped above.
+                archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
         }
@@ -582,7 +605,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 UPDATE conversations
                 SET is_pinned = $pin,
                     pinned_at = $pinnedAt,
-                    updated_at = $now
+                    updated_at = $now,
+                    version = version + 1
                 WHERE id = $id
                 """;
             command.Parameters.AddWithValue("$pin", pin ? 1 : 0);
@@ -597,6 +621,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 updated.IsPinned = pin;
                 updated.PinnedAt = pinnedAt;
                 updated.UpdatedAt = now;
+                // #2131: keep the cached revision in step with the row bumped above.
+                updated.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, updated);
             }
         }
@@ -783,7 +809,10 @@ public sealed class SqliteConversationStore : IConversationStore
             }
 
             // Even an empty patch bumps updated_at and returns the row, mirroring SaveAsync's touch.
+            // #2131: it also bumps the revision, so a whole-aggregate SaveAsync built from a
+            // snapshot read before this patch is rejected instead of reverting it.
             sets.Add("updated_at = $now");
+            sets.Add("version = version + 1");
             command.Parameters.AddWithValue("$now", now.ToString("O"));
             command.Parameters.AddWithValue("$id", conversationId.Value);
             command.CommandText = $"UPDATE conversations SET {string.Join(", ", sets)} WHERE id = $id";
@@ -837,6 +866,7 @@ public sealed class SqliteConversationStore : IConversationStore
             }
 
             sets.Add("updated_at = $now");
+            sets.Add("version = version + 1");
             command.Parameters.AddWithValue("$now", now.ToString("O"));
             command.Parameters.AddWithValue("$id", conversationId.Value);
             command.CommandText = $"UPDATE conversations SET {string.Join(", ", sets)} WHERE id = $id";
@@ -875,10 +905,26 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "UPDATE conversations SET updated_at = $now WHERE id = $id";
+        // #2131: binding adds/removes/moves are conversation mutations, so they bump the revision
+        // too - a whole-aggregate save built before them would otherwise delete-and-recreate the
+        // binding set from its stale snapshot.
+        command.CommandText = "UPDATE conversations SET updated_at = $now, version = version + 1 WHERE id = $id";
         command.Parameters.AddWithValue("$now", now.ToString("O"));
         command.Parameters.AddWithValue("$id", conversationId.Value);
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads the currently committed #2131 revision for a conversation, used to report the losing
+    /// side of a compare-and-swap. Returns <c>0</c> when the row no longer exists.
+    /// </summary>
+    private static async Task<long> ReadVersionAsync(SqliteConnection connection, ConversationId conversationId, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT version FROM conversations WHERE id = $id";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        var value = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return value is null or DBNull ? 0L : Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     // Existence check bound to an in-flight transaction so it reads the transaction's own snapshot.
@@ -1062,7 +1108,8 @@ public sealed class SqliteConversationStore : IConversationStore
                     world_id TEXT NOT NULL DEFAULT '',
                     model_override TEXT,
                     thinking_override TEXT,
-                    context_window_override INTEGER
+                    context_window_override INTEGER,
+                    version INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS conversation_bindings (
@@ -1189,7 +1236,12 @@ public sealed class SqliteConversationStore : IConversationStore
         // "top-level conversation"). Indexed in EnsureConversationColumnsAsync because the listing
         // filter (`parent_conversation_id IS NULL`) and the child lookup both key off it.
         ("parent_conversation_id", "ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;"),
-        ("spawning_tool_call_id", "ALTER TABLE conversations ADD COLUMN spawning_tool_call_id TEXT;")
+        ("spawning_tool_call_id", "ALTER TABLE conversations ADD COLUMN spawning_tool_call_id TEXT;"),
+        // #2131 optimistic-concurrency revision. NOT NULL DEFAULT 1 so every pre-existing row
+        // migrates to a valid starting revision without a rewrite, and so a row can never be at
+        // version 0 (which the store reserves for "aggregate was never loaded from a store" and
+        // therefore treats as an unconditional write).
+        ("version", "ALTER TABLE conversations ADD COLUMN version INTEGER NOT NULL DEFAULT 1;")
     };
 
     // Race-tolerant single-column migration. Probes PRAGMA table_info first (cheap, avoids a
@@ -1352,7 +1404,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
             FROM conversations
             WHERE id = $id
             """;
@@ -1461,7 +1513,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1621,7 +1673,20 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
 
-    private static async Task SaveConversationAsync(SqliteConnection connection, Conversation conversation, bool upsert, CancellationToken ct)
+    /// <summary>
+    /// Writes the whole conversation aggregate. On the upsert path this is a compare-and-swap
+    /// against <see cref="Conversation.Version"/> (issue #2131): the row is only rewritten when its
+    /// committed revision still matches the revision the caller's snapshot was loaded at, so a
+    /// stale full-row save cannot silently clobber a pin / canvas / todo / override that a narrow
+    /// mutation committed after that read. Returns the new revision, or <c>null</c> when the CAS
+    /// guard rejected the write.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="expectedVersion"/> of <c>0</c> means the aggregate did not come out of a
+    /// store (freshly constructed), and the write is unconditional - construct-then-save call sites
+    /// keep working unchanged. Every persisted row is at revision 1 or higher.
+    /// </remarks>
+    private static async Task<long?> SaveConversationAsync(SqliteConnection connection, Conversation conversation, bool upsert, long expectedVersion, CancellationToken ct)
     {
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
 
@@ -1629,8 +1694,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1654,11 +1719,14 @@ public sealed class SqliteConversationStore : IConversationStore
                     pending_ask_user_json = excluded.pending_ask_user_json,
                     model_override = excluded.model_override,
                     thinking_override = excluded.thinking_override,
-                    context_window_override = excluded.context_window_override
+                    context_window_override = excluded.context_window_override,
+                    version = conversations.version + 1
+                WHERE $expectedVersion = 0 OR conversations.version = $expectedVersion
+                RETURNING version
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1689,7 +1757,24 @@ public sealed class SqliteConversationStore : IConversationStore
         // SaveAsync must never be able to re-parent a persisted conversation.
         conversationCommand.Parameters.AddWithValue("$parentConversationId", conversation.ParentConversationId is null ? DBNull.Value : conversation.ParentConversationId.Value.Value);
         conversationCommand.Parameters.AddWithValue("$spawningToolCallId", conversation.SpawningToolCallId is null ? (object)DBNull.Value : conversation.SpawningToolCallId);
-        await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        long newVersion;
+        if (upsert)
+        {
+            conversationCommand.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+            // RETURNING yields no row when the ON CONFLICT guard rejected the update, which is
+            // exactly the stale-save case. Abandoning the transaction (no commit) leaves the
+            // committed row - and the narrow mutation that bumped it - untouched.
+            var returned = await conversationCommand.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (returned is null or DBNull)
+                return null;
+            newVersion = Convert.ToInt64(returned, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            newVersion = 1;
+        }
 
         await using var deleteBindingsCommand = connection.CreateCommand();
         deleteBindingsCommand.Transaction = transaction;
@@ -1719,6 +1804,7 @@ public sealed class SqliteConversationStore : IConversationStore
         }
 
         await transaction.CommitAsync(ct).ConfigureAwait(false);
+        return newVersion;
     }
 
     private SqliteConnection CreateConnection()
@@ -1746,8 +1832,18 @@ public sealed class SqliteConversationStore : IConversationStore
             PinnedAt = conversation.PinnedAt,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
+            // #2131: the per-conversation overrides were previously omitted from the clone, so
+            // SaveAsync - which persists a CLONE of the caller's aggregate - silently wrote NULL
+            // over a committed model/thinking/context override on every full save. Same class of
+            // clobber the CAS guard addresses, on the copy path rather than the SQL path.
+            ModelOverride = conversation.ModelOverride,
+            ThinkingOverride = conversation.ThinkingOverride,
+            ContextWindowOverride = conversation.ContextWindowOverride,
             CreatedAt = conversation.CreatedAt,
             UpdatedAt = conversation.UpdatedAt,
+            // #2131: the revision travels with the snapshot so a caller that read a clone and
+            // saves it later is compare-and-swapped against the revision it actually read.
+            Version = conversation.Version,
             ActiveSessionId = conversation.ActiveSessionId,
             Metadata = CloneMetadata(conversation.Metadata),
             ChannelBindings = conversation.ChannelBindings.Select(binding => new ChannelBinding

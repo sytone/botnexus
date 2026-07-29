@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
+using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
@@ -148,7 +149,32 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         return SendMessageCore(agentId, channelType, content, conversationId);
     }
 
-    private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId)
+    /// <summary>
+    /// Injects a canvas <c>submitToAgent</c> click into a conversation as a genuine USER turn,
+    /// stamped with <see cref="MessageKind.CanvasSubmission"/> so the transcript records why the
+    /// message exists (#2449).
+    /// </summary>
+    /// <remarks>
+    /// This is a separate hub verb from <see cref="SendMessage"/> for exactly one reason: the
+    /// provenance kind must be stamped by the SERVER from the transport surface the call arrived
+    /// on, never taken from a caller-supplied field. Reusing <see cref="SendMessage"/> with a kind
+    /// argument would make provenance forgeable by any client, which is the failure mode the
+    /// content-prefix approach had. <paramref name="conversationId"/> is required: a canvas is
+    /// attached to a conversation and may target only that conversation.
+    /// </remarks>
+    /// <param name="agentId">The agent hosting the canvas.</param>
+    /// <param name="channelType">The channel type.</param>
+    /// <param name="content">The instruction text composed by the canvas.</param>
+    /// <param name="conversationId">The conversation the canvas is attached to. Required.</param>
+    /// <returns>The send message result.</returns>
+    public Task<SendMessageResult> SubmitCanvasPrompt(AgentId agentId, ChannelKey channelType, string content, string conversationId)
+    {
+        EnsureControlScope(nameof(SubmitCanvasPrompt));
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return SendMessageCore(agentId, channelType, content, conversationId, MessageKind.CanvasSubmission);
+    }
+
+    private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId, MessageKind? kind = null)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
@@ -173,7 +199,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             typedAgentId, typedChannelType, resolution.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId),
+            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId, kind),
             typedAgentId,
             resolution.SessionId);
 
@@ -293,23 +319,26 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
-        string messageType, string senderId, string? conversationId = null)
+        string messageType, string senderId, string? conversationId = null, MessageKind? kind = null)
         => _app.AcceptAsync(
             BuildInboundMessage(
                 typedAgentId, senderId, content, messageType,
                 new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
                     RequestedSessionId: typedSessionId,
-                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId))),
+                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
+                kind: kind),
             CancellationToken.None);
 
     // Centralizes the channel-invariant InboundMessage fields shared by the SignalR hub dispatch
     // paths: signalr type, authenticated sender, stable per-agent address, and clientKind metadata.
     private InboundMessage BuildInboundMessage(
         AgentId typedAgentId, string senderId, string content, string messageType,
-        InboundMessageRoutingHints routingHints, IReadOnlyList<MessageContentPart>? contentParts = null)
+        InboundMessageRoutingHints routingHints, IReadOnlyList<MessageContentPart>? contentParts = null,
+        MessageKind? kind = null)
         => new()
         {
+            Kind = kind,
             ChannelType = ChannelKey.From("signalr"),
             SenderId = senderId,
             Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
@@ -382,11 +411,35 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="content">The content.</param>
     /// <returns>The steer result.</returns>
     public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content, string? conversationId)
+        => await SteerWithMedia(agentId, sessionId, content, [], conversationId);
+
+    /// <summary>
+    /// Steer overload that carries draft attachments (#2484). The portal's Steer button previously
+    /// had no seam to pass <c>_attachments</c> through, so files were silently discarded whenever
+    /// the composer was in turn-active state. Content parts are folded via the shared
+    /// <see cref="AgentUserMessageComposer"/> - the same seam the normal send path uses - so all
+    /// dispatch paths deliver attachments identically.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="content">The steering text.</param>
+    /// <param name="contentParts">Draft attachments to deliver with the steer.</param>
+    /// <param name="conversationId">Optional conversation id for activity routing.</param>
+    /// <returns>The steer result.</returns>
+    public async Task<SendMessageResult> SteerWithMedia(
+        AgentId agentId,
+        SessionId sessionId,
+        string content,
+        IReadOnlyList<MediaContentPartDto> contentParts,
+        string? conversationId)
     {
         EnsureControlScope(nameof(Steer));
         var ctx = ResolveCallContext(agentId, sessionId);
         var typedChannelType = ChannelKey.From("signalr");
-        ArgumentException.ThrowIfNullOrWhiteSpace(content);
+        var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
+        if (string.IsNullOrWhiteSpace(content) && parts.Count == 0)
+            throw new ArgumentException("A steer must contain text or at least one attachment.", nameof(content));
+        var normalizedContent = content ?? string.Empty;
 
         // Subscribe so post-compaction streams continue to arrive. #682
         await SubscribeInternalAsync(ctx.SessionId);
@@ -462,15 +515,23 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         // Record steering message in session history
         var session = await _sessions.GetOrCreateAsync(ctx.SessionId, ctx.AgentId, Context.ConnectionAborted);
+        // #2484: persist the COMPOSED text so the transcript records the attachments too, matching
+        // what the agent actually receives.
+        var composed = AgentUserMessageComposer.Compose(normalizedContent, parts);
         session.AddEntry(new SessionEntry
         {
             Role = BotNexus.Domain.Primitives.MessageRole.User,
-            Content = content
+            Content = composed.Content
         });
         await _sessions.SaveAsync(session, Context.ConnectionAborted);
 
-        // Inject into agent's steering queue
-        await handle.SteerAsync(content, Context.ConnectionAborted);
+        // Inject into agent's steering queue. With no attachments this stays on the string
+        // overload (unchanged behaviour); with attachments the composed multimodal message is
+        // injected so image parts reach the vision path instead of being dropped (#2484).
+        if (parts.Count == 0)
+            await handle.SteerAsync(normalizedContent, Context.ConnectionAborted);
+        else
+            await handle.SteerAsync(composed, Context.ConnectionAborted);
 
         await PublishActivityAsync(
             ctx.AgentId,
@@ -494,16 +555,39 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="message">The new direction message to steer the agent toward.</param>
     /// <returns><c>true</c> if a running handle was found and interrupted; <c>false</c> if no active handle exists.</returns>
     public async Task<bool> InterruptAndSteer(AgentId agentId, SessionId sessionId, string message)
+        => await InterruptAndSteerWithMedia(agentId, sessionId, message, []);
+
+    /// <summary>
+    /// Redirect overload that carries draft attachments (#2484), composed through the shared
+    /// <see cref="AgentUserMessageComposer"/> seam exactly as the normal send path does.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="message">The new direction message.</param>
+    /// <param name="contentParts">Draft attachments to deliver with the redirect.</param>
+    /// <returns><c>true</c> if a running handle was found and interrupted.</returns>
+    public async Task<bool> InterruptAndSteerWithMedia(
+        AgentId agentId,
+        SessionId sessionId,
+        string message,
+        IReadOnlyList<MediaContentPartDto> contentParts)
     {
         EnsureControlScope(nameof(InterruptAndSteer));
-        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
+        if (string.IsNullOrWhiteSpace(message) && parts.Count == 0)
+            throw new ArgumentException("A redirect must contain text or at least one attachment.", nameof(message));
         var ctx = ResolveCallContext(agentId, sessionId);
 
         var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
         if (handle is null)
             return false;
 
-        await handle.InterruptAndSteerAsync(message, Context.ConnectionAborted);
+        if (parts.Count == 0)
+            await handle.InterruptAndSteerAsync(message, Context.ConnectionAborted);
+        else
+            await handle.InterruptAndSteerAsync(
+                AgentUserMessageComposer.Compose(message ?? string.Empty, parts),
+                Context.ConnectionAborted);
         return true;
     }
 
@@ -538,11 +622,33 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// </para>
     /// </remarks>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
+        => FollowUpWithMedia(agentId, sessionId, content, []);
+
+    /// <summary>
+    /// Follow-up overload that carries draft attachments (#2484). The composed message is what
+    /// round-trips through the agent's pending-message queue (#2458) when a run is in flight, and
+    /// what is dispatched as content parts when the agent is idle - so the attachments survive both
+    /// branches rather than only the send path.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="content">The follow-up text.</param>
+    /// <param name="contentParts">Draft attachments to deliver with the follow-up.</param>
+    /// <returns>A task that completes once the follow-up has been accepted.</returns>
+    public Task FollowUpWithMedia(
+        AgentId agentId,
+        SessionId sessionId,
+        string content,
+        IReadOnlyList<MediaContentPartDto> contentParts)
     {
         EnsureControlScope(nameof(FollowUp));
         var ctx = ResolveCallContext(agentId, sessionId);
         var connectionId = Context.ConnectionId;
-        ArgumentException.ThrowIfNullOrWhiteSpace(content);
+        var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
+        if (string.IsNullOrWhiteSpace(content) && parts.Count == 0)
+            throw new ArgumentException("A follow-up must contain text or at least one attachment.", nameof(content));
+        var normalizedContent = content ?? string.Empty;
+        var composed = AgentUserMessageComposer.Compose(normalizedContent, parts);
         _ = LastFollowUpDispatch = SafeDispatchAsync(
             async () =>
             {
@@ -556,7 +662,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 // dead-letter guard): a phantom idle handle's follow-up queue is never drained.
                 var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
                 if (handle is not null
-                    && await handle.TryFollowUpWhileRunningAsync(content, CancellationToken.None))
+                    && await (parts.Count == 0
+                        ? handle.TryFollowUpWhileRunningAsync(normalizedContent, CancellationToken.None)
+                        : handle.TryFollowUpWhileRunningAsync(composed, CancellationToken.None)))
                 {
                     await PublishActivityAsync(
                         ctx.AgentId,
@@ -567,8 +675,17 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     return;
                 }
 
-                // Idle agent: nothing to wait for, so a follow-up is just a normal prompt.
-                await DispatchMessageAsync(ctx.AgentId, ctx.SessionId, content, "message", connectionId);
+                // Idle agent: nothing to wait for, so a follow-up is just a normal prompt. Carry
+                // the raw content parts so the ordinary inbound path composes them identically.
+                await _app.AcceptAsync(
+                    BuildInboundMessage(
+                        ctx.AgentId, connectionId, normalizedContent, "message",
+                        new InboundMessageRoutingHints(
+                            RequestedAgentId: ctx.AgentId,
+                            RequestedSessionId: ctx.SessionId,
+                            RequestedConversationId: null),
+                        parts.Count == 0 ? null : parts),
+                    CancellationToken.None);
             },
             ctx.AgentId,
             ctx.SessionId);
