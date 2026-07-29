@@ -83,4 +83,4 @@ public sealed record SessionCompactionOutcome(
     int TokensBefore,
     int TokensAfter,
     string? FailureReason,
-    string? SkipReason = null);
+    CompactionSkipReason? SkipReason = null);

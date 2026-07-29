@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
@@ -10,7 +11,9 @@ namespace BotNexus.Memory;
 public sealed class SqliteMemoryStore(
     string dbPath,
     IFileSystem? fileSystem = null,
-    MemoryLikeFallbackOptions? likeFallbackOptions = null) : IMemoryStore
+    MemoryLikeFallbackOptions? likeFallbackOptions = null,
+    IMemoryEmbeddingService? embeddingService = null,
+    MemoryVectorSearchOptions? vectorSearchOptions = null) : IMemoryStore
 {
     private const double DefaultHalfLifeDays = 30d;
     private readonly string _dbPath = dbPath;
@@ -24,6 +27,15 @@ public sealed class SqliteMemoryStore(
     // to keep degraded-mode cost finite. The FTS primary path is unaffected.
     private readonly MemoryLikeFallbackOptions _likeFallbackOptions =
         likeFallbackOptions ?? MemoryLikeFallbackOptions.Default;
+
+    // Optional by construction: when no embedding service is supplied the store behaves
+    // exactly as it did before hybrid retrieval existed - writes store no vector and search
+    // is BM25-only. This is the supported degraded mode, not an error path.
+    private readonly IMemoryEmbeddingService _embeddingService = embeddingService ?? MemoryEmbeddingService.Disabled;
+
+    private readonly MemoryVectorSearchOptions _vectorSearchOptions =
+        vectorSearchOptions ?? MemoryVectorSearchOptions.Default;
+
     private bool _initialized;
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -110,6 +122,16 @@ public sealed class SqliteMemoryStore(
             var id = string.IsNullOrWhiteSpace(entry.Id) ? Guid.NewGuid().ToString("N") : entry.Id;
             var createdAt = entry.CreatedAt == default ? DateTimeOffset.UtcNow : entry.CreatedAt;
             var toInsert = entry with { Id = id, CreatedAt = createdAt };
+
+            // Populate the embedding BLOB on write. A failure here must never fail the write:
+            // TryGenerateAsync returns null instead of throwing, and the row is simply stored
+            // without a vector, remaining fully retrievable through BM25.
+            if (toInsert.Embedding is null)
+            {
+                var generated = await _embeddingService.TryGenerateAsync(toInsert.Content, ct).ConfigureAwait(false);
+                if (generated is { } stamped)
+                    toInsert = toInsert with { Embedding = EmbeddingBlob.Encode(stamped.Identity, stamped.Vector) };
+            }
 
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -217,28 +239,35 @@ public sealed class SqliteMemoryStore(
 
             command.Parameters.AddWithValue("$query", sanitized);
 
+            // The raw string literal above has no trailing newline, so the next clause must
+            // start on a fresh line. Without this the unfiltered query emitted
+            // "AND m.is_archived = 0ORDER BY ..." - invalid SQL that threw and silently
+            // demoted every unfiltered search to the LIKE fallback.
+            sql.AppendLine();
+
             AppendFilters(sql, command, filter);
 
             sql.AppendLine("ORDER BY bm25_rank DESC LIMIT $limit");
             command.Parameters.AddWithValue("$limit", limit * 5);
             command.CommandText = sql.ToString();
 
-            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            List<(MemoryEntry Entry, double Score)> ranked = [];
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            Dictionary<string, MemoryRankingCandidate> candidates = new(StringComparer.Ordinal);
+            await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
             {
-                var entry = ReadMemory(reader);
-                var bm25Rank = reader.IsDBNull(12) ? 0d : reader.GetDouble(12);
-                var ageDays = reader.IsDBNull(13) ? 0d : Math.Max(0d, reader.GetDouble(13));
-                var finalScore = bm25Rank * Math.Exp(-lambda * ageDays);
-                ranked.Add((entry, finalScore));
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    var entry = ReadMemory(reader);
+                    // bm25() is negative-is-better, so the query already negates it; clamp because
+                    // the ranker normalises by magnitude and a negative lexical score is meaningless.
+                    var bm25Rank = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+                    var ageDays = reader.IsDBNull(13) ? 0d : Math.Max(0d, reader.GetDouble(13));
+                    candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
+                }
             }
 
-            return ranked
-                .OrderByDescending(item => item.Score)
-                .Take(limit)
-                .Select(item => item.Entry)
-                .ToList();
+            await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, ct).ConfigureAwait(false);
+
+            return HybridMemoryRanker.Rank(candidates.Values, limit, lambda);
         }
         catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
         {
@@ -393,6 +422,9 @@ public sealed class SqliteMemoryStore(
             WHERE m.is_archived = 0
             """);
 
+        // See the note on the FTS path: the raw string literal has no trailing newline.
+        sql.AppendLine();
+
         for (var i = 0; i < terms.Length; i++)
         {
             var parameterName = $"$term{i}";
@@ -421,22 +453,100 @@ public sealed class SqliteMemoryStore(
         command.Parameters.AddWithValue("$limit", scanCeiling);
         command.CommandText = sql.ToString();
 
+        Dictionary<string, MemoryRankingCandidate> candidates = new(StringComparer.Ordinal);
+        await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var entry = ReadMemory(reader);
+                var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+                var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
+                candidates[entry.Id] = new MemoryRankingCandidate(entry, textScore, Similarity: null, ageDays);
+            }
+        }
+
+        // The FTS index being unavailable says nothing about the embedding column, so the
+        // degraded path still contributes vector evidence when a model is active. With no
+        // model this collapses to exactly the previous lexical ordering.
+        await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, ct).ConfigureAwait(false);
+
+        return HybridMemoryRanker.Rank(candidates.Values, limit, lambda);
+    }
+
+    /// <summary>
+    /// Adds cosine-similarity evidence to the lexical candidate set, and pulls in semantically
+    /// close rows that the lexical query missed entirely.
+    /// </summary>
+    /// <remarks>
+    /// This is where the paraphrase gap is closed: BM25 can only return rows sharing surface
+    /// terms with the query, so a semantically identical memory phrased differently is
+    /// invisible to it. The scan is brute-force and bounded (see
+    /// <see cref="MemoryVectorSearchOptions"/>) and applies the *same*
+    /// <see cref="AppendFilters"/> predicates as the lexical path, so scope, source, session,
+    /// date-range and tag filtering hold identically across both halves of hybrid retrieval.
+    /// <para>
+    /// Every exit is a silent no-op: no configured model, a generation failure, an
+    /// undecodable BLOB, or a vector stamped with a different <see cref="EmbeddingIdentity"/>
+    /// all simply leave the candidate without a similarity, which the ranker reads as "no
+    /// evidence" and falls back to the lexical signal for that row.
+    /// </para>
+    /// </remarks>
+    private async Task AugmentWithVectorCandidatesAsync(
+        SqliteConnection connection,
+        string query,
+        Dictionary<string, MemoryRankingCandidate> candidates,
+        MemorySearchFilter? filter,
+        CancellationToken ct)
+    {
+        if (_embeddingService.ActiveIdentity is null)
+            return;
+
+        var generated = await _embeddingService.TryGenerateAsync(query, ct).ConfigureAwait(false);
+        if (generated is not { } queryEmbedding)
+            return;
+
+        await using var command = connection.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
+                   m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   (julianday('now') - julianday(m.created_at)) AS age_days
+            FROM memories m
+            WHERE m.is_archived = 0
+              AND m.embedding IS NOT NULL
+            """);
+
+        // See the note on the FTS path: the raw string literal has no trailing newline.
+        sql.AppendLine();
+
+        AppendFilters(sql, command, filter);
+
+        sql.AppendLine("ORDER BY m.created_at DESC");
+        if (_vectorSearchOptions.MaxScanRows is { } maxRows && maxRows > 0)
+        {
+            sql.AppendLine("LIMIT $vectorScanLimit");
+            command.Parameters.AddWithValue("$vectorScanLimit", maxRows);
+        }
+
+        command.CommandText = sql.ToString();
+
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        List<(MemoryEntry Entry, double Score)> ranked = [];
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var entry = ReadMemory(reader);
-            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
-            var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
-            var finalScore = textScore * Math.Exp(-lambda * ageDays);
-            ranked.Add((entry, finalScore));
-        }
+            if (!EmbeddingBlob.TryDecode(entry.Embedding, out var storedIdentity, out var storedVector))
+                continue;
 
-        return ranked
-            .OrderByDescending(item => item.Score)
-            .Take(limit)
-            .Select(item => item.Entry)
-            .ToList();
+            var similarity = VectorSimilarity.TryCosine(
+                queryEmbedding.Identity, queryEmbedding.Vector, storedIdentity, storedVector);
+            if (similarity is null)
+                continue;
+
+            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+            candidates[entry.Id] = candidates.TryGetValue(entry.Id, out var existing)
+                ? existing with { Similarity = similarity }
+                : new MemoryRankingCandidate(entry, LexicalScore: 0d, similarity, ageDays);
+        }
     }
 
     /// <summary>

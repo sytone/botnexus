@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -232,7 +232,7 @@ public sealed class AgentInteractionServiceTests
                     DateTimeOffset.UtcNow.AddHours(-1),
                     DateTimeOffset.UtcNow.AddMinutes(-1))
             ]);
-        _restClient.GetSessionsAsync("agent-1", Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync("agent-1", Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns([
                 new SessionSummary(
                     firstRunSessionId,
@@ -725,7 +725,7 @@ public sealed class AgentInteractionServiceTests
             {
                 new("conv-active", "agent-1", "Active", false, "Active", "sess-active", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
             });
-        _restClient.GetSessionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync(Arg.Any<string>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<SessionSummary>() as IReadOnlyList<SessionSummary>);
 
         // This should NOT trigger a history load because conversation is streaming

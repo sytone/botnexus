@@ -45,9 +45,10 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         IReadOnlyList<ParticipantDto>? participants = null,
         // #2305 (epic #2300): cron-ness is the SERVER-stamped source, never a `cron:` session-id
         // prefix. Fixtures set it explicitly.
-        string source = "Channel") =>
+        string source = "Channel",
+        string kind = "HumanAgent") =>
         new(id, agentId, title, false, status, activeSessionId, bindingCount,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Source: source, Participants: participants);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Kind: kind, Source: source, Participants: participants);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
@@ -317,5 +318,53 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         // Clicking the card is a no-throw focus affordance that leaves the filter untouched.
         cut.Find("[data-testid='activity-summary-agents']").Click();
         Assert.Equal("beta", cut.Find("[data-testid='activity-filter-agent']").GetAttribute("value"));
+    }
+    // ── Origin badges (#2385, epic #2300) ──────────────────────────────────
+
+    [Fact]
+    public void Renders_an_origin_badge_per_row_and_leaves_the_ordinary_human_channel_row_unbadged()
+    {
+        SetupConversations(
+            Conv("c1", title: "Jon DM"),
+            Conv("c2", title: "Nightly run", source: "Cron"),
+            Conv("c3", title: "Inbound hook", source: "Webhook"),
+            Conv("c4", title: "Worker", source: "Agent", kind: "AgentSubAgent"),
+            Conv("c5", title: "Peer", source: "Agent", kind: "AgentAgent"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        // Scheduled rows are default-excluded, so reveal them first - the badge set under test spans
+        // every origin including cron.
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-filter-cron']"));
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+
+        // Assert the OBSERVABLE badge set actually rendered into the DOM, keyed by row, rather than
+        // that the helper returns a string: a correct helper wired to nothing would pass the latter.
+        var badgesByRow = cut.FindAll("[data-testid='activity-row']")
+            .ToDictionary(
+                r => r.GetAttribute("data-conversation-id")!,
+                r => r.QuerySelector("[data-testid='activity-origin-badge']"));
+
+        Assert.Null(badgesByRow["c1"]);
+        Assert.Equal("Scheduled", badgesByRow["c2"]!.TextContent);
+        Assert.Equal("cron", badgesByRow["c2"]!.GetAttribute("data-origin"));
+        Assert.Equal("Webhook", badgesByRow["c3"]!.TextContent);
+        Assert.Equal("webhook", badgesByRow["c3"]!.GetAttribute("data-origin"));
+        Assert.Equal("Sub-agent", badgesByRow["c4"]!.TextContent);
+        Assert.Equal("subagent", badgesByRow["c4"]!.GetAttribute("data-origin"));
+        Assert.Equal("Agent-to-agent", badgesByRow["c5"]!.TextContent);
+        Assert.Equal("a2a", badgesByRow["c5"]!.GetAttribute("data-origin"));
+    }
+
+    [Fact]
+    public void Origin_badge_carries_the_full_source_and_kind_as_hover_detail()
+    {
+        SetupConversations(Conv("c1", title: "Worker", source: "Agent", kind: "AgentSubAgent"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-origin-badge']"));
+
+        var badge = cut.Find("[data-testid='activity-origin-badge']");
+        Assert.Equal("Source: Agent \u00b7 Kind: AgentSubAgent", badge.GetAttribute("title"));
     }
 }

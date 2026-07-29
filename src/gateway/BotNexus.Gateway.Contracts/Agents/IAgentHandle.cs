@@ -83,6 +83,22 @@ public interface IAgentHandle : IAsyncDisposable
     Task SteerAsync(string message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Steers the running agent with a fully-composed multimodal user message, so a steer issued
+    /// from a composer that had draft attachments delivers those attachments rather than text only
+    /// (#2484).
+    /// </summary>
+    /// <param name="message">The composed steering message, optionally carrying image content.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the message is queued.</returns>
+    /// <remarks>
+    /// The default implementation preserves the composed text (which already carries inlined
+    /// non-image attachments from <c>AgentUserMessageComposer</c>) but not the vision payload;
+    /// handles that own a real steering queue MUST override it to inject the typed message intact.
+    /// </remarks>
+    Task SteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
+        => SteerAsync(message.Content, cancellationToken);
+
+    /// <summary>
     /// Steers the running agent with a system-injected side turn (#1845) that must only be
     /// consumed at a genuine idle turn boundary. Used by the pre-compaction memory flush so a
     /// mid-flight flush turn cannot consume the loop's continuation and abandon the original
@@ -146,6 +162,20 @@ public interface IAgentHandle : IAsyncDisposable
         => Task.FromResult(false);
 
     /// <summary>
+    /// Typed counterpart of <see cref="TryFollowUpWhileRunningAsync(string, CancellationToken)"/>
+    /// that carries a fully-composed multimodal user message so a follow-up issued with draft
+    /// attachments survives the queue round-trip (#2484).
+    /// </summary>
+    /// <param name="message">The composed follow-up message, optionally carrying image content.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// <c>true</c> when a run was in flight and the message is queued; <c>false</c> when the agent
+    /// was idle and the caller must deliver it as an ordinary inbound message instead.
+    /// </returns>
+    Task<bool> TryFollowUpWhileRunningAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Atomically aborts the current agent run (if any) and injects a new steering direction.
     /// The new direction is queued immediately after abort completes so the agent resumes
     /// with the redirected goal rather than continuing the abandoned turn.
@@ -158,4 +188,15 @@ public interface IAgentHandle : IAsyncDisposable
     /// Implementation is wired in Issue #800.
     /// </remarks>
     Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Typed counterpart of <see cref="InterruptAndSteerAsync(string, CancellationToken)"/> that
+    /// carries a fully-composed multimodal user message so a redirect issued with draft attachments
+    /// delivers them rather than dropping them (#2484).
+    /// </summary>
+    /// <param name="message">The composed redirect message, optionally carrying image content.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the abort is issued and the steer is queued.</returns>
+    Task InterruptAndSteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
+        => InterruptAndSteerAsync(message.Content, cancellationToken);
 }
