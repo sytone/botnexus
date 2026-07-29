@@ -70,13 +70,28 @@ public sealed class SessionsController : ControllerBase
     /// When <c>true</c>, includes sealed and expired sessions. When <c>false</c> (default),
     /// only active and suspended sessions are returned.
     /// </param>
+    /// <param name="offset">Zero-based offset into the newest-first session list (default 0).</param>
+    /// <param name="limit">Maximum number of sessions to return (default 50, max 200).</param>
     /// <returns>The list result.</returns>
     [HttpGet]
     public async Task<ActionResult> List(
         [FromQuery] string? agentId,
         [FromQuery] bool includeInactive = false,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 50,
         CancellationToken cancellationToken = default)
     {
+        // #2411: this collection endpoint scales with session count, the one axis that grows
+        // without bound on a long-lived gateway. Validate and clamp exactly as the
+        // {sessionId}/history and {sessionId}/debug endpoints in this file already do.
+        if (offset < 0)
+            return BadRequest(new { error = "offset must be greater than or equal to zero." });
+
+        if (limit <= 0)
+            return BadRequest(new { error = "limit must be greater than zero." });
+
+        var boundedLimit = Math.Min(limit, 200);
+
         string? normalizedAgentId = null;
         if (!string.IsNullOrWhiteSpace(agentId))
             normalizedAgentId = AgentId.From(agentId).Value;
@@ -91,7 +106,11 @@ public sealed class SessionsController : ControllerBase
             // aggregate (#1581 fixed warmup the same way; this closes the REST/portal gap).
             // DateTimeOffset.MinValue keeps the historical "return every session" contract;
             // agent/status filtering is applied below to preserve the previous behaviour.
-            summaries = await _sessions.ListSummariesAsync(DateTimeOffset.MinValue, cancellationToken);
+            // DateTimeOffset.MinValue keeps the "no time window" contract, but the read is now
+            // bounded by an explicit page (#2411) instead of returning every session ever
+            // recorded. Agent/status filtering is applied below to preserve prior behaviour.
+            summaries = await _sessions.ListSummariesAsync(
+                DateTimeOffset.MinValue, boundedLimit, offset, cancellationToken);
         }
         catch (SessionStoreUnavailableException)
         {

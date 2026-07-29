@@ -25,13 +25,23 @@ public sealed class InterruptAndSteerTests
     [Fact]
     public void IAgentInteractionService_HasInterruptAndSteerAsync_Method()
     {
-        // Assert the method exists on the interface (contract guard)
-        var method = typeof(IAgentInteractionService).GetMethod("InterruptAndSteerAsync");
+        // Assert the method exists on the interface (contract guard). #2484 added an
+        // attachments-carrying overload, so the (string, string) shape must now be selected by
+        // parameter types - GetMethod(name) alone is ambiguous.
+        var method = typeof(IAgentInteractionService).GetMethod(
+            "InterruptAndSteerAsync",
+            [typeof(string), typeof(string)]);
         Assert.NotNull(method);
         var parameters = method!.GetParameters();
         Assert.Equal(2, parameters.Length);
         Assert.Equal("agentId", parameters[0].Name);
         Assert.Equal("message", parameters[1].Name);
+
+        // #2484: the attachments overload must exist too, so the contract guard covers both.
+        var mediaOverload = typeof(IAgentInteractionService).GetMethod(
+            "InterruptAndSteerAsync",
+            [typeof(string), typeof(string), typeof(IReadOnlyList<DraftAttachment>)]);
+        Assert.NotNull(mediaOverload);
     }
 
     [Theory]

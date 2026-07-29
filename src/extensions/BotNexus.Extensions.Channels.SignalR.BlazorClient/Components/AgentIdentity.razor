@@ -1,0 +1,45 @@
+@inject IClientStateStore Store
+@implements IDisposable
+
+@*
+    Agent identity chip (#2441). Previously an entire ~44px row inside AgentPanel's header; it now
+    lives in the portal top bar so the chat gets that row back. The class names are deliberately
+    unchanged (.agent-panel-avatar / -meta / -title / -description / -id) because they are the
+    documented hover-reveal contract and are asserted by component and E2E tests.
+
+    Every text value passes through PortalText.SingleLine so embedded newline/tab/carriage-return
+    characters cannot grow the top bar or defeat ellipsis truncation.
+*@
+<div class="agent-identity banner-agent-identity" data-testid="agent-identity">
+    <div class="agent-panel-avatar" aria-hidden="true">@AvatarGlyph</div>
+    <div class="agent-panel-meta" title="@AgentId">
+        <span class="agent-panel-title" data-testid="agent-identity-name">@DisplayName</span>
+        @if (!string.IsNullOrWhiteSpace(Description))
+        {
+            <span class="agent-panel-description">@Description</span>
+        }
+        <span class="agent-panel-id">@AgentId</span>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    private AgentState? Agent => Store.GetAgent(AgentId);
+
+    private string DisplayName =>
+        PortalText.SingleLine(Agent?.DisplayName) is { Length: > 0 } name ? name : PortalText.SingleLine(AgentId);
+
+    // Prefer the agent's configured emoji; fall back to the default robot glyph when none is set.
+    private string AvatarGlyph =>
+        string.IsNullOrWhiteSpace(Agent?.Emoji) ? "\U0001F916" : PortalText.SingleLine(Agent!.Emoji);
+
+    private string Description => PortalText.SingleLine(Agent?.Description);
+
+    protected override void OnInitialized() => Store.OnChanged += HandleStoreChanged;
+
+    private void HandleStoreChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Store.OnChanged -= HandleStoreChanged;
+}

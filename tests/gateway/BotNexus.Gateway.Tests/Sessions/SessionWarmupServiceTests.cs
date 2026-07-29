@@ -23,7 +23,7 @@ public sealed class SessionWarmupServiceTests
         await service.StartAsync(CancellationToken.None);
         var sessions = await service.GetAvailableSessionsAsync(CancellationToken.None);
 
-        store.Verify(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        store.Verify(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         store.Verify(value => value.ListAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
         sessions.Where(summary => summary.SessionId == "startup-1").ShouldHaveSingleItem();
     }
@@ -239,7 +239,7 @@ public sealed class SessionWarmupServiceTests
         var available = await service.GetAvailableSessionsAsync(CancellationToken.None);
 
         available.ShouldBeEmpty();
-        store.Verify(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         store.Verify(value => value.ListAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -261,12 +261,14 @@ public sealed class SessionWarmupServiceTests
                 sessions.Where(session => !agentId.HasValue || session.AgentId == agentId.Value).ToList());
         // Warmup now reads through the transcript-free summary path. Mirror the real default
         // implementation (map + retention-window filter) so the mock stays faithful.
-        store.Setup(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((DateTimeOffset updatedAfter, CancellationToken _) =>
-                (IReadOnlyList<SessionSummary>)sessions
-                    .Where(session => session.UpdatedAt >= updatedAfter)
-                    .Select(SessionSummary.FromSession)
-                    .ToList());
+        store.Setup(value => value.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTimeOffset updatedAfter, int? limit, int offset, CancellationToken _) =>
+                SessionSummaryWindow.Apply(
+                    sessions
+                        .Where(session => session.UpdatedAt >= updatedAfter)
+                        .Select(SessionSummary.FromSession),
+                    limit,
+                    offset));
         return store;
     }
 

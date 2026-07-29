@@ -31,7 +31,12 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
             {
                 var loaded = JsonSerializer.Deserialize<PortalPreferences>(json);
                 if (loaded is not null)
+                {
+                    // A hand-edited or stale localStorage entry must never leak an unknown density
+                    // token into the DOM, so normalise on the way in as well as on the way out.
+                    loaded.Density = PortalDensity.Normalize(loaded.Density);
                     _current = loaded;
+                }
             }
         }
         catch
@@ -68,6 +73,14 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     public async Task SetArchiveConfirmAsync(bool enabled)
     {
         _current.ArchiveConfirmEnabled = enabled;
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
+
+    /// <inheritdoc/>
+    public async Task SetDensityAsync(string density)
+    {
+        _current.Density = PortalDensity.Normalize(density);
         await SaveAsync();
         OnChanged.Invoke();
     }

@@ -139,6 +139,10 @@ internal static class AnthropicMessageConverter
         else
         {
             var blocks = new List<object>();
+            var supportsImages = ImageModalityGuard.AllowImages(
+                model,
+                msg.Content.Blocks!.Count(b => b is ImageContent),
+                "anthropic.user");
             foreach (var block in msg.Content.Blocks!)
             {
                 switch (block)
@@ -154,7 +158,7 @@ internal static class AnthropicMessageConverter
                         });
                         break;
                     case ImageContent image:
-                        if (!model.Input.Contains("image"))
+                        if (!supportsImages)
                             break;
                         blocks.Add(new Dictionary<string, object?>
                         {
