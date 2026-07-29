@@ -13,6 +13,7 @@ namespace BotNexus.Extensions.Mcp;
 [JsonSerializable(typeof(McpInitializeParams))]
 [JsonSerializable(typeof(McpInitializeResult))]
 [JsonSerializable(typeof(McpToolsListResult))]
+[JsonSerializable(typeof(McpToolsListParams))]
 [JsonSerializable(typeof(McpToolCallParams))]
 [JsonSerializable(typeof(McpToolCallResult))]
 [JsonSerializable(typeof(McpToolDefinition))]
