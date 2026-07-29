@@ -13,12 +13,14 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// Two rules make that unrepresentable here:
 /// </para>
 /// <list type="number">
-/// <item>The offset advances by the requested page size, never by the received count. The server
-/// now pages the same filtered set the client consumes, so those coincide - but advancing by the
-/// received count would silently re-break the walk the moment they diverge again.</item>
 /// <item>Termination is driven by the server's <c>hasMore</c> flag, never by a short page. The
 /// server clamps <c>limit</c> to its own maximum (#2499), so "returned fewer than requested" is
 /// indistinguishable from "was clamped" and proves nothing about exhaustion.</item>
+/// <item>The offset advances by the number of rows RECEIVED. That is correct only because #2532
+/// moved the agent/status/conversation predicate into the store: the server now pages exactly the
+/// set the client is accumulating, so the client's running count and the server's offset are the
+/// same coordinate. It is also the only advance that survives the clamp - stepping by the
+/// requested page size would skip every row the server trimmed off a clamped page.</item>
 /// </list>
 /// </remarks>
 public static class SessionRosterLoader
@@ -51,14 +53,13 @@ public static class SessionRosterLoader
         ArgumentNullException.ThrowIfNull(restClient);
 
         var all = new List<SessionSummary>();
-        var offset = 0;
 
         for (var page = 0; page < MaxSessionPages; page++)
         {
             var result = await restClient.GetSessionsAsync(
                 agentId,
                 SessionPageSize,
-                offset,
+                all.Count,
                 conversationId,
                 cancellationToken);
 
@@ -68,10 +69,10 @@ public static class SessionRosterLoader
             if (!result.HasMore)
                 break;
 
-            // Advance by the page size, not by result.Sessions.Count: the offset addresses the
-            // server's filtered set, and deriving it from the received count is precisely the
-            // coordinate-space confusion that caused #2532.
-            offset += SessionPageSize;
+            // Defensive: a server that reports hasMore while returning nothing would otherwise
+            // spin at a fixed offset until MaxSessionPages. Stop immediately instead.
+            if (result.Sessions.Count == 0)
+                break;
         }
 
         return all;
