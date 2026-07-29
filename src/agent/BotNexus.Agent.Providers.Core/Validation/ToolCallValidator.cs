@@ -407,7 +407,8 @@ public static class ToolCallValidator
 
         if (!schema.TryGetProperty("properties", out var propertiesElement) || propertiesElement.ValueKind != JsonValueKind.Object)
         {
-            // No properties defined but additionalProperties is false — all properties are unknown
+            // No properties defined but additionalProperties is false - all properties are unknown.
+            // There are no declared names to compare against, so no suggestion is possible here.
             foreach (var argumentProperty in arguments.EnumerateObject())
             {
                 errors.Add($"Property '{argumentProperty.Name}' is not defined in the schema.");
@@ -415,13 +416,118 @@ public static class ToolCallValidator
             return;
         }
 
+        var declaredNames = propertiesElement.EnumerateObject().Select(p => p.Name).ToArray();
+
         foreach (var argumentProperty in arguments.EnumerateObject())
         {
             if (!propertiesElement.TryGetProperty(argumentProperty.Name, out _))
             {
-                errors.Add($"Property '{argumentProperty.Name}' is not defined in the schema.");
+                var message = $"Property '{argumentProperty.Name}' is not defined in the schema.";
+
+                // Issue #2408: a misspelled property otherwise costs the model a whole turn of
+                // guesswork. When a declared property is close enough to be a plausible typo,
+                // name it so the model can self-correct on the very next turn. When nothing is
+                // close the message stays byte-identical to the historical text.
+                var suggestion = FindClosestPropertyName(argumentProperty.Name, declaredNames);
+                if (suggestion is not null)
+                {
+                    message += $" Did you mean '{suggestion}'?";
+                }
+
+                errors.Add(message);
             }
         }
+    }
+
+    /// <summary>
+    /// Returns the declared property name that is the most plausible typo-correction for
+    /// <paramref name="unknownName"/>, or <c>null</c> when nothing is close enough.
+    /// Comparison is case-insensitive so a casing-only mistake is always suggested.
+    /// Ties are broken by ordinal order of the candidate name so the emitted message is
+    /// deterministic regardless of schema property declaration order.
+    /// </summary>
+    private static string? FindClosestPropertyName(string unknownName, IReadOnlyList<string> declaredNames)
+    {
+        if (declaredNames.Count == 0 || unknownName.Length == 0)
+        {
+            return null;
+        }
+
+        // Threshold scales with the length of the supplied token: short names must match
+        // almost exactly (otherwise unrelated 2-3 character names look "close"), longer
+        // names tolerate the two or three character slips typical of a real typo.
+        var threshold = unknownName.Length <= 4 ? 1 : unknownName.Length <= 8 ? 2 : 3;
+
+        string? best = null;
+        var bestDistance = int.MaxValue;
+
+        foreach (var candidate in declaredNames)
+        {
+            var distance = LevenshteinDistance(unknownName, candidate);
+            if (distance > threshold)
+            {
+                continue;
+            }
+
+            // Strictly-better wins; an exact tie is resolved ordinal-first for determinism.
+            if (distance < bestDistance ||
+                (distance == bestDistance && best is not null && string.CompareOrdinal(candidate, best) < 0))
+            {
+                best = candidate;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Classic iterative two-row Levenshtein edit distance (insert/delete/substitute all
+    /// cost 1), compared case-insensitively. Deliberately dependency-free and O(n*m) - the
+    /// inputs are short JSON property names, so the naive form is more than fast enough.
+    /// </summary>
+    private static int LevenshteinDistance(string left, string right)
+    {
+        left = left.ToLowerInvariant();
+        right = right.ToLowerInvariant();
+
+        if (left.Length == 0)
+        {
+            return right.Length;
+        }
+
+        if (right.Length == 0)
+        {
+            return left.Length;
+        }
+
+        // previous[j] holds the distance for the previous source prefix; current[j] the row being built.
+        var previous = new int[right.Length + 1];
+        var current = new int[right.Length + 1];
+
+        for (var j = 0; j <= right.Length; j++)
+        {
+            previous[j] = j;
+        }
+
+        for (var i = 1; i <= left.Length; i++)
+        {
+            current[0] = i;
+
+            for (var j = 1; j <= right.Length; j++)
+            {
+                var substitutionCost = left[i - 1] == right[j - 1] ? 0 : 1;
+
+                current[j] = Math.Min(
+                    Math.Min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + substitutionCost);
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        // The final completed row was swapped into 'previous'.
+        return previous[right.Length];
     }
 
     private static void ValidateType(JsonProperty argumentProperty, JsonElement propertySchema, ICollection<string> errors)

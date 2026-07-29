@@ -40,6 +40,21 @@
                 <div class="portal-settings-hint">
                     When enabled, shows a confirmation prompt before archiving or closing a conversation.
                 </div>
+                <div class="portal-settings-row">
+                    <label class="portal-settings-label" for="portal-density-select">Interface density</label>
+                    <select id="portal-density-select"
+                            class="portal-settings-select"
+                            data-testid="density-select"
+                            value="@Prefs.Current.Density"
+                            @onchange="ChangeDensity">
+                        <option value="compact">Compact</option>
+                        <option value="comfortable">Comfortable</option>
+                    </select>
+                </div>
+                <div class="portal-settings-hint">
+                    Compact tightens the top bar, tabs and sidebar rows. Comfortable restores roomier
+                    spacing. Applies immediately across the portal.
+                </div>
             </div>
         </div>
     </div>
@@ -81,6 +96,11 @@
     {
         var enabled = e.Value is bool b ? b : bool.Parse(e.Value?.ToString() ?? "false");
         await Prefs.SetDebugModeAsync(enabled);
+    }
+
+    private async Task ChangeDensity(ChangeEventArgs e)
+    {
+        await Prefs.SetDensityAsync(e.Value?.ToString() ?? PortalDensity.Compact);
     }
 
     private async Task ToggleArchiveConfirm(ChangeEventArgs e)

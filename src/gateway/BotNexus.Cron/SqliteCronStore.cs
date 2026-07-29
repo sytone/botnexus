@@ -731,6 +731,32 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, job_id, started_at, completed_at, status, error, session_id
+            FROM cron_runs
+            WHERE status = $running
+            ORDER BY started_at DESC
+            """;
+        command.Parameters.AddWithValue("$running", CronRunStatus.Running);
+
+        var runs = new List<CronRun>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            runs.Add(ReadRun(reader));
+        }
+
+        return runs;
+    }
+
+    /// <inheritdoc />
     public async Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
     {
         await using var connection = CreateConnection();

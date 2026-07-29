@@ -1,0 +1,449 @@
+@* #2037: the portal Home page - the default landing surface at "/".
+
+   This is the centralized "start a conversation" experience: a concise site/agent summary across
+   the top, then a conversation starter in the centre. It deliberately REUSES existing surfaces
+   rather than growing parallel pipelines:
+     - PlatformStatsPanel for the live platform metrics (#1692),
+     - IClientStateStore.Agents for the agent roster,
+     - GatewayInfoService.Info.DefaultAgentId for the configured world default agent (#2035),
+     - IModelOptionsProvider for provider-scoped model + capability metadata (#1893),
+     - IStartConversationService for the create -> persist override -> send workflow (#2036).
+
+   The pre-existing Home.razor is the chat page despite its filename (see #2037 implementation
+   notes) and is intentionally left alone; this page is named Landing to avoid that collision. *@
+@page "/"
+@page "/home"
+@inject IPortalLoadService PortalLoad
+@inject IClientStateStore Store
+@inject IGatewayRestClient RestClient
+@inject IStartConversationService StartConversation
+@inject IModelOptionsProvider ModelOptions
+@inject GatewayInfoService GatewayInfo
+@inject HttpClient Http
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>Home - BotNexus</PageTitle>
+
+@if (!PortalLoad.IsReady)
+{
+    <div class="portal-loading">
+        @if (PortalLoad.LoadError is not null)
+        {
+            <div class="portal-load-error">&#x26A0; @PortalLoad.LoadError</div>
+        }
+        else
+        {
+            <div class="portal-load-spinner">Connecting&#x2026;</div>
+        }
+    </div>
+}
+else
+{
+    <div class="home-page" data-testid="home-page">
+        <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
+            <PlatformStatsPanel />
+            <div class="home-agent-summary">
+                <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
+                <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
+                @if (_connectedCount > 0)
+                {
+                    <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
+                }
+            </div>
+        </section>
+
+        @if (_agents.Count == 0)
+        {
+            <section class="home-starter home-starter-empty" data-testid="home-no-agents" role="status">
+                <h2>No agents are available yet</h2>
+                <p>Configure an agent before starting a conversation.</p>
+            </section>
+        }
+        else
+        {
+            <section class="home-starter" aria-label="Start a conversation">
+                <h2 class="home-starter-title">What would you like to do?</h2>
+
+                <textarea class="home-message-input"
+                          data-testid="home-message-input"
+                          aria-label="Message"
+                          rows="4"
+                          placeholder="Type your message, then press Enter to start a conversation&#x2026;"
+                          @bind="_draft"
+                          @bind:event="oninput"
+                          @onkeydown="HandleKeyDownAsync"></textarea>
+
+                <div class="home-starter-controls">
+                    <label class="home-control">
+                        <span class="home-control-label">Agent</span>
+                        <select class="home-agent-select"
+                                data-testid="home-agent-select"
+                                aria-label="Agent"
+                                @onchange="OnAgentChangedAsync">
+                            @foreach (var agent in _agents)
+                            {
+                                <option value="@agent.AgentId" selected="@(agent.AgentId == _selectedAgentId)">@AgentLabel(agent)</option>
+                            }
+                        </select>
+                    </label>
+
+                    <label class="home-control">
+                        <span class="home-control-label">Model</span>
+                        <select class="home-model-select"
+                                data-testid="home-model-select"
+                                aria-label="Model"
+                                @onchange="OnModelChanged">
+                            @foreach (var model in _models)
+                            {
+                                <option value="@model.ModelId" selected="@(model.ModelId == _selectedModel)">@model.Name</option>
+                            }
+                        </select>
+                    </label>
+
+                    @if (ThinkingLevels.Count > 0)
+                    {
+                        <label class="home-control">
+                            <span class="home-control-label">Reasoning</span>
+                            <select class="home-thinking-select"
+                                    data-testid="home-thinking-select"
+                                    aria-label="Reasoning level"
+                                    @onchange="OnThinkingChanged">
+                                <option value="" selected="@(_selectedThinking.Length == 0)">(model default)</option>
+                                @foreach (var level in ThinkingLevels)
+                                {
+                                    <option value="@level" selected="@(level == _selectedThinking)">@level</option>
+                                }
+                            </select>
+                        </label>
+                    }
+
+                    @if (ContextSizes.Count > 1)
+                    {
+                        <label class="home-control">
+                            <span class="home-control-label">Context</span>
+                            <select class="home-context-select"
+                                    data-testid="home-context-select"
+                                    aria-label="Context window"
+                                    @onchange="OnContextChanged">
+                                <option value="" selected="@(_selectedContext.Length == 0)">(model default)</option>
+                                @foreach (var size in ContextSizes)
+                                {
+                                    <option value="@size" selected="@(size.ToString(System.Globalization.CultureInfo.InvariantCulture) == _selectedContext)">@size.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) tokens</option>
+                                }
+                            </select>
+                        </label>
+                    }
+
+                    <button type="button"
+                            class="home-send-btn"
+                            data-testid="home-send"
+                            aria-label="Start conversation"
+                            disabled="@(!CanSend)"
+                            @onclick="SendAsync">
+                        @(_starting ? "Starting\u2026" : "Send")
+                    </button>
+                </div>
+
+                @if (_error is not null)
+                {
+                    <div class="home-error" data-testid="home-error" role="alert">@_error</div>
+                }
+            </section>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<AgentState> _agents = [];
+    private IReadOnlyList<ModelOption> _models = [];
+    private string? _selectedAgentId;
+    private string? _selectedModel;
+    private string? _agentDefaultModel;
+    private string _selectedThinking = string.Empty;
+    private string _selectedContext = string.Empty;
+    private string _draft = string.Empty;
+    private string? _error;
+    private bool _starting;
+
+    // Tracks a deliberate model pick. When the agent changes, an explicit choice is honoured if it
+    // is still valid for the new provider; otherwise selection falls back to the agent's default.
+    private bool _modelPickedByUser;
+
+    // Tracks a deliberate agent pick, and whether the configured world default has actually been
+    // applied. A fallback chosen before the gateway info document arrived must NOT be sticky.
+    private bool _agentPickedByUser;
+    private bool _defaultApplied;
+
+    // Selection generation. The roster can refresh (hub push) while initialization is still awaiting
+    // the gateway info document, so two SelectAgentAsync calls can be in flight at once. Each call
+    // claims a generation and abandons its own results if a newer selection started meanwhile -
+    // otherwise a slower, older selection would clobber the newer one.
+    private int _selectionGeneration;
+
+    private int _connectedCount;
+
+    private bool CanSend => !_starting && !string.IsNullOrWhiteSpace(_draft) && _selectedAgentId is { Length: > 0 };
+
+    private IReadOnlyList<string> ThinkingLevels =>
+        _models.FirstOrDefault(m => m.ModelId == _selectedModel)?.SupportedThinkingLevels ?? [];
+
+    private IReadOnlyList<int> ContextSizes =>
+        _models.FirstOrDefault(m => m.ModelId == _selectedModel)?.SupportedContextSizes ?? [];
+
+    private static string AgentLabel(AgentState agent) =>
+        string.IsNullOrWhiteSpace(agent.DisplayName) ? agent.AgentId : agent.DisplayName;
+
+    protected override void OnInitialized()
+    {
+        PortalLoad.OnReadyChanged += HandleReadyChanged;
+        Store.OnChanged += HandleStateChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!PortalLoad.IsReady && !PortalLoad.IsLoading)
+        {
+            try
+            {
+                var baseUri = new Uri(Nav.BaseUri);
+                var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
+                PortalLoad.ClientKind = "desktop";
+                await PortalLoad.InitializeAsync(hubUrl);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Portal initialization failed: {ex.Message}");
+            }
+        }
+
+        await GatewayInfo.LoadAsync();
+        await RefreshRosterAsync();
+    }
+
+    private void HandleReadyChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshRosterAsync();
+            StateHasChanged();
+        });
+
+    private void HandleStateChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshRosterAsync();
+            StateHasChanged();
+        });
+
+    /// <summary>
+    /// Rebuilds the agent list from the shared client state store and, on first population, resolves
+    /// the initial selection: the configured world default agent (#2035) when it is actually present
+    /// in the roster, otherwise a safe fallback to the first available agent.
+    /// </summary>
+    private async Task RefreshRosterAsync()
+    {
+        _agents = Store.Agents.Values
+            .Where(a => !a.IsReadOnly)
+            .OrderBy(a => a.IsBuiltIn)
+            .ThenBy(a => AgentLabel(a), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _connectedCount = _agents.Count(a => a.IsConnected);
+
+        if (_agents.Count == 0)
+        {
+            _selectedAgentId = null;
+            return;
+        }
+
+        // The gateway info document can only be fetched once the hub handshake has published the API
+        // base URL, which happens AFTER this page first initializes. Retry the load here (it is a
+        // no-op once Info is populated) so the configured world default is not lost to that race.
+        if (GatewayInfo.Info is null && !string.IsNullOrEmpty(RestClient.ApiBaseUrl))
+            await GatewayInfo.LoadAsync();
+
+        var configuredDefault = GatewayInfo.Info?.DefaultAgentId;
+        var defaultAvailable = configuredDefault is { Length: > 0 }
+            && _agents.Any(a => a.AgentId == configuredDefault);
+
+        // Keep the current selection when it is still valid, so a citizen's pick is never clobbered
+        // by a background roster refresh. The one exception: a fallback selected while the gateway
+        // info document had not loaded yet is provisional, so the configured world default still
+        // wins once it becomes known (the roster is populated by the hub before info arrives).
+        if (_selectedAgentId is { Length: > 0 } current
+            && _agents.Any(a => a.AgentId == current)
+            && (_agentPickedByUser || _defaultApplied || !defaultAvailable))
+            return;
+
+        var resolved = defaultAvailable ? configuredDefault! : _agents[0].AgentId;
+        _defaultApplied = defaultAvailable;
+
+        await SelectAgentAsync(resolved);
+    }
+
+    private async Task OnAgentChangedAsync(ChangeEventArgs e)
+    {
+        var agentId = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(agentId))
+            return;
+
+        _agentPickedByUser = true;
+        await SelectAgentAsync(agentId);
+    }
+
+    /// <summary>
+    /// Selects an agent and refreshes the model choices for that agent's provider. The model
+    /// selection resets to the agent's configured model unless the citizen deliberately picked a
+    /// model that is also valid for the new provider (#2037 acceptance criteria).
+    /// </summary>
+    private async Task SelectAgentAsync(string agentId)
+    {
+        var generation = ++_selectionGeneration;
+        _selectedAgentId = agentId;
+        _error = null;
+
+        var previousPick = _modelPickedByUser ? _selectedModel : null;
+        var (provider, model) = await LoadAgentConfigAsync(agentId);
+        if (generation != _selectionGeneration)
+            return;
+
+        var models = string.IsNullOrWhiteSpace(provider)
+            ? []
+            : await ModelOptions.GetModelsAsync(provider);
+        if (generation != _selectionGeneration)
+            return;
+
+        _agentDefaultModel = model;
+        _models = models;
+
+        if (previousPick is { Length: > 0 } && _models.Any(m => m.ModelId == previousPick))
+        {
+            _selectedModel = previousPick;
+        }
+        else
+        {
+            _selectedModel = model is { Length: > 0 } && _models.Any(m => m.ModelId == model)
+                ? model
+                : _models.FirstOrDefault()?.ModelId;
+            _modelPickedByUser = false;
+        }
+
+        // Capability overrides belong to a specific model; drop them whenever the model changes.
+        _selectedThinking = string.Empty;
+        _selectedContext = string.Empty;
+
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Reads the agent's configured provider and model from the existing agent detail endpoint.
+    /// Failures degrade to "no provider", which simply leaves the model selector empty rather than
+    /// blocking the page.
+    /// </summary>
+    private async Task<(string? Provider, string? Model)> LoadAgentConfigAsync(string agentId)
+    {
+        var apiBase = RestClient.ApiBaseUrl;
+        if (string.IsNullOrWhiteSpace(apiBase))
+            return (null, null);
+
+        try
+        {
+            var config = await Http.GetFromJsonAsync<AgentConfigDto>(
+                $"{apiBase}agents/{Uri.EscapeDataString(agentId)}");
+            return (config?.ResolvedProvider, config?.ResolvedModel);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private void OnModelChanged(ChangeEventArgs e)
+    {
+        _selectedModel = e.Value?.ToString();
+        _modelPickedByUser = true;
+        _selectedThinking = string.Empty;
+        _selectedContext = string.Empty;
+    }
+
+    private void OnThinkingChanged(ChangeEventArgs e) => _selectedThinking = e.Value?.ToString() ?? string.Empty;
+
+    private void OnContextChanged(ChangeEventArgs e) => _selectedContext = e.Value?.ToString() ?? string.Empty;
+
+    private async Task HandleKeyDownAsync(KeyboardEventArgs e)
+    {
+        // Enter submits, Shift+Enter inserts a newline - the same contract as the chat composer.
+        if (e is { Key: "Enter", ShiftKey: false })
+            await SendAsync();
+    }
+
+    /// <summary>
+    /// Starts the conversation via the shared #2036 orchestration, then navigates to the canonical
+    /// chat route so the chat view preselects the new conversation. On any failure the drafted
+    /// message is deliberately preserved and no navigation occurs.
+    /// </summary>
+    private async Task SendAsync()
+    {
+        // Re-entrancy guard: a queued Enter or a second click while a start is in flight must not
+        // create a second conversation.
+        if (_starting || !CanSend)
+            return;
+
+        _starting = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await StartConversation.StartAsync(new StartConversationRequest(
+                AgentId: _selectedAgentId!,
+                FirstMessage: _draft,
+                SelectedModel: _selectedModel,
+                AgentDefaultModel: _agentDefaultModel,
+                SelectedThinking: string.IsNullOrWhiteSpace(_selectedThinking) ? null : _selectedThinking,
+                SelectedContextWindow: int.TryParse(_selectedContext, out var context) ? context : null));
+
+            if (!result.Success || result.ConversationId is not { Length: > 0 })
+            {
+                _error = result.Error ?? "Failed to start the conversation.";
+                return;
+            }
+
+            _draft = string.Empty;
+            Nav.NavigateTo($"/chat/{Uri.EscapeDataString(result.AgentId!)}/{Uri.EscapeDataString(result.ConversationId)}");
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to start the conversation: {ex.Message}";
+        }
+        finally
+        {
+            _starting = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        PortalLoad.OnReadyChanged -= HandleReadyChanged;
+        Store.OnChanged -= HandleStateChanged;
+    }
+
+    /// <summary>
+    /// Subset of the existing <c>GET /api/agents/{id}</c> response the starter needs. That endpoint
+    /// names these fields <c>apiProvider</c>/<c>modelId</c>; the shorter <c>provider</c>/<c>model</c>
+    /// names are also accepted so the page keeps working against either shape.
+    /// </summary>
+    private sealed record AgentConfigDto
+    {
+        public string? ApiProvider { get; init; }
+        public string? ModelId { get; init; }
+        public string? Provider { get; init; }
+        public string? Model { get; init; }
+
+        public string? ResolvedProvider =>
+            string.IsNullOrWhiteSpace(ApiProvider) ? Provider : ApiProvider;
+
+        public string? ResolvedModel =>
+            string.IsNullOrWhiteSpace(ModelId) ? Model : ModelId;
+    }
+}

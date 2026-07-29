@@ -17,7 +17,7 @@
 @implements IDisposable
 @implements IAsyncDisposable
 
-<div class="app-shell">
+<div class="app-shell" data-density="@DensityAttribute">
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
@@ -26,8 +26,22 @@
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
             </button>
-            <span class="banner-logo">&#x1F916;</span>
-            <span class="banner-title">BotNexus</span>
+            <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home" @onclick="CloseSidebar">
+                <span class="banner-logo">&#x1F916;</span>
+                <span class="banner-title">BotNexus</span>
+            </a>
+
+            @* #2441: connection state is a dot right after the logo; the full state text lives in
+               the tooltip. This replaced the dedicated sidebar row that cost ~30px of nav height. *@
+            <ConnectionStatus Hub="@Hub" Dot="true" />
+
+            @* #2441: agent identity (emoji + name + description, id on hover) rides in the top bar
+               rather than owning a row inside the agent panel. *@
+            @if (Store.ActiveAgentId is { Length: > 0 } bannerAgentId)
+            {
+                <AgentIdentity AgentId="@bannerAgentId" />
+            }
+
             <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;</button>
             @if (Prefs.Current.DebugModeEnabled)
             {
@@ -59,11 +73,7 @@
         }
 
         <aside class="main-sidebar @(_sidebarOpen ? "sidebar-open" : "sidebar-closed")">
-            @* Connection status *@
-            <div class="sidebar-connection">
-                <ConnectionStatus Hub="@Hub" />
-            </div>
-
+            @* #2441: connection status moved to the top bar as a dot; the sidebar row is gone. *@
             @* Nav links -- rendered in the user's configured order (#2236). The whole nav is driven
                by a single ordering model: every built-in item has a default order number and the
                user can override any of them; overrides persist server-side and roam with the user. *@
@@ -155,6 +165,19 @@
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
 
+    // #2441: Tools and My-Sections collapse state persist with the same localStorage key pattern
+    // as the Scheduled group, and both default to collapsed so the nav starts tight.
+    private bool _toolsGroupCollapsed = true;
+    private const string ToolsCollapsedKey = "botnexus-tools-collapsed";
+    private bool _sectionsGroupCollapsed = true;
+    private const string SectionsCollapsedKey = "botnexus-sections-collapsed";
+
+    /// <summary>
+    /// Density preset emitted as <c>data-density</c> on the app shell, driving the
+    /// <c>--density-*</c> token set for the whole portal (#2441).
+    /// </summary>
+    private string DensityAttribute => PortalDensity.Normalize(Prefs.Current.Density);
+
     private ConversationActivityFilter _activityFilter = ConversationActivityFilter.None;
     private const string ActivityFilterKey = "botnexus-conversation-activity-filter";
 
@@ -228,21 +251,31 @@
 
     private RenderFragment RenderActivityNav() => __builder =>
     {
-        <a href="" class="sidebar-nav-item @NavClass("activity")" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+        <a href="activity" class="sidebar-nav-item @NavClass("activity")" data-testid="nav-activity" @onclick="OnNavClick">&#x1F4CA; Activity</a>
     };
 
     private RenderFragment RenderToolsNav() => __builder =>
     {
         @* Tools section. Tools load from GET /api/tools and roam with the user server-side (#2233).
            Sub-items link to /tools/{id}. Default order sits above Chat (#2236). *@
-        <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
-        <div class="sidebar-subnav" data-testid="tools-subnav">
-            @if (_tools.Count == 0)
+        @* #2441: the Tools sub-list is collapsed by default (state persisted in localStorage the
+           same way the Scheduled group is) and the "No tools configured" placeholder row is not
+           rendered at all - an empty section should cost zero vertical space. *@
+        <div class="sidebar-nav-row">
+            <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
+            @if (_tools.Count > 0)
             {
-                <div class="sidebar-subnav-empty" data-testid="tools-empty">No tools configured</div>
+                <button class="sidebar-nav-toggle" data-testid="tools-collapse-toggle"
+                        aria-expanded="@(!_toolsGroupCollapsed ? "true" : "false")"
+                        title="@(_toolsGroupCollapsed ? "Expand tools" : "Collapse tools")"
+                        @onclick="ToggleToolsGroup">
+                    <span class="group-chevron @(!_toolsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                </button>
             }
-            else
-            {
+        </div>
+        @if (_tools.Count > 0 && !_toolsGroupCollapsed)
+        {
+            <div class="sidebar-subnav" data-testid="tools-subnav">
                 @foreach (var tool in _tools)
                 {
                     <a href="tools/@tool.Id" class="sidebar-subnav-item @(IsToolActive(tool.Id) ? "active" : "")" data-testid="tools-subnav-item" @onclick="CloseSidebar">
@@ -253,8 +286,8 @@
                         <span class="tools-subnav-item-label">@tool.Name</span>
                     </a>
                 }
-            }
-        </div>
+            </div>
+        }
     };
 
     private RenderFragment RenderChatNav() => __builder =>
@@ -409,14 +442,32 @@
             }
         }
 
+        @* #2441: "My sections" is a child of the agent chat section, not a sibling floating at the
+           bottom of the sidebar. It is nested inside the chat region and collapsible so an unused
+           sections feature costs one thin header row instead of a whole block. *@
         @if (Store.ActiveAgentId is not null &&
              Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
              !sectionsAgent.IsReadOnly)
         {
-            <ConversationSectionsPanel @ref="_sectionsPanel"
-                                       AgentId="@sectionsAgent.AgentId"
-                                       TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
-                                       OnChanged="HandleSectionsChanged" />
+            <div class="chat-nav-child" data-testid="chat-sections-child">
+                <button class="conversation-group-header conversation-group-header-toggle chat-nav-child-header"
+                        data-testid="sections-group-toggle"
+                        aria-expanded="@(!_sectionsGroupCollapsed ? "true" : "false")"
+                        @onclick="ToggleSectionsGroup">
+                    <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                    <span class="conversation-group-label">&#x1F4C1; My sections</span>
+                </button>
+                @* Kept MOUNTED when collapsed on purpose: the per-conversation "move to section"
+                   menu reads this component's @ref for the section list, so unmounting it would
+                   silently empty that menu. Collapse hides the body via a class instead. *@
+                <div class="chat-nav-child-body @(_sectionsGroupCollapsed ? "collapsed" : "")"
+                     data-testid="chat-sections-body">
+                    <ConversationSectionsPanel @ref="_sectionsPanel"
+                                               AgentId="@sectionsAgent.AgentId"
+                                               TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
+                                               OnChanged="HandleSectionsChanged" />
+                </div>
+            </div>
         }
         </div>@* end sidebar-scroll-region *@
     };
@@ -492,6 +543,10 @@
             _sidebarOpen = stored == "true";
             var cronStored = await JS.InvokeAsync<string?>("localStorage.getItem", CronCollapsedKey);
             _cronGroupCollapsed = cronStored != "false";
+            var toolsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ToolsCollapsedKey);
+            _toolsGroupCollapsed = toolsStored != "false";
+            var sectionsStored = await JS.InvokeAsync<string?>("localStorage.getItem", SectionsCollapsedKey);
+            _sectionsGroupCollapsed = sectionsStored != "false";
             var filterStored = await JS.InvokeAsync<string?>("localStorage.getItem", ActivityFilterKey);
             if (Enum.TryParse<ConversationActivityFilter>(filterStored, out var storedFilter))
                 _activityFilter = storedFilter;
@@ -607,12 +662,11 @@
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
 
-        // The Activity dashboard owns the root landing route ("" or "activity").
+        // #2037: the Home page now owns the root landing route, so Activity is highlighted only on
+        // its own /activity route (it used to also claim "" when it was the root page).
         if (string.Equals(page, "activity", StringComparison.OrdinalIgnoreCase))
         {
-            return uri == "" || uri.Equals("activity", StringComparison.OrdinalIgnoreCase)
-                ? "active"
-                : "";
+            return uri.Equals("activity", StringComparison.OrdinalIgnoreCase) ? "active" : "";
         }
 
         // The Chat section covers the legacy /chat[/...] routes and the canonical route-owned
@@ -700,6 +754,18 @@
         await JS.InvokeVoidAsync("localStorage.setItem", CronCollapsedKey, _cronGroupCollapsed ? "true" : "false");
     }
 
+    private async Task ToggleToolsGroup()
+    {
+        _toolsGroupCollapsed = !_toolsGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", ToolsCollapsedKey, _toolsGroupCollapsed ? "true" : "false");
+    }
+
+    private async Task ToggleSectionsGroup()
+    {
+        _sectionsGroupCollapsed = !_sectionsGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", SectionsCollapsedKey, _sectionsGroupCollapsed ? "true" : "false");
+    }
+
     /// <summary>
     /// Recent-activity filter applied to the normal (non-pinned, non-scheduled) conversation list.
     /// Lets the user narrow the drawer to conversations touched today or in the last week without
@@ -740,7 +806,7 @@
                @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
                @onclick:preventDefault="true">
                 <span class="conversation-list-item-main">
-                    <span class="conversation-list-item-title">@conversation.Title</span>
+                    <span class="conversation-list-item-title" title="@PortalText.SingleLine(conversation.Title)">@PortalText.SingleLine(conversation.Title)</span>
 
                     @if (conversation.IsDefault)
                     {
@@ -855,10 +921,12 @@
         StateHasChanged();
     }
 
+    // #2441: agent display names and emoji come from user-editable config and may contain embedded
+    // control characters; normalise to a single line so the dropdown row cannot grow.
     private static string FormatAgentName(AgentState agent) =>
         string.IsNullOrWhiteSpace(agent.Emoji)
-            ? agent.DisplayName
-            : $"{agent.Emoji} {agent.DisplayName}";
+            ? PortalText.SingleLine(agent.DisplayName)
+            : PortalText.SingleLine($"{agent.Emoji} {agent.DisplayName}");
 
     private static string? GetVirtualConversationBadge(ConversationState conversation)
     {
@@ -1037,7 +1105,7 @@
             _sidebarAgents = (items ?? [])
                 .Select(a => new SidebarAgentItem(
                     a.AgentId ?? "",
-                    string.IsNullOrWhiteSpace(a.Emoji) ? a.DisplayName : $"{a.Emoji} {a.DisplayName}"))
+                    PortalText.SingleLine(string.IsNullOrWhiteSpace(a.Emoji) ? a.DisplayName : $"{a.Emoji} {a.DisplayName}")))
                 .ToList();
         }
         catch { _sidebarAgents = []; }

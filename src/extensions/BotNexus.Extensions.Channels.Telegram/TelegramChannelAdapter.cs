@@ -8,6 +8,7 @@ using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Channels.Startup;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -396,11 +397,13 @@ public sealed class TelegramChannelAdapter(
     {
         long? offset = null;
         var lastEvictionUtc = DateTimeOffset.UtcNow;
+        var breaker = new ChannelLoopCircuitBreaker($"Telegram bot '{runtime.BotName}' polling loop");
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
                 var updates = await runtime.ApiClient.GetUpdatesAsync(offset, pollingTimeoutSeconds, cancellationToken);
+                breaker.RecordSuccess();
                 foreach (var update in updates.OrderBy(u => u.UpdateId))
                 {
                     offset = update.UpdateId + 1;
@@ -420,10 +423,35 @@ public sealed class TelegramChannelAdapter(
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "{DisplayName} bot '{BotName}' polling loop error", DisplayName, runtime.BotName);
+                // #2386: classify before retrying. A terminal fault (HTTP 409 "terminated by other
+                // getUpdates request", a revoked token) cannot clear by retrying - hot-looping on it
+                // produced thousands of ERR lines while the transport was already dead.
+                var response = breaker.RecordFailure(ex);
+                if (response.ShouldStop)
+                {
+                    if (response.CircuitOpened)
+                    {
+                        _logger.LogError(
+                            ex,
+                            "{DisplayName} bot '{BotName}' polling loop is DEGRADED and has stopped: a non-transient failure was detected and will not clear by retrying. Resolve the underlying fault (duplicate poller, revoked bot token, or invalid configuration) and restart the channel.",
+                            DisplayName,
+                            runtime.BotName);
+                    }
+
+                    break;
+                }
+
+                _logger.LogWarning(
+                    ex,
+                    "{DisplayName} bot '{BotName}' polling loop transient error (failure {FailureCount}); retrying in {RetryDelaySeconds}s",
+                    DisplayName,
+                    runtime.BotName,
+                    breaker.ConsecutiveTransientFailures,
+                    response.RetryDelay.TotalSeconds);
+
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                    await Task.Delay(response.RetryDelay, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {

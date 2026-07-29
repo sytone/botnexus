@@ -21,7 +21,7 @@ public sealed class CronTool(
 
     public Tool Definition => new(
         Name,
-        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs.",
+        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. A job is either an 'agent-prompt' job (the default - costs a model turn on every fire, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -36,6 +36,12 @@ public sealed class CronTool(
                 "schedule": { "type": "string", "description": "Standard 5-field cron expression (minute hour day month weekday). The expression is evaluated in the timezone specified by 'timeZone', or UTC if omitted. Example: '30 22 * * *' with timeZone 'America/Los_Angeles' fires at 10:30 PM Pacific daily." },
                 "timeZone": { "type": "string", "description": "IANA timezone name for the schedule (e.g. 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo'). When set, the cron expression is interpreted in this timezone (including DST adjustments). Defaults to UTC if omitted." },
                 "agentId": { "type": "string", "description": "Target agent (for create, defaults to calling agent)." },
+                "actionType": {
+                  "type": "string",
+                  "enum": ["agent-prompt", "command"],
+                  "description": "What the job does when it fires. 'agent-prompt' (default) sends a prompt to the agent and requires 'message' or 'templateName'. 'command' runs 'shellCommand' as a script and requires 'shellCommand'. On update, omitting it keeps the current action type; supplying a different one switches the job and clears the fields belonging to the other action type."
+                },
+                "shellCommand": { "type": "string", "description": "Shell command or script to run (required for create/update of actionType 'command'). This is an arbitrary-execution surface - treat creating or editing a command job as a dangerous operation." },
                 "message": { "type": "string", "description": "Prompt message (for create/update). Optional when templateName is provided." },
                 "templateName": { "type": "string", "description": "Named prompt template reference (for create/update)." },
                 "templateParameters": {
@@ -72,6 +78,8 @@ public sealed class CronTool(
         CopyString(arguments, prepared, "agentId");
         CopyString(arguments, prepared, "message");
         CopyString(arguments, prepared, "templateName");
+        CopyString(arguments, prepared, "actionType");
+        CopyString(arguments, prepared, "shellCommand");
         if (TryReadStringMap(arguments, "templateParameters", out var templateParameters))
             prepared["templateParameters"] = templateParameters;
         CopyString(arguments, prepared, "model");
@@ -123,9 +131,21 @@ public sealed class CronTool(
         var now = DateTimeOffset.UtcNow;
         var schedule = ReadRequired(arguments, "schedule");
         var timeZone = ReadString(arguments, "timeZone");
-        var message = ReadString(arguments, "message");
-        var templateName = ReadString(arguments, "templateName");
-        EnsurePromptSource(message, templateName);
+        // #2389: the action type decides which fields are required and which are even meaningful.
+        // Defaults to 'agent-prompt' so every pre-existing caller is unaffected.
+        var actionType = NormalizeRequestedActionType(ReadString(arguments, "actionType")) ?? "agent-prompt";
+        var isCommand = string.Equals(actionType, "command", StringComparison.Ordinal);
+
+        // Each action type carries only its own fields, so a command job can never be persisted
+        // holding a stale prompt (or vice versa) that the scheduler would silently ignore.
+        var message = isCommand ? null : ReadString(arguments, "message");
+        var templateName = isCommand ? null : ReadString(arguments, "templateName");
+        var shellCommand = isCommand ? ReadString(arguments, "shellCommand") : null;
+        if (isCommand)
+            EnsureShellCommand(shellCommand);
+        else
+            EnsurePromptSource(message, templateName);
+
         var tz = ResolveTimeZone(timeZone);
 
         DateTimeOffset? nextRunAt = null;
@@ -147,11 +167,12 @@ public sealed class CronTool(
             Id = JobId.From(Guid.NewGuid().ToString("N")),
             Name = ReadRequired(arguments, "name"),
             Schedule = schedule,
-            ActionType = "agent-prompt",
+            ActionType = actionType,
             AgentId = targetAgentId,
             Message = message,
             TemplateName = templateName,
-            TemplateParameters = ReadStringMap(arguments, "templateParameters"),
+            TemplateParameters = isCommand ? null : ReadStringMap(arguments, "templateParameters"),
+            ShellCommand = shellCommand,
             Model = model,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             TimeZone = timeZone,
@@ -175,12 +196,39 @@ public sealed class CronTool(
 
         var newSchedule = ReadString(arguments, "schedule") ?? existing.Schedule;
         var newTimeZone = arguments.ContainsKey("timeZone") ? ReadString(arguments, "timeZone") : existing.TimeZone;
-        var newMessage = arguments.ContainsKey("message") ? ReadString(arguments, "message") : existing.Message;
-        var newTemplateName = arguments.ContainsKey("templateName") ? ReadString(arguments, "templateName") : existing.TemplateName;
+
+        // #2389: an omitted actionType keeps the job's existing one, so a prompt-irrelevant edit
+        // (schedule / enabled / name / timeZone) on a command job is no longer asked for a prompt
+        // it will never use. On an explicit switch the previous action type's fields are dropped
+        // rather than inherited, so the job cannot be left internally inconsistent.
+        var newActionType = NormalizeRequestedActionType(ReadString(arguments, "actionType")) ?? existing.ActionType;
+        var switchingActionType = !string.Equals(newActionType, existing.ActionType, StringComparison.Ordinal);
+
+        var newMessage = arguments.ContainsKey("message")
+            ? ReadString(arguments, "message")
+            : switchingActionType ? null : existing.Message;
+        var newTemplateName = arguments.ContainsKey("templateName")
+            ? ReadString(arguments, "templateName")
+            : switchingActionType ? null : existing.TemplateName;
         var newTemplateParameters = arguments.ContainsKey("templateParameters")
             ? ReadStringMap(arguments, "templateParameters")
-            : existing.TemplateParameters;
-        EnsurePromptSource(newMessage, newTemplateName);
+            : switchingActionType ? null : existing.TemplateParameters;
+        var newShellCommand = arguments.ContainsKey("shellCommand")
+            ? ReadString(arguments, "shellCommand")
+            : switchingActionType ? null : existing.ShellCommand;
+
+        if (string.Equals(newActionType, "command", StringComparison.Ordinal))
+        {
+            EnsureShellCommand(newShellCommand);
+            newMessage = null;
+            newTemplateName = null;
+            newTemplateParameters = null;
+        }
+        else
+        {
+            EnsurePromptSource(newMessage, newTemplateName);
+            newShellCommand = null;
+        }
 
         // Only a caller-supplied override is preflighted. An update that leaves Model alone must
         // not be blocked by a pre-existing bad value, or a job whose model was decommissioned
@@ -198,6 +246,8 @@ public sealed class CronTool(
             Name = ReadString(arguments, "name") ?? existing.Name,
             Schedule = newSchedule,
             TimeZone = newTimeZone,
+            ActionType = newActionType,
+            ShellCommand = newShellCommand,
             Message = newMessage,
             TemplateName = newTemplateName,
             TemplateParameters = newTemplateParameters,
@@ -409,6 +459,36 @@ public sealed class CronTool(
     {
         if (string.IsNullOrWhiteSpace(message) && string.IsNullOrWhiteSpace(templateName))
             throw new ArgumentException("Either 'message' or 'templateName' is required.");
+    }
+
+    // #2389: the command counterpart of EnsurePromptSource. A command job with nothing to run is
+    // just as invalid as an agent-prompt job with nothing to say - relaxing the prompt requirement
+    // per action type must not degrade into "anything goes".
+    private static void EnsureShellCommand(string? shellCommand)
+    {
+        if (string.IsNullOrWhiteSpace(shellCommand))
+            throw new ArgumentException("'shellCommand' is required when actionType is 'command'.");
+    }
+
+    // Returns null when the caller supplied no action type, meaning "default on create / leave
+    // alone on update". Only action types the tool can fully validate are accepted; 'agent-chat'
+    // is the historical alias for 'agent-prompt' and is normalized the same way the REST API
+    // normalizes it. An unknown value is rejected rather than silently persisted as a job the
+    // scheduler has no action for.
+    private static string? NormalizeRequestedActionType(string? actionType)
+    {
+        if (string.IsNullOrWhiteSpace(actionType))
+            return null;
+
+        var trimmed = actionType.Trim();
+        if (trimmed.Equals("agent-prompt", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("agent-chat", StringComparison.OrdinalIgnoreCase))
+            return "agent-prompt";
+        if (trimmed.Equals("command", StringComparison.OrdinalIgnoreCase))
+            return "command";
+
+        throw new ArgumentException(
+            $"Unsupported cron actionType '{actionType}'. Supported values are 'agent-prompt' and 'command'.");
     }
 
     private static bool ReadBool(object value, string argumentName)

@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Configuration;
+﻿using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -304,6 +304,25 @@ public static class AgentLoopRunner
                 ExtractDeferWhileBusy(drained, deferredMessages);
                 pendingMessages = drained;
             }
+
+            // #2478: pre-flight abort check at the exact point the pending-message drain decides
+            // whether to START a fresh loop iteration. Every other ThrowIfCancellationRequested in
+            // this file guards work INSIDE a turn; none of them guarded the decision to begin a new
+            // one from a queued follow-up. Without this, a follow-up enqueued through the #2438
+            // enqueue-then-verify-then-reclaim seam could be drained and dispatched after its
+            // originating request was already cancelled, starting a run nothing holds a
+            // cancellation handle for.
+            //
+            // The check runs BEFORE GetMessagesAsync deliberately: the drain is destructive, and
+            // draining under a cancelled token would remove the message from the queue and then
+            // abort at the next in-loop check, losing it silently - precisely the defect #2388
+            // describes. Aborting first leaves the follow-up pending, so it stays reclaimable via
+            // Agent.TryReclaimFollowUp / PendingMessageQueue.TryRemove and the gateway boundary can
+            // re-deliver it on the normal send path. The cancellation itself surfaces through the
+            // existing reporting surface: Agent.RunAsync catches this OperationCanceledException and
+            // emits the aborted AssistantAgentMessage plus AgentEndEvent. No new cancellation model,
+            // no new event type, no silent drop.
+            cancellationToken.ThrowIfCancellationRequested();
 
             var followUps = await GetMessagesAsync(config.GetFollowUpMessages, cancellationToken).ConfigureAwait(false);
             if (followUps.Count > 0)

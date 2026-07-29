@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -101,6 +101,95 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Security contract for the canvas <c>submitToAgent</c> verb (#2449):
+    /// <list type="bullet">
+    /// <item><description><b>Conversation scoping.</b> The target is <paramref name="conversationId"/>,
+    /// which the host component passes from its OWN <c>ConversationId</c> binding. No conversation id
+    /// ever travels in the iframe message payload, so a canvas cannot name a target. The id is then
+    /// re-checked against the agent's own conversation set, so even a mis-wired host cannot reach a
+    /// conversation this agent does not own.</description></item>
+    /// <item><description><b>Role and provenance integrity.</b> The turn is a genuine USER turn -
+    /// there is no role parameter to forge - and it is emitted through the dedicated
+    /// <c>SubmitCanvasPrompt</c> hub verb, which stamps <c>MessageKind.CanvasSubmission</c>
+    /// SERVER-side from the verb that was invoked. Provenance is therefore a typed field the client
+    /// cannot spoof, reusing the #2300 provenance vocabulary at message level rather than a literal
+    /// stamped into the text. Content is still control-character stripped so it cannot fabricate
+    /// extra transcript lines.</description></item>
+    /// <item><description><b>Mid-turn (degraded, pending #2438).</b> When the bound conversation
+    /// already has an active turn the submission is REJECTED here with an explicit "agent is busy"
+    /// reason, before it reaches the transport. It is not queued and not silently dropped: an
+    /// inbound message arriving mid-run is currently lost server-side (#2388) and the follow-up
+    /// queue that would defer it (#2438) does not exist yet. When #2438 lands this path should
+    /// enqueue instead of refusing.</description></item>
+    /// <item><description><b>Bounds.</b> Prompt and instruction length are capped by an arbitrary
+    /// guardrail (see <see cref="CanvasSubmitGuards.MaxPromptLength"/>). There is deliberately no
+    /// rate limiting, in-flight tracking or content inspection.</description></item>
+    /// </list>
+    /// </remarks>
+    public async Task<CanvasSubmitResult> SubmitCanvasPromptAsync(
+        string agentId,
+        string conversationId,
+        string? prompt,
+        string? instructions)
+    {
+        var agent = _store.GetAgent(agentId);
+        if (agent is null)
+            return CanvasSubmitResult.Rejected("Unknown agent.");
+
+        // Conversation scoping: the canvas may only post to a conversation this agent owns, and the
+        // id itself came from the host binding rather than the iframe payload.
+        if (string.IsNullOrWhiteSpace(conversationId) || !agent.Conversations.TryGetValue(conversationId, out var conv))
+            return CanvasSubmitResult.Rejected("Canvas is not bound to a conversation on this agent.");
+
+        var safePrompt = CanvasSubmitGuards.TryNormalise(prompt, CanvasSubmitGuards.MaxPromptLength);
+        if (safePrompt is null)
+            return CanvasSubmitResult.Rejected(
+                $"Prompt must be non-empty and at most {CanvasSubmitGuards.MaxPromptLength} characters.");
+
+        string? safeInstructions = null;
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            safeInstructions = CanvasSubmitGuards.TryNormalise(instructions, CanvasSubmitGuards.MaxInstructionsLength);
+            if (safeInstructions is null)
+                return CanvasSubmitResult.Rejected(
+                    $"Instructions must be at most {CanvasSubmitGuards.MaxInstructionsLength} characters.");
+        }
+
+        if (conv.StreamState.IsTurnActive)
+            return CanvasSubmitResult.Rejected("Agent is already running; try again when the current turn finishes.");
+
+        var now = DateTimeOffset.UtcNow;
+        var content = CanvasSubmitGuards.ComposeContent(safePrompt, safeInstructions);
+
+        // Local echo on the same append path the composer uses, so the injected turn is rendered as
+        // a User row in the conversation that owns the canvas. The canvas provenance kind mirrors
+        // what the server will stamp on the persisted turn.
+        conv.AppendMessage(new ChatMessage("User", content, now) { Kind = CanvasSubmissionKind });
+        _store.NotifyChanged();
+
+        try
+        {
+            var result = await _hub.SubmitCanvasPromptAsync(agentId, agent.ChannelType ?? "signalr", content, conversationId);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: conversationId);
+            await RefreshConversationsForAgentAsync(agentId);
+            return CanvasSubmitResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Canvas submitToAgent failed for {ConversationId}", Sanitise(conversationId));
+            return CanvasSubmitResult.Rejected($"Submit failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Wire value of <c>MessageKind.CanvasSubmission</c> (#2449), used to stamp the local echo so it
+    /// matches the kind the server persists. Declared here as a literal because the BlazorClient.Core
+    /// project does not reference BotNexus.Domain; the value is pinned by test.
+    /// </summary>
+    public const string CanvasSubmissionKind = "canvas-submission";
+
     /// <summary>
     /// Resolves the (conversationId, sessionId) pair that a conversation-targeted action
     /// (steer, follow-up, abort, redirect, reset, compact) must act on, anchored to the
@@ -135,7 +224,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         return true;
     }
 
-    public async Task SteerAsync(string agentId, string content)
+    public Task SteerAsync(string agentId, string content) => SteerAsync(agentId, content, []);
+
+    /// <inheritdoc />
+    public async Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
         if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
             return;
@@ -148,7 +240,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var result = await _hub.SteerAsync(agentId, sessionId, content, convId);
+            // #2484: route through the media overload whenever the composer had draft attachments,
+            // exactly as SendMessageAsync does, so steering no longer silently discards them.
+            var result = attachments.Count == 0
+                ? await _hub.SteerAsync(agentId, sessionId, content, convId)
+                : await _hub.SteerWithMediaAsync(agentId, sessionId, content,
+                    attachments.Select(ToContentPart).ToArray(), convId);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convId);
             await RefreshConversationsForAgentAsync(agentId);
         }
@@ -158,7 +255,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
-    public async Task FollowUpAsync(string agentId, string content)
+    public Task FollowUpAsync(string agentId, string content) => FollowUpAsync(agentId, content, []);
+
+    /// <inheritdoc />
+    public async Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
         if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
             return;
@@ -171,7 +271,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            await _hub.FollowUpAsync(agentId, sessionId, content);
+            if (attachments.Count == 0)
+                await _hub.FollowUpAsync(agentId, sessionId, content);
+            else
+                await _hub.FollowUpWithMediaAsync(agentId, sessionId, content,
+                    attachments.Select(ToContentPart).ToArray());
         }
         catch (Exception ex)
         {
@@ -223,9 +327,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     // ── Session management ────────────────────────────────────────────────
 
 
-    public async Task InterruptAndSteerAsync(string agentId, string message)
+    public Task InterruptAndSteerAsync(string agentId, string message) => InterruptAndSteerAsync(agentId, message, []);
+
+    /// <inheritdoc />
+    public async Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments)
     {
-        if (string.IsNullOrWhiteSpace(message)) return;
+        if (string.IsNullOrWhiteSpace(message) && attachments.Count == 0) return;
         if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
             return;
 
@@ -233,7 +340,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var delivered = await _hub.InterruptAndSteerAsync(agentId, sessionId, message);
+            var delivered = attachments.Count == 0
+                ? await _hub.InterruptAndSteerAsync(agentId, sessionId, message)
+                : await _hub.InterruptAndSteerWithMediaAsync(agentId, sessionId, message,
+                    attachments.Select(ToContentPart).ToArray());
             if (!delivered)
                 AppendError(agentId, "Interrupt not delivered - agent was not running.");
         }
@@ -958,12 +1068,58 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <summary>
+    /// Server page size used when walking <c>GET /api/sessions</c>. The endpoint pages with a
+    /// default of 50 and a hard cap of 200 (#2411/#2468) and reports no total, so the only way to
+    /// obtain the complete roster is to request the maximum page and keep going until the server
+    /// returns a short page (#2499).
+    /// </summary>
+    private const int SessionPageSize = 200;
+
+    /// <summary>
+    /// Hard stop on the paging walk so a misbehaving server that keeps returning full pages can
+    /// never spin the portal forever. 200 * 200 = 40,000 sessions, far beyond any real store.
+    /// </summary>
+    private const int MaxSessionPages = 200;
+
+    /// <summary>
+    /// Reads every session page for <paramref name="agentId"/> (or all agents when null),
+    /// stopping on the first short or empty page.
+    /// </summary>
+    private async Task<List<SessionSummary>> LoadAllSessionsAsync(
+        string? agentId,
+        CancellationToken cancellationToken)
+    {
+        var all = new List<SessionSummary>();
+        for (var page = 0; page < MaxSessionPages; page++)
+        {
+            var batch = await _restClient.GetSessionsAsync(
+                agentId,
+                SessionPageSize,
+                all.Count,
+                cancellationToken);
+
+            // Only an EMPTY page is a reliable terminator. The server clamps the requested limit to
+            // its own maximum, so a page shorter than SessionPageSize does NOT imply exhaustion -
+            // treating it as such is precisely how the portal would silently truncate again the
+            // next time the server-side cap changes. Cost of correctness: one trailing empty request.
+            if (batch.Count == 0)
+                break;
+
+            all.AddRange(batch);
+        }
+
+        return all;
+    }
+
     private async Task RefreshConversationsForAgentAsync(string agentId)
     {
         try
         {
             var listTask = _restClient.GetConversationsAsync(agentId);
-            var sessionsTask = _restClient.GetSessionsAsync(agentId);
+            // #2499: page until exhausted. Per-agent totals are usually under the page size, but the
+            // endpoint pages unconditionally, so a single call is an unbounded assumption either way.
+            var sessionsTask = LoadAllSessionsAsync(agentId, CancellationToken.None);
             await Task.WhenAll(listTask, sessionsTask);
 
             var list = listTask.Result;

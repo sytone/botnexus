@@ -974,15 +974,59 @@ public sealed class MainLayoutTests : IDisposable
         Assert.True(toolsIndex < chatIndex, "Tools section must render above the Chat link.");
     }
 
+    // #2441: an empty Tools section must cost zero vertical space. The old placeholder row
+    // ("No tools configured") is not rendered at all, and neither is the sub-nav container.
     [Fact]
-    public void Tools_section_shows_empty_state_when_no_tools()
+    public void Tools_section_renders_no_empty_state_row_when_no_tools()
     {
         _toolsHandler.SetTools("[]");
 
         var cut = RenderLayout();
 
-        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-empty']"));
-        Assert.Contains("No tools configured", cut.Find("[data-testid='tools-empty']").TextContent);
+        cut.WaitForAssertion(() => cut.Find("[data-testid='nav-tools']"));
+        Assert.Empty(cut.FindAll("[data-testid='tools-empty']"));
+        Assert.Empty(cut.FindAll("[data-testid='tools-subnav']"));
+        Assert.DoesNotContain("No tools configured", cut.Markup);
+    }
+
+    // #2441: with tools configured the list is collapsed by default behind a chevron toggle,
+    // matching the Scheduled group's persistence pattern.
+    [Fact]
+    public void Tools_section_is_collapsed_by_default_when_tools_exist()
+    {
+        _toolsHandler.SetTools("""
+            [ { "id": "t-1", "name": "Grafana", "url": "https://grafana", "icon": "", "order": 0 } ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
+        Assert.Empty(cut.FindAll("[data-testid='tools-subnav']"));
+        Assert.Equal("false", cut.Find("[data-testid='tools-collapse-toggle']").GetAttribute("aria-expanded"));
+    }
+
+    [Fact]
+    public void Tools_section_expands_on_toggle_click()
+    {
+        _toolsHandler.SetTools("""
+            [ { "id": "t-1", "name": "Grafana", "url": "https://grafana", "icon": "", "order": 0 } ]
+            """);
+
+        var cut = RenderLayout();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
+
+        cut.Find("[data-testid='tools-collapse-toggle']").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-subnav']"));
+        Assert.Single(cut.FindAll("[data-testid='tools-subnav-item']"));
+    }
+
+    // #2441: the density preference is projected onto the app shell so the CSS token set switches.
+    [Fact]
+    public void App_shell_carries_compact_density_attribute_by_default()
+    {
+        var cut = RenderLayout();
+        Assert.Equal("compact", cut.Find(".app-shell").GetAttribute("data-density"));
     }
 
     [Fact]
@@ -996,6 +1040,11 @@ public sealed class MainLayoutTests : IDisposable
             """);
 
         var cut = RenderLayout();
+
+        // #2441: the Tools sub-list is collapsed by default; expand it before asserting
+        // on its contents.
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
+        cut.Find("[data-testid='tools-collapse-toggle']").Click();
 
         cut.WaitForAssertion(() =>
             Assert.Equal(2, cut.FindAll("[data-testid='tools-subnav-item']").Count));
@@ -1011,6 +1060,11 @@ public sealed class MainLayoutTests : IDisposable
             """);
 
         var cut = RenderLayout();
+
+        // #2441: the Tools sub-list is collapsed by default; expand it before asserting
+        // on its contents.
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
+        cut.Find("[data-testid='tools-collapse-toggle']").Click();
 
         cut.WaitForAssertion(() =>
         {
@@ -1030,6 +1084,11 @@ public sealed class MainLayoutTests : IDisposable
             """);
 
         var cut = RenderLayout();
+
+        // #2441: the Tools sub-list is collapsed by default; expand it before asserting
+        // on its contents.
+        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
+        cut.Find("[data-testid='tools-collapse-toggle']").Click();
 
         cut.WaitForAssertion(() =>
         {

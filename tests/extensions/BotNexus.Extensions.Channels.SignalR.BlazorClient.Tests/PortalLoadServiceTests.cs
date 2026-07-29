@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -55,7 +55,7 @@ public sealed class PortalLoadServiceTests
         _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
             .Returns(new List<ConversationSummaryDto>());
 
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<SessionSummary>
             {
                 new(
@@ -120,7 +120,7 @@ public sealed class PortalLoadServiceTests
                 new("conv-1", "agent-1", "Chat", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
             });
 
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<SessionSummary>());
 
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -158,7 +158,7 @@ public sealed class PortalLoadServiceTests
             .Returns([new AgentSummary("agent-1", "Beacon", Emoji: "\U0001F4E1", Description: "Signals and situational awareness", IsBuiltIn: false)]);
         _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
             .Returns(new List<ConversationSummaryDto>());
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<SessionSummary>());
 
         await _service.InitializeAsync("http://localhost:5000/hub/gateway");
@@ -206,7 +206,7 @@ public sealed class PortalLoadServiceTests
                     DateTimeOffset.UtcNow.AddMinutes(-15),
                     DateTimeOffset.UtcNow.AddMinutes(-1))
             ]);
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns([]);
         _restClient.GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("fresh-conv", 0, 0, 200, []));

@@ -129,7 +129,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     "Compaction circuit breaker OPEN for session {SessionId}: " +
                     "{Failures} consecutive failures. Cooling down for {Remaining:0}s more before retrying.",
                     sessionKey, breakerState.Count, (cooldown - elapsed).TotalSeconds);
-                return CompactionResult.Skipped();
+                return CompactionResult.Skipped(skipReason: CompactionSkipReason.CircuitBreakerOpen);
             }
 
             // Cooldown elapsed: clear the breaker and allow this attempt through.
@@ -148,7 +148,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var history = snap.Entries;
         if (history.Count == 0)
         {
-            return CompactionResult.Skipped(snap.DestructiveVersion, snap.Count);
+            return CompactionResult.Skipped(snap.DestructiveVersion, snap.Count, skipReason: CompactionSkipReason.EmptyHistory);
         }
 
         // Phase 3a: compaction operates on the "LLM-visible" projection only. Already-historical
@@ -190,12 +190,35 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
             if (toSummarize.Count == 0)
             {
+                // #2460 loop guard: this branch previously returned silently, so the coordinator
+                // logged outcome=Aborted with no reason while the transcript kept growing and
+                // compaction re-fired every turn (50 consecutive no-op aborts observed in prod,
+                // preserved count climbing 422 -> 440). Record it as a failure so the EXISTING
+                // per-session circuit breaker opens after MaxConsecutiveFailures and the loop is
+                // bounded to a cooldown window instead of running forever. Deliberately minimal:
+                // the split behaviour itself is unchanged.
+                var noSplitFailures = RecordFailure(sessionKey);
+                _logger.LogWarning(
+                    "Compaction aborted for session {SessionId}: {Reason} — the turn split produced no " +
+                    "summarizable entries at PreservedTurns={PreservedTurns} and no smaller fallback split " +
+                    "was usable ({Tokens} visible tokens vs {Threshold} threshold, {Preserved} entries " +
+                    "preserved). History is unchanged. Consecutive failures: {Failures}/{Max}.",
+                    session.SessionId,
+                    CompactionSkipReason.NoSummarizableTurns,
+                    options.PreservedTurns,
+                    visibleTokens,
+                    threshold,
+                    toPreserve.Count,
+                    noSplitFailures,
+                    MaxConsecutiveFailures);
+
                 return CompactionResult.Skipped(
                     snap.DestructiveVersion,
                     snap.Count,
                     entriesPreserved: toPreserve.Count,
                     tokensBefore: visibleTokens,
-                    tokensAfter: visibleTokens);
+                    tokensAfter: visibleTokens,
+                    skipReason: CompactionSkipReason.NoSummarizableTurns);
             }
         }
 
@@ -226,7 +249,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 snap.Count,
                 entriesPreserved: history.Count,
                 tokensBefore: tokensBefore,
-                tokensAfter: tokensBefore);
+                tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.SummarizationTimeout);
         }
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
@@ -247,7 +271,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 snap.Count,
                 entriesPreserved: history.Count,
                 tokensBefore: tokensBefore,
-                tokensAfter: tokensBefore);
+                tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.EmptySummary);
         }
 
         if (summary.Length > options.MaxSummaryChars)
