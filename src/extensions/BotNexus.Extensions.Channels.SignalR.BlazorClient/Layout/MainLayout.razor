@@ -219,23 +219,46 @@
 
     /// <summary>
     /// Returns the nav keys in the order they should render: the server-provided effective order,
-    /// with any built-in key missing from the server response appended in its default position so a
-    /// newly-added built-in can never silently vanish from the nav.
+    /// with any built-in key missing from the server response re-inserted at its default position
+    /// so a newly-added built-in can never silently vanish from the nav, nor be dumped at the
+    /// bottom. A stored order predating a new built-in is MERGED with the defaults, not replaced
+    /// by them (#2535).
     /// </summary>
     private IEnumerable<string> OrderedNavKeys()
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
         foreach (var key in _navOrder)
         {
             if (NavOrderKeys.DefaultOrder.Contains(key, StringComparer.OrdinalIgnoreCase) && seen.Add(key))
-                yield return key;
+                result.Add(key);
         }
 
-        foreach (var key in NavOrderKeys.DefaultOrder)
+        // Re-insert every built-in the server did not mention, positioned relative to its default
+        // neighbours rather than appended. Walking DefaultOrder backwards means each missing key is
+        // placed just before the nearest already-placed key that follows it by default.
+        for (var i = NavOrderKeys.DefaultOrder.Count - 1; i >= 0; i--)
         {
-            if (seen.Add(key))
-                yield return key;
+            var key = NavOrderKeys.DefaultOrder[i];
+            if (!seen.Add(key))
+                continue;
+
+            var insertAt = result.Count;
+            for (var j = i + 1; j < NavOrderKeys.DefaultOrder.Count; j++)
+            {
+                var successor = NavOrderKeys.DefaultOrder[j];
+                var idx = result.FindIndex(k => string.Equals(k, successor, StringComparison.OrdinalIgnoreCase));
+                if (idx >= 0)
+                {
+                    insertAt = idx;
+                    break;
+                }
+            }
+
+            result.Insert(insertAt, key);
         }
+
+        return result;
     }
 
     private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch

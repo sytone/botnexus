@@ -32,6 +32,7 @@ internal static class NavOrderTestSetup
     {
         private const string Json = """
             [
+              { "key": "home", "order": 5 },
               { "key": "activity", "order": 10 },
               { "key": "tools", "order": 20 },
               { "key": "chat", "order": 30 },

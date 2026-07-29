@@ -70,8 +70,12 @@ public sealed class SqliteNavOrderStoreTests : IAsyncDisposable
         var items = await store.ListAsync();
         var tools = items.Single(i => i.Key == NavOrderDefaults.Tools);
         Assert.Equal(5, tools.Order);
-        // Lowering Tools to 5 (below Activity's default 10) moves it to the top.
-        Assert.Equal(NavOrderDefaults.Tools, items[0].Key);
+        // Lowering Tools to 5 (below Activity's default 10) moves it above Activity. Home (#2535)
+        // defaults to 5 and sorts first on the key tie-break, so assert the relative order rather
+        // than an absolute index.
+        var toolsIndex = items.ToList().FindIndex(i => i.Key == NavOrderDefaults.Tools);
+        var activityIndex = items.ToList().FindIndex(i => i.Key == NavOrderDefaults.Activity);
+        Assert.True(toolsIndex < activityIndex, "Lowering Tools order must move it above Activity.");
     }
 
     [Fact]
