@@ -152,15 +152,26 @@ public abstract class SessionStoreBase : ISessionStore
     /// for File/InMemory stores used in development and tests. <see cref="SqliteSessionStore"/>
     /// overrides this with a metadata-only query so production never loads the whole DB.
     /// </summary>
+    /// <remarks>
+    /// #2411: these stores have no query engine to push the window into, so the ordering and
+    /// the <paramref name="limit"/>/<paramref name="offset"/> slice are applied in memory via
+    /// <see cref="SessionSummaryWindow"/>. That keeps the observable contract identical to the
+    /// SQLite override even though the cost profile differs - callers can rely on the page
+    /// shape regardless of which store is configured.
+    /// </remarks>
     public virtual async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
         DateTimeOffset updatedAfter,
+        int? limit = null,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
-        return sessions
-            .Where(session => session.UpdatedAt >= updatedAfter)
-            .Select(SessionSummary.FromSession)
-            .ToList();
+        return SessionSummaryWindow.Apply(
+            sessions
+                .Where(session => session.UpdatedAt >= updatedAfter)
+                .Select(SessionSummary.FromSession),
+            limit,
+            offset);
     }
 
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(

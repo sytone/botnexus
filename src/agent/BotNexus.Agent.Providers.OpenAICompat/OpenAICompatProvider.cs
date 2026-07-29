@@ -283,7 +283,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         Context context, OpenAICompletionsCompat compat, LlmModel model)
     {
         var messages = new List<Dictionary<string, object?>>();
-        var supportsImages = model.Input.Contains("image");
+        var supportsImages = ImageModalityGuard.SupportsImages(model);
 
         // System prompt
         if (!string.IsNullOrEmpty(context.SystemPrompt))
@@ -303,7 +303,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             switch (msg)
             {
                 case UserMessage user:
-                    messages.Add(BuildUserMessage(user, supportsImages));
+                    messages.Add(BuildUserMessage(user, model, supportsImages));
                     break;
 
                 case AssistantMessage assistant:
@@ -334,7 +334,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         return messages;
     }
 
-    private static Dictionary<string, object?> BuildUserMessage(UserMessage user, bool supportsImages)
+    private static Dictionary<string, object?> BuildUserMessage(UserMessage user, LlmModel model, bool supportsImages)
     {
         if (user.Content.IsText)
         {
@@ -349,6 +349,14 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         var parts = new List<object>();
         if (user.Content.Blocks is not null)
         {
+            if (!supportsImages)
+            {
+                ImageModalityGuard.ReportDropped(
+                    model,
+                    user.Content.Blocks.Count(b => b is ImageContent),
+                    "openai-compat.user");
+            }
+
             foreach (var block in user.Content.Blocks)
             {
                 switch (block)
@@ -369,7 +377,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                         break;
 
                     case ImageContent:
-                        // Server doesn't support images — skip
+                        // Server doesn't declare the image modality — dropped, reported above (#2485).
                         break;
                 }
             }

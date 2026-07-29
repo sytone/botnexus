@@ -22,7 +22,8 @@ public sealed class ActivityDashboardProjectionTests
         IReadOnlyList<ParticipantDto>? participants = null,
         // #2305 (epic #2300): cron-ness comes from the SERVER-stamped source field, never from a
         // `cron:`-prefixed session id. Fixtures set it explicitly.
-        string source = "Channel") =>
+        string source = "Channel",
+        string kind = "HumanAgent") =>
         new(
             ConversationId: id,
             AgentId: agentId,
@@ -34,6 +35,7 @@ public sealed class ActivityDashboardProjectionTests
             CreatedAt: (updatedAt ?? Now).AddMinutes(-5),
             UpdatedAt: updatedAt ?? Now,
             Source: source,
+            Kind: kind,
             Participants: participants);
 
     // ── Cron detection ─────────────────────────────────────────────────────
@@ -391,5 +393,73 @@ public sealed class ActivityDashboardProjectionTests
     public void Summarize_throws_on_null_rows()
     {
         Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.Summarize(null!));
+    }
+    // ── Origin badges (#2385, epic #2300) ──────────────────────────────────
+
+    private static ActivityRow Row(string source, string kind) =>
+        ActivityDashboardProjection.Project(
+            new[] { Conv("a", source: source, kind: kind) },
+            new ActivityDashboardFilter(IncludeCron: true),
+            Now).Single();
+
+    [Fact]
+    public void Project_carries_the_typed_source_and_kind_onto_the_row()
+    {
+        var row = Row("Webhook", "AgentSubAgent");
+
+        Assert.Equal(ConversationSource.Webhook, row.Source);
+        Assert.Equal(ConversationKind.AgentSubAgent, row.Kind);
+    }
+
+    [Fact]
+    public void IsCron_is_computed_from_source_so_it_cannot_disagree_with_it()
+    {
+        Assert.True(Row("Cron", "HumanAgent").IsCron);
+        Assert.False(Row("Webhook", "HumanAgent").IsCron);
+        Assert.False(Row("Agent", "AgentSubAgent").IsCron);
+        Assert.False(Row("Channel", "HumanAgent").IsCron);
+    }
+
+    [Theory]
+    // The ordinary human-on-a-channel case is the ONLY unbadged combination: badges must carry
+    // signal, not decorate every row.
+    [InlineData("Channel", "HumanAgent", null, null)]
+    [InlineData("Cron", "HumanAgent", "Scheduled", "cron")]
+    [InlineData("Webhook", "HumanAgent", "Webhook", "webhook")]
+    [InlineData("Agent", "AgentSubAgent", "Sub-agent", "subagent")]
+    [InlineData("Agent", "AgentAgent", "Agent-to-agent", "a2a")]
+    // Source=Agent is deliberately coarse server-side; a default kind still deserves a badge
+    // because an agent minting its own conversation is not the ordinary case.
+    [InlineData("Agent", "HumanAgent", "Agent-initiated", "agent")]
+    // A non-default kind on a channel-sourced conversation is the surprising part, so it badges
+    // on kind even though the trigger was ordinary.
+    [InlineData("Channel", "AgentSubAgent", "Sub-agent", "subagent")]
+    [InlineData("Channel", "AgentAgent", "Agent-to-agent", "a2a")]
+    public void OriginLabel_and_modifier_disambiguate_every_source_kind_pair(
+        string source, string kind, string? expectedLabel, string? expectedModifier)
+    {
+        var row = Row(source, kind);
+
+        Assert.Equal(expectedLabel, ActivityDashboardProjection.OriginLabel(row));
+        Assert.Equal(expectedModifier, ActivityDashboardProjection.OriginModifier(row));
+    }
+
+    [Fact]
+    public void Unknown_wire_values_degrade_to_the_unbadged_back_compat_default()
+    {
+        // A client older than its server must not render a bogus badge for a source/kind it does
+        // not know: tolerant parsing falls back to Channel/HumanAgent, which is unbadged.
+        var row = Row("SomethingNewerServerSideEntirely", "AlsoBrandNew");
+
+        Assert.Equal(ConversationSource.Channel, row.Source);
+        Assert.Equal(ConversationKind.HumanAgent, row.Kind);
+        Assert.Null(ActivityDashboardProjection.OriginLabel(row));
+    }
+
+    [Fact]
+    public void OriginLabel_and_modifier_throw_on_null_row()
+    {
+        Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.OriginLabel(null!));
+        Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.OriginModifier(null!));
     }
 }
