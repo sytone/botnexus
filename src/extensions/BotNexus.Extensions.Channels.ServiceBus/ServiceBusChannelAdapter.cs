@@ -230,13 +230,27 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         var pending = ResolvePendingReplyContext(message.ChannelRequestId, message.ChannelAddress);
         var pendingCtx = pending.Context;
         var replyQueue = ResolveReplyQueue(message.Metadata, pendingCtx);
-        var (correlationId, conversationId) = ResolveReplyContext(message.Metadata, pendingCtx);
+        var (correlationId, inheritedConversationId) = ResolveReplyContext(message.Metadata, pendingCtx);
+
+        // #2529 (security, cross-conversation delivery): the destination conversation is
+        // never guessed. Precedence is strict and fail-closed:
+        //   1. The message's OWN ConversationId - the producing session knows its destination.
+        //   2. A conversation inherited from an EXACT pending reply context (ChannelRequestId
+        //      matched a registered inbound request). This is legitimate reply correlation.
+        //   3. Nothing was inherited at all -> the channel address is unambiguous, use it.
+        //   4. Otherwise the only candidate came from the FIFO-by-address fallback, i.e. an
+        //      unrelated in-flight inbound request on the same address. Adopting it would
+        //      deliver this content into someone else's conversation. FAIL LOUDLY instead.
+        var conversationId = ResolveOutboundConversationId(
+            message,
+            inheritedConversationId,
+            pending.IsExactMatch);
 
         var envelope = new ServiceBusOutboundEnvelope
         {
             CorrelationId = correlationId,
             AgentId = GetMetadataString(message.Metadata, MetaAgentId),
-            ConversationId = conversationId ?? message.ConversationId ?? message.ChannelAddress.Value,
+            ConversationId = conversationId,
             SessionId = message.SessionId,
             Content = message.Content,
             Type = "done",
@@ -648,14 +662,14 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         return ServiceBusAuthMode.None;
     }
 
-    private (string? RequestKey, PendingReplyContext? Context) ResolvePendingReplyContext(
+    private (string? RequestKey, PendingReplyContext? Context, bool IsExactMatch) ResolvePendingReplyContext(
         string? explicitRequestKey,
         ChannelAddress channelAddress)
     {
         if (!string.IsNullOrWhiteSpace(explicitRequestKey)
             && _pendingReplies.TryGetValue(explicitRequestKey, out var explicitContext))
         {
-            return (explicitRequestKey, explicitContext);
+            return (explicitRequestKey, explicitContext, true);
         }
 
         if (_pendingQueue.TryGetValue(channelAddress.Value, out var queue))
@@ -663,7 +677,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             while (queue.TryPeek(out var oldestKey))
             {
                 if (_pendingReplies.TryGetValue(oldestKey, out var fallbackContext))
-                    return (oldestKey, fallbackContext);
+                    return (oldestKey, fallbackContext, false);
 
                 // Successful sends remove the context first. Discard its stale FIFO key only
                 // when a later lookup observes that removal, so a failed send remains retryable.
@@ -671,7 +685,56 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             }
         }
 
-        return (null, null);
+        return (null, null, false);
+    }
+
+    /// <summary>
+    /// Resolves the conversation an outbound envelope is addressed to, fail-closed (#2529).
+    /// </summary>
+    /// <remarks>
+    /// The producing session's own <see cref="OutboundMessage.ConversationId"/> always wins.
+    /// An inherited conversation is only trusted when it came from an exact
+    /// <c>ChannelRequestId</c> match, which is genuine reply correlation. A conversation
+    /// borrowed from the FIFO-by-address fallback belongs to an unrelated in-flight request
+    /// and must never be adopted; an ambiguous destination throws rather than risking
+    /// delivery of content into a third party's conversation.
+    /// </remarks>
+    private static string ResolveOutboundConversationId(
+        OutboundMessage message,
+        string? inheritedConversationId,
+        bool isExactPendingMatch)
+    {
+        // 1. The producing session's own destination always wins.
+        if (message.ConversationId is { Length: > 0 } ownConversationId
+            && !string.IsNullOrWhiteSpace(ownConversationId))
+        {
+            return ownConversationId;
+        }
+
+        // 2. Genuine reply correlation: an exact ChannelRequestId match.
+        if (isExactPendingMatch
+            && inheritedConversationId is { Length: > 0 } exactConversationId
+            && !string.IsNullOrWhiteSpace(exactConversationId))
+        {
+            return exactConversationId;
+        }
+
+        // 3. No conversation was inherited from any pending context, so the channel address
+        //    is the unambiguous destination for this send.
+        if (string.IsNullOrWhiteSpace(inheritedConversationId))
+            return message.ChannelAddress.Value;
+
+        // 4. The only candidate came from the FIFO-by-address fallback and disagrees with the
+        //    channel address: an unrelated request is in flight. Fail closed.
+        if (string.Equals(inheritedConversationId, message.ChannelAddress.Value, StringComparison.Ordinal))
+            return message.ChannelAddress.Value;
+
+        throw new InvalidOperationException(
+            $"Refusing to send a Service Bus message with an ambiguous destination conversation. "
+            + $"The message carries no ConversationId and no matching ChannelRequestId, while an unrelated "
+            + $"inbound request for conversation '{inheritedConversationId}' is pending on channel address "
+            + $"'{message.ChannelAddress.Value}'. Set OutboundMessage.ConversationId or ChannelRequestId "
+            + $"to identify the intended destination (see issue #2529).");
     }
 
     private void CommitPendingReply(string? requestKey)
