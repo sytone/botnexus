@@ -74,9 +74,82 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     }
 
 
+    /// <summary>
+    /// #2522: session metadata key carrying the provider's LAST REPORTED prompt-token count for the
+    /// session, i.e. the real input cost of the previous turn including system prompt, tool schemas
+    /// and workspace-injected files. The compactor reads this OPPORTUNISTICALLY: as of this change no
+    /// producer writes it (a repo-wide search for <c>PromptTokens</c>/<c>usageTokens</c>/<c>LastUsage</c>
+    /// under <c>Sessions</c> returns zero hits; provider usage currently stops at the agent-loop /
+    /// message-converter layer and is never persisted onto the session). The read is therefore a
+    /// no-op in production today and exists so the measurement below light up the moment the
+    /// producer seam lands. Do NOT gate behaviour on it until then.
+    /// </summary>
+    internal const string ProviderPromptTokensMetadataKey = "lastProviderPromptTokens";
+
+    /// <summary>
+    /// #2522 measure-first: the two token numbers a compaction decision is made against, and their
+    /// ratio. <paramref name="EstimatedTokens"/> is the local <c>chars/4</c> estimate over
+    /// LLM-visible entries only — it excludes the system prompt, tool schemas and workspace-injected
+    /// files, so it systematically UNDER-counts real context.
+    /// <paramref name="ProviderPromptTokens"/> is the provider's reported prompt-token count when one
+    /// is reachable (see <see cref="ProviderPromptTokensMetadataKey"/>), else <c>null</c>.
+    /// <paramref name="Ratio"/> is provider/estimated when both are usable, else <c>null</c>.
+    /// </summary>
+    /// <param name="EstimatedTokens">Local estimator output over LLM-visible entries.</param>
+    /// <param name="ProviderPromptTokens">Provider-reported prompt tokens, or null when unreachable.</param>
+    /// <param name="Ratio">ProviderPromptTokens / EstimatedTokens, or null when not computable.</param>
+    internal readonly record struct CompactionTokenMeasurement(
+        int EstimatedTokens,
+        int? ProviderPromptTokens,
+        double? Ratio)
+    {
+        /// <summary>Human/log-readable provider count ("unavailable" when no producer has written one).</summary>
+        public string ProviderPromptTokensDisplay =>
+            ProviderPromptTokens.HasValue ? ProviderPromptTokens.Value.ToString() : "unavailable";
+
+        /// <summary>Human/log-readable ratio ("unavailable" when not computable).</summary>
+        public string RatioDisplay =>
+            Ratio.HasValue ? Ratio.Value.ToString("0.00") : "unavailable";
+    }
+
+    /// <summary>
+    /// #2522: builds the measure-first token measurement for a session (estimator output, provider
+    /// prompt tokens if reachable, and their ratio). Pure and side-effect free.
+    /// </summary>
+    /// <param name="session">The session whose visible context is measured.</param>
+    /// <param name="estimatedTokens">Pre-computed estimator output to pair with the provider count.</param>
+    /// <returns>The measurement.</returns>
+    internal static CompactionTokenMeasurement MeasureTokens(Session session, int estimatedTokens)
+    {
+        var provider = ReadProviderPromptTokens(session);
+        double? ratio = provider.HasValue && provider.Value > 0 && estimatedTokens > 0
+            ? (double)provider.Value / estimatedTokens
+            : null;
+        return new CompactionTokenMeasurement(estimatedTokens, provider, ratio);
+    }
+
+    private static int? ReadProviderPromptTokens(Session session)
+    {
+        if (session.Metadata is null ||
+            !session.Metadata.TryGetValue(ProviderPromptTokensMetadataKey, out var raw) ||
+            raw is null)
+        {
+            return null;
+        }
+
+        return raw switch
+        {
+            int i when i > 0 => i,
+            long l when l > 0 && l <= int.MaxValue => (int)l,
+            string s when int.TryParse(s, out var parsed) && parsed > 0 => parsed,
+            _ => null
+        };
+    }
+
     public bool ShouldCompact(Session session, CompactionOptions options)
     {
         var estimatedTokens = EstimateVisibleTokenCount(session);
+        var measurement = MeasureTokens(session, estimatedTokens);
         var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
         var tokenTrigger = estimatedTokens > threshold;
 
@@ -91,7 +164,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         _logger.LogDebug(
             "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens, " +
             "threshold {Threshold} (window {Window} * ratio {Ratio}), largestVisibleEntry {LargestBytes} bytes " +
-            "(byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), result: {ShouldCompact}",
+            "(byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), " +
+            "providerPromptTokens {ProviderPromptTokens}, providerToEstimateRatio {TokenRatio}, " +
+            "result: {ShouldCompact}",
             session.SessionId,
             estimatedTokens,
             threshold,
@@ -100,6 +175,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             largestEntryBytes,
             options.LargestEntryBytesThreshold,
             bloatTrigger,
+            measurement.ProviderPromptTokensDisplay,
+            measurement.RatioDisplay,
             shouldCompact);
 
         return shouldCompact;
@@ -197,12 +274,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 // per-session circuit breaker opens after MaxConsecutiveFailures and the loop is
                 // bounded to a cooldown window instead of running forever. Deliberately minimal:
                 // the split behaviour itself is unchanged.
+                //
+                // #2522 measure-first: enrich this warning with BOTH token numbers the decision is
+                // made against — the local estimator output and the provider's reported prompt-token
+                // count (when reachable) — plus their ratio, so the NEXT occurrence is self-diagnosing
+                // without needing a live repro. A ratio materially > 1 means the trigger fires on a
+                // context that is far larger than what the split walk can see and shed.
                 var noSplitFailures = RecordFailure(sessionKey);
+                var measurement = MeasureTokens(session.Session, visibleTokens);
                 _logger.LogWarning(
                     "Compaction aborted for session {SessionId}: {Reason} — the turn split produced no " +
                     "summarizable entries at PreservedTurns={PreservedTurns} and no smaller fallback split " +
                     "was usable ({Tokens} visible tokens vs {Threshold} threshold, {Preserved} entries " +
-                    "preserved). History is unchanged. Consecutive failures: {Failures}/{Max}.",
+                    "preserved). History is unchanged. Consecutive failures: {Failures}/{Max}. " +
+                    "Token measurement: estimated={EstimatedTokens}, providerPromptTokens={ProviderPromptTokens}, " +
+                    "providerToEstimateRatio={TokenRatio}.",
                     session.SessionId,
                     CompactionSkipReason.NoSummarizableTurns,
                     options.PreservedTurns,
@@ -210,7 +296,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     threshold,
                     toPreserve.Count,
                     noSplitFailures,
-                    MaxConsecutiveFailures);
+                    MaxConsecutiveFailures,
+                    measurement.EstimatedTokens,
+                    measurement.ProviderPromptTokensDisplay,
+                    measurement.RatioDisplay);
 
                 return CompactionResult.Skipped(
                     snap.DestructiveVersion,
