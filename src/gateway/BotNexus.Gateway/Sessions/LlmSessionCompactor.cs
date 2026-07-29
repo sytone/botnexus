@@ -129,7 +129,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     "Compaction circuit breaker OPEN for session {SessionId}: " +
                     "{Failures} consecutive failures. Cooling down for {Remaining:0}s more before retrying.",
                     sessionKey, breakerState.Count, (cooldown - elapsed).TotalSeconds);
-                return CompactionResult.Skipped(skipReason: CompactionSkipReasons.CircuitBreakerOpen);
+                return CompactionResult.Skipped(skipReason: CompactionSkipReason.CircuitBreakerOpen);
             }
 
             // Cooldown elapsed: clear the breaker and allow this attempt through.
@@ -148,7 +148,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var history = snap.Entries;
         if (history.Count == 0)
         {
-            return CompactionResult.Skipped(snap.DestructiveVersion, snap.Count, skipReason: CompactionSkipReasons.EmptyHistory);
+            return CompactionResult.Skipped(snap.DestructiveVersion, snap.Count, skipReason: CompactionSkipReason.EmptyHistory);
         }
 
         // Phase 3a: compaction operates on the "LLM-visible" projection only. Already-historical
@@ -204,7 +204,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     "was usable ({Tokens} visible tokens vs {Threshold} threshold, {Preserved} entries " +
                     "preserved). History is unchanged. Consecutive failures: {Failures}/{Max}.",
                     session.SessionId,
-                    CompactionSkipReasons.NoSummarizableTurns,
+                    CompactionSkipReason.NoSummarizableTurns,
                     options.PreservedTurns,
                     visibleTokens,
                     threshold,
@@ -218,7 +218,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     entriesPreserved: toPreserve.Count,
                     tokensBefore: visibleTokens,
                     tokensAfter: visibleTokens,
-                    skipReason: CompactionSkipReasons.NoSummarizableTurns);
+                    skipReason: CompactionSkipReason.NoSummarizableTurns);
             }
         }
 
@@ -250,7 +250,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 entriesPreserved: history.Count,
                 tokensBefore: tokensBefore,
                 tokensAfter: tokensBefore,
-                skipReason: CompactionSkipReasons.SummarizationTimeout);
+                skipReason: CompactionSkipReason.SummarizationTimeout);
         }
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
@@ -272,7 +272,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 entriesPreserved: history.Count,
                 tokensBefore: tokensBefore,
                 tokensAfter: tokensBefore,
-                skipReason: CompactionSkipReasons.EmptySummary);
+                skipReason: CompactionSkipReason.EmptySummary);
         }
 
         if (summary.Length > options.MaxSummaryChars)

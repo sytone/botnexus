@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
+using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
@@ -148,7 +149,32 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         return SendMessageCore(agentId, channelType, content, conversationId);
     }
 
-    private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId)
+    /// <summary>
+    /// Injects a canvas <c>submitToAgent</c> click into a conversation as a genuine USER turn,
+    /// stamped with <see cref="MessageKind.CanvasSubmission"/> so the transcript records why the
+    /// message exists (#2449).
+    /// </summary>
+    /// <remarks>
+    /// This is a separate hub verb from <see cref="SendMessage"/> for exactly one reason: the
+    /// provenance kind must be stamped by the SERVER from the transport surface the call arrived
+    /// on, never taken from a caller-supplied field. Reusing <see cref="SendMessage"/> with a kind
+    /// argument would make provenance forgeable by any client, which is the failure mode the
+    /// content-prefix approach had. <paramref name="conversationId"/> is required: a canvas is
+    /// attached to a conversation and may target only that conversation.
+    /// </remarks>
+    /// <param name="agentId">The agent hosting the canvas.</param>
+    /// <param name="channelType">The channel type.</param>
+    /// <param name="content">The instruction text composed by the canvas.</param>
+    /// <param name="conversationId">The conversation the canvas is attached to. Required.</param>
+    /// <returns>The send message result.</returns>
+    public Task<SendMessageResult> SubmitCanvasPrompt(AgentId agentId, ChannelKey channelType, string content, string conversationId)
+    {
+        EnsureControlScope(nameof(SubmitCanvasPrompt));
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return SendMessageCore(agentId, channelType, content, conversationId, MessageKind.CanvasSubmission);
+    }
+
+    private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId, MessageKind? kind = null)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
@@ -173,7 +199,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             typedAgentId, typedChannelType, resolution.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId),
+            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId, kind),
             typedAgentId,
             resolution.SessionId);
 
@@ -293,23 +319,26 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
-        string messageType, string senderId, string? conversationId = null)
+        string messageType, string senderId, string? conversationId = null, MessageKind? kind = null)
         => _app.AcceptAsync(
             BuildInboundMessage(
                 typedAgentId, senderId, content, messageType,
                 new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
                     RequestedSessionId: typedSessionId,
-                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId))),
+                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
+                kind: kind),
             CancellationToken.None);
 
     // Centralizes the channel-invariant InboundMessage fields shared by the SignalR hub dispatch
     // paths: signalr type, authenticated sender, stable per-agent address, and clientKind metadata.
     private InboundMessage BuildInboundMessage(
         AgentId typedAgentId, string senderId, string content, string messageType,
-        InboundMessageRoutingHints routingHints, IReadOnlyList<MessageContentPart>? contentParts = null)
+        InboundMessageRoutingHints routingHints, IReadOnlyList<MessageContentPart>? contentParts = null,
+        MessageKind? kind = null)
         => new()
         {
+            Kind = kind,
             ChannelType = ChannelKey.From("signalr"),
             SenderId = senderId,
             Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
