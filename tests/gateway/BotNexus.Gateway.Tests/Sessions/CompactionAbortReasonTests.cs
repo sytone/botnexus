@@ -52,7 +52,7 @@ public sealed class CompactionAbortReasonTests
         });
 
         result.Succeeded.ShouldBeFalse();
-        result.SkipReason.ShouldBe(CompactionSkipReasons.EmptyHistory);
+        result.SkipReason.ShouldBe(CompactionSkipReason.EmptyHistory);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class CompactionAbortReasonTests
         });
 
         result.Succeeded.ShouldBeFalse();
-        result.SkipReason.ShouldBe(CompactionSkipReasons.NoSummarizableTurns);
+        result.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class CompactionAbortReasonTests
         });
 
         result.Succeeded.ShouldBeFalse();
-        result.SkipReason.ShouldBe(CompactionSkipReasons.EmptySummary);
+        result.SkipReason.ShouldBe(CompactionSkipReason.EmptySummary);
     }
 
     [Fact]
@@ -124,13 +124,13 @@ public sealed class CompactionAbortReasonTests
         for (var i = 0; i < LlmSessionCompactor.MaxConsecutiveFailures; i++)
         {
             var attempt = await compactor.CompactAsync(session, options);
-            attempt.SkipReason.ShouldBe(CompactionSkipReasons.NoSummarizableTurns);
+            attempt.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
         }
 
         var guarded = await compactor.CompactAsync(session, options);
 
         guarded.Succeeded.ShouldBeFalse();
-        guarded.SkipReason.ShouldBe(CompactionSkipReasons.CircuitBreakerOpen);
+        guarded.SkipReason.ShouldBe(CompactionSkipReason.CircuitBreakerOpen);
     }
 
     // ── Coordinator: reason propagation + warning log ────────────────────────
@@ -143,14 +143,14 @@ public sealed class CompactionAbortReasonTests
             logger,
             CompactionResult.Skipped(
                 entriesPreserved: 440,
-                skipReason: CompactionSkipReasons.NoSummarizableTurns));
+                skipReason: CompactionSkipReason.NoSummarizableTurns));
 
         var session = CreateSession(("user", "hello"));
 
         var outcome = await coordinator.CompactAsync(TestAgent, session, CancellationToken.None);
 
         outcome.Applied.ShouldBeFalse();
-        outcome.SkipReason.ShouldBe(CompactionSkipReasons.NoSummarizableTurns);
+        outcome.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
 
         var warning = logger.Entries
             .Where(e => e.Level == LogLevel.Warning)
@@ -158,7 +158,7 @@ public sealed class CompactionAbortReasonTests
             .FirstOrDefault(m => m.Contains("compaction did not apply", StringComparison.Ordinal));
 
         warning.ShouldNotBeNull("an aborted compaction must log a warning naming the abort branch");
-        warning.ShouldContain($"reason={CompactionSkipReasons.NoSummarizableTurns}");
+        warning.ShouldContain($"reason={CompactionSkipReason.NoSummarizableTurns}");
     }
 
     [Fact]
@@ -177,7 +177,7 @@ public sealed class CompactionAbortReasonTests
         var outcome = await coordinator.CompactAsync(TestAgent, session, CancellationToken.None);
 
         outcome.Applied.ShouldBeFalse();
-        outcome.SkipReason.ShouldBe(CompactionSkipReasons.SummarizationFailed);
+        outcome.SkipReason.ShouldBe(CompactionSkipReason.SummarizationFailed);
     }
 
     [Fact]

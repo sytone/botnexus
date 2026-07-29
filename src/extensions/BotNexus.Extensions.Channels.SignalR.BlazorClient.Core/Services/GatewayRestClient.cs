@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -144,12 +144,24 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     /// <inheritdoc />
     public async Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
         string? agentId = null,
+        int? limit = null,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
-        var query = string.IsNullOrWhiteSpace(agentId)
-            ? string.Empty
-            : $"?agentId={Uri.EscapeDataString(agentId)}";
+
+        // #2499: the endpoint pages (default 50, max 200). Forward the paging arguments so callers
+        // can walk the whole roster; omit them entirely when not supplied so the historical
+        // single-argument call produces the exact same URL it always did.
+        var args = new List<string>(3);
+        if (!string.IsNullOrWhiteSpace(agentId))
+            args.Add($"agentId={Uri.EscapeDataString(agentId)}");
+        if (limit is not null)
+            args.Add($"limit={limit.Value}");
+        if (offset > 0)
+            args.Add($"offset={offset}");
+
+        var query = args.Count == 0 ? string.Empty : "?" + string.Join("&", args);
         var result = await _http.GetFromJsonAsync<List<SessionSummary>>(
             $"{_apiBaseUrl}sessions{query}",
             cancellationToken);

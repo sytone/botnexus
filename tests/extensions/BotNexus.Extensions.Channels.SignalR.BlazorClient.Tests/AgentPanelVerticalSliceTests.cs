@@ -204,6 +204,21 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         Assert.Contains(".agent-panel-tab", css);
         Assert.Contains(".canvas-panel", css);
         Assert.Contains("@media (max-width: 768px)", css);
+
+        // #2441: portal chrome spacing is expressed as themeable density tokens with both a
+        // compact and a comfortable value set, not hard-coded numbers.
+        Assert.Contains("[data-density=\"compact\"]", css);
+        Assert.Contains("[data-density=\"comfortable\"]", css);
+        foreach (var token in new[]
+                 {
+                     "--density-row-pad-y", "--density-row-pad-x", "--density-gap",
+                     "--density-control-h", "--density-bar-h", "--density-font-sm",
+                     "--density-font-xs", "--density-nav-pad-y", "--density-nav-pad-x",
+                     "--density-subnav-indent", "--density-group-pad-y"
+                 })
+        {
+            Assert.Contains(token, css);
+        }
     }
 
     private IRenderedComponent<Home> RenderHomeForAgentConversation() =>

@@ -1267,6 +1267,17 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// #2484: injects the COMPOSED message (text plus any vision payload) verbatim, so a steer
+    /// dispatched with draft attachments delivers them. The string overload cannot carry images.
+    /// </remarks>
+    public Task SteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    {
+        _agent.Steer(message);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public Task SteerDeferrableAsync(string message, CancellationToken cancellationToken = default)
     {
         // #1845: mark as defer-while-busy so the agent loop holds this side turn until it reaches
@@ -1293,6 +1304,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
         // 3. Enqueue the new direction. The agent picks it up at the next steering drain point.
         _agent.Steer(new AgentCoreUserMessage(message));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// #2484 typed counterpart: same abort/clear/enqueue sequence, but the composed message
+    /// (including its vision payload) is enqueued intact instead of text only.
+    /// </remarks>
+    public async Task InterruptAndSteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        await _agent.AbortAsync();
+        _agent.ClearSteeringQueue();
+        _agent.Steer(message);
     }
 
     /// <inheritdoc />
@@ -1344,6 +1369,28 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         // (reclaim succeeds -> we own it again and the caller must send it normally).
         var reclaimed = _agent.TryReclaimFollowUp(queued);
         return Task.FromResult(!reclaimed);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// #2484 typed counterpart: identical enqueue-then-reverify ordering, but the COMPOSED message
+    /// is what round-trips through the pending-message queue, so a follow-up issued with draft
+    /// attachments still carries them when the queue is drained after the current run settles.
+    /// </remarks>
+    public Task<bool> TryFollowUpWhileRunningAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        if (!IsRunning)
+            return Task.FromResult(false);
+
+        _agent.FollowUp(message);
+
+        if (IsRunning)
+            return Task.FromResult(true);
+
+        var reclaimedTyped = _agent.TryReclaimFollowUp(message);
+        return Task.FromResult(!reclaimedTyped);
     }
 
     /// <inheritdoc />

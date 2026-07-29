@@ -55,7 +55,7 @@ public static class CompletionsMessageConverter
             {
                 case UserMessage user:
                 {
-                    var userMessage = ConvertUserMessage(user, model.Input.Contains("image"));
+                    var userMessage = ConvertUserMessage(user, model);
                     if (userMessage is not null)
                         result.Add(userMessage);
                     lastRole = "user";
@@ -80,10 +80,11 @@ public static class CompletionsMessageConverter
                         var tr = (ToolResultMessage)transformedMessages[j];
                         result.Add(ConvertToolResultMessage(tr, compat, model));
 
-                        var hasImages = tr.Content.Any(c => c is ImageContent);
-                        if (hasImages && model.Input.Contains("image"))
+                        var trImages = tr.Content.OfType<ImageContent>().ToList();
+                        if (trImages.Count > 0 &&
+                            ImageModalityGuard.AllowImages(model, trImages.Count, "completions.tool-result"))
                         {
-                            foreach (var image in tr.Content.OfType<ImageContent>())
+                            foreach (var image in trImages)
                             {
                                 imageBlocks.Add(new JsonObject
                                 {
@@ -153,8 +154,13 @@ public static class CompletionsMessageConverter
         return id;
     }
 
-    private static JsonObject? ConvertUserMessage(UserMessage user, bool supportsImages)
+    private static JsonObject? ConvertUserMessage(UserMessage user, LlmModel model)
     {
+        var supportsImages = ImageModalityGuard.AllowImages(
+            model,
+            user.Content.IsText ? 0 : user.Content.Blocks!.Count(b => b is ImageContent),
+            "completions.user");
+
         if (user.Content.IsText)
             return new JsonObject
             {

@@ -25,4 +25,11 @@ public interface IPortalPreferencesService
 
     /// <summary>Update the archive-confirmation preference and persist.</summary>
     Task SetArchiveConfirmAsync(bool enabled);
+
+    /// <summary>
+    /// Update the UI density preset (#2441) and persist. Unrecognised values are coerced to
+    /// <see cref="PortalDensity.Compact"/> by <see cref="PortalDensity.Normalize"/>.
+    /// </summary>
+    /// <param name="density">Requested preset; see <see cref="PortalDensity"/>.</param>
+    Task SetDensityAsync(string density);
 }

@@ -615,9 +615,26 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// <c>Conversation.AgentId</c> (P9-I) and cached per conversation; rows whose conversation
     /// no longer resolves to an agent are skipped — they cannot belong to an agent's visible
     /// list.
+    /// <para>
+    /// #2411: the read is bounded. When no time window is requested the bound is pushed into
+    /// SQL as <c>ORDER BY updated_at DESC, id ASC LIMIT ? OFFSET ?</c>, so the common portal
+    /// list never scans the whole session table. When a <paramref name="updatedAfter"/> window
+    /// <i>is</i> requested the bound cannot go into SQL: timestamps are persisted with their
+    /// original UTC offset, so the window is evaluated on parsed values in managed code and a
+    /// SQL <c>LIMIT</c> would truncate before that filter ran. In that case the shared
+    /// <see cref="SessionSummaryWindow"/> applies the identical slice after filtering.
+    /// </para>
+    /// <para>
+    /// A page may come back shorter than <paramref name="limit"/> when rows are dropped for an
+    /// unresolvable conversation. Those rows are not addressable by any caller, and this
+    /// endpoint's consumers already post-filter by agent and status, so a short page is the
+    /// pre-existing shape rather than a new one.
+    /// </para>
     /// </remarks>
     public override async Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
         DateTimeOffset updatedAfter,
+        int? limit = null,
+        int offset = 0,
         CancellationToken cancellationToken = default)
         => await RetryOnTransientAsync(async () =>
         {
@@ -636,7 +653,18 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     FROM session_history
                     GROUP BY session_id
                 ) h ON h.session_id = s.id
+                ORDER BY s.updated_at DESC, s.id ASC
                 """;
+
+            // Only push the window into SQL when nothing is dropped by the parsed-value
+            // updatedAfter filter below; otherwise LIMIT would truncate before filtering.
+            var boundedInSql = updatedAfter == DateTimeOffset.MinValue && limit is not null;
+            if (boundedInSql)
+            {
+                command.CommandText += "\nLIMIT $limit OFFSET $offset";
+                command.Parameters.AddWithValue("$limit", limit!.Value);
+                command.Parameters.AddWithValue("$offset", Math.Max(offset, 0));
+            }
 
             // Read raw rows first; resolving the agent per row touches the conversation
             // store and must not happen while the data reader holds the connection.
@@ -685,7 +713,12 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     row.ConversationId));
             }
 
-            return (IReadOnlyList<SessionSummary>)summaries;
+            // When SQL already applied the window these rows ARE the page; re-slicing with the
+            // same offset would skip a second time. Otherwise apply the window here so both
+            // paths expose the identical newest-first page contract.
+            return boundedInSql
+                ? SessionSummaryWindow.Apply(summaries, limit, 0)
+                : SessionSummaryWindow.Apply(summaries, limit, offset);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <summary>
