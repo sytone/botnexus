@@ -643,11 +643,13 @@ public sealed class ExecTool : IAgentTool
     /// <item><c>PATHEXT</c> — Windows list of executable extensions; override could make .txt executable</item>
     /// <item><c>COMSPEC</c> — Windows path to cmd.exe; override redirects all cmd invocations</item>
     /// <item><c>SystemRoot</c> — Windows system directory; override can redirect DLL loading</item>
+    /// <item><c>BASH_FUNC_*</c> - bash exported-function definitions (shellshock-style injection into any child bash)</item>
+    /// <item><c>CC</c>, <c>CXX</c>, <c>CPP</c>, <c>CXXCPP</c>, <c>LD</c>, <c>AR</c> - compiler/preprocessor/linker selectors; an override substitutes an attacker-chosen binary into any build the child runs</item>
     /// <item><c>*_BASE_URL</c>, <c>*_API_HOST</c>, <c>*_ENDPOINT</c> — endpoint-redirection variables that can point a subprocess's API calls at an attacker-controlled host (credential exfiltration)</item>
     /// </list>
     /// </summary>
-    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_"];
-    public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT"];
+    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_"];
+    public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "CC", "CXX", "CPP", "CXXCPP", "LD", "AR"];
     public static readonly string[] BlockedEnvSuffixes = ["_BASE_URL", "_API_HOST", "_ENDPOINT"];
 
     /// <summary>
