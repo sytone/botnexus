@@ -1,0 +1,91 @@
+name: 'Bug'
+description: 'Something is broken.'
+labels: [type:bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Bug** — Something is broken.
+        Fields marked required are enforced. Agents: use `New-BotNexusIssue.ps1 -Action template -Type type:bug` instead of this form.
+  - type: textarea
+    id: summary
+    attributes:
+      label: 'Summary'
+      description: 'Two or three sentences: what is wrong or missing, and the outcome you want. Not a title restatement.'
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 'Evidence'
+      description: 'The actual failure: error text, log line, failing test name, or exact repro steps. Paste the signature verbatim - a paraphrase cannot be grepped for.'
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behaviour
+    attributes:
+      label: 'Expected behaviour'
+      description: 'What should happen instead. Without this, ''broken'' is an opinion.'
+    validations:
+      required: true
+  - type: textarea
+    id: root_cause
+    attributes:
+      label: 'Root cause'
+      description: 'The mechanism, if known - which layer is wrong and why. Say so if you have NOT diagnosed it; a guess asserted as fact is worse than an admission. Verify the premise against source before asserting it.'
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: 'Impact'
+      description: 'Who or what is affected, and how often. Drives priority.'
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_fix
+    attributes:
+      label: 'Proposed fix'
+      description: 'Only if you have a specific one. Name the seam it should reuse.'
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: 'Acceptance criteria'
+      description: 'Numbered, independently checkable clauses. Each one must be provable by a test, a command, or a file that exists. This is the close gate: the issue closes only when every clause is met.'
+      placeholder: |
+        1. First independently checkable clause
+        2. Second clause
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: 'Files'
+      description: 'Known-relevant paths, one per line. Saves an agent a discovery pass.'
+    validations:
+      required: false
+  - type: textarea
+    id: related
+    attributes:
+      label: 'Related'
+      description: 'Issue/PR numbers and links. Parent epic goes here.'
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: 'Leave blank if unsure - triage will set it.'
+      options: [priority:critical, priority:high, priority:medium, priority:low]
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling]
+    validations:
+      required: false

@@ -1,0 +1,77 @@
+name: 'Test coverage'
+description: 'Missing or weak test coverage.'
+labels: [type:test]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Test coverage** — Missing or weak test coverage.
+        Fields marked required are enforced. Agents: use `New-BotNexusIssue.ps1 -Action template -Type type:test` instead of this form.
+  - type: textarea
+    id: summary
+    attributes:
+      label: 'Summary'
+      description: 'Two or three sentences: what is wrong or missing, and the outcome you want. Not a title restatement.'
+    validations:
+      required: true
+  - type: textarea
+    id: coverage_gap
+    attributes:
+      label: 'Coverage gap'
+      description: 'The exact behaviour that is unpinned, and how you know - a mutation that survives, a revert that stays green, a path with no assertion.'
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: 'Risk'
+      description: 'What could regress unnoticed today.'
+    validations:
+      required: true
+  - type: textarea
+    id: non_vacuity
+    attributes:
+      label: 'Non-vacuity'
+      description: 'How the new test will be PROVEN to detect the wrong behaviour: name the mutation or revert that must turn it red. A test that cannot fail is decoration.'
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: 'Acceptance criteria'
+      description: 'Numbered, independently checkable clauses. Each one must be provable by a test, a command, or a file that exists. This is the close gate: the issue closes only when every clause is met.'
+      placeholder: |
+        1. First independently checkable clause
+        2. Second clause
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: 'Files'
+      description: 'Known-relevant paths, one per line. Saves an agent a discovery pass.'
+    validations:
+      required: false
+  - type: textarea
+    id: related
+    attributes:
+      label: 'Related'
+      description: 'Issue/PR numbers and links. Parent epic goes here.'
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: 'Leave blank if unsure - triage will set it.'
+      options: [priority:critical, priority:high, priority:medium, priority:low]
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling]
+    validations:
+      required: false
