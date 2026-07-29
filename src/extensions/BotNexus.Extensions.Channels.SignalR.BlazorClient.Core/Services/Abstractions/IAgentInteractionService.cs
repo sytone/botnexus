@@ -11,6 +11,20 @@ public interface IAgentInteractionService
 
     /// <summary>Sends optional text plus validated generic attachments through the existing content-parts seam.</summary>
     Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
+    /// <summary>
+    /// Injects a canvas-authored prompt into the conversation that owns the canvas as a genuine
+    /// USER turn (#2449). This is the server-side half of the <c>canvasState.submitToAgent</c>
+    /// bridge verb: the iframe supplies only text, never a target.
+    /// </summary>
+    /// <param name="agentId">Agent hosting the canvas panel.</param>
+    /// <param name="conversationId">
+    /// The conversation the canvas is BOUND to, taken from the host component's own parameter.
+    /// Callers must never pass a value read out of the iframe message payload - the whole point of
+    /// this parameter is that the target is derived from the host binding.
+    /// </param>
+    /// <param name="prompt">Agent-authored prompt text supplied by the canvas.</param>
+    /// <param name="instructions">Optional retrieval hint appended after the prompt.</param>
+    Task<CanvasSubmitResult> SubmitCanvasPromptAsync(string agentId, string conversationId, string? prompt, string? instructions);
     Task SteerAsync(string agentId, string content);
 
     /// <summary>Steers with optional draft attachments, matching the send media overload (#2484).</summary>
