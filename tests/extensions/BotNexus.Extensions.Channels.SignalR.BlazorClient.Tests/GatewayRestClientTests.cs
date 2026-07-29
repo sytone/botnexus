@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -344,6 +344,65 @@ public sealed class GatewayRestClientTests
         var success = await client.DeleteWorkspaceItemAsync("agent-1", "no-such-file.md");
 
         success.ShouldBeFalse();
+    }
+
+    // ── GetSessionsAsync paging (#2499) ──────────────────────────────────────────
+
+    private const string EmptySessionArray = "[]";
+
+    /// <summary>
+    /// Backwards compatibility: a caller that supplies neither limit nor offset must produce the
+    /// exact URL the client always produced, so the server default keeps applying unchanged.
+    /// </summary>
+    [Fact]
+    public async Task GetSessionsAsync_without_paging_args_emits_no_limit_or_offset()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions", EmptySessionArray);
+
+        await client.GetSessionsAsync();
+
+        handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions");
+    }
+
+    /// <summary>
+    /// Backwards compatibility for the agent-filtered form: still a bare <c>?agentId=</c>.
+    /// </summary>
+    [Fact]
+    public async Task GetSessionsAsync_with_only_agentId_emits_agentId_alone()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions", EmptySessionArray);
+
+        await client.GetSessionsAsync("a1");
+
+        handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions?agentId=a1");
+    }
+
+    /// <summary>
+    /// Paging arguments are forwarded as query-string args so a caller can walk the whole roster.
+    /// </summary>
+    [Fact]
+    public async Task GetSessionsAsync_forwards_limit_and_offset_as_query_args()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions", EmptySessionArray);
+
+        await client.GetSessionsAsync("a1", limit: 200, offset: 400);
+
+        handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions?agentId=a1&limit=200&offset=400");
+    }
+
+    /// <summary>Paging works without an agent filter (the portal bootstrap's global sweep).</summary>
+    [Fact]
+    public async Task GetSessionsAsync_forwards_paging_without_agentId()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions", EmptySessionArray);
+
+        await client.GetSessionsAsync(agentId: null, limit: 50, offset: 50);
+
+        handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions?limit=50&offset=50");
     }
 
     // ── WriteWorkspaceFileAsync ──────────────────────────────────────────────────

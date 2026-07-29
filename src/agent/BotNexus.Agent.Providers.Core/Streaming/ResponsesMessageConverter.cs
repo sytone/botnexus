@@ -121,6 +121,10 @@ public static class ResponsesMessageConverter
         }
 
         var contentArray = new JsonArray();
+        var supportsImages = ImageModalityGuard.AllowImages(
+            model,
+            (user.Content.Blocks ?? []).Count(b => b is ImageContent),
+            "responses.user");
         foreach (var block in user.Content.Blocks ?? [])
         {
             switch (block)
@@ -133,7 +137,7 @@ public static class ResponsesMessageConverter
                     });
                     break;
 
-                case ImageContent image when model.Input.Contains("image"):
+                case ImageContent image when supportsImages:
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "input_image",
@@ -241,7 +245,9 @@ public static class ResponsesMessageConverter
     {
         var (callId, _) = SplitToolCallId(toolResult.ToolCallId);
         var textResult = string.Join("\n", toolResult.Content.OfType<TextContent>().Select(t => t.Text));
-        var hasImages = toolResult.Content.Any(c => c is ImageContent) && model.Input.Contains("image");
+        var imageParts = toolResult.Content.OfType<ImageContent>().ToList();
+        var hasImages = imageParts.Count > 0 &&
+            ImageModalityGuard.AllowImages(model, imageParts.Count, "responses.tool-result");
         JsonNode output;
 
         if (hasImages)
@@ -256,7 +262,7 @@ public static class ResponsesMessageConverter
                 });
             }
 
-            foreach (var image in toolResult.Content.OfType<ImageContent>())
+            foreach (var image in imageParts)
             {
                 outputParts.Add(new JsonObject
                 {

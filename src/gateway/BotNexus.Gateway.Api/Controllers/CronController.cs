@@ -1,4 +1,5 @@
 using BotNexus.Cron;
+using BotNexus.Gateway.Api.Models;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -102,7 +103,7 @@ public sealed class CronController(
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The create result.</returns>
     [HttpPost]
-    public async Task<ActionResult<CronJob>> Create([FromBody] CronJob request, CancellationToken cancellationToken)
+    public async Task<ActionResult<CronJob>> Create([FromBody] CronJobCreateRequest request, CancellationToken cancellationToken)
     {
         if (request.NextRunAt.HasValue && !IsTimestampInRange(request.NextRunAt.Value))
             return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
@@ -110,7 +111,15 @@ public sealed class CronController(
         if (request.CreatedAt != default && !IsTimestampInRange(request.CreatedAt))
             return BadRequest("CreatedAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
 
-        var toCreate = request with
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest("Name is required.");
+
+        if (string.IsNullOrWhiteSpace(request.Schedule))
+            return BadRequest("Schedule is required.");
+
+        // #2389: the id is generated here when the caller omits one (see CronJobCreateRequest),
+        // matching the existing server-side defaulting of CreatedAt and normalization of ActionType.
+        var toCreate = request.ToCronJob() with
         {
             ActionType = NormalizeActionType(request.ActionType),
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt

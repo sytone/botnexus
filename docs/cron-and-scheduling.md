@@ -765,7 +765,70 @@ Agents can schedule, remove, or list cron jobs at runtime using the **`cron` too
 **Name:** `cron`  
 **Description:** Schedule or manage cron jobs. Actions: list, create, update, delete, run, history.
 
+A job created through the tool is one of two action types:
+
+| `actionType` | What it does on each fire | Required fields | Cost |
+|---|---|---|---|
+| `agent-prompt` (default) | Sends a prompt to the target agent | `message` **or** `templateName` | One full model turn per fire |
+| `command` | Runs `shellCommand` as a script | `shellCommand` | No tokens unless the script escalates |
+
+`actionType` is optional and defaults to `agent-prompt`, so callers that omit it behave
+exactly as before. Validation is per action type: an `agent-prompt` job still requires a
+prompt source, and a `command` job still requires a non-empty `shellCommand` - neither is
+allowed to be created with nothing to do.
+
+`shellCommand` is an arbitrary-execution surface. Creating or editing a `command` job
+should be treated as a dangerous operation and carry the same authorization posture as
+the `exec` path.
+
 ### 9.2 Actions
+
+#### `create`
+
+Creates a new job.
+
+**Arguments:**
+- `action` = `"create"`
+- `name`: Job name (required)
+- `schedule`: Standard 5-field cron expression (required)
+- `actionType`: `"agent-prompt"` (default) or `"command"` (optional)
+- `message`: Prompt text - `agent-prompt` jobs only
+- `templateName` / `templateParameters`: Named prompt template - `agent-prompt` jobs only
+- `shellCommand`: Script to run - required for `command` jobs
+- `timeZone`: IANA timezone the schedule is evaluated in (optional; defaults to UTC)
+- `agentId`: Target agent (optional; defaults to the calling agent)
+- `model`: Model override - `agent-prompt` jobs only (optional)
+- `enabled`: Whether the job is enabled (optional; default `true`)
+
+**Example - a zero-token command job:**
+```json
+{
+  "action": "create",
+  "name": "disk-space-check",
+  "schedule": "0 * * * *",
+  "actionType": "command",
+  "shellCommand": "pwsh -NoProfile -File ./scripts/check-disk.ps1"
+}
+```
+
+#### `update`
+
+Updates an existing job. Every field is optional; an omitted field keeps its current value.
+
+**Arguments:**
+- `action` = `"update"`
+- `jobId`: Job identifier (required)
+- Any of the `create` fields above
+
+Updating prompt-irrelevant fields (`schedule`, `timeZone`, `name`, `enabled`) on a
+`command` job does **not** require a `message` or `templateName`, and preserves the
+existing `shellCommand`.
+
+Supplying a different `actionType` switches the job and clears the fields belonging to the
+other action type, so a job is never left as a `command` job holding a stale prompt (or an
+`agent-prompt` job holding an orphaned `shellCommand`). A switch must satisfy the new type's
+validation in the same call - e.g. switching to `agent-prompt` requires a `message` or
+`templateName`.
 
 #### `history`
 

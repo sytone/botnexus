@@ -1,11 +1,27 @@
-<div class="connection-indicator @CssClass" data-testid="connection-status" title="@Label">
-    <span class="connection-dot">@DotChar</span>
+@*
+    Connection state indicator (#2441). Rendered as a bare dot in the portal top bar: the full
+    state text lives in the title tooltip so the indicator costs a few pixels instead of a whole
+    sidebar row. The label span is kept in the DOM (visually hidden in Dot mode) so assistive tech
+    and existing assertions can still read the state text.
+*@
+<div class="connection-indicator @CssClass @(Dot ? "connection-indicator-dot" : "")"
+     data-testid="connection-status"
+     role="status"
+     aria-live="polite"
+     title="@Label">
+    <span class="connection-dot" aria-hidden="true">@DotChar</span>
     <span class="connection-label">@Label</span>
 </div>
 
 @code {
     [Parameter, EditorRequired]
     public GatewayHubConnection Hub { get; set; } = default!;
+
+    /// <summary>
+    /// Render as a compact dot with the state text moved to the tooltip. Used by the top bar.
+    /// </summary>
+    [Parameter]
+    public bool Dot { get; set; }
 
     private string CssClass => Hub.State switch
     {
@@ -15,19 +31,25 @@
         _ => "status-disconnected"
     };
 
+    // Escaped codepoints, not literal glyphs: this file has previously been corrupted by
+    // encoding round-trips and the dot is the only thing the user sees in Dot mode.
     private string DotChar => Hub.State switch
     {
-        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected => "●",
-        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "◌",
-        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "◌",
-        _ => "○"
+        // U+25CF BLACK CIRCLE
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected => "\u25CF",
+        // U+25CC DOTTED CIRCLE
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "\u25CC",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "\u25CC",
+        // U+25CB WHITE CIRCLE
+        _ => "\u25CB"
     };
 
     private string Label => Hub.State switch
     {
         Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected => "Connected",
-        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "Connecting…",
-        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "Reconnecting…",
+        // U+2026 HORIZONTAL ELLIPSIS
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "Connecting\u2026",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "Reconnecting\u2026",
         _ => "Disconnected"
     };
 }

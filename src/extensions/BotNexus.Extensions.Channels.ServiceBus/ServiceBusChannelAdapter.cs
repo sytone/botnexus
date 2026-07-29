@@ -8,6 +8,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Channels.Startup;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -70,6 +71,10 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
 
     private IServiceBusAdapterClientFactory? _activeFactory;
     private ServiceBusProcessor? _processor;
+
+    // #2386: bounds the receive loop so a terminal fault parks the processor instead of
+    // re-erroring every few seconds for hours.
+    private readonly ChannelLoopCircuitBreaker _receiveBreaker = new("Azure Service Bus receive loop");
 
     // Senders are cached per queue name so we don't create a new sender on every reply.
     private readonly ConcurrentDictionary<string, IServiceBusSenderWrapper> _senders =
@@ -544,16 +549,65 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     }
 
     private Task OnProcessErrorAsync(ProcessErrorEventArgs args)
-    {
-        _logger.LogError(
-            args.Exception,
-            "{DisplayName} Service Bus processor error (source={ErrorSource}, entity={EntityPath})",
-            DisplayName,
-            args.ErrorSource,
-            args.EntityPath);
+        => HandleProcessorErrorAsync(args.Exception, args.ErrorSource.ToString(), args.EntityPath);
 
-        return Task.CompletedTask;
+    /// <summary>
+    /// Bounds the Service Bus receive loop (#2386). The Azure SDK re-invokes this callback for
+    /// every failed receive attempt, so a fault it cannot recover from - a revoked AAD grant
+    /// (AADSTS50173) being the observed case - previously produced an unbounded ERR stream at
+    /// ~13/min for six hours while inbound messages were silently not being received.
+    /// </summary>
+    /// <remarks>
+    /// Terminal failures stop the processor and emit exactly one actionable ERR line. Transient
+    /// failures are left to the SDK's own retry, logged at warning with a bounded backoff hint so
+    /// they no longer dominate the error log. Unclassifiable failures are treated as terminal.
+    /// </remarks>
+    internal async Task HandleProcessorErrorAsync(Exception exception, string errorSource, string? entityPath)
+    {
+        var response = _receiveBreaker.RecordFailure(exception);
+
+        if (!response.ShouldStop)
+        {
+            _logger.LogWarning(
+                exception,
+                "{DisplayName} Service Bus processor transient error (source={ErrorSource}, entity={EntityPath}, failure {FailureCount}); next attempt bounded to {RetryDelaySeconds}s",
+                DisplayName,
+                errorSource,
+                entityPath,
+                _receiveBreaker.ConsecutiveTransientFailures,
+                response.RetryDelay.TotalSeconds);
+            return;
+        }
+
+        if (response.CircuitOpened)
+        {
+            _logger.LogError(
+                exception,
+                "{DisplayName} receive loop on queue '{QueueName}' is DEGRADED and has been stopped: a non-transient failure was detected and will not clear by retrying (source={ErrorSource}). Inbound messages are NOT being received. Resolve the underlying fault - for a revoked Azure credential run 'az login --scope https://servicebus.azure.net/.default' - then restart the channel.",
+                DisplayName,
+                _options.InboundQueueName,
+                errorSource);
+        }
+
+        var processor = _processor;
+        if (processor is not null && !processor.IsClosed)
+        {
+            try
+            {
+                await processor.StopProcessingAsync(CancellationToken.None);
+            }
+            catch (Exception stopEx)
+            {
+                _logger.LogWarning(stopEx, "{DisplayName} failed to stop the degraded Service Bus processor", DisplayName);
+            }
+        }
     }
+
+    /// <summary>Exposed for tests: whether the receive-loop circuit breaker has tripped.</summary>
+    internal bool ReceiveCircuitIsOpen => _receiveBreaker.IsOpen;
+
+    /// <summary>Exposed for tests: clears the transient backoff after a successful receive.</summary>
+    internal void RecordReceiveSuccess() => _receiveBreaker.RecordSuccess();
 
     private IServiceBusAdapterClientFactory CreateDefaultFactory()
     {

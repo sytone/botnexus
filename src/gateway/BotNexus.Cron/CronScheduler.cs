@@ -36,6 +36,12 @@ public sealed class CronScheduler(
     // exactly once per process lifetime, gated by this flag.
     private int _migrationRan;
 
+    /// <summary>
+    /// Distinct terminal reason stamped on runs reaped by <see cref="ReapOrphanedRunsAsync"/>, so an
+    /// orphaned run is never confused with a genuine action failure or a graceful abort (#2410).
+    /// </summary>
+    internal const string OrphanedRunReason = "Cron run orphaned - no terminal write was recorded by its owning process.";
+
     public async Task<CronRun> RunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
         await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -109,6 +115,18 @@ public sealed class CronScheduler(
             _logger.LogError(ex, "Legacy cron conversation migration failed. Scheduler will continue running.");
         }
 
+        // #2410: startup sweep. Runs left stamped Running by a previous process that died without a
+        // terminal write (kill, host crash, OOM, power loss) are invisible AND unprunable; reap them
+        // before the first tick so the history reflects reality from the moment the scheduler starts.
+        try
+        {
+            await ReapOrphanedRunsAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Orphaned cron run reaping failed at startup. Scheduler will continue running.");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var options = _optionsMonitor.CurrentValue ?? new CronOptions();
@@ -132,6 +150,18 @@ public sealed class CronScheduler(
 
     private async Task ProcessTickAsync(CancellationToken ct)
     {
+        // #2410: the reaper is periodic as well as startup-bound - a run can be orphaned by a crash
+        // of a sibling process while this scheduler keeps ticking. Failures here must never abort the
+        // tick, so they are logged and swallowed.
+        try
+        {
+            await ReapOrphanedRunsAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Orphaned cron run reaping failed during tick.");
+        }
+
         var jobs = await _cronStore.ListAsync(ct: ct).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
 
@@ -408,6 +438,75 @@ public sealed class CronScheduler(
         // here; passing it separately would reintroduce a read-modify-write clobber window.
         _ = conversationId;
         await _cronStore.RecordRunFinalizationAsync(jobId, triggeredAt, status, error, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Marks cron runs that are still stamped <see cref="CronRunStatus.Running"/> but whose
+    /// <c>StartedAt</c> deviates from now by more than
+    /// <see cref="CronOptions.OrphanedRunThresholdSeconds"/> as <see cref="CronRunStatus.Error"/>
+    /// with the orphan reason (#2410).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The write-path protection (<c>RecordAbortedRunAsync</c> on every abort path) only covers
+    /// graceful aborts. A process kill, host crash, OOM, or power loss leaves the row stamped
+    /// <c>running</c> forever - and because retention never deletes in-flight runs, such a row is
+    /// also permanently immune to <see cref="ICronStore.PurgeRunsOlderThanAsync"/> and accumulates.
+    /// Reaping converts it into a terminal, visible, prunable row.
+    /// </para>
+    /// <para>
+    /// The bound is deliberately compared as <c>Math.Abs(now - startedAt)</c>, not
+    /// <c>now - startedAt</c>. A future-dated <c>started_at</c> (clock skew, a restored database, a
+    /// forced run) yields a negative span, which a one-sided comparison never exceeds - that row
+    /// would be a permanent blind spot and could never be reaped. The symmetric comparison closes it.
+    /// </para>
+    /// </remarks>
+    /// <returns>The number of runs reaped.</returns>
+    internal async Task<int> ReapOrphanedRunsAsync(CancellationToken ct = default)
+    {
+        var options = _optionsMonitor.CurrentValue ?? new CronOptions();
+        var bound = TimeSpan.FromSeconds(Math.Max(1, options.OrphanedRunThresholdSeconds));
+
+        var running = await _cronStore.ListRunningRunsAsync(ct).ConfigureAwait(false);
+        if (running.Count == 0)
+        {
+            return 0;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var reaped = 0;
+
+        foreach (var run in running)
+        {
+            // Symmetric bound: both a long-stale and a future-dated started_at are orphans.
+            if ((now - run.StartedAt).Duration() <= bound)
+            {
+                continue;
+            }
+
+            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, OrphanedRunReason, ct: ct)
+                .ConfigureAwait(false);
+
+            // Only clear the job's bookkeeping when it is still advertising this stuck run. A newer
+            // terminal run must not be regressed by reaping an older orphan.
+            var job = await _cronStore.GetAsync(run.JobId, ct).ConfigureAwait(false);
+            if (job is not null && string.Equals(job.LastRunStatus, CronRunStatus.Running, StringComparison.Ordinal))
+            {
+                await _cronStore.RecordRunFinalizationAsync(
+                    run.JobId,
+                    run.StartedAt,
+                    CronRunStatus.Error,
+                    OrphanedRunReason,
+                    ct).ConfigureAwait(false);
+            }
+
+            reaped++;
+            _logger.LogWarning(
+                "Reaped orphaned cron run '{RunId}' for job '{JobId}' (started_at {StartedAt:o}, bound {Bound}).",
+                run.Id, run.JobId, run.StartedAt, bound);
+        }
+
+        return reaped;
     }
 
     /// <summary>

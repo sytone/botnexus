@@ -73,6 +73,38 @@ public sealed class ChannelFailureClassifierTests
             .Classify(new NotSupportedException())
             .ShouldBe(ChannelFailureKind.Terminal);
 
+    /// <summary>
+    /// #2386 - the Service Bus receive loop is now parked on a terminal classification, so an
+    /// SDK fault that self-describes as retryable must NOT be read as terminal or a momentary
+    /// broker communication blip would take the transport down until a restart. The Azure SDK
+    /// convention for this is a public <c>bool IsTransient</c> property (ServiceBusException,
+    /// RequestFailedException derivatives); the classifier honours the convention without
+    /// referencing any Azure or channel-specific type.
+    /// </summary>
+    [Fact]
+    public void Classify_SdkExceptionDeclaringItselfTransient_IsTransient()
+        => ChannelFailureClassifier
+            .Classify(new SelfDescribingException(isTransient: true))
+            .ShouldBe(ChannelFailureKind.Transient);
+
+    [Fact]
+    public void Classify_SdkExceptionDeclaringItselfNonTransient_IsTerminal()
+        => ChannelFailureClassifier
+            .Classify(new SelfDescribingException(isTransient: false))
+            .ShouldBe(ChannelFailureKind.Terminal);
+
+    [Fact]
+    public void Classify_TransientSdkExceptionNestedInsideAnotherException_IsTransient()
+        => ChannelFailureClassifier
+            .Classify(new InvalidOperationException("wrapper", new SelfDescribingException(isTransient: true)))
+            .ShouldBe(ChannelFailureKind.Transient);
+
+    /// <summary>Stands in for Azure's <c>ServiceBusException</c>, which is not referenced here.</summary>
+    private sealed class SelfDescribingException(bool isTransient) : Exception("sdk fault")
+    {
+        public bool IsTransient { get; } = isTransient;
+    }
+
     [Fact]
     public void Classify_NullException_Throws()
         => Should.Throw<ArgumentNullException>(() => ChannelFailureClassifier.Classify(null!));

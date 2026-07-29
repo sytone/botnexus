@@ -125,9 +125,12 @@
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
                             <span class="activity-conversation-title">@row.Title</span>
-                            @if (row.IsCron)
+                            @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
                             {
-                                <span class="activity-badge activity-badge-cron">Scheduled</span>
+                                <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
+                                      data-testid="activity-origin-badge"
+                                      data-origin="@ActivityDashboardProjection.OriginModifier(row)"
+                                      title="@OriginTooltip(row)">@originLabel</span>
                             }
                         </td>
                         <td class="activity-cell-agents">
@@ -290,6 +293,13 @@
             return agent.DisplayName;
         return agentId;
     }
+
+    /// <summary>
+    /// Full <c>(source, kind)</c> pair as hover detail behind the short badge. The badge answers the
+    /// question at a glance; the tooltip keeps the underlying typed values inspectable without
+    /// lengthening the row.
+    /// </summary>
+    private static string OriginTooltip(ActivityRow row) => $"Source: {row.Source} \u00b7 Kind: {row.Kind}";
 
     private static string FormatRelative(DateTimeOffset ts)
     {

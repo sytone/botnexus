@@ -61,6 +61,34 @@ public sealed record Conversation
     /// <summary>Gets or sets when this conversation was last modified.</summary>
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Gets or sets the optimistic-concurrency revision of this conversation (issue #2131).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Monotonically incremented by the store on every mutation that writes conversation columns
+    /// (full save, pin, metadata/override patch, archive, canvas-state write). A hydrated
+    /// conversation therefore carries the revision it was read at, and
+    /// <c>IConversationStore.SaveAsync</c> - which is a full-row upsert of the whole aggregate -
+    /// compares-and-swaps on it so a caller that mutated only <see cref="Title"/> from a stale
+    /// snapshot cannot silently write back the stale value of every <em>other</em> column and
+    /// clobber a pin, canvas, todo or override committed after its read. The mismatch surfaces as
+    /// a <c>ConversationConcurrencyException</c> rather than being lost.
+    /// </para>
+    /// <para>
+    /// <c>0</c> means "not loaded from a store" (a freshly constructed aggregate). The store treats
+    /// that as an unconditional write so bare construct-then-save call sites keep working; every
+    /// persisted row is at <c>1</c> or higher, so any conversation that came out of the store is
+    /// concurrency-checked.
+    /// </para>
+    /// <para>
+    /// <c>TouchAsync</c> deliberately does NOT bump the version: it only stamps
+    /// <see cref="UpdatedAt"/> and runs on the hot message-processing path, so versioning it would
+    /// manufacture conflicts without protecting any field.
+    /// </para>
+    /// </remarks>
+    public long Version { get; set; }
+
     /// <summary>Gets or sets the session currently active within this conversation, if any.</summary>
     public SessionId? ActiveSessionId { get; set; }
 

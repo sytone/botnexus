@@ -2,6 +2,7 @@ using System.IO.Abstractions;
 using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -47,7 +48,7 @@ public sealed class CronControllerTests
         var controller = CreateController(store, new RecordingAction(), new CronOptions());
         var request = CreateJob("job-create");
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
         created.ShouldNotBeNull();
@@ -126,7 +127,7 @@ public sealed class CronControllerTests
             Model = "openai/gpt-4.1"
         };
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
         created.ShouldNotBeNull();
@@ -145,7 +146,7 @@ public sealed class CronControllerTests
             NextRunAt = new DateTimeOffset(9001, 1, 1, 0, 0, 0, TimeSpan.Zero)
         };
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
@@ -161,7 +162,7 @@ public sealed class CronControllerTests
             NextRunAt = new DateTimeOffset(1969, 12, 31, 23, 59, 59, TimeSpan.Zero)
         };
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
@@ -190,7 +191,7 @@ public sealed class CronControllerTests
         var futureTime = DateTimeOffset.UtcNow.AddHours(1);
         var request = CreateJob("job-validnext") with { NextRunAt = futureTime };
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
         created.ShouldNotBeNull();
@@ -207,7 +208,7 @@ public sealed class CronControllerTests
             CreatedAt = new DateTimeOffset(9001, 1, 1, 0, 0, 0, TimeSpan.Zero)
         };
 
-        var result = await controller.Create(request, CancellationToken.None);
+        var result = await controller.Create(ToCreateRequest(request), CancellationToken.None);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
@@ -273,6 +274,103 @@ public sealed class CronControllerTests
 
     private static void SqliteConnectionClearHelper()
         => Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+    // #2389: creating a resource must not force the caller to invent the server's identifier.
+    [Fact]
+    public async Task Create_WithoutId_GeneratesServerSideId()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var request = new CronJobCreateRequest
+        {
+            Name = "Server generated",
+            Schedule = "0 * * * *",
+            ActionType = "command",
+            ShellCommand = "./check.ps1"
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
+        created.ShouldNotBeNull();
+        created!.Id.Value.ShouldNotBeNullOrWhiteSpace();
+        created.ActionType.ShouldBe("command");
+        created.ShellCommand.ShouldBe("./check.ps1");
+        (await store.GetAsync(created.Id)).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Create_WithExplicitId_HonoursIt()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var request = new CronJobCreateRequest
+        {
+            Id = "explicit-id",
+            Name = "Explicit",
+            Schedule = "0 * * * *",
+            ActionType = "agent-prompt",
+            Message = "hi"
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
+        created.ShouldNotBeNull();
+        created!.Id.Value.ShouldBe("explicit-id");
+    }
+
+    [Fact]
+    public async Task Create_WithoutName_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var result = await controller.Create(
+            new CronJobCreateRequest { Schedule = "0 * * * *" },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_WithoutSchedule_ReturnsBadRequest()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var result = await controller.Create(
+            new CronJobCreateRequest { Name = "No schedule" },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    // #2389: POST /api/cron now binds CronJobCreateRequest (id optional) rather than the domain
+    // record. Existing cases still express their intent as a CronJob and project it here, so the
+    // scenarios they assert are unchanged.
+    private static CronJobCreateRequest ToCreateRequest(CronJob job) => new()
+    {
+        Id = job.Id.Value,
+        Name = job.Name,
+        Schedule = job.Schedule,
+        ActionType = job.ActionType,
+        AgentId = job.AgentId?.Value,
+        Message = job.Message,
+        TemplateName = job.TemplateName,
+        TemplateParameters = job.TemplateParameters,
+        Model = job.Model,
+        WebhookUrl = job.WebhookUrl,
+        ShellCommand = job.ShellCommand,
+        Enabled = job.Enabled,
+        System = job.System,
+        DeleteAfterRun = job.DeleteAfterRun,
+        TimeZone = job.TimeZone,
+        CreatedBy = job.CreatedBy,
+        CreatedAt = job.CreatedAt,
+        NextRunAt = job.NextRunAt,
+        Metadata = job.Metadata
+    };
 
     private static CronController CreateController(FakeCronStore store, ICronAction action, CronOptions options)
     {
@@ -438,6 +536,9 @@ public sealed class CronControllerTests
                 .ToList();
             return Task.FromResult<IReadOnlyList<CronRun>>(runs);
         }
+
+        public Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<CronRun>>(_runs.Values.Where(r => r.Status == CronRunStatus.Running).ToList());
 
         public Task<int> PurgeRunsOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
         {

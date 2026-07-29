@@ -96,7 +96,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 EntriesPreserved: 0,
                 TokensBefore: 0,
                 TokensAfter: 0,
-                FailureReason: ex.Message);
+                FailureReason: ex.Message,
+                SkipReason: CompactionSkipReason.SummarizationFailed);
         }
 
         // 3. Apply + persist. Track outcome for the caller.
@@ -120,8 +121,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                     break;
                 case HistoryReplaceOutcome.Aborted:
                     _logger.LogWarning(
-                        "Session {SessionId} compaction aborted: history was destructively modified during the summary call. History is unchanged.",
-                        sessionId);
+                        "Session {SessionId} compaction aborted: {Reason} — history was destructively modified during the summary call. History is unchanged.",
+                        sessionId, CompactionSkipReason.ConcurrentHistoryChange);
                     break;
             }
         }
@@ -144,12 +145,37 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 EntriesPreserved: result.EntriesPreserved,
                 TokensBefore: result.TokensBefore,
                 TokensAfter: result.TokensAfter,
-                FailureReason: "Compaction was discarded because the session was deleted or reset while it was in progress.");
+                FailureReason: "Compaction was discarded because the session was deleted or reset while it was in progress.",
+                SkipReason: CompactionSkipReason.SessionRebound);
+        }
+
+        // #2460: the Aborted outcome previously logged NO reason, making a repeating no-op abort
+        // loop undiagnosable from logs alone. Resolve the specific branch and log it at Warning
+        // (survives production log settings) whenever nothing was applied.
+        var skipReason = !applied
+            ? result.SkipReason
+              ?? (historyOutcome == HistoryReplaceOutcome.Aborted
+                  ? CompactionSkipReason.ConcurrentHistoryChange
+                  : null)
+            : null;
+
+        if (!applied)
+        {
+            _logger.LogWarning(
+                "Session {SessionId} compaction did not apply: reason={SkipReason}, {Summarized} entries summarized, " +
+                "{Preserved} preserved, tokens {TokensBefore}->{TokensAfter} (outcome={Outcome}). History is unchanged.",
+                sessionId,
+                skipReason ?? "Unspecified",
+                result.EntriesSummarized,
+                result.EntriesPreserved,
+                result.TokensBefore,
+                result.TokensAfter,
+                historyOutcome);
         }
 
         _logger.LogInformation(
-            "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved (applied={Applied}, outcome={Outcome}).",
-            sessionId, result.EntriesSummarized, result.EntriesPreserved, applied, historyOutcome);
+            "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved (applied={Applied}, outcome={Outcome}, reason={SkipReason}).",
+            sessionId, result.EntriesSummarized, result.EntriesPreserved, applied, historyOutcome, skipReason ?? "(none)");
 
         // 4. Evict the cached agent handle on success so the next turn rebuilds
         //    context from post-compaction history (PR #602 Bug 3 fix — must run
@@ -180,7 +206,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             EntriesPreserved: result.EntriesPreserved,
             TokensBefore: result.TokensBefore,
             TokensAfter: result.TokensAfter,
-            FailureReason: failureReason);
+            FailureReason: failureReason,
+            SkipReason: skipReason);
     }
 
     public string BuildNotificationText(SessionCompactionOutcome outcome)

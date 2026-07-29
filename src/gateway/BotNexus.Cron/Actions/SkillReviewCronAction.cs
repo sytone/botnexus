@@ -159,7 +159,11 @@ public sealed class SkillReviewCronAction : ICronAction
         // ListSummariesAsync is the transcript-free window read (same shape as memory-dreaming's
         // ReadDailyNotes lookback). We take the newest MaxSessions summaries for this agent, then
         // load only those sessions' transcripts to derive signals - bounding the work per tick.
-        var summaries = await store.ListSummariesAsync(cutoff, cancellationToken).ConfigureAwait(false);
+        // limit: null is the explicit unbounded opt-in (#2411): the per-agent filter below runs
+        // after the read, so a pre-truncated page could exclude this agent entirely.
+        var summaries = await store
+            .ListSummariesAsync(cutoff, limit: null, offset: 0, cancellationToken)
+            .ConfigureAwait(false);
         var relevant = summaries
             .Where(s => string.Equals(s.AgentId, agentId.Value, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(s => s.UpdatedAt)
