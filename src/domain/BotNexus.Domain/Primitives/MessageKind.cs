@@ -28,6 +28,16 @@ public sealed class MessageKind : IEquatable<MessageKind>
     /// <summary>The parent agent's response produced while handling a sub-agent completion.</summary>
     public static readonly MessageKind SubAgentResponse = Register("subagent-response");
 
+    /// <summary>
+    /// A user turn injected by a canvas <c>submitToAgent</c> click (#2449). The turn is a genuine
+    /// user turn - a human pressed a button in the canvas the agent rendered - so its
+    /// <see cref="MessageRole"/> stays <c>user</c>; this kind is the typed answer to "why does this
+    /// message exist?", the message-level analogue of the conversation-level
+    /// <c>ConversationSource.Cron</c> (#2300). It is stamped at the hub from the transport surface
+    /// the click arrived on, never from iframe-supplied content.
+    /// </summary>
+    public static readonly MessageKind CanvasSubmission = Register("canvas-submission");
+
     /// <summary>Gets the stable wire value of this kind.</summary>
     public string Value { get; }
 

@@ -108,16 +108,90 @@ connection.on("CanvasStateChanged", (conversationId, key, value) => {
 
 ## postMessage Bridge
 
-Canvas HTML rendered in the iframe can communicate back to the server via `window.postMessage`. The portal's `canvasBridge.js` intercepts messages and forwards state updates through the SignalR connection:
+Canvas HTML rendered in the iframe gets a `window.canvasState` SDK injected synchronously before any
+user script runs. It has six verbs — five state verbs plus `submitToAgent`:
+
+| Verb | Signature | Description |
+|------|-----------|-------------|
+| `get` | `get(key)` | Read one state key |
+| `set` | `set(key, value)` | Write one state key |
+| `delete` | `delete(key)` | Remove one state key |
+| `getAll` | `getAll()` | Read the whole state object |
+| `clear` | `clear()` | Remove all state keys |
+| `submitToAgent` | `submitToAgent({ prompt, instructions })` | Hand control back to the agent |
+
+All six return Promises.
+
+### `submitToAgent` (issue #2449)
+
+The five state verbs are write-only from the agent's point of view: a user can fill in a canvas form
+and nothing tells the agent about it. `submitToAgent` closes that loop. It injects a **user message**
+into the conversation that owns the canvas, using prompt text the agent chose when it rendered the
+canvas. The agent then reads the submitted values out of canvas state as normal.
+
+```html
+<button id="submit">Submit review</button>
+<script>
+  document.getElementById('submit').addEventListener('click', async () => {
+    await canvasState.set('rating', document.getElementById('rating').value);
+    await canvasState.set('comments', document.getElementById('comments').value);
+
+    await canvasState.submitToAgent({
+      prompt: 'The user has completed the review form.',
+      instructions: 'Read canvas state keys "rating" and "comments", then summarise the review.'
+    });
+  });
+</script>
+```
+
+**Usage rules.** `submitToAgent` is **user-initiated only**. Wire it to a button click or an
+explicit user action. Do **not** call it from a timer or interval, from a render or reactive path,
+or automatically on load. There is deliberately no throttle, no min-interval and no in-flight
+tracking: this is a documented instruction, not enforced machinery, and an agent that ignores it
+costs the user turns.
+
+The `prompt` carries **instructions, not payload**. Canvas data belongs in canvas state - write it
+with `set()` and tell the agent which keys to read back with `get_state`. Nothing inspects the
+prompt's contents; this rule is enforced by documentation.
+
+**Security model.** This verb lets iframe-hosted content create a conversation turn, so it is
+deliberately narrow:
+
+- **Conversation scoping.** The target conversation is derived from the canvas panel's own binding.
+  There is no conversation-id parameter; a conversation id present in the postMessage payload is
+  ignored, and the derived id is re-checked against the hosting agent's own conversation set. A
+  canvas can target only the conversation hosting it - never another conversation, never a session,
+  never another agent.
+- **Role integrity.** The message is recorded as a genuine **user** turn. There is no role parameter
+  to forge. Control characters in the prompt are collapsed to spaces so the text cannot fabricate
+  extra transcript lines or trailer-shaped suffixes. Canvas-submitted text is user-origin content
+  and is never treated as trusted instruction.
+- **Provenance.** The submission is routed through a dedicated `SubmitCanvasPrompt` hub verb, and
+  the **server** stamps `MessageKind.CanvasSubmission` on the resulting turn from the verb that was
+  invoked. This reuses the issue #2300 provenance vocabulary at the message level - the same way a
+  cron run is identified by `ConversationSource.Cron` - so the transcript can answer "why does this
+  message exist?" with a typed field. Provenance is deliberately **not** a marker in the message
+  text: any message can contain any literal, so a text marker proves nothing and is unverifiable.
+- **Bounds.** `prompt` is capped at 2000 characters and `instructions` at 1000. These are
+  **arbitrary guardrails, not a contract** - sensible values that comfortably fit instruction text
+  and would only be hit by someone inlining a data dump. Longer values are rejected rather than
+  truncated.
+- **Mid-turn behaviour (degraded, pending #2438).** If the conversation already has an active agent
+  turn, the submission is **rejected** (the Promise rejects with `Agent is already running; try
+  again when the current turn finishes.`) rather than queued. Inbound messages arriving mid-run are
+  currently dropped by the gateway (issue #2388), and the follow-up queue that would defer the click
+  (issue #2438) does not exist yet - so queueing today would silently lose the user's click. An
+  explicit rejection lets the canvas show a retry affordance instead. Once #2438 lands this path
+  should enqueue rather than refuse, and the behaviour improves without a canvas-side change.
+
+Rejections surface as a rejected Promise, so wrap the call:
 
 ```javascript
-// Inside canvas iframe
-window.parent.postMessage({
-  type: 'canvas-state',
-  action: 'set',
-  key: 'counter',
-  value: 42
-}, '*');
+try {
+  await canvasState.submitToAgent({ prompt: 'Form complete.' });
+} catch (err) {
+  document.getElementById('status').textContent = err.message;
+}
 ```
 
 ## Configuration
