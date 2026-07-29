@@ -722,6 +722,189 @@ public sealed class SqliteSessionStore : SessionStoreBase
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <summary>
+    /// Filter-then-window summary page (#2532). The agent and status predicates are part of the
+    /// query, so <c>Offset</c> addresses the FILTERED set rather than the raw session table.
+    /// </summary>
+    /// <remarks>
+    /// Where the predicate can be expressed in SQL it is:
+    /// <list type="bullet">
+    /// <item>Status becomes <c>lower(coalesce(status,'active')) NOT IN ('sealed','expired','closed')</c>,
+    /// which reproduces <c>SessionRowMapper.ParseStatus</c> exactly (legacy <c>closed</c> is
+    /// <see cref="SessionStatus.Sealed"/>, and NULL/unknown is <see cref="SessionStatus.Active"/>).</item>
+    /// <item>Agent becomes <c>conversation_id IN (...)</c>. Post-P9-I (#674) the sessions table has
+    /// no <c>agent_id</c> column - ownership lives on <c>Conversation.AgentId</c> - so the agent
+    /// predicate is resolved to that agent's conversation ids and pushed down as a set membership
+    /// test. With that in place the <c>LIMIT</c>/<c>OFFSET</c> and a matching <c>COUNT(*)</c> can
+    /// both run in SQL over precisely the rows the caller will receive.</item>
+    /// </list>
+    /// Two cases fall back to a managed filter over the SQL-status-filtered rows: an unfiltered
+    /// (no agent) read, where rows whose conversation no longer resolves must be dropped after the
+    /// conversation lookup and would otherwise corrupt a SQL count; and a non-MinValue
+    /// <c>UpdatedAfter</c> window, which cannot be compared lexicographically because timestamps
+    /// are persisted with their original UTC offset. Both produce the identical observable page.
+    /// </remarks>
+    public override async Task<SessionSummaryPage> ListSummaryPageAsync(
+        SessionSummaryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return await RetryOnTransientAsync(async () =>
+        {
+            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+            // Resolve the agent predicate to a conversation-id set before opening the connection:
+            // the conversation store is a separate database and must not be queried while a reader
+            // holds this one.
+            List<string>? conversationIds = null;
+            if (query.AgentId is { Length: > 0 } agentFilter)
+            {
+                var owned = await _conversationStore
+                    .ListAsync(AgentId.From(agentFilter), cancellationToken)
+                    .ConfigureAwait(false);
+                conversationIds = owned.Select(c => c.ConversationId.Value).ToList();
+                if (query.ConversationId is { Length: > 0 } scoped)
+                    conversationIds = conversationIds.Where(id => string.Equals(id, scoped, StringComparison.Ordinal)).ToList();
+
+                // An agent with no conversations owns no sessions. Answer without touching SQL so
+                // an empty IN () is never emitted.
+                if (conversationIds.Count == 0)
+                    return SessionSummaryPage.Empty;
+            }
+            else if (query.ConversationId is { Length: > 0 } onlyConversation)
+            {
+                conversationIds = [onlyConversation];
+            }
+
+            var clauses = new List<string>();
+            if (!query.IncludeInactive)
+            {
+                // Mirrors SessionRowMapper.ParseStatus: NULL/unknown parses to Active, and the
+                // legacy 'closed' value parses to Sealed.
+                clauses.Add("lower(coalesce(s.status, 'active')) NOT IN ('sealed', 'expired', 'closed')");
+            }
+
+            var conversationParameters = new List<string>();
+            if (conversationIds is not null)
+            {
+                for (var i = 0; i < conversationIds.Count; i++)
+                    conversationParameters.Add($"$conv{i}");
+                clauses.Add($"s.conversation_id IN ({string.Join(", ", conversationParameters)})");
+            }
+
+            var where = clauses.Count == 0 ? string.Empty : "WHERE " + string.Join("\n  AND ", clauses);
+
+            // The window can only be pushed into SQL when every row the query returns is a row the
+            // caller will actually see. That needs (a) no managed UpdatedAfter filter and (b) a
+            // conversation-id set, so no row can be dropped later for an unresolvable agent.
+            var boundedInSql = query.UpdatedAfter == DateTimeOffset.MinValue
+                && conversationIds is not null
+                && query.Limit is not null;
+
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            var offset = Math.Max(query.Offset, 0);
+            var totalCount = -1;
+            if (boundedInSql)
+            {
+                await using var countCommand = connection.CreateCommand();
+                countCommand.CommandText = $"SELECT COUNT(*) FROM sessions s\n{where}";
+                for (var i = 0; i < conversationIds!.Count; i++)
+                    countCommand.Parameters.AddWithValue(conversationParameters[i], conversationIds[i]);
+                totalCount = Convert.ToInt32(
+                    await countCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+                    System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                SELECT s.id, s.channel_type, s.session_type, s.status,
+                       s.created_at, s.updated_at, s.conversation_id,
+                       COALESCE(h.cnt, 0) AS message_count
+                FROM sessions s
+                LEFT JOIN (
+                    SELECT session_id, COUNT(*) AS cnt
+                    FROM session_history
+                    GROUP BY session_id
+                ) h ON h.session_id = s.id
+                {where}
+                ORDER BY s.updated_at DESC, s.id ASC
+                """;
+
+            if (conversationIds is not null)
+            {
+                for (var i = 0; i < conversationIds.Count; i++)
+                    command.Parameters.AddWithValue(conversationParameters[i], conversationIds[i]);
+            }
+
+            if (boundedInSql)
+            {
+                command.CommandText += "\nLIMIT $limit OFFSET $offset";
+                command.Parameters.AddWithValue("$limit", query.Limit!.Value);
+                command.Parameters.AddWithValue("$offset", offset);
+            }
+
+            var rows = new List<SessionRowMapper.SessionSummaryRow>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    rows.Add(SessionRowMapper.MapSummaryRow(reader));
+            }
+
+            var summaries = new List<SessionSummary>(rows.Count);
+            foreach (var row in rows)
+            {
+                var agentId = await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(agentId))
+                    continue;
+
+                summaries.Add(ToSummary(row, agentId));
+            }
+
+            if (!boundedInSql)
+            {
+                // Managed path: SessionSummaryWindow.ApplyQuery re-applies the whole predicate
+                // (harmlessly idempotent for the clauses SQL already handled) and, critically,
+                // filters before windowing.
+                return SessionSummaryWindow.ApplyQuery(summaries, query);
+            }
+
+            return new SessionSummaryPage(
+                summaries,
+                totalCount,
+                offset + summaries.Count < totalCount);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Projects a metadata-only session row plus its resolved agent into a
+    /// <see cref="SessionSummary"/>. Shared by <see cref="ListSummariesAsync"/> and
+    /// <see cref="ListSummaryPageAsync"/> so the two reads cannot disagree about
+    /// <c>IsInteractive</c>.
+    /// </summary>
+    private static SessionSummary ToSummary(SessionRowMapper.SessionSummaryRow row, string agentId)
+    {
+        // Mirror Session.IsInteractive: a user-facing session is UserAgent-typed and
+        // not delivered over the internal "cron" channel.
+        var isInteractive = row.Type.Equals(SessionType.UserAgent)
+            && (!row.Channel.HasValue
+                || !string.Equals(row.Channel.Value.Value, "cron", StringComparison.OrdinalIgnoreCase));
+
+        return new SessionSummary(
+            row.Id,
+            agentId,
+            row.Channel,
+            row.Status,
+            row.Type,
+            isInteractive,
+            row.Count,
+            row.Created,
+            row.Updated,
+            row.ConversationId);
+    }
+
+    /// <summary>
     /// Returns sessions for a single conversation, using the
     /// <c>idx_sessions_conversation_created</c> index to avoid loading the
     /// full session table. Honours the same chronological-ascending /
