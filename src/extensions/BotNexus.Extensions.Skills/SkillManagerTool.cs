@@ -66,7 +66,7 @@ public sealed class SkillManagerTool(
                 "scope": {
                   "type": "string",
                   "enum": ["agent", "workspace", "shared"],
-                  "description": "Where to manage the skill: 'agent' (default) - this agent's private skills; 'workspace' - the current workspace; 'shared' - the global all-agent skills directory (requires AllowSharedSkillManagement). Default is workspace. Existing skills are matched across all scopes regardless of this value."
+                  "description": "Where to manage the skill: 'agent' - this agent's private skills; 'workspace' - the current workspace; 'shared' - the global all-agent skills directory (requires AllowSharedSkillManagement). Omitting this argument resolves to workspace, which is the default. Existing skills are matched across all scopes regardless of this value."
                 },
                 "content": {
                   "type": "string",
@@ -433,10 +433,12 @@ public sealed class SkillManagerTool(
     };
 
     /// <summary>
-    /// Maps the optional scope argument to a <see cref="SkillSource"/>. Defaults to agent.
+    /// Maps the optional scope argument to a <see cref="SkillSource"/>. When the argument is
+    /// omitted or blank the resolved scope is <see cref="SkillSource.Workspace"/>, which
+    /// preserves historical behaviour; this is the single authoritative statement of the default.
     /// Returns false with an error message for an unrecognised scope.
     /// </summary>
-    private static bool TryResolveScope(IReadOnlyDictionary<string, object?> arguments, out SkillSource scope, out string error)
+    internal static bool TryResolveScope(IReadOnlyDictionary<string, object?> arguments, out SkillSource scope, out string error)
     {
         error = string.Empty;
         var raw = ReadString(arguments, "scope");
