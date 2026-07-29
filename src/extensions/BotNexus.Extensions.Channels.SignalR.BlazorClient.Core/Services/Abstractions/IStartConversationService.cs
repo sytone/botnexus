@@ -14,11 +14,22 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// The agent's configured default model. When <paramref name="SelectedModel"/> equals this the
 /// selection is not an override, so nothing is persisted and the agent default stays in force.
 /// </param>
+/// <param name="SelectedThinking">
+/// Optional capability-aware reasoning-level override chosen in the Home page's model controls
+/// (#2037). Only offered when the selected model's metadata advertises thinking levels; null means
+/// "leave the reasoning level to the model/agent defaults".
+/// </param>
+/// <param name="SelectedContextWindow">
+/// Optional capability-aware context-window override, offered only when the selected model
+/// advertises more than one supported context size (#2037).
+/// </param>
 public sealed record StartConversationRequest(
     string AgentId,
     string FirstMessage,
     string? SelectedModel = null,
-    string? AgentDefaultModel = null);
+    string? AgentDefaultModel = null,
+    string? SelectedThinking = null,
+    int? SelectedContextWindow = null);
 
 /// <summary>
 /// Outcome of a start-conversation attempt. Only a <see cref="Success"/> result carries an identity the

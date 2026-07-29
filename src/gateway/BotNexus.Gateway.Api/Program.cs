@@ -16,6 +16,7 @@ using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Copilot.Responses;
 using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
@@ -347,6 +348,10 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     var models = serviceProvider.GetRequiredService<ModelRegistry>();
     var httpClient = serviceProvider.GetRequiredService<HttpClient>();
     var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+
+    // #2485: static provider message converters have no injected logger; give them the ambient
+    // factory so dropped image content parts are warned about instead of vanishing silently.
+    ProviderDiagnostics.LoggerFactory = loggerFactory;
 
     apiProviders.Register(new AnthropicProvider(httpClient));
     apiProviders.Register(new CopilotMessagesProvider(httpClient));
