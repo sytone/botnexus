@@ -21,10 +21,14 @@ namespace BotNexus.Gateway.Channels;
 /// only adapters that opt in via <see cref="ChannelAdapterBase.StripsRuntimeContext"/> redact.
 /// </para>
 /// <para>
-/// <b>Why the clip is guarded</b>: mutating outbound content is risky. The redactor only removes
-/// text when it sees well-formed, balanced, non-nested BEGIN/END pairs. Absent, unbalanced,
-/// out-of-order or nested delimiters leave the input byte-identical - a user who legitimately
-/// asks the agent to quote a partial marker is never silently clipped.
+/// <b>Why the clip fails closed</b> (issue #2520): the redactor previously bailed out and returned
+/// the input unchanged whenever the markers looked malformed (unbalanced counts, an END before a
+/// BEGIN, a nested BEGIN). That was fail-open: any marker-shaped text reaching assistant output -
+/// echoed from a user message, an untrusted issue body or a fetched web page - unbalanced the
+/// counts and suppressed the strip, emitting the real envelope verbatim. The scan is now
+/// unconditional: every BEGIN consumes up to the next END, and an unterminated BEGIN strips to
+/// end-of-text. Text containing no BEGIN at all (including a lone stray END) is byte-identical, so
+/// ordinary prose that merely mentions the END marker is never clipped.
 /// </para>
 /// </remarks>
 public static class RuntimeContextRedactor
@@ -43,12 +47,13 @@ public static class RuntimeContextRedactor
     public const string EndDelimiter = "INTERNAL_RUNTIME_CONTEXT_END";
 
     /// <summary>
-    /// Removes every balanced <see cref="BeginDelimiter"/> ... <see cref="EndDelimiter"/> block from
-    /// <paramref name="text"/>. Returns the input unchanged when there is nothing safe to strip
-    /// (no delimiters, unbalanced counts, an END before its BEGIN, or a nested BEGIN).
+    /// Removes every <see cref="BeginDelimiter"/> ... <see cref="EndDelimiter"/> region from
+    /// <paramref name="text"/>, failing closed. Each BEGIN consumes through the next END (so a
+    /// nested or repeated BEGIN is swallowed rather than trusted), and a BEGIN with no following
+    /// END strips to end-of-text. Input with no BEGIN is returned byte-identical.
     /// </summary>
     /// <param name="text">The outbound assistant text about to be delivered to a channel.</param>
-    /// <returns>The text with the runtime-context envelope(s) removed, or the original input.</returns>
+    /// <returns>The text with the runtime-context envelope(s) removed.</returns>
     [return: NotNullIfNotNull(nameof(text))]
     public static string? Strip(string? text)
     {
@@ -60,16 +65,6 @@ public static class RuntimeContextRedactor
         if (firstBegin < 0)
             return text;
 
-        // Guard: a stray END ahead of the first BEGIN means the markers are not a well-formed
-        // envelope (e.g. a user quoting fragments). Leave the content alone.
-        var firstEnd = text.IndexOf(EndDelimiter, StringComparison.Ordinal);
-        if (firstEnd < 0 || firstEnd < firstBegin)
-            return text;
-
-        // Guard: marker counts must balance before any mutation happens.
-        if (CountOccurrences(text, BeginDelimiter) != CountOccurrences(text, EndDelimiter))
-            return text;
-
         var builder = new StringBuilder(text.Length);
         var cursor = 0;
 
@@ -79,17 +74,19 @@ public static class RuntimeContextRedactor
             if (begin < 0)
                 break;
 
+            builder.Append(text, cursor, begin - cursor);
+
             var afterBegin = begin + BeginDelimiter.Length;
             var end = text.IndexOf(EndDelimiter, afterBegin, StringComparison.Ordinal);
             if (end < 0)
-                return text; // Unbalanced in sequence - abort without mutating.
+            {
+                // Fail closed: an unterminated BEGIN could still be followed by envelope content,
+                // so discard the remainder rather than emit it. A nested/repeated BEGIN before the
+                // END needs no special case - the scan simply consumes through the next END.
+                cursor = text.Length;
+                break;
+            }
 
-            // Guard: a nested/repeated BEGIN before the END means the envelope is malformed.
-            var nested = text.IndexOf(BeginDelimiter, afterBegin, StringComparison.Ordinal);
-            if (nested >= 0 && nested < end)
-                return text;
-
-            builder.Append(text, cursor, begin - cursor);
             cursor = end + EndDelimiter.Length;
 
             // Consume the single line break that terminated the END marker line so removing a
@@ -102,18 +99,5 @@ public static class RuntimeContextRedactor
 
         builder.Append(text, cursor, text.Length - cursor);
         return builder.ToString();
-    }
-
-    private static int CountOccurrences(string haystack, string needle)
-    {
-        var count = 0;
-        var index = 0;
-        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
-        {
-            count++;
-            index += needle.Length;
-        }
-
-        return count;
     }
 }
