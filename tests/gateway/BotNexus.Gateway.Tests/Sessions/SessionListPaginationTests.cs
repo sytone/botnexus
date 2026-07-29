@@ -182,7 +182,7 @@ public sealed class SessionListPaginationTests : IDisposable
 
         _ = await controller.List("agent-a", conversationId: "c1", cancellationToken: CancellationToken.None);
 
-        observed()!.ConversationId.ShouldBe("c1", "#2532 AC3: conversation-scoped reads are a store predicate");
+        observed()!.ConversationIdFilter.ShouldBe("c1", "#2532 AC3: conversation-scoped reads are a store predicate");
     }
 
     // #2532 AC5: the response must carry an explicit exhaustion signal.

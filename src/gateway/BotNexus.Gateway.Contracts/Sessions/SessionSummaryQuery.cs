@@ -21,7 +21,15 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// means "no time window" and is what the REST list endpoint passes.
 /// </param>
 /// <param name="AgentId">When set, only sessions owned by this agent match.</param>
-/// <param name="ConversationId">When set, only sessions linked to this conversation match.</param>
+/// <param name="ConversationIdFilter">
+/// When set, only sessions linked to this conversation match. Named <c>...Filter</c> rather than
+/// <c>ConversationId</c> because this is a nullable FILTER PREDICATE - <c>null</c> means "do not
+/// filter by conversation" - and is emphatically NOT a session's own conversation id, which is
+/// non-nullable per P9-B-2 (#627). The architecture fence in
+/// <c>SessionConversationIdNonNullableArchitectureTests</c> matches on the member NAME, so a
+/// nullable member called <c>ConversationId</c> here would read as a re-opened orphan-session
+/// escape hatch. The distinct name keeps that fence meaningful instead of allowlisting past it.
+/// </param>
 /// <param name="IncludeInactive">
 /// When <c>false</c> (the default) only <see cref="SessionStatus.Active"/> and
 /// <see cref="SessionStatus.Suspended"/> sessions match, mirroring the portal's default view.
@@ -34,7 +42,7 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 public sealed record SessionSummaryQuery(
     DateTimeOffset UpdatedAfter,
     string? AgentId = null,
-    string? ConversationId = null,
+    string? ConversationIdFilter = null,
     bool IncludeInactive = false,
     int? Limit = null,
     int Offset = 0)
@@ -54,7 +62,7 @@ public sealed record SessionSummaryQuery(
         if (AgentId is not null && !string.Equals(summary.AgentId, AgentId, StringComparison.Ordinal))
             return false;
 
-        if (ConversationId is not null && !string.Equals(summary.ConversationId, ConversationId, StringComparison.Ordinal))
+        if (ConversationIdFilter is not null && !string.Equals(summary.ConversationId, ConversationIdFilter, StringComparison.Ordinal))
             return false;
 
         if (!IncludeInactive && summary.Status is not (SessionStatus.Active or SessionStatus.Suspended))

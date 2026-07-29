@@ -763,7 +763,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     .ListAsync(AgentId.From(agentFilter), cancellationToken)
                     .ConfigureAwait(false);
                 conversationIds = owned.Select(c => c.ConversationId.Value).ToList();
-                if (query.ConversationId is { Length: > 0 } scoped)
+                if (query.ConversationIdFilter is { Length: > 0 } scoped)
                     conversationIds = conversationIds.Where(id => string.Equals(id, scoped, StringComparison.Ordinal)).ToList();
 
                 // An agent with no conversations owns no sessions. Answer without touching SQL so
@@ -771,7 +771,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 if (conversationIds.Count == 0)
                     return SessionSummaryPage.Empty;
             }
-            else if (query.ConversationId is { Length: > 0 } onlyConversation)
+            else if (query.ConversationIdFilter is { Length: > 0 } onlyConversation)
             {
                 conversationIds = [onlyConversation];
             }
