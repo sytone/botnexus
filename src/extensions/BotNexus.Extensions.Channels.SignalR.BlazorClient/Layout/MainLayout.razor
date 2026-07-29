@@ -204,6 +204,7 @@
     /// </summary>
     private static class NavOrderKeys
     {
+        public const string Home = "home";
         public const string Activity = "activity";
         public const string Tools = "tools";
         public const string Chat = "chat";
@@ -213,7 +214,7 @@
         public const string Cron = "cron";
 
         public static readonly IReadOnlyList<string> DefaultOrder =
-            [Activity, Tools, Chat, Configuration, Skills, Agents, Cron];
+            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron];
     }
 
     /// <summary>
@@ -239,6 +240,7 @@
 
     private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch
     {
+        NavOrderKeys.Home => RenderHomeNav(),
         NavOrderKeys.Activity => RenderActivityNav(),
         NavOrderKeys.Tools => RenderToolsNav(),
         NavOrderKeys.Chat => RenderChatNav(),
@@ -247,6 +249,14 @@
         NavOrderKeys.Agents => RenderAgentsNav(),
         NavOrderKeys.Cron => RenderCronNav(),
         _ => _ => { }
+    };
+
+    // #2535: Home owns the root route (Landing.razor, page "/"). Before this it was reachable
+    // only via the banner logo, which carries no active state and duplicates the Agents robot
+    // glyph. The house glyph keeps it visually distinct from Agents.
+    private RenderFragment RenderHomeNav() => __builder =>
+    {
+        <a href="" class="sidebar-nav-item @NavClass("home")" data-testid="nav-home" @onclick="OnNavClick">&#x1F3E0; Home</a>
     };
 
     private RenderFragment RenderActivityNav() => __builder =>
@@ -661,6 +671,15 @@
     private string NavClass(string page)
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+
+        // #2535: Home owns the root route. A plain equality against the page key would never match
+        // because the root relative path is the empty string, not "home"; and a prefix match on ""
+        // would mark every route active. So match the empty root path and the explicit /home alias
+        // ONLY.
+        if (string.Equals(page, "home", StringComparison.OrdinalIgnoreCase))
+        {
+            return uri.Length == 0 || uri.Equals("home", StringComparison.OrdinalIgnoreCase) ? "active" : "";
+        }
 
         // #2037: the Home page now owns the root landing route, so Activity is highlighted only on
         // its own /activity route (it used to also claim "" when it was the root page).

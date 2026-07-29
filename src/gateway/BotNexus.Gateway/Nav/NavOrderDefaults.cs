@@ -10,9 +10,15 @@ namespace BotNexus.Gateway.Nav;
 /// The gap of 10 between adjacent defaults leaves room for a user to slot an item between two
 /// built-ins without renumbering. By design <c>tools</c> (20) sits above <c>chat</c> (30) so the
 /// Tools section renders above Chat out of the box, per the product decision on #2231.
+/// <c>home</c> (5) owns the root route and is the intended entry point, so it defaults above
+/// Activity (#2535). Because the effective list is built by layering stored overrides onto this
+/// dictionary, a stored order predating this key still surfaces Home at its default position.
 /// </remarks>
 public static class NavOrderDefaults
 {
+    /// <summary>Stable key for the Home (root landing) nav item (#2535).</summary>
+    public const string Home = "home";
+
     /// <summary>Stable key for the Activity dashboard nav item.</summary>
     public const string Activity = "activity";
 
@@ -40,6 +46,7 @@ public static class NavOrderDefaults
     /// </summary>
     public static readonly IReadOnlyDictionary<string, int> Defaults = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
     {
+        [Home] = 5,
         [Activity] = 10,
         [Tools] = 20,
         [Chat] = 30,
