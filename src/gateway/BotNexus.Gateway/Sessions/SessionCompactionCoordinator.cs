@@ -97,7 +97,7 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 TokensBefore: 0,
                 TokensAfter: 0,
                 FailureReason: ex.Message,
-                SkipReason: CompactionSkipReasons.SummarizationFailed);
+                SkipReason: CompactionSkipReason.SummarizationFailed);
         }
 
         // 3. Apply + persist. Track outcome for the caller.
@@ -122,7 +122,7 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 case HistoryReplaceOutcome.Aborted:
                     _logger.LogWarning(
                         "Session {SessionId} compaction aborted: {Reason} — history was destructively modified during the summary call. History is unchanged.",
-                        sessionId, CompactionSkipReasons.ConcurrentHistoryChange);
+                        sessionId, CompactionSkipReason.ConcurrentHistoryChange);
                     break;
             }
         }
@@ -146,7 +146,7 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 TokensBefore: result.TokensBefore,
                 TokensAfter: result.TokensAfter,
                 FailureReason: "Compaction was discarded because the session was deleted or reset while it was in progress.",
-                SkipReason: CompactionSkipReasons.SessionRebound);
+                SkipReason: CompactionSkipReason.SessionRebound);
         }
 
         // #2460: the Aborted outcome previously logged NO reason, making a repeating no-op abort
@@ -155,7 +155,7 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         var skipReason = !applied
             ? result.SkipReason
               ?? (historyOutcome == HistoryReplaceOutcome.Aborted
-                  ? CompactionSkipReasons.ConcurrentHistoryChange
+                  ? CompactionSkipReason.ConcurrentHistoryChange
                   : null)
             : null;
 
