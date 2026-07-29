@@ -55,7 +55,7 @@ public sealed class ActorPseudonymCentralizationArchitectureTests
 
     /// <summary>Detects the <c>Convert.ToHexString(hash)[..N].ToLowerInvariant()</c> variant.</summary>
     private static readonly Regex TruncatedHexSlice = new(
-        @"Convert\.ToHexString\([^)]*\)\s*\[\s*\.\.\s*\d+\s*\]\s*\.ToLowerInvariant\(\)",
+        @"Convert\.ToHexString\(.*\)\s*\[\s*\.\.\s*\d+\s*\]\s*\.ToLowerInvariant\(\)",
         RegexOptions.Compiled);
 
     /// <summary>Detects a named private helper that hashes an actor/agent/session id.</summary>

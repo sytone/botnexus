@@ -11,8 +11,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -506,7 +504,7 @@ public sealed class SessionsController : ControllerBase
                 "gateway.session.access.denied",
                 SecurityEventOutcome.Denied,
                 SecurityEventSeverity.Medium,
-                Actor: new SecurityEventActor(SecurityActorKind.Operator, HashActor(callerId)),
+                Actor: new SecurityEventActor(SecurityActorKind.Operator, ActorPseudonym.For(callerId)),
                 Target: new SecurityEventTarget(SecurityTargetKind.Session, sessionReference),
                 Policy: SecurityPolicyDecision.Deny,
                 Control: SecurityControlFamily.Authorization);
@@ -519,19 +517,6 @@ public sealed class SessionsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Hashes a caller id to a short opaque hex token so security events carry a stable pseudonym
-    /// instead of the raw identity. SHA-256 truncated to 8 bytes is enough for correlation; it is
-    /// not reversible and never stores the plaintext.
-    /// </summary>
-    private static string HashActor(string id)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
-        var sb = new StringBuilder(16);
-        for (var i = 0; i < 8; i++)
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        return sb.ToString();
-    }
 
     /// <summary>Deletes a session.</summary>
     /// <summary>

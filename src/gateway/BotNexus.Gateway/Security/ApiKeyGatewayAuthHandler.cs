@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
@@ -455,7 +452,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             var evt = SecurityEvent.AuthOutcome(
                 success ? "gateway.auth.accepted" : "gateway.auth.rejected",
                 success,
-                actor: new SecurityEventActor(SecurityActorKind.Node, HashActor(actorId)))
+                actor: new SecurityEventActor(SecurityActorKind.Node, ActorPseudonym.For(actorId)))
             with
             {
                 Target = new SecurityEventTarget(SecurityTargetKind.Gateway, GatewayTarget)
@@ -467,19 +464,5 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             // Observability must never break the auth path; swallow and log.
             _logger.LogWarning(ex, "Failed to record gateway auth security event (success={Success}).", success);
         }
-    }
-
-    /// <summary>
-    /// Hashes a caller id or presented credential to a short, opaque hex token so security events
-    /// carry a stable pseudonym instead of the raw value. SHA-256 truncated to 8 bytes is enough
-    /// for correlation; it is not reversible and never stores the plaintext.
-    /// </summary>
-    private static string HashActor(string id)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
-        var sb = new StringBuilder(16);
-        for (var i = 0; i < 8; i++)
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        return sb.ToString();
     }
 }

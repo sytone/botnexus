@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Security;
@@ -137,7 +135,7 @@ public sealed class ExecApprovalManager : IExecApprovalManager
             var evt = SecurityEvent.ApprovalDecision(
                 action,
                 decision,
-                actor: new SecurityEventActor(SecurityActorKind.Agent, HashActor(sessionId)),
+                actor: new SecurityEventActor(SecurityActorKind.Agent, ActorPseudonym.For(sessionId)),
                 target: new SecurityEventTarget(SecurityTargetKind.Tool, ToolName),
                 severity: decision == SecurityPolicyDecision.Deny
                     ? SecurityEventSeverity.Medium
@@ -151,19 +149,6 @@ public sealed class ExecApprovalManager : IExecApprovalManager
         }
     }
 
-    /// <summary>
-    /// Hashes a session/agent id to a short, opaque hex token so security events carry a stable
-    /// pseudonym instead of the raw id. SHA-256 with a fixed prefix is sufficient for correlation;
-    /// it is not reversible and never stores the plaintext.
-    /// </summary>
-    private static string HashActor(string id)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
-        var sb = new StringBuilder(16);
-        for (var i = 0; i < 8; i++)
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        return sb.ToString();
-    }
 
     /// <summary>
     /// Decodes a PowerShell <c>-EncodedCommand</c> / <c>-ec</c> payload to its plaintext form.
