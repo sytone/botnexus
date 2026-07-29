@@ -190,6 +190,7 @@ export default defineConfig({
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
+          { text: 'Hybrid Memory Retrieval', link: '/features/hybrid-memory-retrieval' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],

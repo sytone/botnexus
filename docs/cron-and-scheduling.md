@@ -182,36 +182,41 @@ Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
 
 ### 3.1 Top-Level Cron Config
 
-**Section:** `BotNexus.Cron`
+**Section:** `cron` (in `config.json`)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Enabled` | bool | `true` | Enable/disable the cron service globally |
-| `TickIntervalSeconds` | int | `10` | How often the scheduler checks for due jobs (seconds) |
-| `ExecutionHistorySize` | int | `100` | Max execution history entries per job (in-memory queue) |
-| `Jobs` | dict | `{}` | Centralized job registry (key → `CronJobConfig`) |
+| `enabled` | bool | `true` | Enable/disable the cron service globally |
+| `tickIntervalSeconds` | int | `60` | How often the scheduler wakes to evaluate due jobs (seconds) |
+| `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none |
+| `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
+| `jobs` | dict | `{}` | Config-defined job registry (key → job descriptor, see §3.2) |
+
+> Only `enabled`, `tickIntervalSeconds` and `jobs` are settable from `config.json`'s `cron`
+> section; `defaultJobTimeoutSeconds` and `orphanedRunThresholdSeconds` are scheduler options
+> bound in code and are documented here because they govern observable scheduler behaviour.
 
 ### 3.2 Per-Job Configuration
 
-**Type:** `CronJobConfig`
+**Type:** `CronJobConfig` (each entry under `cron.jobs`)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Name` | string | (inferred) | Optional explicit job name override |
-| `Type` | string | `"agent"` | Job type: `agent`, `system`, or `maintenance` |
-| `Schedule` | string | (required) | Cron expression (5- or 6-field) |
-| `Enabled` | bool | `true` | Whether the job is active |
-| `Timezone` | string | `null` | Timezone ID for schedule evaluation (IANA format) |
-| `Agent` | string | (agent jobs only) | Name of agent to run |
-| `Prompt` | string | (agent jobs only) | Prompt to execute |
-| `Session` | string | (agent jobs only) | Session mode: `new`, `persistent`, or `named:<key>` |
-| `DeleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
-| `Action` | string | (system/maintenance jobs) | Action name to execute |
-| `Agents` | list | `[]` | Agent names for `consolidate-memory` |
-| `OutputChannels` | list | `[]` | Channels to route output to |
-| `SessionCleanupDays` | int | `30` | Session retention days for cleanup |
-| `LogRetentionDays` | int | `30` | Log retention days for rotation |
-| `LogsPath` | string | `null` | Override logs directory path |
+| `name` | string | (inferred) | Display name for the job |
+| `schedule` | string | (required) | Cron expression (5- or 6-field) |
+| `actionType` | string | `agent-prompt` | What the job does when it fires — e.g. `agent-prompt`, `webhook`, `command` |
+| `agentId` | string | (agent jobs only) | Agent to run the prompt against |
+| `message` | string | (agent jobs only) | Prompt message sent to the agent |
+| `templateName` | string | `null` | Named prompt template to use instead of a literal `message` |
+| `templateParameters` | dict | `{}` | Parameter values for `templateName` |
+| `model` | string | `null` | Model override for agent-prompt jobs |
+| `webhookUrl` | string | (webhook jobs only) | URL invoked by a webhook job |
+| `shellCommand` | string | (command jobs only) | Script run by a `command` job. Firing is gated through the `exec` tool policy — see [Shell Execution](./features/shell-execution.md). |
+| `enabled` | bool | `true` | Whether the job is active |
+| `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
+| `createdBy` | string | `null` | Provenance marker for who created the job |
+| `metadata` | dict | `{}` | Free-form metadata carried with the job |
+| `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 
 ### 3.3 Complete Configuration Example
 
