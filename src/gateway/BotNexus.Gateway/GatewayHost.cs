@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
@@ -531,6 +531,48 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     resolvedChannel is IStreamEventChannelAdapter,
                     message.StreamResponse,
                     shouldStream);
+
+                // #2388: busy-agent boundary policy. An inbound message that lands while this
+                // agent's previous turn is still in flight used to be pushed straight at the
+                // running agent, tripping Agent.RunAsync's (correct) single-turn guard with
+                // `InvalidOperationException: Agent is already running`. That exception escaped
+                // into the generic catch below - logged as an ERR, with the message discarded.
+                // Both entry paths below reproduced it independently in production: the streaming
+                // path (InProcessAgentHandle.StreamCoreAsync) and the blocking path
+                // (InProcessAgentHandle.PromptAsync), so the policy is applied ONCE here, above
+                // the stream/prompt branch, rather than per-path.
+                //
+                // The policy is option 1 from the issue - QUEUE - and it deliberately reuses the
+                // existing follow-up seam introduced for #2438 (IAgentHandle.
+                // TryFollowUpWhileRunningAsync) rather than inventing a second queue. That
+                // primitive already makes the running/idle decision atomically: it enqueues first
+                // and re-verifies, so a run that settles between the check and the enqueue cannot
+                // strand the message in a queue that is never drained. A plain
+                // `if (handle.IsRunning)` test here would reintroduce exactly that race.
+                //
+                // Nothing is swallowed: `false` means the agent was (or became) idle and the turn
+                // runs inline as before, and a bounded-queue overflow surfaces as an exception
+                // rather than a silent drop. The user's message has already been written to the
+                // transcript by the write-ahead save above, so it is retained either way.
+                if (await handle.TryFollowUpWhileRunningAsync(
+                        BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor),
+                        cancellationToken))
+                {
+                    _logger.LogInformation(
+                        "Agent '{AgentId}' session '{SessionId}' was mid-turn; inbound message queued as a " +
+                        "follow-up and will be delivered when the current turn completes (#2388).",
+                        agentId, sessionId);
+
+                    await _activity.PublishAsync(new GatewayActivity
+                    {
+                        Type = GatewayActivityType.FollowUpQueued,
+                        AgentId = agentId,
+                        SessionId = sessionId,
+                        Message = "Agent is busy; your message was queued and will be delivered when the current turn completes."
+                    }, cancellationToken);
+
+                    continue;
+                }
 
                 if (resolvedChannel is { } channel && shouldStream)
                 {
