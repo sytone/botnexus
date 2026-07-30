@@ -60,4 +60,22 @@ public sealed record CronJob
     /// </summary>
     public ConversationId? ConversationId { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
+
+    /// <summary>
+    /// Instant at which the job's <b>current</b> scheduling inputs (<see cref="Schedule"/> and
+    /// <see cref="TimeZone"/>) took effect. Missed-run detection clamps its scan floor to this
+    /// value so occurrences computed from a schedule that was not active at the time are never
+    /// replayed as missed runs (#2554).
+    ///
+    /// <b>Store-owned.</b> It is stamped exclusively by <c>ICronStore</c> on create and on a
+    /// definition update that actually changes <see cref="Schedule"/> or <see cref="TimeZone"/>.
+    /// A caller-supplied value on any create/update payload is discarded: honouring one would let
+    /// an import or a crafted <c>POST /api/cron</c> spoof catch-up ownership and force an immediate
+    /// execution of an agent prompt or shell command.
+    ///
+    /// <c>null</c> means <i>unknown</i> - a row written before this column existed. Unknown is
+    /// deliberately treated as "no clamp", i.e. exactly today's behaviour, so the migration cannot
+    /// retroactively suppress legitimate missed runs for pre-existing jobs.
+    /// </summary>
+    public DateTimeOffset? ScheduleActivatedAt { get; init; }
 }
