@@ -1168,6 +1168,7 @@ BotNexus monitors `config.json` for changes and applies most updates without req
 - ✅ **Agent definitions** — Add, remove, or modify agents
 - ✅ **Provider settings** — Update API keys, models, base URLs
 - ✅ **Cron jobs** — Add, remove, or reschedule jobs
+- ✅ **Agent `fileAccess` policies** - Changed allow/deny paths re-register the agent and rebuild its path validator
 - ✅ **Channel configuration** — Enable/disable channels
 - ⚠️ **Gateway settings** — Require restart (listen URL, session store type)
 
