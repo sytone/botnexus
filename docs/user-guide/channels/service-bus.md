@@ -38,6 +38,7 @@ The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by 
       "inboundQueueName": "botnexus-inbound",
       "defaultReplyQueueName": "botnexus-outbound",
       "maxConcurrentCalls": 1,
+      "maxAutoLockRenewalMinutes": 30,
       "allowedSenderIds": []
     }
   }
@@ -73,6 +74,7 @@ All options are configured via `~/.botnexus/config.json` under the `channels.ser
 | `InboundQueueName` | `string` | `botnexus-inbound` | Name of the queue BotNexus **listens on** for incoming messages. |
 | `DefaultReplyQueueName` | `string` | `botnexus-outbound` | Name of the queue BotNexus **sends replies to** by default. Individual messages can override this via the `replyTo` envelope field or application property. |
 | `MaxConcurrentCalls` | `int` | `1` | Maximum number of messages processed in parallel. Increase for higher throughput; keep at `1` if strict ordering within the inbound queue is required. |
+| `MaxAutoLockRenewalMinutes` | `int` | `30` | Maximum wall-clock duration, in minutes, for which the processor keeps automatically renewing a message lock while the agent turn is still running. The Azure SDK default is five minutes, which is shorter than many agent turns; when it lapses the completion call fails with a lock-lost error and Service Bus redelivers work that already succeeded. Valid range `0`–`1440`; set to `0` to disable automatic renewal entirely (not recommended). |
 | `AllowedSenderIds` | `string[]` | `[]` *(empty — all allowed)* | Optional allow-list of sender identifiers. When non-empty, messages whose `senderId` is not in this list are abandoned without processing. |
 
 ---

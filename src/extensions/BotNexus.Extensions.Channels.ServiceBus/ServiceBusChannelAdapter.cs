@@ -279,6 +279,16 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             cancellationToken);
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Service Bus streaming correlates by request identity, so a target without a
+    /// <see cref="ChannelStreamTarget.ChannelRequestId"/> can never be delivered. The guard in
+    /// <see cref="SendStreamEventAsync"/> is unchanged; this simply lets a fan-out caller learn
+    /// the precondition instead of discovering it as an exception.
+    /// </remarks>
+    public bool CanSendStreamEvent(ChannelStreamTarget target)
+        => !string.IsNullOrWhiteSpace(target.ChannelRequestId);
+
+    /// <inheritdoc/>
     public async Task SendStreamEventAsync(
         ChannelStreamTarget target,
         AgentStreamEvent streamEvent,

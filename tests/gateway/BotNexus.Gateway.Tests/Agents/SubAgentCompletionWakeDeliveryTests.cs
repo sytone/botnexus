@@ -36,6 +36,9 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         targetAdapter.SetupGet(a => a.SupportsStreaming).Returns(true);
         var targetStreamAdapter = targetAdapter.As<IStreamEventChannelAdapter>();
         targetStreamAdapter
+            .Setup(a => a.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>()))
+            .Returns(true);
+        targetStreamAdapter
             .Setup(a => a.SendStreamEventAsync(StreamTargets.For("parent-session"), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

@@ -341,6 +341,33 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 tokensAfter: tokensBefore,
                 skipReason: CompactionSkipReason.SummarizationTimeout);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // #2556: any non-cancellation summarization failure (auth, network, 4xx/5xx,
+            // deserialization) is a *provider* failure. Give it its own skip reason so the
+            // log can distinguish it from an unsummarizable split. The underlying message is
+            // logged verbatim - it is NOT paraphrased into a size/threshold narrative.
+            // Ordering matters: the OperationCanceledException timeout discriminator above
+            // must win, and caller cancellation must still propagate (the filter above lets
+            // an OperationCanceledException with the caller's token cancelled escape here).
+            var newCount = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                ex,
+                "Compaction aborted for session {SessionId}: summarization failed: {Error}. " +
+                "History is unchanged. Consecutive failures: {Failures}/{Max}",
+                session.SessionId,
+                ex.Message,
+                newCount,
+                MaxConsecutiveFailures);
+
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion,
+                snap.Count,
+                entriesPreserved: history.Count,
+                tokensBefore: tokensBefore,
+                tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.SummarizationFailed);
+        }
 
         // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
         if (string.IsNullOrWhiteSpace(summary))

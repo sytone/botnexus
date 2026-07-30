@@ -105,7 +105,7 @@ public sealed class ExecToolBackgroundPruneTests : IDisposable
         // Seed a dead PID, then launch a real short-lived background process which triggers a prune.
         ExecTool.RegisterBackgroundForTest(int.MaxValue - 11, "ghost", DateTime.UtcNow);
 
-        var tool = new ExecTool(fileSystem: new MockFileSystem());
+        var tool = new ExecTool(workingDirectory: null, fileSystem: new MockFileSystem());
         string[] command = IsWindows
             ? ["cmd.exe", "/c", "ping -n 5 127.0.0.1"]
             : ["/bin/bash", "-c", "sleep 5"];

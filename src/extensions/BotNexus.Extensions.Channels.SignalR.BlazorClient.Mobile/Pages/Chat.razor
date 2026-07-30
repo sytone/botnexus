@@ -34,14 +34,21 @@ else
 {
     var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
     var activeConvId = activeAgent?.ActiveConversationId;
-    var messages = activeConvId is not null ? Store.GetMessages(activeConvId) : [];
+    @* #2320: Store.GetMessages returns a LIVE view over the conversation's backing List, and
+       Store.Agents / agent.Conversations are the live dictionaries the SignalR handlers mutate.
+       A concurrent AppendMessage / stream commit / PrependMessages / seeding continuation modified
+       them mid-enumeration, which threw "Collection was modified" and aborted the entire render.
+       Every collection this pass walks is materialised into a defensive snapshot FIRST, so the
+       render enumerates a private array that no handler can touch. *@
+    var messages = activeConvId is not null ? Store.GetMessages(activeConvId).ToArray() : [];
+    var agentEntries = Store.Agents.ToArray().OrderForDisplay().ToArray();
     var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
     @* #2327: the picker groups exactly as the desktop sidebar does (Pinned / Conversations /
        Scheduled) via the shared PortalConversationGrouping helper, so the two form factors cannot
        drift. Native <optgroup> keeps the OS touch picker rather than replacing it with a
        bottom-sheet. Empty groups are dropped by the helper, so no empty <optgroup> is emitted. *@
     var conversationGroups = PortalConversationGrouping.ForPicker(
-        activeAgent?.Conversations.Values.Where(c => c.Status == "Active") ?? [],
+        activeAgent?.Conversations.Values.ToArray().Where(c => c.Status == "Active") ?? [],
         Store.ActiveSelectionSource);
     <div class="mobile-app">
         <!-- DISCONNECTED INDICATOR -->
@@ -57,7 +64,7 @@ else
         <!-- TOP BAR -->
         <div class="top-bar">
             <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
-                @foreach (var (agentId, agent) in Store.Agents.OrderForDisplay())
+                @foreach (var (agentId, agent) in agentEntries)
                 {
                     <option value="@agentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
                 }
@@ -983,7 +990,12 @@ else
             : null;
         if (activeConvId is null) return;
         var needsRender = false;
-        foreach (var msg in Store.GetMessages(activeConvId))
+        // #2320: snapshot BEFORE the loop. This loop awaits JS interop per message, so the
+        // enumeration would otherwise stay suspended across async yields -- a guaranteed window for a
+        // concurrent SignalR handler to append to the live list and invalidate the enumerator. The
+        // snapshot also means a message that arrives mid-pass is simply picked up by the next pass
+        // (Store.OnChanged fires again) rather than aborting this one.
+        foreach (var msg in Store.GetMessages(activeConvId).ToArray())
         {
             if (ShouldRenderAsMarkdown(msg.Role) && !string.IsNullOrEmpty(msg.Content) && !_markdownCache.ContainsKey(msg.Id))
             {
