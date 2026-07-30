@@ -35,7 +35,9 @@ internal static class TestHelpers
         ToolExecutionMode toolExecutionMode = ToolExecutionMode.Sequential,
         BeforeToolCallDelegate? beforeToolCall = null,
         AfterToolCallDelegate? afterToolCall = null,
-        TimeSpan? toolTimeout = null)
+        TimeSpan? toolTimeout = null,
+        TimeSpan? beforeToolCallTimeout = null,
+        Action<string>? onDiagnostic = null)
     {
         return new AgentLoopConfig(
             Model: model ?? CreateTestModel(),
@@ -49,7 +51,9 @@ internal static class TestHelpers
             BeforeToolCall: beforeToolCall,
             AfterToolCall: afterToolCall,
             GenerationSettings: new SimpleStreamOptions(),
-            ToolTimeout: toolTimeout);
+            ToolTimeout: toolTimeout,
+            BeforeToolCallTimeout: beforeToolCallTimeout,
+            OnDiagnostic: onDiagnostic);
     }
 
     public static AgentOptions CreateTestOptions(
