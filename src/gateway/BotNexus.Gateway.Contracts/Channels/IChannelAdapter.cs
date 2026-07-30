@@ -142,6 +142,21 @@ public interface IChannelDispatcher
 public interface IStreamEventChannelAdapter
 {
     /// <summary>
+    /// Whether this adapter can deliver a stream event for the supplied target.
+    /// </summary>
+    /// <remarks>
+    /// Some adapters carry hard preconditions on the target (for example, Service Bus
+    /// correlates a stream by <see cref="ChannelStreamTarget.ChannelRequestId"/> and cannot
+    /// deliver without one). Fan-out hops such as the internal adapter consult this before
+    /// delegating so an unsatisfiable destination is a logged skip rather than an exception
+    /// that aborts the originating agent turn. The default returns <c>true</c>; adapters with
+    /// preconditions override it. Returning <c>false</c> does not relax the adapter's own
+    /// guard - <see cref="SendStreamEventAsync"/> still throws when called directly.
+    /// </remarks>
+    /// <param name="target">The routing target the caller intends to stream to.</param>
+    bool CanSendStreamEvent(ChannelStreamTarget target) => true;
+
+    /// <summary>
     /// Sends a structured stream event to a target conversation.
     /// </summary>
     /// <param name="target">
