@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -655,6 +656,21 @@ public sealed class ExecTool : IAgentTool
         };
     }
 
+    /// <summary>
+    /// Reads an optional string-valued map argument (<c>env</c>) regardless of how the tool pipeline
+    /// delivered it. The previous implementation accepted only a
+    /// <see cref="IReadOnlyDictionary{TKey,TValue}"/> of <c>string</c> values or a whole
+    /// <see cref="JsonElement"/> object, but deserialization commonly yields
+    /// <c>Dictionary&lt;string, object?&gt;</c> whose values are boxed scalars or per-value
+    /// <see cref="JsonElement"/>s. The verbatim payload from issue #2415 - <c>{"PYTHONUTF8":"1"}</c>,
+    /// an object with string values - was therefore rejected by a message stating the exact
+    /// requirement the payload already satisfied, which sends the model into blind retries.
+    /// <para>
+    /// Widening the accepted shapes is not "anything goes": a value with no unambiguous
+    /// environment-variable string form (a nested object or an array) is still rejected, and the
+    /// rejection names the offending key so the model can fix the one entry at fault.
+    /// </para>
+    /// </summary>
     private static IReadOnlyDictionary<string, string>? ReadOptionalStringDictionary(
         IReadOnlyDictionary<string, object?> args, string key)
     {
@@ -663,15 +679,80 @@ public sealed class ExecTool : IAgentTool
             return null;
         }
 
-        return value switch
+        switch (value)
         {
-            IReadOnlyDictionary<string, string> dict => dict,
-            JsonElement { ValueKind: JsonValueKind.Object } element =>
-                element.EnumerateObject()
-                    .ToDictionary(p => p.Name, p => p.Value.GetString() ?? string.Empty),
-            _ => throw new ArgumentException($"Argument '{key}' must be an object with string values.")
-        };
+            case IReadOnlyDictionary<string, string> dict:
+                return dict;
+
+            case JsonElement { ValueKind: JsonValueKind.Object } element:
+                return element.EnumerateObject()
+                    .ToDictionary(p => p.Name, p => ConvertEnvValue(key, p.Name, p.Value));
+
+            // The shape the tool pipeline actually delivers after deserialization.
+            case IEnumerable<KeyValuePair<string, object?>> pairs:
+                return pairs.ToDictionary(p => p.Key, p => ConvertEnvValue(key, p.Key, p.Value));
+
+            default:
+                throw new ArgumentException(
+                    $"Argument '{key}' must be an object mapping names to string values. " +
+                    $"Received {DescribeArgumentShape(value)}; expected an object such as " +
+                    "{\"PYTHONUTF8\": \"1\"}.");
+        }
     }
+
+    /// <summary>
+    /// Converts one map entry to its environment-variable string form. Scalars have an unambiguous
+    /// string form and are accepted (environment variables are strings by definition); JSON null
+    /// becomes an empty string, preserving the prior behaviour of <c>GetString()</c> on a null
+    /// element. Objects and arrays have no such form and are rejected with the offending key named.
+    /// </summary>
+    private static string ConvertEnvValue(string argumentKey, string entryKey, object? entryValue)
+    {
+        switch (entryValue)
+        {
+            case null:
+                return string.Empty;
+
+            case string text:
+                return text;
+
+            case JsonElement element:
+                return element.ValueKind switch
+                {
+                    JsonValueKind.String => element.GetString() ?? string.Empty,
+                    JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
+                    JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => element.ToString(),
+                    _ => throw new ArgumentException(
+                        $"Argument '{argumentKey}' entry '{entryKey}' must be a string or a scalar with an " +
+                        $"unambiguous string form. Received a JSON {element.ValueKind.ToString().ToLowerInvariant()}; " +
+                        "expected a string such as \"1\". Nested objects and arrays are not valid environment " +
+                        "variable values - flatten the value or serialize it yourself.")
+                };
+
+            case bool or sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal:
+                return Convert.ToString(entryValue, CultureInfo.InvariantCulture) ?? string.Empty;
+
+            default:
+                throw new ArgumentException(
+                    $"Argument '{argumentKey}' entry '{entryKey}' must be a string or a scalar with an " +
+                    $"unambiguous string form. Received {DescribeArgumentShape(entryValue)}; expected a string " +
+                    "such as \"1\". Nested objects and arrays are not valid environment variable values - " +
+                    "flatten the value or serialize it yourself.");
+        }
+    }
+
+    /// <summary>
+    /// Renders what the caller actually sent so a rejection diagnoses rather than merely asserts.
+    /// #2415's core complaint was messages that restated a requirement without saying what was
+    /// received, leaving the model no signal about what to change.
+    /// </summary>
+    private static string DescribeArgumentShape(object value)
+        => value switch
+        {
+            JsonElement element => $"a JSON {element.ValueKind.ToString().ToLowerInvariant()}",
+            string text => $"a string '{text}'",
+            _ => $"a {value.GetType().Name}"
+        };
 
     #endregion
 
