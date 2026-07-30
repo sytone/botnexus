@@ -416,87 +416,14 @@ public sealed class PlatformConfigAgentSource(
 
 
     /// <summary>
-    /// Computes a stable, order-independent fingerprint (SHA-256, hex) of the effective
-    /// agent descriptors. Two descriptor sets that are semantically equal produce the same
-    /// fingerprint even though <see cref="LoadFromConfig"/> mints fresh instances each call,
-    /// so unchanged IOptionsMonitor callbacks can be suppressed before a registry apply.
+    /// Computes a stable, order-independent fingerprint of the effective agent descriptors so
+    /// unchanged IOptionsMonitor callbacks can be suppressed before a registry apply. Delegates
+    /// to <see cref="AgentDescriptorFingerprint"/>, which is also what the hosted service uses to
+    /// decide whether to re-register an agent - a second local copy of the field list is exactly
+    /// the drift that caused #2383.
     /// </summary>
     private static string ComputeEffectiveFingerprint(IReadOnlyList<AgentDescriptor> descriptors)
-    {
-        var builder = new StringBuilder();
-        foreach (var descriptor in descriptors.OrderBy(d => d.AgentId.Value, StringComparer.Ordinal))
-            AppendDescriptor(builder, descriptor);
-
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()));
-        return Convert.ToHexString(bytes);
-    }
-
-    private static void AppendDescriptor(StringBuilder builder, AgentDescriptor d)
-    {
-        builder.Append(d.AgentId.Value).Append('\u001f');
-        builder.Append(d.DisplayName).Append('\u001f');
-        builder.Append(d.Kind).Append('\u001f');
-        builder.Append(d.Emoji).Append('\u001f');
-        builder.Append(d.Description).Append('\u001f');
-        builder.Append(d.ModelId).Append('\u001f');
-        builder.Append(d.ApiProvider).Append('\u001f');
-        builder.Append(d.SystemPromptFile).Append('\u001f');
-        builder.Append(d.IsolationStrategy).Append('\u001f');
-        builder.Append(d.CacheRetentionMode).Append('\u001f');
-        builder.Append(d.Thinking).Append('\u001f');
-        builder.Append(d.ContextWindow).Append('\u001f');
-        builder.Append(d.MaxConcurrentSessions).Append('\u001f');
-        builder.Append(d.SessionAccessLevel).Append('\u001f');
-        builder.Append(d.ConversationAccessLevel).Append('\u001f');
-        AppendList(builder, d.ToolIds);
-        AppendList(builder, d.AllowedModelIds);
-        AppendList(builder, d.SubAgentIds);
-        AppendList(builder, d.SubAgentRoles);
-        AppendList(builder, d.SystemPromptFiles);
-        AppendList(builder, d.SessionAllowedAgents);
-        AppendList(builder, d.ConversationAllowedAgents);
-        AppendList(builder, d.ShellCommand);
-        // Metadata, isolation options and extension config are serialized deterministically so
-        // that inline config edits (e.g. metadata, extensions, memory) are also reflected.
-        builder.Append(SerializeStable(d.Metadata)).Append('\u001f');
-        builder.Append(SerializeStable(d.IsolationOptions)).Append('\u001f');
-        builder.Append(SerializeExtensions(d.ExtensionConfig)).Append('\u001f');
-        builder.Append(SerializeStable(d.Memory)).Append('\u001f');
-        builder.Append(SerializeStable(d.Soul)).Append('\u001f');
-        builder.Append(SerializeStable(d.Heartbeat)).Append('\u001f');
-        builder.Append(SerializeStable(d.FileAccess)).Append('\u001e');
-    }
-
-    private static readonly JsonSerializerOptions s_fingerprintJsonOptions = new()
-    {
-        WriteIndented = false,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private static void AppendList(StringBuilder builder, IReadOnlyList<string>? values)
-    {
-        if (values is not null)
-        {
-            foreach (var value in values)
-                builder.Append(value).Append('\u001d');
-        }
-        builder.Append('\u001f');
-    }
-
-    private static string SerializeStable(object? value)
-        => value is null ? string.Empty : JsonSerializer.Serialize(value, s_fingerprintJsonOptions);
-
-    private static string SerializeExtensions(IReadOnlyDictionary<string, JsonElement> extensions)
-    {
-        if (extensions is null || extensions.Count == 0)
-            return string.Empty;
-
-        var builder = new StringBuilder();
-        foreach (var kvp in extensions.OrderBy(e => e.Key, StringComparer.Ordinal))
-            builder.Append(kvp.Key).Append('=').Append(kvp.Value.GetRawText()).Append(';');
-        return builder.ToString();
-    }
-
+        => AgentDescriptorFingerprint.ComputeEffective(descriptors);
     private static IReadOnlyDictionary<string, object?> ConvertObject(JsonElement? element)
     {
         if (element is null || element.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
