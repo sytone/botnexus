@@ -67,13 +67,15 @@ public sealed class EditToolNoMatchDiagnosticTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenOnlyLeadingIndentationDiffers_SaysWhitespaceAndReRead()
+    public async Task ExecuteAsync_WhenBlockMissesButAnchorLineDiffersOnlyByWhitespace_SaysWhitespaceAndReRead()
     {
-        // The file line has no indent; the oldText carries a leading tab that does not appear in
-        // the file. The fuzzy matcher only trims *trailing* whitespace, so a leading-indent drift
-        // on the oldText side reaches 0 matches (it is not a substring of the file either).
-        const string content = "class C\n{\nreturn compute(value);\n}";
-        var ex = await RunNoMatchAsync("indent.txt", content, "\treturn compute(value);");
+        // Issue #2421 changed the single-line leading-indent case: it now *applies* instead of
+        // erroring, so this test was migrated to keep covering the whitespace/invisible-character
+        // hint on a block that genuinely still misses. The anchor line differs from the file only
+        // by indentation, but the block as a whole does not exist, so the hint is still the right
+        // guidance and the edit is correctly refused.
+        const string content = "class C\n{\n    return compute(value);\n}";
+        var ex = await RunNoMatchAsync("indent.txt", content, "return compute(value);\nreturn second();");
 
         ex.Message.ShouldContain("found 0");
         ex.Message.ShouldContain("line 3");
