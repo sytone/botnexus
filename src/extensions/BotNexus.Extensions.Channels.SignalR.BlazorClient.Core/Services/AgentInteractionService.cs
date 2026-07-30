@@ -44,9 +44,17 @@ public sealed class AgentInteractionService : IAgentInteractionService
         value?.Replace("\r", string.Empty, StringComparison.Ordinal)
               .Replace("\n", " ", StringComparison.Ordinal);
 
+    /// <summary>
+    /// #2568: routes an attachment to the text or binary transport shape using the ONE shared
+    /// <see cref="TextualMimeType"/> predicate, which lives in the zero-dependency
+    /// BotNexus.Domain.Wire assembly this client already references. Previously this asked
+    /// <c>MimeType.StartsWith("text/")</c> locally while the server-side composer asked the same
+    /// too-narrow question independently, so <c>application/json</c> took the binary path here and
+    /// the metadata-only path there, and the payload was silently discarded.
+    /// </summary>
     private static MediaContentPartDto ToContentPart(DraftAttachment attachment)
     {
-        if (attachment.MimeType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+        if (TextualMimeType.IsTextual(attachment.MimeType))
             return new MediaContentPartDto { MimeType = attachment.MimeType, FileName = attachment.FileName, Text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(attachment.Base64Data)) };
         return new MediaContentPartDto { MimeType = attachment.MimeType, FileName = attachment.FileName, Base64Data = attachment.Base64Data };
     }
