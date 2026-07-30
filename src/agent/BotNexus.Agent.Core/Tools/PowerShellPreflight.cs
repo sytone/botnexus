@@ -280,7 +280,115 @@ public static class PowerShellPreflight
                 lastOpenBrace < 0 ? n : lastOpenBrace);
         }
 
+        // The script is syntactically clean under the rules above; last, look for the *semantic*
+        // mistake behind most surviving ParserErrors - an argument value that carries its own
+        // quoting layer (issue #2417).
+        return DetectNestedQuoting(s);
+    }
+
+    // Flags whose VALUE is itself a script/filter/JSON payload. When such a value arrives
+    // single-quoted and still contains an unescaped '"' or '$', the agent has stacked quoting
+    // layers and the inner $variables will be eaten before the inner interpreter ever sees them.
+    private static readonly string[] NestedQuoteFlags = { "-c", "-command", "--jq", "-json" };
+
+    /// <summary>
+    /// Detects stacked quoting layers: a <c>-c</c>/<c>-Command</c>/<c>--jq</c>/<c>-Json</c> argument
+    /// whose single-quoted value still contains an unescaped <c>"</c> or <c>$</c>. Deliberately narrow -
+    /// a double-quoted value is left alone because <c>$</c> interpolation there is normal and
+    /// intentional, and a false rejection would break a working command.
+    /// </summary>
+    private static PreflightError? DetectNestedQuoting(string s)
+    {
+        var n = s.Length;
+        var i = 0;
+        var pendingFlagOffset = -1;
+
+        while (i < n)
+        {
+            while (i < n && char.IsWhiteSpace(s[i]))
+            {
+                i++;
+            }
+
+            if (i >= n)
+            {
+                break;
+            }
+
+            var tokenStart = i;
+
+            // A single-quoted token is read as one unit so its contents can be inspected.
+            if (s[i] == '\'')
+            {
+                var contentStart = i + 1;
+                i++;
+                while (i < n)
+                {
+                    if (s[i] == '\'')
+                    {
+                        if (i + 1 < n && s[i + 1] == '\'')
+                        {
+                            i += 2;
+                            continue;
+                        }
+
+                        break;
+                    }
+
+                    i++;
+                }
+
+                if (pendingFlagOffset >= 0 && i <= n)
+                {
+                    var inner = s.Substring(contentStart, Math.Min(i, n) - contentStart);
+                    if (inner.Contains('"') || inner.Contains('$'))
+                    {
+                        return new PreflightError(
+                            "Nested quoting detected: the value passed to "
+                            + $"'{s.Substring(pendingFlagOffset, TokenLength(s, pendingFlagOffset))}' "
+                            + "contains its own unescaped '\"' or '$', so an outer quoting layer will "
+                            + "consume it before the inner interpreter runs. Write a tmp/*.ps1 and pass "
+                            + "structured data via a file or -File instead of stacking quotes.",
+                            pendingFlagOffset);
+                    }
+                }
+
+                pendingFlagOffset = -1;
+                i++; // move past the closing quote
+                continue;
+            }
+
+            // Any other token: read to the next whitespace, skipping over double-quoted runs.
+            while (i < n && !char.IsWhiteSpace(s[i]))
+            {
+                if (s[i] == '"')
+                {
+                    i++;
+                    while (i < n && s[i] != '"')
+                    {
+                        i += s[i] == '`' ? 2 : 1;
+                    }
+                }
+
+                i++;
+            }
+
+            var token = s.Substring(tokenStart, Math.Min(i, n) - tokenStart);
+            pendingFlagOffset = NestedQuoteFlags.Contains(token.ToLowerInvariant()) ? tokenStart : -1;
+        }
+
         return null;
+    }
+
+    private static int TokenLength(string s, int start)
+    {
+        var i = start;
+        while (i < s.Length && !char.IsWhiteSpace(s[i]))
+        {
+            i++;
+        }
+
+        return i - start;
     }
 
     /// <summary>
@@ -448,6 +556,19 @@ public static class PowerShellPreflight
 
         if (before < 0 || s[before] is '|' or ';' or '{' or '(' or '&' or '=')
         {
+            // Derived symptom (issue #2417): an assignment or parameter left with an EMPTY operand
+            // right where a $variable should have been is the fingerprint of an outer quoting layer
+            // having eaten that variable. Say so, rather than leaving the agent with the bare
+            // parser message that points at the pipe instead of the real cause.
+            if (before >= 0 && s[before] == '=' && before < index - 1)
+            {
+                return new PreflightError(
+                    "An empty pipe element is not allowed. The operand before '|' is empty, which "
+                    + "usually means a $variable was consumed by an outer quoting layer before "
+                    + "PowerShell parsed the script.",
+                    index);
+            }
+
             return new PreflightError("An empty pipe element is not allowed.", index);
         }
 

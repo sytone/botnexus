@@ -211,6 +211,14 @@ public sealed class ShellTool : IAgentTool
             PowerShellPreflight.ThrowIfInvalid(inlineScript);
         }
 
+        // Same guard for inline `python -c` one-liners (issue #2417): unterminated string literals
+        // and unbalanced brackets are rejected before the interpreter is spawned.
+        if (PythonPreflight.IsPythonExecutable(invocation.FileName)
+            && PythonPreflight.TryGetInlineScript(invocation.BaseArgs, invocation.Command, out var inlinePyScript))
+        {
+            PythonPreflight.ThrowIfInvalid(inlinePyScript);
+        }
+
         // Combine the clamp warning (if any) with the shell-detection warning so both surface
         // on the tool result without threading two prefixes through every output build site.
         var warningPrefix = string.Concat(clampWarning, invocation.WarningPrefix);

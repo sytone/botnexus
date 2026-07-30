@@ -200,6 +200,14 @@ public sealed class ExecTool : IAgentTool
             PowerShellPreflight.ThrowIfInvalid(inlinePwshScript);
         }
 
+        // Same guard for inline `python -c` one-liners (issue #2417): unterminated string literals
+        // and unbalanced brackets are rejected before the interpreter is spawned.
+        if (PythonPreflight.IsPythonExecutable(command[0])
+            && PythonPreflight.TryGetInlineScript(processArgs, inlineScript: null, out var inlinePyScript))
+        {
+            PythonPreflight.ThrowIfInvalid(inlinePyScript);
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
