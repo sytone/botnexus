@@ -205,6 +205,7 @@ public sealed class InternalChannelAdapterTests
         var telegramAdapter = new Mock<IChannelAdapter>();
         telegramAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("telegram"));
         var telegramStream = telegramAdapter.As<IStreamEventChannelAdapter>();
+        telegramStream.Setup(a => a.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>())).Returns(true);
         telegramStream.Setup(a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -237,6 +238,145 @@ public sealed class InternalChannelAdapterTests
             a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "SignalR fallback must not receive the event when the parent session has a non-SignalR channel");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TargetAdapterCannotSatisfyPrecondition_SkipsDeliveryWithoutThrowing()
+    {
+        // #2559: the internal adapter is a fan-out hop. A resolvable but unsatisfiable target
+        // (Service Bus with no ChannelRequestId) must be skipped exactly like an unresolvable
+        // one, instead of letting the target's precondition exception kill the agent turn.
+        var session = SessionId.From("session-sb");
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-sb"),
+            session,
+            ChannelAddress.From("sb-address"),
+            null);
+        var streamEvent = new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi" };
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(x => x.GetAsync(session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = session,
+                AgentId = AgentId.From("agent-a"),
+                ChannelType = ChannelKey.From("servicebus")
+            });
+
+        var sbAdapter = new Mock<IChannelAdapter>();
+        sbAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("servicebus"));
+        var sbStream = sbAdapter.As<IStreamEventChannelAdapter>();
+        sbStream.Setup(a => a.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>())).Returns(false);
+        sbStream.Setup(a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("A Service Bus stream requires a channel request identity."));
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.Setup(m => m.Get(ChannelKey.From("servicebus"))).Returns(sbAdapter.Object);
+
+        var sut = CreateAdapter(channelManager.Object, sessionStore.Object);
+
+        Func<Task> act = () => sut.SendStreamEventAsync(target, streamEvent, CancellationToken.None);
+
+        await act.ShouldNotThrowAsync();
+        sbStream.Verify(
+            a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "an unsatisfiable target must never be invoked");
+        sbAdapter.Verify(
+            a => a.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the skip must not silently reroute through the plain delta path");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TargetAdapterCannotSatisfyPrecondition_LogsSingleWarningNamingSessionAndChannelType()
+    {
+        var session = SessionId.From("session-sb-log");
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-sb"),
+            session,
+            ChannelAddress.From("sb-address"),
+            null);
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(x => x.GetAsync(session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = session,
+                AgentId = AgentId.From("agent-a"),
+                ChannelType = ChannelKey.From("servicebus")
+            });
+
+        var sbAdapter = new Mock<IChannelAdapter>();
+        sbAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("servicebus"));
+        var sbStream = sbAdapter.As<IStreamEventChannelAdapter>();
+        sbStream.Setup(a => a.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>())).Returns(false);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.Setup(m => m.Get(ChannelKey.From("servicebus"))).Returns(sbAdapter.Object);
+
+        var logger = new Mock<ILogger<InternalChannelAdapter>>();
+        var serviceProvider = new Mock<IServiceProvider>();
+        serviceProvider.Setup(sp => sp.GetService(typeof(IChannelManager))).Returns(channelManager.Object);
+        var sut = new InternalChannelAdapter(serviceProvider.Object, sessionStore.Object, logger.Object);
+
+        await sut.SendStreamEventAsync(
+            target,
+            new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi" },
+            CancellationToken.None);
+
+        logger.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("session-sb-log", StringComparison.Ordinal) &&
+                    v.ToString()!.Contains("servicebus", StringComparison.Ordinal)),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "the undeliverable stream event must be reported once at Warning, naming the session and the target channel type");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TargetAdapterSatisfiesPrecondition_DeliversEvent()
+    {
+        var session = SessionId.From("session-sb-ok");
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv-sb"),
+            session,
+            ChannelAddress.From("sb-address"),
+            null,
+            ChannelRequestId: "request-1");
+        var streamEvent = new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi" };
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(x => x.GetAsync(session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = session,
+                AgentId = AgentId.From("agent-a"),
+                ChannelType = ChannelKey.From("servicebus")
+            });
+
+        var sbAdapter = new Mock<IChannelAdapter>();
+        sbAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("servicebus"));
+        var sbStream = sbAdapter.As<IStreamEventChannelAdapter>();
+        sbStream.Setup(a => a.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>())).Returns(true);
+        sbStream.Setup(a => a.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.Setup(m => m.Get(ChannelKey.From("servicebus"))).Returns(sbAdapter.Object);
+
+        var sut = CreateAdapter(channelManager.Object, sessionStore.Object);
+
+        await sut.SendStreamEventAsync(target, streamEvent, CancellationToken.None);
+
+        sbStream.Verify(
+            a => a.SendStreamEventAsync(target, streamEvent, CancellationToken.None),
+            Times.Once,
+            "a satisfiable Service Bus target must still stream exactly as before");
     }
 
     [Fact]

@@ -89,6 +89,16 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventCha
 
         if (targetAdapter is IStreamEventChannelAdapter streamTarget)
         {
+            if (!streamTarget.CanSendStreamEvent(target))
+            {
+                Logger.LogWarning(
+                    "Internal adapter: target channel '{TargetChannelType}' cannot deliver stream event '{EventType}' for session '{SessionId}'; skipping delivery.",
+                    targetAdapter.ChannelType,
+                    streamEvent.Type,
+                    target.SessionId);
+                return;
+            }
+
             await streamTarget.SendStreamEventAsync(target, streamEvent, cancellationToken);
             return;
         }
