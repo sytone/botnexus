@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
