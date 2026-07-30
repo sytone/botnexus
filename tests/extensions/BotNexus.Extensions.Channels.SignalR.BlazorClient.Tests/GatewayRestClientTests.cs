@@ -346,9 +346,11 @@ public sealed class GatewayRestClientTests
         success.ShouldBeFalse();
     }
 
-    // ── GetSessionsAsync paging (#2499) ──────────────────────────────────────────
+    // ── GetSessionsAsync paging (#2499, #2532) ───────────────────────────────────
 
-    private const string EmptySessionArray = "[]";
+    // #2532: the endpoint returns a page object carrying totalCount/hasMore, not a bare array.
+    // Only the stub payload shape changes here - every URL assertion below is untouched.
+    private const string EmptySessionArray = """{"sessions":[],"totalCount":0,"hasMore":false}""";
 
     /// <summary>
     /// Backwards compatibility: a caller that supplies neither limit nor offset must produce the
@@ -403,6 +405,39 @@ public sealed class GatewayRestClientTests
         await client.GetSessionsAsync(agentId: null, limit: 50, offset: 50);
 
         handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions?limit=50&offset=50");
+    }
+
+    /// <summary>
+    /// The conversation filter (#2532 AC3) is forwarded so a conversation-scoped read never has to
+    /// pull the agent's whole session history.
+    /// </summary>
+    [Fact]
+    public async Task GetSessionsAsync_forwards_conversationId()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions", EmptySessionArray);
+
+        await client.GetSessionsAsync("a1", limit: 200, offset: 0, conversationId: "c1");
+
+        handler.LastRequestUrl.ShouldBe($"{BaseUrl}sessions?agentId=a1&limit=200&conversationId=c1");
+    }
+
+    /// <summary>
+    /// The response's totalCount/hasMore are surfaced to the caller - they are the only valid
+    /// termination signal for a paging walk (#2532 AC5).
+    /// </summary>
+    [Fact]
+    public async Task GetSessionsAsync_surfaces_totalCount_and_hasMore()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse(
+            "/api/sessions",
+            """{"sessions":[],"totalCount":107,"hasMore":true}""");
+
+        var page = await client.GetSessionsAsync("a1", limit: 50, offset: 0);
+
+        page.TotalCount.ShouldBe(107);
+        page.HasMore.ShouldBeTrue();
     }
 
     // ── WriteWorkspaceFileAsync ──────────────────────────────────────────────────

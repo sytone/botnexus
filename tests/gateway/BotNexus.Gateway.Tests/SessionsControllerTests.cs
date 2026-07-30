@@ -16,6 +16,21 @@ public sealed class SessionsControllerTests
 {
     private const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
 
+    /// <summary>
+    /// #2532 AC5: <c>List</c> now returns an envelope <c>{ sessions, totalCount, hasMore, ... }</c>
+    /// rather than a bare array, so clients get an explicit exhaustion signal. These helpers read
+    /// the sessions array out of the envelope; every assertion below is otherwise unchanged.
+    /// </summary>
+    private static System.Text.Json.JsonElement ListSessionsJson(ActionResult actionResult)
+    {
+        var ok = actionResult.ShouldBeOfType<OkObjectResult>();
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        return System.Text.Json.JsonDocument.Parse(json).RootElement.GetProperty("sessions");
+    }
+
+    private static int ListSessionCount(ActionResult actionResult)
+        => ListSessionsJson(actionResult).GetArrayLength();
+
     [Fact]
     public async Task List_WithExistingSessions_ReturnsSessions()
     {
@@ -25,11 +40,7 @@ public sealed class SessionsControllerTests
 
         var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
-        var okResult = actionResult as OkObjectResult;
-        okResult.ShouldNotBeNull();
-        var sessions = okResult!.Value as IEnumerable<object>;
-        sessions.ShouldNotBeNull();
-        sessions!.Count().ShouldBe(1);
+        ListSessionCount(actionResult).ShouldBe(1);
     }
 
     [Fact]
@@ -1178,10 +1189,7 @@ public sealed class SessionsControllerTests
 
         var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
-        var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
-        var json = System.Text.Json.JsonSerializer.Serialize(okResult!.Value);
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        var first = doc.RootElement.EnumerateArray().First();
+        var first = ListSessionsJson(actionResult).EnumerateArray().First();
         first.TryGetProperty("conversationId", out var convIdProp).ShouldBeTrue("conversationId property should be present in List response");
         convIdProp.GetString().ShouldBe("c_testconvid123");
     }
@@ -1223,10 +1231,7 @@ public sealed class SessionsControllerTests
         var controller = new SessionsController(store);
         var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
-        var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
-        var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        var ids = doc.RootElement.EnumerateArray()
+        var ids = ListSessionsJson(actionResult).EnumerateArray()
             .Select(item => item.GetProperty("sessionId").GetString())
             .Where(id => id is not null)
             .ToHashSet(StringComparer.Ordinal);
@@ -1255,10 +1260,7 @@ public sealed class SessionsControllerTests
         var controller = new SessionsController(store);
         var actionResult = await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None);
 
-        var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
-        var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        var ids = doc.RootElement.EnumerateArray()
+        var ids = ListSessionsJson(actionResult).EnumerateArray()
             .Select(item => item.GetProperty("sessionId").GetString())
             .Where(id => id is not null)
             .ToHashSet(StringComparer.Ordinal);
@@ -1278,13 +1280,13 @@ public sealed class SessionsControllerTests
     public async Task List_UsesSummaryRead_NotFullHydration()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42) });
+        store.Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage([Summary("s1", "agent-a", SessionStatus.Active, 42)], 1, false));
         var controller = new SessionsController(store.Object);
 
         await controller.List(null, cancellationToken: CancellationToken.None);
 
-        store.Verify(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once,
+        store.Verify(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()), Times.Once,
             "List must use the metadata-only summary read");
         store.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never,
             "List must not hydrate full transcripts via ListAsync");
@@ -1294,47 +1296,66 @@ public sealed class SessionsControllerTests
     public async Task List_ProjectsSummaryFields_IncludingMessageCount()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 42, "c1") });
+        store.Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage([Summary("s1", "agent-a", SessionStatus.Active, 42, "c1")], 1, false));
         var controller = new SessionsController(store.Object);
 
-        var ok = (await controller.List(null, cancellationToken: CancellationToken.None)) as OkObjectResult;
+        var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
-        ok.ShouldNotBeNull();
-        var sessions = (ok!.Value as IEnumerable<object>)!.ToList();
-        sessions.Count.ShouldBe(1);
-        var json = JsonSerializer.Serialize(sessions[0]);
+        var sessions = ListSessionsJson(actionResult);
+        sessions.GetArrayLength().ShouldBe(1);
+        var json = sessions[0].GetRawText();
         json.ShouldContain("\"messageCount\":42");
         json.ShouldContain("\"sessionId\":\"s1\"");
         json.ShouldContain("\"conversationId\":\"c1\"");
     }
 
+    /// <summary>
+    /// #2532 AC1: the agent filter is now the STORE's job, so this asserts the controller hands it
+    /// down rather than trimming a page after the fact. Previously this test stubbed an unfiltered
+    /// two-agent page and checked the controller dropped one - that behaviour is exactly the defect
+    /// (it made offset address a different set than the client consumed), so the test now pins the
+    /// property it was really about: a request for agent-a yields only agent-a's sessions.
+    /// </summary>
     [Fact]
     public async Task List_FiltersByAgentId()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { Summary("s1", "agent-a", SessionStatus.Active, 1), Summary("s2", "agent-b", SessionStatus.Active, 1) });
+        store.Setup(s => s.ListSummaryPageAsync(
+                It.Is<SessionSummaryQuery>(q => q.AgentId == "agent-a"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage([Summary("s1", "agent-a", SessionStatus.Active, 1)], 1, false));
+        store.Setup(s => s.ListSummaryPageAsync(
+                It.Is<SessionSummaryQuery>(q => q.AgentId != "agent-a"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage(
+                [Summary("s1", "agent-a", SessionStatus.Active, 1), Summary("s2", "agent-b", SessionStatus.Active, 1)], 2, false));
         var controller = new SessionsController(store.Object);
 
-        var ok = (await controller.List("agent-a", cancellationToken: CancellationToken.None)) as OkObjectResult;
+        var filtered = await controller.List("agent-a", cancellationToken: CancellationToken.None);
+        ListSessionCount(filtered).ShouldBe(1);
 
-        (ok!.Value as IEnumerable<object>)!.Count().ShouldBe(1);
+        var unfiltered = await controller.List(null, cancellationToken: CancellationToken.None);
+        ListSessionCount(unfiltered).ShouldBe(2);
     }
 
+    /// <summary>
+    /// #2532 AC1, status half. Same rewrite rationale as <see cref="List_FiltersByAgentId"/>: the
+    /// controller must PASS includeInactive to the store, not post-filter a page with it.
+    /// </summary>
     [Fact]
     public async Task List_ExcludesInactiveByDefault_AndIncludesWhenRequested()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { Summary("s-active", "agent-a", SessionStatus.Active, 1), Summary("s-sealed", "agent-a", SessionStatus.Sealed, 1) });
+        store.Setup(s => s.ListSummaryPageAsync(
+                It.Is<SessionSummaryQuery>(q => !q.IncludeInactive), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage([Summary("s-active", "agent-a", SessionStatus.Active, 1)], 1, false));
+        store.Setup(s => s.ListSummaryPageAsync(
+                It.Is<SessionSummaryQuery>(q => q.IncludeInactive), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage(
+                [Summary("s-active", "agent-a", SessionStatus.Active, 1), Summary("s-sealed", "agent-a", SessionStatus.Sealed, 1)], 2, false));
         var controller = new SessionsController(store.Object);
 
-        var defaultOk = (await controller.List(null, cancellationToken: CancellationToken.None)) as OkObjectResult;
-        (defaultOk!.Value as IEnumerable<object>)!.Count().ShouldBe(1);
-
-        var inclusiveOk = (await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None)) as OkObjectResult;
-        (inclusiveOk!.Value as IEnumerable<object>)!.Count().ShouldBe(2);
+        ListSessionCount(await controller.List(null, cancellationToken: CancellationToken.None)).ShouldBe(1);
+        ListSessionCount(await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None)).ShouldBe(2);
     }
 
     private static SessionSummary Summary(string id, string agentId, SessionStatus status, int messageCount, string? conversationId = null)
@@ -1361,7 +1382,7 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new SessionStoreUnavailableException("unavailable", new Exception("inner")));
 
         var controller = new SessionsController(store.Object);
@@ -1378,8 +1399,8 @@ public sealed class SessionsControllerTests
     {
         var store = new Mock<ISessionStore>();
         store
-            .Setup(s => s.ListSummariesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<SessionSummary>());
+            .Setup(s => s.ListSummaryPageAsync(It.IsAny<SessionSummaryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSummaryPage.Empty);
 
         var controller = new SessionsController(store.Object);
 

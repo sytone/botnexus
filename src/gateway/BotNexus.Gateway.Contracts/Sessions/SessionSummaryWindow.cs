@@ -45,4 +45,30 @@ public static class SessionSummaryWindow
 
         return ordered.ToList();
     }
+
+    /// <summary>
+    /// Filters <paramref name="summaries"/> by <paramref name="query"/>, then applies the query's
+    /// window, returning the page together with the total size of the filtered set (#2532).
+    /// </summary>
+    /// <remarks>
+    /// The order here is the whole point of issue #2532: filter FIRST, window SECOND, so
+    /// <c>Offset</c> addresses the filtered set rather than the raw store. This is the single
+    /// implementation every non-SQL store shares, so the interface default, the base-class default
+    /// and any test double cannot disagree about that ordering.
+    /// </remarks>
+    public static SessionSummaryPage ApplyQuery(
+        IEnumerable<SessionSummary> summaries,
+        SessionSummaryQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(summaries);
+        ArgumentNullException.ThrowIfNull(query);
+
+        var matching = summaries.Where(query.Matches).ToList();
+        var offset = Math.Max(query.Offset, 0);
+        var items = Apply(matching, query.Limit, offset);
+        return new SessionSummaryPage(
+            items,
+            matching.Count,
+            offset + items.Count < matching.Count);
+    }
 }

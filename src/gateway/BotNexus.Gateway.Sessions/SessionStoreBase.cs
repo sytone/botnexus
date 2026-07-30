@@ -174,6 +174,20 @@ public abstract class SessionStoreBase : ISessionStore
             offset);
     }
 
+    /// <summary>
+    /// Filter-then-window summary page for stores without a query engine (#2532). Filtering
+    /// happens before the slice so <c>Offset</c> addresses the filtered set - the invariant the
+    /// controller's old post-hoc LINQ broke.
+    /// </summary>
+    public virtual async Task<SessionSummaryPage> ListSummaryPageAsync(
+        SessionSummaryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
+        return SessionSummaryWindow.ApplyQuery(sessions.Select(SessionSummary.FromSession), query);
+    }
+
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(
         AgentId? agentId,
         BotNexus.Gateway.Abstractions.Models.SessionStatus? status,

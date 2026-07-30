@@ -453,6 +453,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
 
+        // #2532 AC3: sessions are a per-conversation concern, so they load HERE - when the user
+        // actually opens the conversation - rather than being enumerated for the whole agent on
+        // every agent switch (AC2). Scoped to this conversation, so the server returns a handful
+        // of rows in a single request instead of the agent's entire session history.
+        await LoadSessionsForConversationAsync(agentId, conversationId);
+
         // Best-effort REST hydration of per-conversation artifacts that arrive out of band from the
         // live SignalR stream (canvas #413, todo #1464, pending ask_user #1488). A reloaded tab, a
         // newly-opened window, or a mobile client that missed the live event would otherwise show
@@ -521,6 +527,33 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // Load history if not already loaded
         if (conv is not null && !conv.HistoryLoaded && !conv.IsLoadingHistory)
             await LoadConversationHistoryAsync(agentId, conversationId);
+    }
+
+    /// <summary>
+    /// Loads and registers the sessions belonging to a single conversation (#2532 AC3).
+    /// </summary>
+    /// <remarks>
+    /// Uses the shared <see cref="SessionRosterLoader"/> walk so this call site cannot drift from
+    /// <c>PortalLoadService</c>'s (#2452). Best-effort: a failing REST call must not block the
+    /// user from opening the conversation, so it degrades to a debug log.
+    /// </remarks>
+    private async Task LoadSessionsForConversationAsync(string agentId, string conversationId)
+    {
+        try
+        {
+            var sessions = await SessionRosterLoader.LoadAllAsync(
+                _restClient,
+                agentId,
+                conversationId,
+                CancellationToken.None);
+
+            foreach (var session in sessions)
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Best-effort session load failed for conversation {ConversationId}", Sanitise(conversationId));
+        }
     }
 
     /// <summary>
@@ -1069,64 +1102,22 @@ public sealed class AgentInteractionService : IAgentInteractionService
     }
 
     /// <summary>
-    /// Server page size used when walking <c>GET /api/sessions</c>. The endpoint pages with a
-    /// default of 50 and a hard cap of 200 (#2411/#2468) and reports no total, so the only way to
-    /// obtain the complete roster is to request the maximum page and keep going until the server
-    /// returns a short page (#2499).
+    /// Refreshes the conversation list for an agent. Conversations ONLY.
     /// </summary>
-    private const int SessionPageSize = 200;
-
-    /// <summary>
-    /// Hard stop on the paging walk so a misbehaving server that keeps returning full pages can
-    /// never spin the portal forever. 200 * 200 = 40,000 sessions, far beyond any real store.
-    /// </summary>
-    private const int MaxSessionPages = 200;
-
-    /// <summary>
-    /// Reads every session page for <paramref name="agentId"/> (or all agents when null),
-    /// stopping on the first short or empty page.
-    /// </summary>
-    private async Task<List<SessionSummary>> LoadAllSessionsAsync(
-        string? agentId,
-        CancellationToken cancellationToken)
-    {
-        var all = new List<SessionSummary>();
-        for (var page = 0; page < MaxSessionPages; page++)
-        {
-            var batch = await _restClient.GetSessionsAsync(
-                agentId,
-                SessionPageSize,
-                all.Count,
-                cancellationToken);
-
-            // Only an EMPTY page is a reliable terminator. The server clamps the requested limit to
-            // its own maximum, so a page shorter than SessionPageSize does NOT imply exhaustion -
-            // treating it as such is precisely how the portal would silently truncate again the
-            // next time the server-side cap changes. Cost of correctness: one trailing empty request.
-            if (batch.Count == 0)
-                break;
-
-            all.AddRange(batch);
-        }
-
-        return all;
-    }
-
+    /// <remarks>
+    /// #2532 AC2: this used to fire a full session enumeration in parallel with the conversation
+    /// list on every agent switch. Nothing on the agent-level view needs the session roster -
+    /// sessions are a per-conversation concern - so the walk was pure latency on the critical
+    /// path, and with the pre-fix paging bug it meant 120+ blocking requests per click. Sessions
+    /// are now loaded when a conversation is actually selected
+    /// (<see cref="LoadSessionsForConversationAsync"/>).
+    /// </remarks>
     private async Task RefreshConversationsForAgentAsync(string agentId)
     {
         try
         {
-            var listTask = _restClient.GetConversationsAsync(agentId);
-            // #2499: page until exhausted. Per-agent totals are usually under the page size, but the
-            // endpoint pages unconditionally, so a single call is an unbounded assumption either way.
-            var sessionsTask = LoadAllSessionsAsync(agentId, CancellationToken.None);
-            await Task.WhenAll(listTask, sessionsTask);
-
-            var list = listTask.Result;
+            var list = await _restClient.GetConversationsAsync(agentId);
             _store.SeedConversations(agentId, list);
-
-            foreach (var session in sessionsTask.Result)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
 
             // Fetch canvas for the auto-selected conversation on initial load (#383)
             var agent = _store.GetAgent(agentId);

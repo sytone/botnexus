@@ -181,6 +181,10 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             MaxConcurrentCalls = _options.MaxConcurrentCalls,
             // Manual completion — we complete after successful dispatch, abandon on error.
             AutoCompleteMessages = false,
+            // #2525: the SDK default renewal window is five minutes, which is shorter than many
+            // agent turns. When it lapses the completion call fails with a lock-lost error and
+            // Service Bus redelivers work that already succeeded.
+            MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(_options.MaxAutoLockRenewalMinutes),
         };
 
         _processor = _activeFactory.CreateProcessor(_options.InboundQueueName, processorOptions);
@@ -535,31 +539,88 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task OnProcessMessageAsync(ProcessMessageEventArgs args)
-    {
-        try
-        {
-            await HandleMessageBodyAsync(
+    private Task OnProcessMessageAsync(ProcessMessageEventArgs args)
+        => ProcessMessageCoreAsync(
+            ct => HandleMessageBodyAsync(
                 args.Message.Body.ToString(),
                 args.Message.ApplicationProperties,
                 args.Message.MessageId,
-                args.CancellationToken);
+                ct),
+            ct => args.CompleteMessageAsync(args.Message, ct),
+            () => args.AbandonMessageAsync(args.Message),
+            args.Message.MessageId,
+            args.CancellationToken);
 
-            await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+    /// <summary>
+    /// Testable core of the processor callback (#2525). The handler runs first and the message is
+    /// only acknowledged afterwards, so delivery stays at-least-once: a mid-turn crash retries
+    /// rather than silently losing the request. The distinction this method adds is between a
+    /// <em>handler</em> failure — where the work did not happen and abandoning is correct — and an
+    /// <em>acknowledgement</em> failure that occurs after the work already succeeded.
+    /// </summary>
+    internal async Task<MessageProcessingOutcome> ProcessMessageCoreAsync(
+        Func<CancellationToken, Task> handleAsync,
+        Func<CancellationToken, Task> completeAsync,
+        Func<Task> abandonAsync,
+        string? messageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await handleAsync(cancellationToken);
         }
         catch (OperationCanceledException)
         {
             // Shutdown is in progress — abandon so the message is retried on the next startup.
-            await args.AbandonMessageAsync(args.Message);
+            await abandonAsync();
+            return MessageProcessingOutcome.AbandonedForShutdown;
         }
         catch (Exception ex)
         {
             _logger.LogError(
                 ex,
-                "{DisplayName} unhandled error processing Service Bus message; message will be abandoned",
-                DisplayName);
+                "{DisplayName} unhandled error processing Service Bus message {MessageId}; message will be abandoned",
+                DisplayName,
+                messageId);
 
-            await args.AbandonMessageAsync(args.Message);
+            await abandonAsync();
+            return MessageProcessingOutcome.AbandonedAfterHandlerFailure;
+        }
+
+        // From here on the work has already been performed. Anything that fails is an
+        // acknowledgement problem, not a processing problem, and must not be logged as one.
+        try
+        {
+            await completeAsync(cancellationToken);
+            return MessageProcessingOutcome.Completed;
+        }
+        catch (ServiceBusException ex) when (
+            ex.Reason == ServiceBusFailureReason.MessageLockLost ||
+            ex.Reason == ServiceBusFailureReason.SessionLockLost)
+        {
+            // The lock expired while the turn was running. Abandoning is not attempted: with an
+            // invalid lock that call fails too, and the broker redelivers the message regardless.
+            // The honest statement is that the work succeeded and may be redelivered.
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} processed Service Bus message {MessageId} successfully but the lock expired before it could be acknowledged; the broker may redeliver this message and the work may run again",
+                DisplayName,
+                messageId);
+
+            return MessageProcessingOutcome.CompleteFailedLockLost;
+        }
+        catch (Exception ex)
+        {
+            // A non-lock acknowledgement failure (transient/network). The lock may still be held,
+            // so abandon deliberately to release it promptly rather than waiting for expiry.
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} processed Service Bus message {MessageId} successfully but could not acknowledge it; the message will be abandoned and may be redelivered",
+                DisplayName,
+                messageId);
+
+            await abandonAsync();
+            return MessageProcessingOutcome.CompleteFailedAbandoned;
         }
     }
 
