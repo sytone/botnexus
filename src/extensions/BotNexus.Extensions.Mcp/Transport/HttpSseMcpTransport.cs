@@ -20,7 +20,13 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     private readonly bool _ownsHttpClient;
     private readonly TimeSpan _connectTimeout;
     private readonly int _maxReconnectAttempts;
+    private readonly TimeSpan _reconnectBaseDelay;
+    private readonly TimeSpan _minReconnectDelay;
     private readonly IReadOnlyDictionary<string, string>? _headers;
+
+    private static readonly TimeSpan DefaultReconnectBaseDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DefaultMinReconnectDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(30);
 
     private string? _sessionId;
     private readonly SemaphoreSlim _reinitLock = new(1, 1);
@@ -40,13 +46,17 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     /// <param name="headers">Optional additional HTTP headers.</param>
     /// <param name="httpClient">Optional pre-configured HttpClient. If null, one is created internally.</param>
     /// <param name="connectTimeout">Connection timeout. Default: 30 seconds.</param>
-    /// <param name="maxReconnectAttempts">Maximum SSE reconnection attempts. Default: 3.</param>
+    /// <param name="maxReconnectAttempts">Maximum <em>consecutive zero-progress</em> SSE reconnection attempts. Default: 3.</param>
+    /// <param name="reconnectBaseDelay">Base delay for the exponential reconnect backoff. Default: 1 second. Intended for tests.</param>
+    /// <param name="minReconnectDelay">Floor applied to every reconnect delay. Default: 1 second. Intended for tests.</param>
     public HttpSseMcpTransport(
         Uri endpoint,
         IReadOnlyDictionary<string, string>? headers = null,
         HttpClient? httpClient = null,
         TimeSpan? connectTimeout = null,
-        int maxReconnectAttempts = 3)
+        int maxReconnectAttempts = 3,
+        TimeSpan? reconnectBaseDelay = null,
+        TimeSpan? minReconnectDelay = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         _endpoint = endpoint;
@@ -55,10 +65,15 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         _httpClient = httpClient ?? new HttpClient();
         _connectTimeout = connectTimeout ?? TimeSpan.FromSeconds(30);
         _maxReconnectAttempts = maxReconnectAttempts;
+        _reconnectBaseDelay = reconnectBaseDelay ?? DefaultReconnectBaseDelay;
+        _minReconnectDelay = minReconnectDelay ?? DefaultMinReconnectDelay;
     }
 
     /// <summary>Gets the session ID assigned by the server, if any.</summary>
     internal string? SessionId => _sessionId;
+
+    /// <summary>Gets the background SSE read loop task, if the transport opened a persistent stream.</summary>
+    internal Task? SseLoopTask => _sseTask;
 
     /// <inheritdoc />
     public async Task ConnectAsync(CancellationToken ct = default)
@@ -454,6 +469,11 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     /// </summary>
     private async Task SseReadLoopAsync(HttpResponseMessage initialResponse, CancellationToken ct)
     {
+        // `attempt` counts CONSECUTIVE ZERO-PROGRESS reconnects. It is reset only when a
+        // connection actually delivered at least one SSE event to _responseChannel, so a
+        // server that returns 200 text/event-stream with an instantly-closed body can no
+        // longer be scored as success and looped on forever (issue #2564). A healthy
+        // long-lived stream that delivered events and then closed still resets the counter.
         var attempt = 0;
 
         try
@@ -461,13 +481,17 @@ public sealed class HttpSseMcpTransport : IMcpTransport
             using (var stream = await initialResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
             using (var reader = new StreamReader(stream))
             {
-                await ParseSseStreamAsync(reader, ct).ConfigureAwait(false);
+                var initialEvents = await ParseSseStreamAsync(reader, ct).ConfigureAwait(false);
+                if (initialEvents > 0)
+                {
+                    attempt = 0;
+                }
             }
 
             while (!ct.IsCancellationRequested && attempt < _maxReconnectAttempts)
             {
                 attempt++;
-                var delay = TimeSpan.FromMilliseconds(Math.Min(1000 * Math.Pow(2, attempt - 1), 30_000));
+                var delay = ComputeReconnectDelay(attempt);
                 await Task.Delay(delay, ct).ConfigureAwait(false);
 
                 try
@@ -485,9 +509,12 @@ public sealed class HttpSseMcpTransport : IMcpTransport
 
                     using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     using var reader = new StreamReader(stream);
-                    await ParseSseStreamAsync(reader, ct).ConfigureAwait(false);
+                    var eventCount = await ParseSseStreamAsync(reader, ct).ConfigureAwait(false);
 
-                    attempt = 0;
+                    if (eventCount > 0)
+                    {
+                        attempt = 0;
+                    }
                 }
                 catch (HttpRequestException) when (!ct.IsCancellationRequested)
                 {
@@ -500,12 +527,26 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     }
 
     /// <summary>
+    /// Computes the delay before reconnect number <paramref name="attempt"/>: exponential from the
+    /// base delay, clamped below by the reconnect floor and above by 30 seconds.
+    /// </summary>
+    internal TimeSpan ComputeReconnectDelay(int attempt)
+    {
+        var exponential = _reconnectBaseDelay.TotalMilliseconds * Math.Pow(2, Math.Max(0, attempt - 1));
+        var clamped = Math.Min(exponential, MaxReconnectDelay.TotalMilliseconds);
+        clamped = Math.Max(clamped, _minReconnectDelay.TotalMilliseconds);
+        return TimeSpan.FromMilliseconds(Math.Min(clamped, MaxReconnectDelay.TotalMilliseconds));
+    }
+
+    /// <summary>
     /// Parses an SSE stream, extracting JSON-RPC response messages from <c>event: message</c> events.
     /// </summary>
-    internal async Task ParseSseStreamAsync(TextReader reader, CancellationToken ct)
+    /// <returns>The number of SSE events successfully delivered to the response channel.</returns>
+    internal async Task<int> ParseSseStreamAsync(TextReader reader, CancellationToken ct)
     {
         string? eventType = null;
         string? data = null;
+        var delivered = 0;
 
         while (!ct.IsCancellationRequested)
         {
@@ -518,7 +559,10 @@ public sealed class HttpSseMcpTransport : IMcpTransport
                 {
                     if (eventType is null or "message")
                     {
-                        TryEnqueueResponse(data);
+                        if (TryEnqueueResponse(data))
+                        {
+                            delivered++;
+                        }
                     }
 
                     eventType = null;
@@ -543,23 +587,30 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         // Flush any trailing event without a final blank line
         if (data is not null && eventType is null or "message")
         {
-            TryEnqueueResponse(data);
+            if (TryEnqueueResponse(data))
+            {
+                delivered++;
+            }
         }
+
+        return delivered;
     }
 
-    private void TryEnqueueResponse(string json)
+    private bool TryEnqueueResponse(string json)
     {
         try
         {
             var response = JsonSerializer.Deserialize(json, JsonContext.Default.JsonRpcResponse);
             if (response is not null)
             {
-                _responseChannel.Writer.TryWrite(response);
+                return _responseChannel.Writer.TryWrite(response);
             }
         }
         catch (JsonException)
         {
             // Skip malformed SSE data
         }
+
+        return false;
     }
 }
