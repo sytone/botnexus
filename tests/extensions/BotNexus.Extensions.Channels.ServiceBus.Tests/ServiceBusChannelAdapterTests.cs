@@ -713,6 +713,55 @@ public sealed class ServiceBusChannelAdapterTests
     }
 
     [Fact]
+    public void CanSendStreamEvent_TargetWithoutChannelRequestId_ReturnsFalse()
+    {
+        // #2559: the precondition is exposed as a capability so a fan-out caller can skip
+        // instead of discovering it as a turn-killing exception.
+        var adapter = CreateAdapter();
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"),
+            SessionId.From("session"),
+            ChannelAddress.From("conv"),
+            null);
+
+        adapter.CanSendStreamEvent(target).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CanSendStreamEvent_TargetWithChannelRequestId_ReturnsTrue()
+    {
+        var adapter = CreateAdapter();
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"),
+            SessionId.From("session"),
+            ChannelAddress.From("conv"),
+            ChannelRequestId: "request-1");
+
+        adapter.CanSendStreamEvent(target).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_TargetWithoutChannelRequestId_StillThrows()
+    {
+        // The Service Bus guard itself is deliberately unchanged (#2559 AC3): relaxing it would
+        // convert a loud failure into a silently undelivered stream.
+        var adapter = CreateAdapter();
+        StartAdapter(adapter);
+        var target = new ChannelStreamTarget(
+            ConversationId.From("conv"),
+            SessionId.From("session"),
+            ChannelAddress.From("conv"),
+            null);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => adapter.SendStreamEventAsync(
+            target,
+            new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hi" },
+            CancellationToken.None));
+
+        ex.Message.ShouldContain("channel request identity");
+    }
+
+    [Fact]
     public async Task SendStreamEventAsync_DeltasThenRunEnded_SendsOrderedDeltasAndOneConsolidatedTerminal()
     {
         var factory = new FakeServiceBusAdapterClientFactory();
