@@ -16,6 +16,13 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (drained after runs complete).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
 /// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
+/// <param name="BeforeToolCallTimeout">
+/// Wall-clock budget for the <paramref name="BeforeToolCall"/> hook (#2518). The hook is the
+/// pre-execution policy gate, so a hook that never returns would otherwise stall the whole turn.
+/// When the budget elapses the tool call is <em>blocked</em> (fail closed), never allowed through.
+/// Null means the loop default of 15 seconds; set to <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>
+/// or a non-positive value to disable the budget (not recommended).
+/// </param>
 /// <param name="AfterToolCall">Optional post-tool-call hook for result transformation.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, etc.).</param>
 /// <param name="MaxRetryDelayMs">
@@ -35,6 +42,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// dispatch -- cron or an autonomous follow-up loop -- re-checks the compaction threshold instead
 /// of growing the transcript unbounded until provider overflow. Failures are swallowed and the
 /// loop continues. Null means no mid-loop re-check (prior behaviour).
+/// </param>
+/// <param name="OnDiagnostic">
+/// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or
+/// wedged policy provider is diagnosable rather than silently stalling the loop.
 /// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
@@ -56,4 +67,12 @@ public record AgentLoopConfig(
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
     ClaimAuditOptions? ClaimAudit = null,
-    Func<CancellationToken, Task>? MaybeCompactAsync = null);
+    Func<CancellationToken, Task>? MaybeCompactAsync = null,
+    TimeSpan? BeforeToolCallTimeout = null,
+    Action<string>? OnDiagnostic = null)
+{
+    /// <summary>
+    /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
+    /// </summary>
+    public static readonly TimeSpan DefaultBeforeToolCallTimeout = TimeSpan.FromSeconds(15);
+}

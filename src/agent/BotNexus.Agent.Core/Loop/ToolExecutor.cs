@@ -5,6 +5,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Validation;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace BotNexus.Agent.Core.Loop;
@@ -264,9 +265,39 @@ internal static class ToolExecutor
         {
             var beforeContext = new BeforeToolCallContext(assistantMessage, toolCall, validatedArgs, context);
             BeforeToolCallResult? beforeResult;
+
+            // #2518: the pre-tool-call hook is the pre-execution policy gate (it enforces the
+            // tool-approval posture shipped in #2397). An approval provider that wedges -- a stalled
+            // prompt, an unreachable policy service, a deadlocked store -- would otherwise hang the
+            // whole agent turn, because a cron or channel turn may carry no ambient deadline at all.
+            // Bound it, and on breach fail CLOSED: block the call, exactly like the exception path
+            // below. Allowing execution on a timeout would turn a liveness bug into a policy bypass.
+            var budget = config.BeforeToolCallTimeout ?? AgentLoopConfig.DefaultBeforeToolCallTimeout;
+            var budgetEnabled = budget > TimeSpan.Zero && budget != Timeout.InfiniteTimeSpan;
+
+            using var hookCts = budgetEnabled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            if (hookCts is not null)
+            {
+                hookCts.CancelAfter(budget);
+            }
+
+            var hookToken = hookCts?.Token ?? cancellationToken;
+            var startedAt = Stopwatch.GetTimestamp();
+
             try
             {
-                beforeResult = await config.BeforeToolCall(beforeContext, cancellationToken).ConfigureAwait(false);
+                beforeResult = await config.BeforeToolCall(beforeContext, hookToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                hookCts is not null &&
+                hookCts.IsCancellationRequested &&
+                !cancellationToken.IsCancellationRequested)
+            {
+                // Budget breach, not turn cancellation. The ambient token is untouched, so this is
+                // unambiguously the hook overrunning its own deadline.
+                return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -275,6 +306,17 @@ internal static class ToolExecutor
                     BuildErrorResult($"BeforeToolCall hook failed: {ex.Message}"),
                     true);
             }
+
+            // A hook that swallows its cancellation token and returns normally after the budget
+            // elapsed must not be treated as a policy decision either -- it produced its answer
+            // outside the window it was given.
+            if (hookCts is not null && hookCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+            }
+
+            // Genuine turn cancellation still propagates as cancellation, never as a hook timeout.
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (beforeResult?.Block == true)
             {
@@ -427,6 +469,35 @@ internal static class ToolExecutor
     private static AgentToolResult BuildErrorResult(string message)
     {
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+    }
+
+    /// <summary>
+    /// Builds the fail-closed outcome for a pre-tool-call hook that exceeded its budget (#2518),
+    /// and reports the breach through the diagnostic sink with the elapsed time and the tool
+    /// identity so a slow policy provider is nameable rather than merely mysterious.
+    /// </summary>
+    private static ToolPreparation BuildBeforeToolCallTimeout(
+        AgentLoopConfig config,
+        ToolCallContent toolCall,
+        TimeSpan budget,
+        long startedAt)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(startedAt);
+        var message =
+            $"BeforeToolCall hook timed out after {elapsed.TotalSeconds:F1}s " +
+            $"(budget {budget.TotalSeconds:F1}s) for tool '{toolCall.Name}' (call {toolCall.Id}). " +
+            "Tool call blocked because no policy decision was reached.";
+
+        try
+        {
+            config.OnDiagnostic?.Invoke(message);
+        }
+        catch
+        {
+            // A misbehaving diagnostic sink must never mask the fail-closed outcome.
+        }
+
+        return new ToolPreparation(null, BuildErrorResult(message), true);
     }
 
     /// <summary>

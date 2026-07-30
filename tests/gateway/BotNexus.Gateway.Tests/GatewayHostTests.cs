@@ -2338,6 +2338,11 @@ public sealed partial class GatewayHostTests
         signalrChannel.As<IStreamEventChannelAdapter>()
             .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        // #2559: the internal fan-out hop now asks the target whether it can satisfy the stream
+        // target's preconditions. SignalR can, so the loose mock must say so explicitly.
+        signalrChannel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.CanSendStreamEvent(It.IsAny<ChannelStreamTarget>()))
+            .Returns(true);
         signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var channelManager = new Mock<IChannelManager>();

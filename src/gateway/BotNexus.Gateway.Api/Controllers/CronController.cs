@@ -117,11 +117,17 @@ public sealed class CronController(
         if (string.IsNullOrWhiteSpace(request.Schedule))
             return BadRequest("Schedule is required.");
 
+        // #2552: validate at the shared boundary BEFORE anything reaches the store, so a rejected
+        // webhook target leaves no row behind.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
+            return BadRequest(CronWebhookUrl.RejectionMessage);
+
         // #2389: the id is generated here when the caller omits one (see CronJobCreateRequest),
         // matching the existing server-side defaulting of CreatedAt and normalization of ActionType.
         var toCreate = request.ToCronJob() with
         {
             ActionType = NormalizeActionType(request.ActionType),
+            WebhookUrl = normalizedWebhookUrl,
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt
         };
 
@@ -144,6 +150,10 @@ public sealed class CronController(
         if (request.NextRunAt.HasValue && !IsTimestampInRange(request.NextRunAt.Value))
             return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
 
+        // #2552: same shared boundary on the update path.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
+            return BadRequest(CronWebhookUrl.RejectionMessage);
+
         var typedJobId = JobId.From(jobId);
         var existing = await store.GetAsync(typedJobId, cancellationToken);
         if (existing is null)
@@ -153,6 +163,7 @@ public sealed class CronController(
         {
             Id = typedJobId,
             ActionType = NormalizeActionType(request.ActionType),
+            WebhookUrl = normalizedWebhookUrl,
             CreatedAt = existing.CreatedAt
         };
 

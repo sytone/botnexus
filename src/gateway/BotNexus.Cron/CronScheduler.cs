@@ -908,6 +908,18 @@ public sealed class CronScheduler(
                 continue;
             }
 
+            // #2552: the declarative surface goes through the same shared boundary as the API so
+            // the two cannot drift. A config-declared job with a credential-bearing or non-http(s)
+            // webhook URL is skipped loudly rather than materialised into the store.
+            if (!CronWebhookUrl.TryNormalize(configuredJob.WebhookUrl, out var normalizedWebhookUrl))
+            {
+                _logger.LogWarning(
+                    "Skipping configured cron job '{JobId}' because its webhookUrl is invalid. {Reason}",
+                    jobIdString,
+                    CronWebhookUrl.RejectionMessage);
+                continue;
+            }
+
             var jobId = JobId.From(jobIdString);
             var agentId = string.IsNullOrWhiteSpace(configuredJob.AgentId)
                 ? (AgentId?)null
@@ -927,7 +939,7 @@ public sealed class CronScheduler(
                     TemplateName = configuredJob.TemplateName,
                     TemplateParameters = configuredJob.TemplateParameters,
                     Model = configuredJob.Model,
-                    WebhookUrl = configuredJob.WebhookUrl,
+                    WebhookUrl = normalizedWebhookUrl,
                     ShellCommand = configuredJob.ShellCommand,
                     Enabled = configuredJob.Enabled,
                     System = configuredJob.System,
@@ -951,7 +963,7 @@ public sealed class CronScheduler(
                 TemplateName = configuredJob.TemplateName,
                 TemplateParameters = configuredJob.TemplateParameters,
                 Model = configuredJob.Model,
-                WebhookUrl = configuredJob.WebhookUrl,
+                WebhookUrl = normalizedWebhookUrl,
                 ShellCommand = configuredJob.ShellCommand,
                 Enabled = configuredJob.Enabled,
                 System = configuredJob.System,

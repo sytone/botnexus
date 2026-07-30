@@ -1103,31 +1103,46 @@ Content-Type: application/json
 
 **Endpoint:** `GET /api/sessions`
 
-**Description:** Retrieve all conversation sessions.
+**Description:** Retrieve a page of conversation sessions, newest first.
 
 **Query Parameters:**
 - `agentId` (string, optional) — Filter sessions by agent ID
+- `conversationId` (string, optional) — Filter sessions linked to one conversation
+- `includeInactive` (bool, optional, default: false) — Include sealed and expired sessions
+- `offset` (integer, optional, default: 0) — Zero-based offset into the **filtered** set
+- `limit` (integer, optional, default: 50) — Clamped to a server maximum of 200
 
 **Request:**
 ```http
-GET /api/sessions
+GET /api/sessions?limit=50&offset=0
 X-Api-Key: your-api-key
 ```
 
 **Response:** 200 OK
 ```json
-[
-  {
-    "sessionId": "abc123",
-    "agentId": "assistant",
-    "channelType": "signalr",
-    "callerId": "user-1",
-    "status": "Active",
-    "createdAt": "2026-01-15T10:30:00Z",
-    "updatedAt": "2026-01-15T11:45:00Z"
-  }
-]
+{
+  "sessions": [
+    {
+      "sessionId": "abc123",
+      "agentId": "assistant",
+      "channelType": "signalr",
+      "conversationId": "conv-1",
+      "status": "Active",
+      "createdAt": "2026-01-15T10:30:00Z",
+      "updatedAt": "2026-01-15T11:45:00Z"
+    }
+  ],
+  "totalCount": 120,
+  "hasMore": true,
+  "offset": 0,
+  "limit": 50
+}
 ```
+
+> **Terminate on `hasMore`, not on a short page.** The server clamps `limit` to its own
+> maximum, so a page shorter than requested does not mean the set is exhausted.
+
+See the [Sessions API reference](api/sessions.md#get-apisessions) for the full field table.
 
 ---
 

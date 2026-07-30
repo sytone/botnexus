@@ -156,6 +156,8 @@ export default defineConfig({
           { text: 'Session Stores', link: '/development/session-stores' },
           { text: 'Workspace and Memory', link: '/development/workspace-and-memory' },
           { text: 'DDD Patterns', link: '/development/ddd-patterns' },
+          { text: 'Code Standards', link: '/development/code-standards' },
+          { text: 'Issue Conventions', link: '/development/issue-conventions' },
           { text: 'CLI Wizard Framework', link: '/development/cli-wizard' },
           { text: 'Container Integration Testing', link: '/development/container-integration-testing' },
           { text: 'E2E Tests', link: '/development/e2e-tests' },
