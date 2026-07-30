@@ -126,6 +126,23 @@ public sealed record McpToolsListResult
 {
     [JsonPropertyName("tools")]
     public IReadOnlyList<McpToolDefinition> Tools { get; init; } = [];
+
+    /// <summary>
+    /// Opaque continuation token. When present and non-empty the client must issue another
+    /// <c>tools/list</c> request passing this value as <c>cursor</c>. Absent or empty means
+    /// the listing is complete. A short page is NOT an end-of-list signal.
+    /// </summary>
+    [JsonPropertyName("nextCursor")]
+    public string? NextCursor { get; init; }
+}
+
+/// <summary>
+/// Parameters for the MCP <c>tools/list</c> request. Only sent for continuation pages.
+/// </summary>
+public sealed record McpToolsListParams
+{
+    [JsonPropertyName("cursor")]
+    public required string Cursor { get; init; }
 }
 
 /// <summary>

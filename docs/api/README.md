@@ -6,10 +6,10 @@ conversations, cron jobs, webhooks, satellites, and portal tools.
 
 > **Scope of this reference.** This is the first slice of the API documentation
 > effort ([#219](https://github.com/Sytone/botnexus/issues/219)). It documents a
-> small, code-verified subset of controllers. The SignalR hub/event reference and
-> the .NET public API reference are tracked as follow-up slices (see
-> [Deferred](#deferred) below). Every route, verb, and status code on the linked
-> pages was read directly from the controller source under
+> small, code-verified subset of controllers, plus a full
+> [SignalR hub reference](signalr.md). The .NET public API reference is tracked as
+> a follow-up slice (see [Deferred](#deferred) below). Every route, verb, and status
+> code on the linked pages was read directly from the controller source under
 > `src/gateway/BotNexus.Gateway.Api/Controllers/`.
 
 ---
@@ -113,18 +113,20 @@ this exception — they go through the normal API-key check.
 
 | Controller | Base route | Reference |
 |------------|------------|-----------|
+| Agents | `api/agents` | [agents.md](agents.md) |
 | Conversations | `api/conversations` | [conversations.md](conversations.md) |
 | Cron | `api/cron` | [cron.md](cron.md) |
 | Satellites | `api/satellites` | [satellites.md](satellites.md) |
+| Sessions + Sub-agents | `api/sessions`, `api/subagents` | [sessions.md](sessions.md) |
 | Webhooks (management + inbound delivery) | `api/webhooks` | [webhooks.md](webhooks.md) |
 | Tools | `api/tools` | [tools.md](tools.md) |
 
 A machine-readable OpenAPI 3.0 description of the full surface is also available at
 [openapi.json](openapi.json).
 
-> The gateway hosts additional controllers (agents, sessions, channels, models,
-> providers, memory, stats, and more) that are not yet documented as hand-written
-> pages in this slice; they do appear in `openapi.json`.
+> The gateway hosts additional controllers (channels, models, providers, memory,
+> stats, and more) that are not yet documented as hand-written pages; they do
+> appear in `openapi.json`.
 
 ---
 
@@ -133,9 +135,6 @@ A machine-readable OpenAPI 3.0 description of the full surface is also available
 The following are explicitly **out of scope** for this slice and tracked as
 follow-up work under [#219](https://github.com/Sytone/botnexus/issues/219):
 
-- **SignalR hub & event reference** — the real-time hub methods and server→client
-  events used by the WebUI.
 - **.NET public API reference** — generated from XML doc comments (e.g. DocFX).
-- **Remaining REST controllers** — agents, sessions, channels, models, providers,
-  memory, reports, diagnostics, stats, sub-agents, and the rest of the
-  `Controllers/` set.
+- **Remaining REST controllers** - channels, models, providers, memory, reports,
+  diagnostics, stats, and the rest of the `Controllers/` set.

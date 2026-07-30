@@ -1,6 +1,8 @@
 using System.Text.Json;
 using BotNexus.Extensions.Mcp.Protocol;
 using BotNexus.Extensions.Mcp.Transport;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Extensions.Mcp;
 
@@ -10,17 +12,29 @@ namespace BotNexus.Extensions.Mcp;
 /// </summary>
 public sealed class McpClient : IAsyncDisposable
 {
+    /// <summary>
+    /// Maximum number of <c>tools/list</c> pages walked before the client stops following
+    /// <c>nextCursor</c>. Guards against a misbehaving or hostile server paginating forever.
+    /// </summary>
+    internal const int MaxToolListPages = 100;
+
     private readonly IMcpTransport _transport;
     private readonly string _serverId;
+    private readonly ILogger _logger;
     private readonly SemaphoreSlim _protocolLock = new(1, 1);
     private int _nextId;
     private McpServerCapabilities? _capabilities;
     private bool _initialized;
 
-    public McpClient(IMcpTransport transport, string serverId)
+    /// <summary>Creates a client bound to a transport.</summary>
+    /// <param name="transport">Transport used to exchange JSON-RPC messages.</param>
+    /// <param name="serverId">Server identifier used for tool name prefixing and diagnostics.</param>
+    /// <param name="logger">Optional logger for protocol diagnostics.</param>
+    public McpClient(IMcpTransport transport, string serverId, ILogger? logger = null)
     {
         _transport = transport;
         _serverId = serverId;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     /// <summary>Gets the server identifier used for tool name prefixing.</summary>
@@ -77,7 +91,9 @@ public sealed class McpClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Lists all tools available on the MCP server.
+    /// Lists all tools available on the MCP server, following <c>nextCursor</c> pagination
+    /// until the server reports no further pages. Termination is driven solely by an absent
+    /// or empty <c>nextCursor</c> — a short page is not treated as end-of-list.
     /// </summary>
     public async Task<IReadOnlyList<McpToolDefinition>> ListToolsAsync(CancellationToken ct = default)
     {
@@ -86,29 +102,70 @@ public sealed class McpClient : IAsyncDisposable
         await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var request = new JsonRpcRequest
-            {
-                Id = Interlocked.Increment(ref _nextId),
-                Method = "tools/list",
-            };
+            var tools = new List<McpToolDefinition>();
+            string? cursor = null;
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            var pages = 0;
 
-            await _transport.SendAsync(request, ct).ConfigureAwait(false);
-            var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
-
-            if (response.Error is not null)
+            while (true)
             {
-                throw new McpException(
-                    $"MCP tools/list failed: {response.Error.Message}",
-                    response.Error.Code);
-            }
+                var request = new JsonRpcRequest
+                {
+                    Id = Interlocked.Increment(ref _nextId),
+                    Method = "tools/list",
+                    Params = cursor is null
+                        ? null
+                        : JsonSerializer.SerializeToElement(
+                            new McpToolsListParams { Cursor = cursor },
+                            JsonContext.Default.McpToolsListParams),
+                };
 
-            if (response.Result is JsonElement result)
-            {
+                await _transport.SendAsync(request, ct).ConfigureAwait(false);
+                var response = await _transport.ReceiveAsync(ct).ConfigureAwait(false);
+
+                if (response.Error is not null)
+                {
+                    throw new McpException(
+                        $"MCP tools/list failed: {response.Error.Message}",
+                        response.Error.Code);
+                }
+
+                pages++;
+
+                if (response.Result is not JsonElement result)
+                    break;
+
                 var toolsResult = JsonSerializer.Deserialize(result.GetRawText(), JsonContext.Default.McpToolsListResult);
-                return toolsResult?.Tools ?? [];
+                if (toolsResult is null)
+                    break;
+
+                if (toolsResult.Tools is { } page)
+                    tools.AddRange(page);
+
+                var next = toolsResult.NextCursor;
+                if (string.IsNullOrEmpty(next))
+                    break;
+
+                if (!seenCursors.Add(next))
+                {
+                    _logger.LogWarning(
+                        "MCP server '{ServerId}' repeated tools/list cursor '{Cursor}'; stopping pagination after {PageCount} page(s) with {ToolCount} tool(s).",
+                        _serverId, next, pages, tools.Count);
+                    break;
+                }
+
+                if (pages >= MaxToolListPages)
+                {
+                    _logger.LogWarning(
+                        "MCP server '{ServerId}' tools/list exceeded the {MaxPages}-page cap; tool list truncated at {ToolCount} tool(s) and may be incomplete.",
+                        _serverId, MaxToolListPages, tools.Count);
+                    break;
+                }
+
+                cursor = next;
             }
 
-            return [];
+            return tools;
         }
         finally
         {

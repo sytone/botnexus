@@ -142,30 +142,33 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
+    public async Task<SessionPageDto> GetSessionsAsync(
         string? agentId = null,
         int? limit = null,
         int offset = 0,
+        string? conversationId = null,
         CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
 
-        // #2499: the endpoint pages (default 50, max 200). Forward the paging arguments so callers
-        // can walk the whole roster; omit them entirely when not supplied so the historical
-        // single-argument call produces the exact same URL it always did.
-        var args = new List<string>(3);
+        // #2532: the endpoint filters in the store and returns an object carrying totalCount and
+        // hasMore. Paging arguments are only emitted when supplied so the historical
+        // single-argument call produces the same URL it always did.
+        var args = new List<string>(4);
         if (!string.IsNullOrWhiteSpace(agentId))
             args.Add($"agentId={Uri.EscapeDataString(agentId)}");
         if (limit is not null)
             args.Add($"limit={limit.Value}");
         if (offset > 0)
             args.Add($"offset={offset}");
+        if (!string.IsNullOrWhiteSpace(conversationId))
+            args.Add($"conversationId={Uri.EscapeDataString(conversationId)}");
 
         var query = args.Count == 0 ? string.Empty : "?" + string.Join("&", args);
-        var result = await _http.GetFromJsonAsync<List<SessionSummary>>(
+        var result = await _http.GetFromJsonAsync<SessionPageDto>(
             $"{_apiBaseUrl}sessions{query}",
             cancellationToken);
-        return result as IReadOnlyList<SessionSummary> ?? [];
+        return result ?? new SessionPageDto([], 0, false);
     }
 
     /// <inheritdoc />

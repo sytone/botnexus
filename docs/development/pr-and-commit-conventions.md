@@ -6,6 +6,8 @@ branch commits are discarded at merge. This page defines the required format for
 
 Applies to every contributor, human or agent.
 
+For what a good *issue* looks like, see [issue-conventions.md](issue-conventions.md).
+
 ## Why this is stricter than a typical repo
 
 An audit of 44 consecutive PRs found 100% Conventional-Commits-compliant titles but seventeen different

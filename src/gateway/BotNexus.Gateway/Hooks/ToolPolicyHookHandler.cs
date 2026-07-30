@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Security;
@@ -140,7 +137,7 @@ public sealed class ToolPolicyHookHandler : IHookHandler<BeforeToolCallEvent, Be
             var evt = SecurityEvent.ApprovalDecision(
                 action,
                 decision,
-                actor: new SecurityEventActor(SecurityActorKind.Agent, HashActor(agentId)),
+                actor: new SecurityEventActor(SecurityActorKind.Agent, ActorPseudonym.For(agentId)),
                 target: new SecurityEventTarget(SecurityTargetKind.Tool, toolName),
                 severity: decision == SecurityPolicyDecision.Deny
                     ? SecurityEventSeverity.Medium
@@ -151,18 +148,5 @@ public sealed class ToolPolicyHookHandler : IHookHandler<BeforeToolCallEvent, Be
         {
             _logger.LogWarning(ex, "Failed to record tool policy security event for action {Action}.", action);
         }
-    }
-
-    /// <summary>
-    /// Hashes an agent id to a short opaque hex token so security events carry a stable pseudonym
-    /// rather than the raw identifier. Matches <c>ExecApprovalManager</c>'s scheme.
-    /// </summary>
-    private static string HashActor(string id)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id));
-        var sb = new StringBuilder(16);
-        for (var i = 0; i < 8; i++)
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        return sb.ToString();
     }
 }

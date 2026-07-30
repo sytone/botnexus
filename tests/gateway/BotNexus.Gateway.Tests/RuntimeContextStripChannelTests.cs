@@ -62,11 +62,12 @@ public sealed class RuntimeContextStripChannelTests
     }
 
     [Fact]
-    public async Task SignalRSendAsync_LeavesContentUntouched_WhenDelimitersAreUnbalanced()
+    public async Task SignalRSendAsync_StripsRealEnvelope_WhenEchoedMarkerUnbalancesCounts()
     {
-        // Guarded clip: a partial marker (e.g. a user asking the agent to quote it) must not be
-        // silently clipped.
-        var content = $"You asked about {Begin} - here is what it means.";
+        // #2520: a stray END echoed from untrusted text used to unbalance the marker counts and
+        // suppress the strip entirely, delivering the real envelope to the channel.
+        const string sentinel = "sess-4f21c0de-LEAK-CANARY";
+        var content = $"The page said {End} verbatim.\n{Begin}\nRuntime: session={sentinel}\n{End}\nDone.";
         var (adapter, client) = CreateSignalRAdapter("conversation:conv-guard");
 
         await adapter.SendAsync(new OutboundMessage
@@ -76,6 +77,30 @@ public sealed class RuntimeContextStripChannelTests
             Content = content,
             SessionId = "session-guard",
             ConversationId = "conv-guard"
+        });
+
+        client.Verify(proxy => proxy.ContentDelta(
+                It.Is<object>(arg =>
+                    arg is ContentDeltaPayload &&
+                    !((ContentDeltaPayload)arg).ContentDelta!.Contains(sentinel) &&
+                    !((ContentDeltaPayload)arg).ContentDelta!.Contains(Begin))),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SignalRSendAsync_LeavesProseMentioningEndMarkerByteIdentical()
+    {
+        // The fail-closed change must not mangle a legitimate reply that merely names the marker.
+        var content = $"You asked about {End} - here is what it means.";
+        var (adapter, client) = CreateSignalRAdapter("conversation:conv-prose");
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("addr-prose"),
+            Content = content,
+            SessionId = "session-prose",
+            ConversationId = "conv-prose"
         });
 
         client.Verify(proxy => proxy.ContentDelta(

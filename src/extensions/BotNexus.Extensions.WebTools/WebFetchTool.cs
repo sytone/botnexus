@@ -136,7 +136,54 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     /// </summary>
     internal static void AssertNotPrivateOrImds(Uri uri)
     {
-        SsrfValidator.AssertSafe(uri);
+        AssertSafeWithGuidance(uri, null);
+    }
+
+    /// <summary>
+    /// Appended to loopback rejections only. Issue #2418: a terminal policy error with no
+    /// alternative caused one agent to retry the identical blocked gateway URL 116 times in a
+    /// week. The block itself is correct and unchanged - this only tells the caller where to go
+    /// instead, so the rejection is self-correcting rather than a retry trap.
+    /// </summary>
+    internal const string LoopbackGuidance =
+        " web_fetch is a generic OUTBOUND fetch tool and cannot be used to inspect this gateway "
+        + "or other services on this machine, so retrying this URL will always fail. To inspect "
+        + "the local gateway (for example /health or /api/logs/recent), use a sanctioned local "
+        + "mechanism instead: issue the request from the shell/exec tool against the local API.";
+
+    /// <summary>
+    /// Runs the shared SSRF policy and, when the rejected host is loopback, appends actionable
+    /// guidance to the message. Security behaviour is identical to calling
+    /// <see cref="SsrfValidator.AssertSafe"/> directly -- every URL blocked before is still
+    /// blocked, and non-loopback rejections keep their message byte-for-byte. The guidance lives
+    /// here rather than in <see cref="SsrfValidator"/> because only this tool knows it is an
+    /// outbound fetch tool; the same validator also guards webhooks where the advice is wrong.
+    /// </summary>
+    private static void AssertSafeWithGuidance(Uri uri, IReadOnlyList<string>? additionalBlockedHosts)
+    {
+        var result = SsrfValidator.Validate(uri, additionalBlockedHosts);
+        if (result.IsSafe)
+            return;
+
+        throw new ArgumentException(
+            IsLoopbackHost(uri.Host) ? result.Reason + LoopbackGuidance : result.Reason);
+    }
+
+    /// <summary>
+    /// True when <paramref name="host"/> is a loopback target: the literal name <c>localhost</c>,
+    /// any address in 127.0.0.0/8, or the IPv6 loopback <c>::1</c> (with or without brackets).
+    /// </summary>
+    private static bool IsLoopbackHost(string host)
+    {
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var hostToParse = host.StartsWith('[') && host.EndsWith(']')
+            ? host[1..^1]
+            : host;
+
+        return System.Net.IPAddress.TryParse(hostToParse, out var ip)
+            && System.Net.IPAddress.IsLoopback(ip);
     }
 
     /// <summary>
@@ -150,7 +197,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     {
         if (!_config.AllowPrivateNetworks)
         {
-            SsrfValidator.AssertSafe(uri, _config.AdditionalBlockedHosts);
+            AssertSafeWithGuidance(uri, _config.AdditionalBlockedHosts);
             return;
         }
 

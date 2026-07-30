@@ -70,4 +70,21 @@ public interface ICronStore
     /// the caller decides which of them are too old (or too far in the future) to be genuine.
     /// </summary>
     Task<IReadOnlyList<CronRun>> ListRunningRunsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Idempotently records a single <c>missed</c> run for the scheduled occurrence
+    /// <paramref name="scheduledOccurrenceUtc"/>. Returns <c>true</c> when a new history row was
+    /// written and <c>false</c> when an equivalent row already existed.
+    /// </summary>
+    /// <remarks>
+    /// Startup missed-run detection re-scans the window between a job's last real execution and
+    /// now on every gateway start. Because the missed-run path deliberately does not advance the
+    /// job's <c>last_run_at</c> (no execution occurred), the same window is rescanned after every
+    /// restart. Implementers must therefore key the row on <c>(jobId, scheduledOccurrenceUtc)</c>
+    /// so repeated scans converge instead of accumulating duplicate history (#2477). The row is
+    /// written already-terminal: <c>started_at</c> carries the scheduled occurrence rather than
+    /// the scan wall-clock, and scheduler-owned job bookkeeping (<c>last_run_*</c>) is untouched
+    /// because no execution actually happened.
+    /// </remarks>
+    Task<bool> TryRecordMissedRunAsync(JobId jobId, DateTimeOffset scheduledOccurrenceUtc, CancellationToken ct = default);
 }

@@ -172,6 +172,50 @@ Use this checklist:
 
 ---
 
+## Agent-id-shaped addresses (#1681, #2530)
+
+A `ChannelAddress` equal to the conversation's `AgentId` is **rejected at binding-persistence time**
+for every channel type except an explicit allow-list. `DefaultConversationRouter.ShouldPersistBinding`
+owns this rule and both binding-creation paths (new-conversation and explicit-`conversationId`
+bind-on-first-use) consult it.
+
+**Why the allow-list rather than a blanket ban.** The portal deliberately mints
+`ChannelAddress.From(agentId.Value)` in `GatewayHub` so every browser connection for an agent
+converges on one portal conversation regardless of the volatile SignalR connection id. That address
+is never used to reach a remote party -- the SignalR adapter delivers by group (`conversationId`) --
+so the binding is deliverable and must keep persisting, otherwise reconnect resolution via
+`ResolveByBindingAsync` breaks. `signalr` is therefore allow-listed.
+
+Every other channel type is an **external transport** whose adapter resolves a real remote
+destination out of the address (a Teams thread, a Telegram chat id, a Service Bus conversation
+reference). An agent id in that slot can never be delivered: fan-out walks the binding, sends a
+real envelope, and the relay drops it with `No conversation reference found for <agentId>`.
+
+**Rule for channel authors:** never derive a `ChannelAddress` from an `AgentId` for an external
+transport. If your channel needs a stable per-agent routing key and delivers by an internal group
+rather than by the address, add it to `AgentIdAddressableChannelTypes` with a comment justifying
+why the address is never dialled.
+
+### Disposition of pre-existing junk bindings
+
+The guard is preventative: it stops new junk bindings, but rows written before the fix remain on
+disk. The chosen disposition is **mute, not delete**, and it is **deferred to a follow-up** rather
+than shipped as part of the guard change:
+
+- **Mute over delete.** Setting `Mode = Muted` removes the row from `GetOutboundBindingsAsync`
+  (which already filters muted bindings), so the undeliverable fan-out stops immediately -- the
+  actual harm. Deleting rows is irreversible, and a binding that merely *looks* agent-id-shaped
+  could in principle be a legitimate external address for an agent whose id collides with a real
+  channel identifier. Muting is reversible and diagnosable; the row survives for forensics.
+- **Deferred.** A migration must run against live conversation stores and is a materially
+  different risk profile from a pure routing guard. It is tracked separately so the guard can ship
+  and stop the bleeding first.
+
+Until the migration lands, an operator can neutralise a known junk binding by muting it through the
+normal conversation-administration path.
+
+---
+
 ## See also
 
 - [gateway-flow.md](./gateway-flow.md) — sequence diagrams of the inbound and outbound paths.

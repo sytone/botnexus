@@ -11,8 +11,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -70,8 +68,9 @@ public sealed class SessionsController : ControllerBase
     /// When <c>true</c>, includes sealed and expired sessions. When <c>false</c> (default),
     /// only active and suspended sessions are returned.
     /// </param>
-    /// <param name="offset">Zero-based offset into the newest-first session list (default 0).</param>
+    /// <param name="offset">Zero-based offset into the newest-first <b>filtered</b> session list (default 0).</param>
     /// <param name="limit">Maximum number of sessions to return (default 50, max 200).</param>
+    /// <param name="conversationId">When set, only sessions linked to this conversation are returned (#2532 AC3).</param>
     /// <returns>The list result.</returns>
     [HttpGet]
     public async Task<ActionResult> List(
@@ -79,6 +78,7 @@ public sealed class SessionsController : ControllerBase
         [FromQuery] bool includeInactive = false,
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 50,
+        [FromQuery] string? conversationId = null,
         CancellationToken cancellationToken = default)
     {
         // #2411: this collection endpoint scales with session count, the one axis that grows
@@ -96,34 +96,33 @@ public sealed class SessionsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(agentId))
             normalizedAgentId = AgentId.From(agentId).Value;
 
-        IReadOnlyList<SessionSummary> summaries;
+        SessionSummaryPage page;
         try
         {
-            // Use the transcript-free summary read so the portal sidebar never pays for
-            // hydrating every session's full transcript just to render metadata. The slow
-            // path (ListAsync -> EnumerateSessions) materialised the whole history table -
-            // seconds on a large DB. ListSummariesAsync derives MessageCount from a COUNT(*)
-            // aggregate (#1581 fixed warmup the same way; this closes the REST/portal gap).
-            // DateTimeOffset.MinValue keeps the historical "return every session" contract;
-            // agent/status filtering is applied below to preserve the previous behaviour.
-            // DateTimeOffset.MinValue keeps the "no time window" contract, but the read is now
-            // bounded by an explicit page (#2411) instead of returning every session ever
-            // recorded. Agent/status filtering is applied below to preserve prior behaviour.
-            summaries = await _sessions.ListSummariesAsync(
-                DateTimeOffset.MinValue, boundedLimit, offset, cancellationToken);
+            // #2532: the agent and status filters are part of the STORE query, not applied to the
+            // page after it comes back. Filtering a page post-hoc put limit/offset in a different
+            // coordinate space from the rows the client received: a client advancing offset by the
+            // number of rows it got crept forward one row at a time and only terminated by walking
+            // the entire global session table (120+ requests observed in the wild). With the
+            // predicate in the store, offset addresses exactly the set the client is consuming.
+            //
+            // DateTimeOffset.MinValue keeps the historical "no time window" contract.
+            page = await _sessions.ListSummaryPageAsync(
+                new SessionSummaryQuery(
+                    DateTimeOffset.MinValue,
+                    normalizedAgentId,
+                    string.IsNullOrWhiteSpace(conversationId) ? null : conversationId,
+                    includeInactive,
+                    boundedLimit,
+                    offset),
+                cancellationToken);
         }
         catch (SessionStoreUnavailableException)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Session store temporarily unavailable. Please retry." });
         }
 
-        IEnumerable<SessionSummary> filtered = summaries;
-        if (normalizedAgentId is not null)
-            filtered = filtered.Where(s => string.Equals(s.AgentId, normalizedAgentId, StringComparison.Ordinal));
-        if (!includeInactive)
-            filtered = filtered.Where(s => s.Status is SessionStatus.Active or SessionStatus.Suspended);
-
-        var result = filtered.Select(s => new
+        var items = page.Items.Select(s => new
         {
             sessionId = s.SessionId,
             agentId = s.AgentId,
@@ -137,8 +136,19 @@ public sealed class SessionsController : ControllerBase
             messageCount = s.MessageCount,
             createdAt = s.CreatedAt,
             updatedAt = s.UpdatedAt
+        }).ToList();
+
+        // #2532 AC5: total/hasMore are the authoritative termination signal. Clients must not
+        // infer exhaustion from a short page - the server clamps limit to its own maximum, so
+        // "returned < requested" says nothing about whether more rows exist (#2499).
+        return Ok(new
+        {
+            sessions = items,
+            totalCount = page.TotalCount,
+            hasMore = page.HasMore,
+            offset,
+            limit = boundedLimit
         });
-        return Ok(result);
     }
 
     /// <summary>
@@ -506,7 +516,7 @@ public sealed class SessionsController : ControllerBase
                 "gateway.session.access.denied",
                 SecurityEventOutcome.Denied,
                 SecurityEventSeverity.Medium,
-                Actor: new SecurityEventActor(SecurityActorKind.Operator, HashActor(callerId)),
+                Actor: new SecurityEventActor(SecurityActorKind.Operator, ActorPseudonym.For(callerId)),
                 Target: new SecurityEventTarget(SecurityTargetKind.Session, sessionReference),
                 Policy: SecurityPolicyDecision.Deny,
                 Control: SecurityControlFamily.Authorization);
@@ -519,19 +529,6 @@ public sealed class SessionsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Hashes a caller id to a short opaque hex token so security events carry a stable pseudonym
-    /// instead of the raw identity. SHA-256 truncated to 8 bytes is enough for correlation; it is
-    /// not reversible and never stores the plaintext.
-    /// </summary>
-    private static string HashActor(string id)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(id ?? string.Empty));
-        var sb = new StringBuilder(16);
-        for (var i = 0; i < 8; i++)
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        return sb.ToString();
-    }
 
     /// <summary>Deletes a session.</summary>
     /// <summary>

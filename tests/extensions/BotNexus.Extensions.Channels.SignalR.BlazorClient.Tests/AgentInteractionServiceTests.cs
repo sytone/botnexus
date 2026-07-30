@@ -232,8 +232,12 @@ public sealed class AgentInteractionServiceTests
                     DateTimeOffset.UtcNow.AddHours(-1),
                     DateTimeOffset.UtcNow.AddMinutes(-1))
             ]);
-        _restClient.GetSessionsAsync("agent-1", Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([
+        // #2532 AC2: RefreshConversationsAsync no longer enumerates sessions, so this stub is now
+        // unreached. It is left in place deliberately - the assertion below is about conversation
+        // KEYING (repeated cron runs must collapse onto one stable conversation id), and leaving
+        // the session data available proves the keying does not depend on having dropped it.
+        _restClient.GetSessionsAsync("agent-1", Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto([
                 new SessionSummary(
                     firstRunSessionId,
                     "agent-1",
@@ -254,7 +258,7 @@ public sealed class AgentInteractionServiceTests
                     false,
                     DateTimeOffset.UtcNow.AddMinutes(-3),
                     DateTimeOffset.UtcNow.AddMinutes(-1))
-            ]);
+            ], TotalCount: 2, HasMore: false));
 
         await _service.RefreshConversationsAsync("agent-1");
 
@@ -725,8 +729,8 @@ public sealed class AgentInteractionServiceTests
             {
                 new("conv-active", "agent-1", "Active", false, "Active", "sess-active", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
             });
-        _restClient.GetSessionsAsync(Arg.Any<string>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new List<SessionSummary>() as IReadOnlyList<SessionSummary>);
+        _restClient.GetSessionsAsync(Arg.Any<string>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto([], 0, false));
 
         // This should NOT trigger a history load because conversation is streaming
         await _service.RefreshConversationsAsync("agent-1");

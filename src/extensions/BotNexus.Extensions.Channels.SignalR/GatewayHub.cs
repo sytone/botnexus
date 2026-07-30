@@ -1269,6 +1269,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Conversation-first routing: use agentId as the channel address so every connection
         // from the same agent routes to the same portal conversation, regardless of SignalR
         // connection ID.
+        //
+        // #2530: the agent-id address is only safe when paired with the SignalR channel type,
+        // because the SignalR adapter delivers by conversation group and never dials the
+        // address. The caller-supplied channelType is a client-declared *preference* (the
+        // portal forwards the agent's configured ChannelType) and must NOT become the binding
+        // identity -- doing so mints e.g. a 'telegram' or 'servicebus' binding addressed by the
+        // agent id, which fan-out then sends a real, undeliverable envelope to. This hub IS the
+        // SignalR transport, so the binding identity is always signalr.
+        var bindingChannelType = SignalRChannel;
         var channelAddress = ChannelAddress.From(agentId.Value);
         var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
             ? (ConversationId?)null
@@ -1277,7 +1286,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             agentId,
             new InboundMessage
             {
-                ChannelType = channelType,
+                ChannelType = bindingChannelType,
                 ChannelAddress = channelAddress,
                 SenderId = Context.ConnectionId,
                 Sender = CitizenId.Of(UserId.From(GetAuthenticatedUserId())),
@@ -1286,7 +1295,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 // carries the typed RequestedAgentId + RequestedConversationId explicitly.
             },
             new ChannelSource(
-                channelType,
+                bindingChannelType,
                 channelAddress,
                 Context.ConnectionId),
             RequestedConversationId: typedConversationId,

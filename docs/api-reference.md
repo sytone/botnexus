@@ -681,6 +681,99 @@ X-Api-Key: your-api-key
 - An extension that declares multiple types appears once per type in the response.
 - Extensions with no declared types use `"unknown"` as the type.
 
+### Extension Details
+
+**Endpoint:** `GET /api/extensions/details`
+
+**Description:** List loaded extensions with their full manifest details, including the configuration field schema each extension declares in its `botnexus-extension.json`. Unlike the flat `GET /api/extensions` listing, each extension appears exactly once regardless of how many types it declares.
+
+**Request:**
+```http
+GET /api/extensions/details
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "id": "botnexus-qmd",
+    "name": "QMD",
+    "version": "1.0.0",
+    "enabled": true,
+    "extensionTypes": ["tool"],
+    "registeredServices": ["IQmdSearchService"],
+    "configSchema": [
+      { "id": "enabled", "type": "bool", "default": "false", "required": false }
+    ],
+    "assemblyFileName": "BotNexus.Extensions.Qmd.dll"
+  }
+]
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Extension ID from the manifest |
+| `name` | string | Extension display name |
+| `version` | string | Extension version |
+| `enabled` | boolean | Whether the extension is enabled; a disabled extension is discovered but not loaded |
+| `extensionTypes` | string[] | Extension type identifiers declared in the manifest |
+| `registeredServices` | string[] | Service contract names registered by this extension |
+| `configSchema` | object[] | Configuration field schema declared by this extension (`id`, `type`, `default`, `required`, ...), used to validate operator config and apply defaults at startup |
+| `assemblyFileName` | string | Entry assembly filename (not full path) |
+
+### Extension Load Health
+
+**Endpoint:** `GET /api/extensions/health`
+
+**Description:** Report the outcome of the startup extension-load pass. This is the boot smoke gate's assertion surface: it turns a silent extension-assembly-load regression - which previously left `/health` green and surfaced only as a generic timeout - into an explicit, named failure.
+
+**Request:**
+```http
+GET /api/extensions/health
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK - every attempted extension loaded
+```json
+{
+  "status": "ok",
+  "loadedCount": 7,
+  "failedCount": 0,
+  "failed": []
+}
+```
+
+**Response:** 503 Service Unavailable - at least one extension failed to load
+```json
+{
+  "status": "failed",
+  "loadedCount": 6,
+  "failedCount": 1,
+  "failed": [
+    {
+      "id": "botnexus-qmd",
+      "error": "Could not load file or assembly 'BotNexus.Extensions.Qmd'"
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `"ok"` when every attempted extension loaded; otherwise `"failed"` |
+| `loadedCount` | int | Number of extensions that loaded successfully at boot |
+| `failedCount` | int | Number of extensions that failed to load at boot |
+| `failed` | object[] | Per-extension load failures; each entry carries the `id` that failed and the actual `error` (typically naming the missing or diverged assembly/type) |
+
+**Notes:**
+- The report reflects the **startup** load pass, so it is stable for the lifetime of the process.
+- The non-200 status code makes this endpoint usable directly as a container or deployment readiness probe.
+
 ---
 
 ## Chat
@@ -1123,6 +1216,120 @@ X-Api-Key: your-api-key
 
 ---
 
+### Export Session Transcript (Markdown)
+
+**Endpoint:** `GET /api/sessions/{sessionId}/export/markdown`
+
+**Description:** Render the session's history as a downloadable markdown transcript document. When `gateway.transcriptExport.redactSecrets` is enabled, secret-shaped values are redacted during rendering.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/export/markdown
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — `text/markdown` file attachment named `session-{sessionId}.md`.
+
+**Error Responses:**
+- `204 No Content` — Session exists but has no renderable transcript
+- `404 Not Found` — Session does not exist
+
+---
+
+### List Live Sub-Agents for a Session
+
+**Endpoint:** `GET /api/sessions/{sessionId}/subagents`
+
+**Description:** List the **live runtime** sub-agent state for one parent session. Contrast with `GET /api/sessions/{sessionId}/subagents/history` (persisted rows, including finished runs) and the platform-wide `GET /api/subagents` feed.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/subagents
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "subAgentId": "sub-abc123",
+    "parentSessionId": "session-abc123",
+    "childSessionId": "session-sub-abc123",
+    "name": "docs-audit",
+    "parentAgentId": "farnsworth",
+    "childAgentId": "farnsworth",
+    "childConversationId": "conv-9f2",
+    "task": "Audit the API reference for missing endpoints",
+    "model": "claude-opus-5",
+    "archetype": "Researcher",
+    "status": "Running",
+    "startedAt": "2026-07-26T10:30:00Z",
+    "completedAt": null,
+    "turnsUsed": 4,
+    "resultSummary": null
+  }
+]
+```
+
+A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
+### Get Sub-Agent History for a Session
+
+**Endpoint:** `GET /api/sessions/{sessionId}/subagents/history`
+
+**Description:** Return persisted sub-agent session rows for the given parent session, ordered by start time ascending. Unlike the live listing above, this includes completed and failed runs.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/subagents/history
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — an array of the same `SubAgentSessionSummary` shape returned by [List Sub-Agent Runs](#list-sub-agent-runs), scoped to this parent session.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
+### Kill a Sub-Agent
+
+**Endpoint:** `DELETE /api/sessions/{sessionId}/subagents/{subAgentId}`
+
+**Description:** Terminate a sub-agent run owned by the specified session. This is a state mutation and enforces the same per-session caller-identity gate as Delete and Suspend, so a caller cannot terminate a run owned by a different caller.
+
+**Parameters:**
+- `sessionId` (string, path) — Parent session ID
+- `subAgentId` (string, path) — Sub-agent ID to terminate
+
+**Request:**
+```http
+DELETE /api/sessions/session-abc123/subagents/sub-abc123
+X-Api-Key: your-api-key
+```
+
+**Response:** 204 No Content
+
+**Error Responses:**
+- `403 Forbidden` — Caller does not own the session
+- `404 Not Found` — Session or sub-agent does not exist
+
+---
+
 ### Get Session Metadata
 
 **Endpoint:** `GET /api/sessions/{sessionId}/metadata`
@@ -1243,6 +1450,40 @@ X-Api-Key: your-api-key
 **Error Responses:**
 - `404 Not Found` — Session does not exist
 - `409 Conflict` — Session is not in `Suspended` state
+
+---
+
+### Seal Session
+
+**Endpoint:** `PATCH /api/sessions/{sessionId}/seal`
+
+**Description:** Seal a finished **sub-agent** session so it can never be reused. Only sessions whose type is a sub-agent session are eligible, and only once the run has ended — an `Active` or `Suspended` session cannot be sealed. The transition is a compare-and-set, so a concurrent transcript append is not rolled back and a competing seal/reset is reported rather than silently overwritten. Enforces the same per-session caller-identity gate as the metadata endpoints.
+
+**Parameters:**
+- `sessionId` (string, path) — Sub-agent session ID
+
+**Request:**
+```http
+PATCH /api/sessions/session-sub-abc123/seal
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "sessionId": "session-sub-abc123",
+  "status": "Sealed",
+  "updatedAt": "2026-07-26T10:42:00Z"
+}
+```
+
+**Response:** 204 No Content — Session is already sealed (idempotent).
+
+**Error Responses:**
+- `400 Bad Request` — Session is not a sub-agent session
+- `403 Forbidden` — Caller does not own the session
+- `404 Not Found` — Session does not exist
+- `409 Conflict` — Session is `Active`/`Suspended`, or is in another state that cannot transition to `Sealed`
 
 ---
 
@@ -1656,6 +1897,51 @@ All non-exempt API responses include standard rate limit headers:
 On `429 Too Many Requests`, the same headers are returned with `Remaining=0`.
 
 Headers are absent when rate limiting is disabled or on exempt paths (e.g., health check).
+
+---
+
+### Nav Order (Portal Sidebar)
+
+The portal left-nav ordering model. The gateway stores per-item order overrides server-side so
+they roam with the user across browsers and devices; the effective order is the built-in defaults
+layered with those overrides. Lower order numbers render higher in the sidebar.
+
+#### List Nav Order
+
+```http
+GET /api/nav-order
+```
+
+Returns every built-in nav item with its effective order, ascending.
+
+```json
+[
+  { "key": "conversations", "order": 10 },
+  { "key": "tools", "order": 20 }
+]
+```
+
+#### Set a Nav Order Override
+
+```http
+PUT /api/nav-order/{key}
+PATCH /api/nav-order/{key}
+Content-Type: application/json
+
+{ "order": 5 }
+```
+
+`{key}` is the stable nav key (for example `tools`). Returns the full updated ordered list.
+An empty or whitespace key returns `400 Bad Request`.
+
+#### Reset a Nav Key
+
+```http
+DELETE /api/nav-order/{key}
+```
+
+Removes the user override for `{key}`, restoring its built-in default. Returns the full updated
+ordered list.
 
 ---
 

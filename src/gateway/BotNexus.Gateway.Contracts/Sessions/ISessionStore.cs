@@ -290,6 +290,34 @@ public interface ISessionStore
     }
 
     /// <summary>
+    /// Returns one page of <see cref="SessionSummary"/> records matching <paramref name="query"/>,
+    /// together with the total size of the matching set (#2532).
+    /// </summary>
+    /// <remarks>
+    /// This is the read path <c>GET /api/sessions</c> uses. It exists because
+    /// <see cref="ListSummariesAsync"/> can only page the <b>store</b>: callers that then filtered
+    /// the page by agent or status in memory were paging one set and consuming another, so a
+    /// client walking offsets advanced through the global session table one matching row at a time
+    /// (issue #2532). Here the agent/status predicate is part of the query, so
+    /// <see cref="SessionSummaryQuery.Offset"/> always addresses the FILTERED set.
+    /// <para>
+    /// The default implementation filters in memory over <see cref="ListAsync"/> so non-SQLite
+    /// stores (File, InMemory, test doubles) keep working. The SQLite store overrides it to push
+    /// the status predicate and the window into SQL.
+    /// </para>
+    /// </remarks>
+    /// <param name="query">The filter and window to apply.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    async Task<SessionSummaryPage> ListSummaryPageAsync(
+        SessionSummaryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        return SessionSummaryWindow.ApplyQuery(sessions.Select(SessionSummary.FromSession), query);
+    }
+
+    /// <summary>
     /// Lists sessions for a specific agent filtered by channel type,
     /// ordered by created time descending (newest first).
     /// </summary>

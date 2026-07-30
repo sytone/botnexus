@@ -92,6 +92,23 @@ public sealed class ServiceBusChannelOptions
     public int MaxConcurrentCalls { get; set; } = 1;
 
     /// <summary>
+    /// Maximum wall-clock duration, in minutes, for which the processor keeps automatically
+    /// renewing a message lock while the agent turn is still running. The Azure SDK default is
+    /// five minutes, which is shorter than many agent turns; when it lapses the completion call
+    /// fails with a lock-lost error and Service Bus redelivers work that already succeeded.
+    /// Set to zero to disable automatic renewal entirely (not recommended).
+    /// </summary>
+    [Display(
+        Name = "Max auto lock renewal minutes",
+        Description = "How long the processor keeps renewing a message lock while an agent turn runs.",
+        GroupName = "Service Bus",
+        Order = 5)]
+    [DefaultValue(30)]
+    [Range(0, 1440)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "service-bus", Order = 5)]
+    public int MaxAutoLockRenewalMinutes { get; set; } = 30;
+
+    /// <summary>
     /// Allow-list of sender IDs permitted to dispatch messages into the gateway.
     /// When non-empty, messages from senders not in this list are silently dropped.
     /// An empty list permits all senders.

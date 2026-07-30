@@ -13,6 +13,14 @@ namespace BotNexus.Cron.Actions;
 /// gateway process identity. The command is stored in <see cref="CronJob.ShellCommand"/> and must be
 /// non-null for command action types.
 ///
+/// Authorization (issue #2462): every execution passes through <see cref="ICommandCronAuthorizer"/>
+/// <b>before</b> <c>Process.Start()</c>. The gated event is <b>FIRING</b> - each scheduled or manual
+/// run - not <b>AUTHORING</b> (creating/updating a job that carries a shellCommand), which this
+/// change leaves unchanged. A denial throws, so the scheduler records a failed run carrying the
+/// denial reason and the subprocess is never started. The policy vocabulary is the existing
+/// exec/shell tool-boundary surface (<c>IToolPolicyProvider</c> / <c>ToolApprovalFallback</c>),
+/// not a second parallel model.
+///
 /// Process management:
 /// <list type="bullet">
 ///   <item>Uses <c>pwsh -NoProfile -c</c> as the default shell (cross-platform via .NET Process).</item>
@@ -43,6 +51,26 @@ public sealed class CommandCronAction : ICronAction
                 $"Cron job '{context.Job.Id}' has action type 'command' but ShellCommand is null or empty.");
 
         var logger = context.Services.GetService<ILogger<CommandCronAction>>();
+
+        // FIRING gate (#2462): evaluated on every execution, before any process is started.
+        // Fails closed - if no authorizer is registered we construct the default one, which itself
+        // denies when the shared tool policy provider is absent.
+        var authorizer = context.Services.GetService<ICommandCronAuthorizer>()
+            ?? new ToolPolicyCommandCronAuthorizer(
+                context.Services.GetService<BotNexus.Gateway.Abstractions.Security.IToolPolicyProvider>(),
+                context.Services.GetService<ILogger<ToolPolicyCommandCronAuthorizer>>());
+
+        var decision = authorizer.AuthorizeFiring(context.Job, command);
+        if (!decision.Allowed)
+        {
+            logger?.LogError(
+                "CommandCronAction: DENIED command execution for job '{JobId}': {Reason}. No process was started.",
+                context.Job.Id, decision.Reason);
+
+            throw new UnauthorizedAccessException(
+                $"Cron command job '{context.Job.Id}' was denied by the command authorization policy: {decision.Reason}");
+        }
+
         var timeoutSeconds = ResolveTimeout(context.Job);
 
         logger?.LogInformation(

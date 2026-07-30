@@ -55,9 +55,9 @@ public sealed class PortalLoadServiceTests
         _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
             .Returns(new List<ConversationSummaryDto>());
 
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new List<SessionSummary>
-            {
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto(
+            [
                 new(
                     SessionId: staleCronSessionId,
                     AgentId: "agent-1",
@@ -67,7 +67,7 @@ public sealed class PortalLoadServiceTests
                     MessageCount: 0,
                     CreatedAt: DateTimeOffset.UtcNow.AddDays(-1),
                     UpdatedAt: DateTimeOffset.UtcNow.AddDays(-1))
-            });
+            ], TotalCount: 1, HasMore: false));
 
         // The key: session history returns 404 for the deleted cron session
         _restClient.GetSessionHistoryAsync(staleCronSessionId, Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -120,8 +120,8 @@ public sealed class PortalLoadServiceTests
                 new("conv-1", "agent-1", "Chat", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
             });
 
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new List<SessionSummary>());
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto([], 0, false));
 
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns<ConversationHistoryResponseDto?>(_ =>
@@ -158,8 +158,8 @@ public sealed class PortalLoadServiceTests
             .Returns([new AgentSummary("agent-1", "Beacon", Emoji: "\U0001F4E1", Description: "Signals and situational awareness", IsBuiltIn: false)]);
         _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
             .Returns(new List<ConversationSummaryDto>());
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new List<SessionSummary>());
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto([], 0, false));
 
         await _service.InitializeAsync("http://localhost:5000/hub/gateway");
 
@@ -206,8 +206,8 @@ public sealed class PortalLoadServiceTests
                     DateTimeOffset.UtcNow.AddMinutes(-15),
                     DateTimeOffset.UtcNow.AddMinutes(-1))
             ]);
-        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([]);
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto([], 0, false));
         _restClient.GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("fresh-conv", 0, 0, 200, []));
 

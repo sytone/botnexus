@@ -302,6 +302,35 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SendMessage_NeverPersistsAgentIdBindingOnAForeignChannelType()
+    {
+        // #2530: the hub mints ChannelAddress.From(agentId) as its conversation-first routing
+        // key. That is only safe on the signalr channel type, whose adapter delivers by
+        // conversation group and never dials the address. The channelType argument is a
+        // client-declared preference; if it were used as the binding identity the hub would
+        // persist e.g. a 'telegram' binding addressed 'agent-a', and fan-out would send a real
+        // undeliverable envelope to it.
+        var conversationStore = new InMemoryConversationStore();
+        var hub = CreateHub(
+            orchestrator: new CapturingInboundMessageOrchestrator(),
+            conversationStore: conversationStore,
+            connectionId: "conn-1");
+
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("telegram"), "first");
+
+        var conversations = await conversationStore.ListAsync(AgentId.From("agent-a"), CancellationToken.None);
+        var bindings = conversations.SelectMany(c => c.ChannelBindings).ToList();
+
+        bindings.ShouldNotBeEmpty("the portal binding must still be persisted");
+        bindings.ShouldNotContain(
+            b => b.ChannelAddress.Value == "agent-a" && b.ChannelType.Value != "signalr",
+            "an agent-id address must never be bound to a non-signalr channel type");
+        bindings.ShouldContain(
+            b => b.ChannelAddress.Value == "agent-a" && b.ChannelType.Value == "signalr",
+            "the legitimate signalr portal binding must survive");
+    }
+
+    [Fact]
     public async Task GatewayHub_SendMessage_WithConversationId_ResolvesConversationSession()
     {
         const string defaultSessionId = "session-default";

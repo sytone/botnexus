@@ -1210,6 +1210,115 @@ public sealed class MainLayoutTests : IDisposable
         Assert.True(tools < chat, "Fallback default order must keep Tools above Chat.");
     }
 
+    // -- Home nav entry (#2535) ---------------------------------------------------------------
+
+    [Fact]
+    public void Nav_renders_home_entry_pointing_at_the_root_route()
+    {
+        var cut = RenderLayout();
+
+        var home = cut.Find("[data-testid='nav-home']");
+        Assert.Equal("a", home.TagName, ignoreCase: true);
+        Assert.Contains("sidebar-nav-item", home.ClassName);
+        // Blazor resolves an empty href against the base href, i.e. the application root.
+        Assert.Equal(string.Empty, home.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void Home_nav_entry_renders_first_in_default_order()
+    {
+        var cut = RenderLayout();
+
+        var markup = cut.Markup;
+        var home = markup.IndexOf("data-testid=\"nav-home\"", StringComparison.Ordinal);
+        var activity = markup.IndexOf("data-testid=\"nav-activity\"", StringComparison.Ordinal);
+        var tools = markup.IndexOf("data-testid=\"nav-tools\"", StringComparison.Ordinal);
+        Assert.True(home >= 0 && activity >= 0 && tools >= 0);
+        Assert.True(home < activity, "Home must render above Activity by default (#2535).");
+        Assert.True(home < tools, "Home must render above Tools by default (#2535).");
+    }
+
+    [Fact]
+    public void Root_route_marks_home_nav_entry_active()
+    {
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/");
+
+        var cut = RenderLayout();
+
+        Assert.Contains("active", cut.Find("[data-testid='nav-home']").ClassName);
+    }
+
+    [Fact]
+    public void Root_route_does_not_mark_other_nav_entries_active()
+    {
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/");
+
+        var cut = RenderLayout();
+
+        Assert.DoesNotContain("active", cut.Find("[data-testid='nav-activity']").ClassName);
+        Assert.DoesNotContain("active", cut.Find("a[href='chat']").ClassName);
+        Assert.DoesNotContain("active", cut.Find("a[href='configuration']").ClassName);
+        Assert.DoesNotContain("active", cut.Find("a[href='agents']").ClassName);
+    }
+
+    [Fact]
+    public void Non_root_route_does_not_mark_home_nav_entry_active()
+    {
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/activity");
+
+        var cut = RenderLayout();
+
+        Assert.DoesNotContain("active", cut.Find("[data-testid='nav-home']").ClassName);
+        // Activity's own highlighting is unchanged by the addition of Home.
+        Assert.Contains("active", cut.Find("[data-testid='nav-activity']").ClassName);
+    }
+
+    [Fact]
+    public void Stored_nav_order_predating_home_still_surfaces_home_in_its_default_position()
+    {
+        // A user order persisted before #2535 has no "home" key at all. Home must still render, and
+        // at its default position (above Activity), not appended to the bottom of the nav.
+        _navOrderHandler.SetOrder("""
+            [
+              { "key": "activity", "order": 10 },
+              { "key": "tools", "order": 20 },
+              { "key": "chat", "order": 30 },
+              { "key": "configuration", "order": 40 },
+              { "key": "skills", "order": 50 },
+              { "key": "agents", "order": 60 },
+              { "key": "cron", "order": 70 }
+            ]
+            """);
+
+        var cut = RenderLayout();
+
+        cut.WaitForAssertion(() =>
+        {
+            var markup = cut.Markup;
+            var home = markup.IndexOf("data-testid=\"nav-home\"", StringComparison.Ordinal);
+            var activity = markup.IndexOf("data-testid=\"nav-activity\"", StringComparison.Ordinal);
+            var cron = markup.IndexOf("data-testid=\"nav-cron-jobs\"", StringComparison.Ordinal);
+            Assert.True(home >= 0, "A stored order predating #2535 must not drop the Home nav item.");
+            Assert.True(home < activity, "Home must be merged in at its default position, above Activity.");
+            Assert.True(home < cron, "Home must not be appended to the bottom of the nav.");
+        });
+    }
+
+    [Fact]
+    public void Home_nav_icon_is_distinct_from_the_agents_nav_icon()
+    {
+        var cut = RenderLayout();
+
+        var home = cut.Find("[data-testid='nav-home']").TextContent;
+        var agents = cut.Find("a[href='agents']").TextContent;
+        Assert.Contains("\U0001F3E0", home);
+        Assert.DoesNotContain("\U0001F916", home);
+        Assert.Contains("\U0001F916", agents);
+    }
+
     /// <summary>
     /// Controllable fake nav-order source. Returns the JSON body configured via
     /// <see cref="SetOrder"/> for GET /api/nav-order, defaulting to the built-in effective order.

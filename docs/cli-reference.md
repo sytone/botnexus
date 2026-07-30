@@ -82,18 +82,19 @@ You should see the root command help listing all available subcommands.
 30. [satellite](#satellite) — Manage satellite nodes
 31. [doctor](#doctor) — Run the complete CLI diagnostic suite
 32. [doctor config](#doctor-config) — Guided config migration
-33. [locations](#locations) — Manage configured locations
-34. [update](#update) — Pull, build, and restart the gateway
-35. [memory](#memory) — Backfill agent memory stores
-36. [cron](#cron-command) — Manage cron jobs from the CLI
-37. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-38. [debug sessions](#debug-sessions) — Inspect session SQLite database
-39. [debug logs](#debug-logs) — Inspect log files
-40. [debug memory](#debug-memory) — Inspect agent memory directories
-41. [debug db](#debug-db) — Inspect raw databases
-42. [debug gateway](#debug-gateway) — Live gateway diagnostics
-43. [debug cron](#debug-cron) — Cron scheduler diagnostics
-44. [Examples](#examples)
+33. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+34. [locations](#locations) — Manage configured locations
+35. [update](#update) — Pull, build, and restart the gateway
+36. [memory](#memory) — Backfill agent memory stores
+37. [cron](#cron-command) — Manage cron jobs from the CLI
+38. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+39. [debug sessions](#debug-sessions) — Inspect session SQLite database
+40. [debug logs](#debug-logs) — Inspect log files
+41. [debug memory](#debug-memory) — Inspect agent memory directories
+42. [debug db](#debug-db) — Inspect raw databases
+43. [debug gateway](#debug-gateway) — Live gateway diagnostics
+44. [debug cron](#debug-cron) — Cron scheduler diagnostics
+45. [Examples](#examples)
 
 ---
 
@@ -1746,6 +1747,7 @@ botnexus doctor [OPTIONS]
 |--------|-------------|
 | `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
 | `--verbose` | Show detailed check output. |
+| `--cleanup-orphans` | After the diagnostic suite, reconcile persistent agent workspaces and delete orphaned directories. Prompts when interactive; in a non-interactive terminal nothing is deleted without this flag. |
 
 ### Subcommands
 
@@ -1753,6 +1755,7 @@ botnexus doctor [OPTIONS]
 |---------|-------------|
 | `locations` | Check that every resolved BotNexus location (config, logs, sessions, agents) is accessible. |
 | `config` | Guided config migration — detect and optionally apply missing settings. See [doctor config](#doctor-config). |
+| `agents` | Reconcile persistent agent workspaces with the configured agents. See [doctor agents](#doctor-agents). |
 
 ### Examples
 
@@ -1765,6 +1768,9 @@ botnexus doctor --target /opt/botnexus-prod
 
 # Verify location accessibility
 botnexus doctor locations
+
+# Run diagnostics, then reconcile and delete orphaned agent workspaces
+botnexus doctor --cleanup-orphans
 ```
 
 Checks include: config validity, provider reachability, directory/location accessibility, persistent and sub-agent workspace health, extension loading, and port availability. Add new checks to the registry so the aggregate suite can never silently omit one.
@@ -1805,6 +1811,39 @@ botnexus doctor config --dry-run
 
 # Apply every applicable fix non-interactively
 botnexus doctor config --yes
+```
+
+---
+
+## doctor agents
+
+Reconcile the persistent agent workspaces under the resolved agents root against the enabled agents declared in `config.json`. The command prints the reconciliation plan — which workspace directories correspond to configured agents and which are orphaned — and only deletes orphans when deletion has been explicitly approved.
+
+The same read-only reconciliation check runs as part of the aggregate [`doctor`](#doctor) suite, so drift is always reported even when nothing is removed.
+
+### Usage
+
+```powershell
+botnexus doctor agents [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--cleanup-orphans` | Delete orphaned persistent agent workspaces. Prompts for confirmation when interactive; without this flag a non-interactive run is strictly non-destructive. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus`. |
+
+> Without `--cleanup-orphans`, the command reports the plan and exits without deleting anything.
+
+### Examples
+
+```powershell
+# Report workspace drift without deleting anything
+botnexus doctor agents
+
+# Reconcile and remove orphaned workspaces
+botnexus doctor agents --cleanup-orphans
 ```
 
 ---
@@ -1886,7 +1925,38 @@ botnexus update [COMMAND] [OPTIONS]
 |--------|-----------|-------------|
 | `--source <DIR>` | `update`, `check` | Path to the BotNexus repository root. Defaults to `~/botnexus`. |
 | `--port <PORT>` | `update` | Gateway port to restart against. Defaults to `5005`. |
+| `--stash` | `update` | If the repo has uncommitted changes, stash them to a named, recoverable stash and continue. |
+| `--force` | `update` | If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive. |
 | `--verbose` | `update`, `check` | Show detailed update output. |
+
+`--stash` and `--force` cannot be combined (exit code `2`).
+
+### Uncommitted changes in the deployment repo
+
+The repo that `update` pulls into (`~/botnexus` by default) is a *deployed artifact*, not a
+development worktree, so local edits there are usually accidental. Before pulling, `update` runs
+`git status --porcelain` and acts on the result:
+
+- **Clean** - proceeds normally. Untracked files are reported but never block the update.
+- **Dirty, interactive** - lists every dirty path and prompts: stash / discard / abort.
+- **Dirty, non-interactive** - exits `3` with the dirty file list and copy-pasteable remediation.
+  Nothing is modified.
+
+`--stash` saves the work as `botnexus-update-<timestamp>` and prints the `git stash apply`
+command to restore it. The stash is **not** re-applied automatically after the pull, because a
+silent re-apply is how you get a surprise conflict in the middle of a gateway restart.
+
+Pull failures are classified (dirty tree / diverged / auth / network / other) and each gets its
+own remediation line instead of a raw git error.
+
+### Exit Codes (for `update`)
+
+| Code | Meaning |
+|------|--------|
+| `0` | Update applied |
+| `2` | Conflicting options (`--stash` with `--force`) |
+| `3` | Deployment repo has uncommitted changes; nothing was modified |
+| `130` | Cancelled |
 
 ### Exit Codes (for `update check`)
 
@@ -1904,6 +1974,12 @@ botnexus update check
 
 # Pull, build, and restart the gateway
 botnexus update
+
+# Update when the deployment repo has local edits you want to keep
+botnexus update --stash
+
+# Update and throw away local edits in the deployment repo
+botnexus update --force
 ```
 
 ---
