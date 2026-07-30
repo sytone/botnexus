@@ -28,11 +28,17 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
     private sealed class UnconfirmedKillProcess(Process process, string command, DateTimeOffset startedAt)
         : ManagedProcess(process, command, startedAt)
     {
+        private readonly Process _raw = process;
+
         public int KillAttempts { get; private set; }
 
+        // Stands in for a Windows tree kill where the root died but a descendant outlived the wait:
+        // the OS process is genuinely gone (so it is reap-eligible) yet exit was never CONFIRMED.
         protected override bool KillCore()
         {
             KillAttempts++;
+            try { if (!_raw.HasExited) _raw.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try { _raw.WaitForExit(5_000); } catch { /* best effort */ }
             return false;
         }
     }
@@ -40,7 +46,14 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
     private sealed class ConfirmedKillProcess(Process process, string command, DateTimeOffset startedAt)
         : ManagedProcess(process, command, startedAt)
     {
-        protected override bool KillCore() => true;
+        private readonly Process _raw = process;
+
+        protected override bool KillCore()
+        {
+            try { if (!_raw.HasExited) _raw.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try { _raw.WaitForExit(5_000); } catch { /* best effort */ }
+            return true;
+        }
     }
 
     private sealed record LogLine(LogLevel Level, string Message);
@@ -69,16 +82,16 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
         return manager;
     }
 
-    private static ProcessStartInfo ExitNowStartInfo() => OperatingSystem.IsWindows()
-        ? new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c exit /b 0", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true }
-        : new ProcessStartInfo { FileName = "/bin/bash", Arguments = "-c \"exit 0\"", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+    private static ProcessStartInfo LongRunnerStartInfo() => OperatingSystem.IsWindows()
+        ? new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c ping -n 60 127.0.0.1", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true }
+        : new ProcessStartInfo { FileName = "/bin/bash", Arguments = "-c \"sleep 60\"", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
 
+    /// <summary>Spawns a live process (so registration is not reaped before the kill under test).</summary>
     private T Spawn<T>(Func<Process, T> factory) where T : ManagedProcess
     {
-        var process = Process.Start(ExitNowStartInfo())!;
+        var process = Process.Start(LongRunnerStartInfo())!;
         var managed = factory(process);
         _spawned.Add(managed);
-        managed.WaitForExit(5_000);
         return managed;
     }
 
@@ -148,6 +161,7 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
         var confirmed = Spawn(p => new ConfirmedKillProcess(p, "confirmed", DateTimeOffset.UtcNow));
 
         unconfirmed.KillState.ShouldBe(ProcessKillState.NotRequested);
+        confirmed.KillState.ShouldBe(ProcessKillState.NotRequested);
 
         unconfirmed.Kill().ShouldBeFalse();
         confirmed.Kill().ShouldBeTrue();
