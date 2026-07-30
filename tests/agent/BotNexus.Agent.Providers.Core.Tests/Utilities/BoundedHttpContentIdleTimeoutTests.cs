@@ -27,10 +27,12 @@ public class BoundedHttpContentIdleTimeoutTests
         var content = new StreamContent(stream);
 
         var sw = Stopwatch.StartNew();
+        // Hang guard: without a working idle deadline this read never returns, so bound the wait
+        // and let the resulting TimeoutException fail the test by name rather than wedging the run.
         var act = async () => await BoundedHttpContent.ReadStringWithLimitAsync(
             content,
             maxBytes: 1024,
-            idleTimeout: TimeSpan.FromMilliseconds(200));
+            idleTimeout: TimeSpan.FromMilliseconds(200)).WaitAsync(TimeSpan.FromSeconds(10));
 
         var ex = await act.ShouldThrowAsync<ResponseBodyStalledException>();
         sw.Stop();
@@ -52,7 +54,7 @@ public class BoundedHttpContentIdleTimeoutTests
         var act = async () => await BoundedHttpContent.ReadFromJsonWithLimitAsync<SampleValue>(
             content,
             maxBytes: 1024,
-            idleTimeout: TimeSpan.FromMilliseconds(200));
+            idleTimeout: TimeSpan.FromMilliseconds(200)).WaitAsync(TimeSpan.FromSeconds(10));
 
         var ex = await act.ShouldThrowAsync<ResponseBodyStalledException>();
         ex.IdleTimeout.ShouldBe(TimeSpan.FromMilliseconds(200));
