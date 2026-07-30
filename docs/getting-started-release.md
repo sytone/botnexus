@@ -23,6 +23,8 @@ botnexus gateway start
 # Open the portal at http://localhost:5005
 ```
 
+> **No access to nuget.org?** If your network blocks the public NuGet feed, see [Installing Without nuget.org Access](guides/offline-install.md) for source-build, internal-mirror, and run-from-source alternatives.
+
 ---
 
 ## Prerequisites
