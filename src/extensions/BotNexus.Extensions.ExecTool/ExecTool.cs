@@ -32,7 +32,18 @@ public sealed class ExecTool : IAgentTool
     private readonly string? _workingDirectory;
     private readonly IFileSystem _fileSystem;
 
-    public ExecTool(string? workingDirectory = null, IFileSystem? fileSystem = null)
+    /// <summary>
+    /// Creates the tool bound to an agent workspace. <paramref name="workingDirectory"/> deliberately
+    /// has NO default value: that makes the constructor non-auto-resolvable, so the extension loader
+    /// skips registering this tool as a bare DI singleton and it can only reach an agent through
+    /// <see cref="ExecToolContributor"/>, which supplies the session workspace. Before #2416 the
+    /// optional parameter allowed a workspace-less singleton whose children inherited the gateway
+    /// process's current directory, diverging from the shell tool. Pass <see langword="null"/>
+    /// explicitly to opt into process-relative resolution (tests and standalone hosts).
+    /// </summary>
+    /// <param name="workingDirectory">The agent workspace, or null for process-relative resolution.</param>
+    /// <param name="fileSystem">File system used for Windows .cmd/.bat resolution.</param>
+    public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
@@ -54,6 +65,8 @@ public sealed class ExecTool : IAgentTool
     public Tool Definition => new(
         Name,
         "Execute a command with advanced process management: timeouts, background mode, stdin piping, and environment variable merging. " +
+        "Commands run in the agent workspace by default - the same directory the shell tool uses - so workspace-relative " +
+        "paths such as 'tmp/q.py' resolve correctly; pass workingDir to run elsewhere. " +
         "On Windows PowerShell: wrap a variable followed by ':' as ${var} inside double-quoted strings (or use single quotes); " +
         "no backtick line-continuations; for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
         "cp1252 by default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file " +
@@ -89,7 +102,7 @@ public sealed class ExecTool : IAgentTool
                 },
                 "workingDir": {
                   "type": "string",
-                  "description": "Working directory override."
+                  "description": "Working directory override. Defaults to the agent workspace; a relative value resolves against it."
                 }
               },
               "required": ["command"]
@@ -132,10 +145,17 @@ public sealed class ExecTool : IAgentTool
             }
         }
 
+        // #2416: resolve a relative workingDir against the agent workspace rather than the gateway
+        // process's current directory. Path.GetFullPath(relative) alone silently rebased onto the host
+        // process directory (the user profile on Windows), which is the same divergence from `shell`
+        // that broke the documented "write tmp/q.py then run it" recipe. A rooted path is unaffected,
+        // and with no workspace configured the previous process-relative behaviour is preserved.
         var workingDir = ReadOptionalString(arguments, "workingDir");
         if (!string.IsNullOrWhiteSpace(workingDir))
         {
-            workingDir = Path.GetFullPath(workingDir);
+            workingDir = _workingDirectory is not null
+                ? Path.GetFullPath(workingDir, _workingDirectory)
+                : Path.GetFullPath(workingDir);
         }
 
         IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
