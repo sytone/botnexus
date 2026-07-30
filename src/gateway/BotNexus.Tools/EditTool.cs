@@ -758,8 +758,33 @@ public sealed class EditTool : IAgentTool
                 trimmedEnd--;
             }
 
-            for (var i = lineStart; i < trimmedEnd; i++)
+            // Issue #2421: fold *leading* indentation too, not just trailing whitespace. Indent
+            // drift is the single most common cause of the "found 0" family - the #1555 diagnostic
+            // already proved the tool had located the right line and only indentation differed.
+            // Because the index map records original offsets, the file's own indentation stays
+            // outside the matched span and survives the replacement untouched.
+            var trimmedStart = lineStart;
+            while (trimmedStart < trimmedEnd && char.IsWhiteSpace(text[trimmedStart]) && text[trimmedStart] != '\n')
             {
+                trimmedStart++;
+            }
+
+            for (var i = trimmedStart; i < trimmedEnd; i++)
+            {
+                // Invisible characters that are never intentional in an edit anchor: ANSI escape
+                // sequences (pasted shell output) and zero-width marks (copy/paste artefacts).
+                // Dropping them emits nothing, so they simply do not participate in the match.
+                if (text[i] == '\u001B')
+                {
+                    i = SkipAnsiEscape(text, i, trimmedEnd);
+                    continue;
+                }
+
+                if (IsZeroWidth(text[i]))
+                {
+                    continue;
+                }
+
                 // Surrogate pairs (emoji, supplementary plane chars) must be emitted together.
                 // Processing a lone high surrogate through .Normalize() throws ArgumentException.
                 if (char.IsHighSurrogate(text[i]))
@@ -810,6 +835,45 @@ public sealed class EditTool : IAgentTool
 
         indexMap.Add(text.Length);
         return new NormalizedFuzzyText(normalized.ToString(), indexMap);
+    }
+
+    /// <summary>
+    /// Returns the index of the final character of the ANSI escape sequence beginning at
+    /// <paramref name="start"/>, so the caller's loop increment lands just past it. Handles the CSI
+    /// form (<c>ESC [ ... final-byte</c>) and degrades to consuming only the ESC itself for anything
+    /// unrecognised, which keeps a stray ESC from swallowing real content.
+    /// </summary>
+    private static int SkipAnsiEscape(string text, int start, int limit)
+    {
+        var index = start + 1;
+        if (index >= limit || text[index] != '[')
+        {
+            return start;
+        }
+
+        index++;
+        // Parameter and intermediate bytes, terminated by a final byte in the range @ to ~.
+        while (index < limit && text[index] is >= '\u0020' and <= '\u003F')
+        {
+            index++;
+        }
+
+        if (index < limit && text[index] is >= '\u0040' and <= '\u007E')
+        {
+            return index;
+        }
+
+        // Unterminated sequence - consume only the ESC so real text is never lost.
+        return start;
+    }
+
+    /// <summary>
+    /// Zero-width and byte-order marks that carry no visible meaning but break exact matching when
+    /// smuggled into an edit anchor by a copy/paste.
+    /// </summary>
+    private static bool IsZeroWidth(char value)
+    {
+        return value is '\u200B' or '\u200C' or '\u200D' or '\u2060' or '\uFEFF';
     }
 
     private static string NormalizeFuzzyText(char value)

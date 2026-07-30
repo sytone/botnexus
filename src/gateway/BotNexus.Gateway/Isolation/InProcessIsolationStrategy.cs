@@ -449,6 +449,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId.Value,
+            // #2548: give the agent core a diagnostic sink. AgentOptions.OnDiagnostic is the only
+            // channel the core has for non-fatal runtime conditions it deliberately swallows to
+            // keep the run alive (an event listener threw, an agent_end notification failed, a
+            // BeforeToolCall hook breached its fail-closed timeout). Nothing assigned it, so every
+            // one of those was discarded at the boundary and the operator saw nothing. Agent.Core
+            // deliberately carries no logging dependency, so the host - not the core - owns the
+            // forwarding: the delegate closes over the gateway's existing ILogger.
+            //
+            // Warning is the correct severity: these conditions are never expected, and each one
+            // means work was silently lost, but none of them failed the turn. Information would
+            // bury them in the normal hot-path stream; Error would page on a condition the agent
+            // already recovered from.
+            OnDiagnostic: diagnostic => _logger.LogWarning(
+                "Agent diagnostic for '{AgentId}' session '{SessionId}': {Diagnostic}",
+                descriptor.AgentId.Value, context.SessionId.Value, diagnostic),
             ToolTimeout: ResolveToolTimeout(descriptor),
             ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit),
             MaybeCompactAsync: maybeCompactAsync);

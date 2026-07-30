@@ -11,7 +11,7 @@ namespace BotNexus.Extensions.ExecTool.Tests;
 [Collection(ExecToolBackgroundRegistryCollection.Name)]
 public class ExecToolTests : IDisposable
 {
-    private readonly ExecTool _tool = new(fileSystem: new MockFileSystem());
+    private readonly ExecTool _tool = new(workingDirectory: null, fileSystem: new MockFileSystem());
 
     public void Dispose()
     {

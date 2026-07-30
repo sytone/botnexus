@@ -60,10 +60,27 @@ and `PATCH .../seal`.
 
 | Parameter | In | Type | Default | Notes |
 |-----------|----|------|---------|-------|
-| `agentId` | query | string | — | Filter to one agent. |
+| `agentId` | query | string | — | Filter to one agent. Applied in the **store query**, not post-hoc on a page. |
+| `conversationId` | query | string | — | When set, only sessions linked to this conversation are returned. |
 | `includeInactive` | query | bool | `false` | When `true`, includes sealed and expired sessions. When `false`, only `Active` and `Suspended` are returned. |
+| `offset` | query | int | `0` | Zero-based offset into the newest-first **filtered** set. |
+| `limit` | query | int | `50` | Clamped to a server maximum of `200`. |
 
-Returns `200 OK` with an array of projected summaries:
+Returns `200 OK` with a paging envelope:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `sessions` | array | The projected summaries for this page (see below). |
+| `totalCount` | int | Total rows matching the filters, across all pages. |
+| `hasMore` | bool | Authoritative termination signal. |
+| `offset` | int | The offset that was applied. |
+| `limit` | int | The **clamped** limit that was applied. |
+
+> **Do not infer exhaustion from a short page.** The server clamps `limit` to its own maximum,
+> so `sessions.length < limit` says nothing about whether more rows exist. Terminate on
+> `hasMore === false`.
+
+Each entry in `sessions` is a projected summary:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -82,7 +99,12 @@ Returns `503 Service Unavailable` with `{ "error": "Session store temporarily un
 when the session store is briefly unavailable.
 
 > This route deliberately uses the transcript-free summary read so the portal sidebar never
-> pays for hydrating every session's full transcript just to render metadata.
+> pays for hydrating every session's full transcript just to render metadata. The `agentId`,
+> `conversationId` and status predicates are pushed into the store query so that `offset`
+> addresses exactly the set the client is consuming — filtering a page *after* it came back
+> put `limit`/`offset` in a different coordinate space from the returned rows, so a client
+> advancing by the row count crept forward one row at a time and only terminated by walking
+> the entire global session table.
 
 ### `GET /api/sessions/stats`
 
