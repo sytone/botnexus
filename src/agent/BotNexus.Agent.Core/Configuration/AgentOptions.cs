@@ -16,6 +16,11 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (combined with Agent.FollowUp queues).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
 /// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
+/// <param name="BeforeToolCallTimeout">
+/// Wall-clock budget for the pre-tool-call policy hook (#2518). Defaults to 15 seconds when null.
+/// A hook that exceeds the budget fails CLOSED: the tool call is blocked. Set to
+/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> or a non-positive value to disable.
+/// </param>
 /// <param name="AfterToolCall">Optional post-tool-call hook for result transformation.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, sessionId, etc.).</param>
 /// <param name="SteeringMode">Controls steering message queue consumption (All or OneAtATime).</param>
@@ -61,4 +66,5 @@ public record AgentOptions(
     int? MaxRetryDelayMs = null,
     TimeSpan? ToolTimeout = null,
     Diagnostics.ClaimAuditOptions? ClaimAudit = null,
-    Func<CancellationToken, Task>? MaybeCompactAsync = null);
+    Func<CancellationToken, Task>? MaybeCompactAsync = null,
+    TimeSpan? BeforeToolCallTimeout = null);

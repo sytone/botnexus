@@ -636,7 +636,9 @@ public sealed class Agent
             skipInitialSteeringPoll,
             _options.ToolTimeout ?? TimeSpan.FromSeconds(120),
             _options.ClaimAudit,
-            _options.MaybeCompactAsync);
+            _options.MaybeCompactAsync,
+            _options.BeforeToolCallTimeout,
+            _options.OnDiagnostic);
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)
