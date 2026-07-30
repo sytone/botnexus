@@ -192,10 +192,14 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 CreatedAt = job.CreatedAt == default ? DateTimeOffset.UtcNow : job.CreatedAt,
 
                 // #2554: the activation stamp is store-owned. Whatever the caller put on the
-                // record is discarded and replaced with the instant this schedule actually became
-                // active. Honouring an inbound value would let an import or a crafted
-                // POST /api/cron backdate/forward-date catch-up ownership.
-                ScheduleActivatedAt = DateTimeOffset.UtcNow
+                // record is discarded. It is set to null ("unknown"), not to "now": a create is
+                // not a schedule *change*, and a fresh stamp here would clamp the scan floor for
+                // any job created with a pre-existing LastRunAt (restore/import/tests), silently
+                // suppressing legitimate missed runs. Null keeps create byte-identical to today's
+                // behaviour; the stamp appears only when UpdateDefinitionAsync observes Schedule
+                // or TimeZone actually change. Honouring an inbound value would let an import or
+                // a crafted POST /api/cron spoof catch-up ownership.
+                ScheduleActivatedAt = null
             };
 
             await using var connection = CreateConnection();
