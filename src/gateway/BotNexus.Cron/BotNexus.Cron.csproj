@@ -23,6 +23,7 @@
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
     <Compile Include="Prompts\PromptTemplateRenderer.cs" />
     <Compile Include="Actions\CommandCronAction.cs" />
+    <Compile Include="Actions\CommandCronAuthorizer.cs" />
     <Compile Include="Actions\AgentConverseCronAction.cs" />
      <Compile Include="Actions\MemoryDreamingCronAction.cs" />
     <Compile Include="Actions\SkillReviewCronAction.cs" />

@@ -36,14 +36,18 @@ responds directly (most stream their results back as server events instead).
 | `GetAgents()` → `AgentDescriptor[]` | List the agents registered on this gateway. |
 | `SendMessage(agentId, channelType, content, conversationId?)` → `SendMessageResult` | Send a text message to an agent, optionally targeting a specific conversation. |
 | `SendMessageWithMedia(agentId, channelType, content, contentParts)` → `SendMessageResult` | Send a message with attached media (`MediaContentPartDto[]`). |
+| `SubmitCanvasPrompt(agentId, channelType, content, conversationId)` → `SendMessageResult` | Submit an instruction composed by a canvas (#2449). A **separate verb** from `SendMessage` on purpose: the provenance kind (`MessageKind.CanvasSubmission`) is stamped by the **server** from the transport surface the call arrived on, so it cannot be forged by a caller-supplied field. `conversationId` is **required** — a canvas is attached to one conversation and may target only that conversation. |
 
 ### Steering a running agent
 
 | Method | Purpose |
 |---|---|
 | `Steer(agentId, sessionId, content, conversationId?)` → `SendMessageResult` | Queue a message to be applied at the next turn boundary of the running session. |
+| `SteerWithMedia(agentId, sessionId, content, contentParts, conversationId?)` → `SendMessageResult` | Steer overload carrying draft attachments (#2484). |
 | `InterruptAndSteer(agentId, sessionId, message)` → `bool` | Abort the in-flight step and steer immediately (the portal **Redirect** control). |
+| `InterruptAndSteerWithMedia(agentId, sessionId, message, contentParts)` → `bool` | Redirect overload carrying draft attachments (#2484). |
 | `FollowUp(agentId, sessionId, content)` | Queue a message to be delivered after the whole run loop completes. |
+| `FollowUpWithMedia(agentId, sessionId, content, contentParts)` | Follow-up overload carrying draft attachments (#2484). The composed message round-trips through the agent's pending-message queue (#2458) when a run is in flight, and is dispatched as content parts when the agent is idle — so attachments survive both branches. |
 | `Abort(agentId, sessionId)` | Stop the entire run loop immediately (the portal **Stop** control). |
 
 ### Session management

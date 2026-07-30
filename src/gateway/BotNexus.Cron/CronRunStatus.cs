@@ -30,4 +30,11 @@ public static class CronRunStatus
 
     /// <summary>The run has been started and stamped but has not yet reached a terminal state.</summary>
     public const string Running = "running";
+
+    /// <summary>
+    /// A scheduled occurrence that elapsed while the gateway was down and was never executed.
+    /// Written only by startup missed-run detection, which stamps the row with the scheduled
+    /// occurrence instant so the (job, occurrence) pair is a stable identity across restarts.
+    /// </summary>
+    public const string Missed = "missed";
 }

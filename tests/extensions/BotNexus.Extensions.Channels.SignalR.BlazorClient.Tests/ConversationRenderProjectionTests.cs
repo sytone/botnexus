@@ -62,7 +62,7 @@ public sealed class ConversationRenderProjectionTests
             { ConversationKind.HumanAgent,    ConversationSource.Channel, false, ConversationListGroup.Normal,         null },
             { ConversationKind.HumanAgent,    ConversationSource.Cron,    true,  ConversationListGroup.Scheduled,      "Cron" },
             { ConversationKind.HumanAgent,    ConversationSource.Webhook, true,  ConversationListGroup.Automated,      "Webhook" },
-            { ConversationKind.HumanAgent,    ConversationSource.Agent,   true,  ConversationListGroup.AgentInitiated, "Read-only" },
+            { ConversationKind.HumanAgent,    ConversationSource.Agent,   false, ConversationListGroup.Normal,         null },
 
             { ConversationKind.AgentAgent,    ConversationSource.Channel, true,  ConversationListGroup.AgentInitiated, "Read-only" },
             { ConversationKind.AgentAgent,    ConversationSource.Cron,    true,  ConversationListGroup.AgentInitiated, "Read-only" },
@@ -130,6 +130,109 @@ public sealed class ConversationRenderProjectionTests
         Assert.False(projection.ShowComposer);
 
         // The conversation itself is still attended — read-only here is purely a view concern.
+        Assert.False(projection.IsUnattended);
+    }
+
+    // ── #2526: an agent-minted user-facing conversation is NOT an observer row ───────
+
+    /// <summary>
+    /// The <c>conversation_new</c> tool mints <c>(Kind=HumanAgent, Source=Agent)</c>. The user is a
+    /// participant, so the thread must be writable. Before #2526 the unconditional
+    /// <c>Source is Agent</c> disjunct in <c>IsUnattended</c> made this cell read-only.
+    /// </summary>
+    [Theory]
+    [InlineData(SelectionSource.UserClick)]
+    [InlineData(SelectionSource.RouteNavigation)]
+    [InlineData(SelectionSource.Bootstrap)]
+    public void AgentMintedUserFacingConversation_IsWritableAndNormallyGrouped(SelectionSource selection)
+    {
+        var conversation = new ConversationState
+        {
+            ConversationId = "c-1",
+            Kind = ConversationKind.HumanAgent,
+            Source = ConversationSource.Agent
+        };
+
+        var projection = conversation.Project(selection);
+
+        Assert.False(projection.IsUnattended);
+        Assert.False(projection.IsReadOnly);
+        Assert.True(projection.ShowComposer);
+        Assert.Equal(ConversationListGroup.Normal, projection.Group);
+        Assert.Null(projection.Badge);
+    }
+
+    /// <summary>
+    /// #2243/#2248/#2299 guard: loosening the <c>Source</c> axis must not make any genuine
+    /// agent-to-agent or sub-agent thread writable, whatever triggered it.
+    /// </summary>
+    [Theory]
+    [InlineData(ConversationKind.AgentAgent, ConversationSource.Channel)]
+    [InlineData(ConversationKind.AgentAgent, ConversationSource.Cron)]
+    [InlineData(ConversationKind.AgentAgent, ConversationSource.Webhook)]
+    [InlineData(ConversationKind.AgentAgent, ConversationSource.Agent)]
+    [InlineData(ConversationKind.AgentSubAgent, ConversationSource.Channel)]
+    [InlineData(ConversationKind.AgentSubAgent, ConversationSource.Cron)]
+    [InlineData(ConversationKind.AgentSubAgent, ConversationSource.Webhook)]
+    [InlineData(ConversationKind.AgentSubAgent, ConversationSource.Agent)]
+    public void AgentPairedConversations_StayReadOnlyAndAgentInitiated(
+        ConversationKind kind,
+        ConversationSource source)
+    {
+        var conversation = new ConversationState { ConversationId = "c-1", Kind = kind, Source = source };
+
+        var projection = conversation.Project(SelectionSource.UserClick);
+
+        Assert.True(projection.IsUnattended);
+        Assert.True(projection.IsReadOnly);
+        Assert.False(projection.ShowComposer);
+        Assert.Equal(ConversationListGroup.AgentInitiated, projection.Group);
+        Assert.Equal("Read-only", projection.Badge);
+    }
+
+    /// <summary>Cron and webhook runs stay unattended regardless of pairing (#2526 must not widen).</summary>
+    [Theory]
+    [InlineData(ConversationSource.Cron, ConversationListGroup.Scheduled, "Cron")]
+    [InlineData(ConversationSource.Webhook, ConversationListGroup.Automated, "Webhook")]
+    public void CronAndWebhookConversations_StayUnattendedAndReadOnly(
+        ConversationSource source,
+        ConversationListGroup expectedGroup,
+        string expectedBadge)
+    {
+        var conversation = new ConversationState
+        {
+            ConversationId = "c-1",
+            Kind = ConversationKind.HumanAgent,
+            Source = source
+        };
+
+        var projection = conversation.Project(SelectionSource.UserClick);
+
+        Assert.True(projection.IsUnattended);
+        Assert.True(projection.IsReadOnly);
+        Assert.False(projection.ShowComposer);
+        Assert.Equal(expectedGroup, projection.Group);
+        Assert.Equal(expectedBadge, projection.Badge);
+    }
+
+    /// <summary>
+    /// The observer-view selection still forces read-only even for an agent-minted user
+    /// conversation, so #2299's "view sub-agent" behaviour is unchanged.
+    /// </summary>
+    [Fact]
+    public void AgentMintedUserFacingConversation_IsStillReadOnly_UnderSubAgentViewSelection()
+    {
+        var conversation = new ConversationState
+        {
+            ConversationId = "c-1",
+            Kind = ConversationKind.HumanAgent,
+            Source = ConversationSource.Agent
+        };
+
+        var projection = conversation.Project(SelectionSource.SubAgentView);
+
+        Assert.True(projection.IsReadOnly);
+        Assert.False(projection.ShowComposer);
         Assert.False(projection.IsUnattended);
     }
 

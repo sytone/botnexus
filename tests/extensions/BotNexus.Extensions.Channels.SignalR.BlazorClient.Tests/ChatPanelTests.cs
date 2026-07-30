@@ -254,8 +254,13 @@ public sealed class ChatPanelTests : IDisposable
     public void Read_only_sub_agent_view_does_not_bind_prevent_enter_submit()
     {
         CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
-        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session", source: "Agent")]);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
         _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
+        // Read-only here is the observer-VIEW concern (#2299), which is what this test is about.
+        // It is asserted via SelectionSource rather than Source=Agent: since #2526 that source alone
+        // no longer implies read-only, because conversation_new mints (HumanAgent, Agent) for the
+        // user to talk in.
+        _store.SelectView("sub-1", "subagent-session:sub-1", SelectionSource.SubAgentView);
 
         var agent = _store.GetAgent("sub-1")!;
         agent.SessionType = "agent-subagent";

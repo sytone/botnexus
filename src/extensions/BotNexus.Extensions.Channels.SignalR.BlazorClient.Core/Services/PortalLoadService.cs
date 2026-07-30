@@ -53,50 +53,6 @@ public sealed class PortalLoadService : IPortalLoadService
         _agentInteraction = agentInteraction;  // optional — null when not wired (e.g. in tests)
     }
 
-    /// <summary>
-    /// Server page size used when walking <c>GET /api/sessions</c>. The endpoint pages with a
-    /// default of 50 and a hard cap of 200 (#2411/#2468) and reports no total, so the only way to
-    /// obtain the complete roster is to request the maximum page and keep going until the server
-    /// returns a short page (#2499).
-    /// </summary>
-    private const int SessionPageSize = 200;
-
-    /// <summary>
-    /// Hard stop on the paging walk so a misbehaving server that keeps returning full pages can
-    /// never spin the portal forever. 200 * 200 = 40,000 sessions, far beyond any real store.
-    /// </summary>
-    private const int MaxSessionPages = 200;
-
-    /// <summary>
-    /// Reads every session page for <paramref name="agentId"/> (or all agents when null),
-    /// stopping on the first short or empty page.
-    /// </summary>
-    private async Task<List<SessionSummary>> LoadAllSessionsAsync(
-        string? agentId,
-        CancellationToken cancellationToken)
-    {
-        var all = new List<SessionSummary>();
-        for (var page = 0; page < MaxSessionPages; page++)
-        {
-            var batch = await _restClient.GetSessionsAsync(
-                agentId,
-                SessionPageSize,
-                all.Count,
-                cancellationToken);
-
-            // Only an EMPTY page is a reliable terminator. The server clamps the requested limit to
-            // its own maximum, so a page shorter than SessionPageSize does NOT imply exhaustion -
-            // treating it as such is precisely how the portal would silently truncate again the
-            // next time the server-side cap changes. Cost of correctness: one trailing empty request.
-            if (batch.Count == 0)
-                break;
-
-            all.AddRange(batch);
-        }
-
-        return all;
-    }
-
     public async Task InitializeAsync(string hubUrl, CancellationToken cancellationToken = default)
     {
         if (IsReady || IsLoading)
@@ -133,8 +89,9 @@ public sealed class PortalLoadService : IPortalLoadService
             });
             await Task.WhenAll(conversationTasks);
 
-            // #2499: page until exhausted - a single call returns at most the server page size.
-            var sessions = await LoadAllSessionsAsync(agentId: null, cancellationToken);
+            // #2532: one shared walk, terminating on the server's hasMore flag.
+            var sessions = await SessionRosterLoader.LoadAllAsync(
+                _restClient, agentId: null, conversationId: null, cancellationToken);
             foreach (var session in sessions)
                 _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
 

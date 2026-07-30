@@ -589,7 +589,144 @@ public class ExecToolTests : IDisposable
         ExecTool.ValidateEnvKey("MY_VAR");
     }
 
+    [Theory]
+    [InlineData("BASH_FUNC_x")]
+    [InlineData("BASH_FUNC_ls%%")]
+    [InlineData("bash_func_x")]
+    public void ValidateEnvKey_DirectCall_BlocksBashExportedFunctions(string key)
+    {
+        var act = () => ExecTool.ValidateEnvKey(key);
+        var ex = act.ShouldThrow<ArgumentException>();
+        ex.Message.ShouldContain("BASH_FUNC_");
+    }
+
+    [Theory]
+    [InlineData("BASH_FUNC_x")]
+    [InlineData("bash_func_x")]
+    public async Task PrepareArguments_RejectsBashExportedFunctionEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "() { :; }; /bin/evil" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData("CC")]
+    [InlineData("CXX")]
+    [InlineData("CPP")]
+    [InlineData("CXXCPP")]
+    [InlineData("LD")]
+    [InlineData("AR")]
+    [InlineData("cxxcpp")]
+    [InlineData("cc")]
+    public void ValidateEnvKey_DirectCall_BlocksToolchainSelectors(string key)
+    {
+        var act = () => ExecTool.ValidateEnvKey(key);
+        act.ShouldThrow<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData("CXXCPP")]
+    [InlineData("cc")]
+    public async Task PrepareArguments_RejectsToolchainSelectorEnvOverride(string key)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string> { [key] = "/tmp/evil-cc" },
+        };
+
+        var act = () => _tool.PrepareArgumentsAsync(args);
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
+    /// <summary>
+    /// Control: keys that look adjacent to the new toolchain/bash entries but are NOT blocked
+    /// must still be accepted. These must stay green under mutation of the blocklists.
+    /// </summary>
+    [Theory]
+    [InlineData("MY_CUSTOM_VAR")]
+    [InlineData("CCACHE_DIR")]
+    [InlineData("BASHFUNC")]
+    [InlineData("ARCH")]
+    [InlineData("CARGO_HOME")]
+    public void ValidateEnvKey_DirectCall_AllowsBenignAdjacentKeys(string key)
+    {
+        // Should not throw
+        ExecTool.ValidateEnvKey(key);
+    }
+
+    [Fact]
+    public async Task PrepareArguments_AllowsBenignAdjacentEnvOverrides()
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["command"] = new List<string> { "echo", "hi" },
+            ["env"] = new Dictionary<string, string>
+            {
+                ["CCACHE_DIR"] = "/tmp/ccache",
+                ["ARCH"] = "x64",
+            },
+        };
+
+        var result = await _tool.PrepareArgumentsAsync(args);
+        result.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// PINNED BASELINE. The exec env blocklists are a security policy surface: any addition or
+    /// removal must be a deliberate, reviewed change. If this test fails, update the expected
+    /// sets here *and* add observable rejection tests for the new entries — do not just re-pin.
+    /// </summary>
+    [Fact]
+    public void BlockedEnvSets_MatchPinnedBaseline()
+    {
+        ExecTool.BlockedEnvPrefixes.ShouldBe(
+            new[] { "LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_" },
+            ignoreOrder: true);
+
+        ExecTool.BlockedEnvExact.ShouldBe(
+            new[] { "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "CC", "CXX", "CPP", "CXXCPP", "LD", "AR" },
+            ignoreOrder: true);
+
+        ExecTool.BlockedEnvSuffixes.ShouldBe(
+            new[] { "_BASE_URL", "_API_HOST", "_ENDPOINT" },
+            ignoreOrder: true);
+    }
+
+    /// <summary>
+    /// Every pinned blocklist entry must actually be rejected by the real validation entry point,
+    /// and must be rejected case-insensitively (matching existing OrdinalIgnoreCase semantics).
+    /// </summary>
+    [Fact]
+    public void ValidateEnvKey_RejectsEveryPinnedEntry_CaseInsensitively()
+    {
+        foreach (var exact in ExecTool.BlockedEnvExact)
+        {
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey(exact));
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey(exact.ToLowerInvariant()));
+        }
+
+        foreach (var prefix in ExecTool.BlockedEnvPrefixes)
+        {
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey(prefix + "SOMETHING"));
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey(prefix.ToLowerInvariant() + "something"));
+        }
+
+        foreach (var suffix in ExecTool.BlockedEnvSuffixes)
+        {
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey("SOMETHING" + suffix));
+            Should.Throw<ArgumentException>(() => ExecTool.ValidateEnvKey("something" + suffix.ToLowerInvariant()));
+        }
+    }
+
     #endregion
+
 }
 
 public class ConditionalFactAttribute : FactAttribute

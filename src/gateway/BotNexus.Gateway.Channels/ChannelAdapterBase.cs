@@ -68,14 +68,15 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// Defaults to <see langword="false"/> so internal, agent-to-agent and transcript-shaped
     /// surfaces keep the block (they legitimately want it for debugging and self-diagnosis).
     /// Concrete user-facing adapters (SignalR/portal, Telegram, TUI) opt in by overriding this.
-    /// The strip itself is guarded - see <see cref="RuntimeContextRedactor"/>.
+    /// The strip itself fails closed - see <see cref="RuntimeContextRedactor"/>.
     /// </remarks>
     protected virtual bool StripsRuntimeContext => false;
 
     /// <summary>
     /// Projects assistant text onto this channel's user-visible surface, applying the guarded
     /// runtime-context strip when <see cref="StripsRuntimeContext"/> is enabled. Returns the input
-    /// unchanged for internal surfaces and whenever the delimiters are absent or unbalanced.
+    /// unchanged for internal surfaces and whenever no BEGIN delimiter is present; the strip itself
+    /// fails closed on malformed delimiters (#2520).
     /// </summary>
     /// <param name="text">The outbound text about to be written to the channel.</param>
     /// <returns>The channel-projected text.</returns>

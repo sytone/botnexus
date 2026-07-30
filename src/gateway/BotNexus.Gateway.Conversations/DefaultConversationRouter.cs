@@ -382,11 +382,39 @@ public sealed class DefaultConversationRouter : IConversationRouter
     // internal channel whose ChannelAddress equals the conversation AgentId. That
     // artifact must never be persisted as a binding: an internal binding addressed by
     // an agent name accumulates duplicates and poisons multi-bot routing (#1681).
-    private const string KickoffChannelType = "internal";
+    // #2530 generalised this: the same rule now applies to every channel type that is
+    // not on the allow-list below.
 
-    private static bool ShouldPersistBinding(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress) =>
-        !(string.Equals(channelType.Value, KickoffChannelType, StringComparison.OrdinalIgnoreCase) &&
-          string.Equals(channelAddress.Value, agentId.Value, StringComparison.OrdinalIgnoreCase));
+    // Channel types for which an agent-id-shaped ChannelAddress is a LEGITIMATE, stable
+    // routing key rather than a junk artifact.
+    //
+    // "signalr" is the portal's conversation-first routing key: GatewayHub deliberately
+    // mints ChannelAddress.From(agentId.Value) so every browser connection for an agent
+    // converges on the same portal conversation regardless of connection id. Delivery is
+    // by SignalR group (conversationId), never by the address, so the binding is
+    // deliverable and must keep persisting -- suppressing it would break reconnect
+    // resolution via ResolveByBindingAsync.
+    //
+    // Every other channel type is an EXTERNAL transport whose adapter resolves a real
+    // remote destination from the address (Teams thread, Telegram chat id, Service Bus
+    // conversation reference). An agent id there can never be delivered: the relay logs
+    // "No conversation reference found for <agentId>" and drops the reply (#2530).
+    private static readonly HashSet<string> AgentIdAddressableChannelTypes =
+        new(StringComparer.OrdinalIgnoreCase) { "signalr" };
+
+    /// <summary>
+    /// Decides whether a (channelType, channelAddress) pair may be persisted as a durable
+    /// <see cref="ChannelBinding"/>. An address equal to the agent id is rejected for every
+    /// channel type except the explicitly allow-listed ones that use it as a real routing key.
+    /// </summary>
+    private static bool ShouldPersistBinding(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress)
+    {
+        if (!string.Equals(channelAddress.Value, agentId.Value, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Address == agent id. Only the allow-listed channel types may keep it.
+        return AgentIdAddressableChannelTypes.Contains(channelType.Value);
+    }
 
     private async Task<Conversation?> TryReopenArchivedConversationAsync(
         AgentId agentId,

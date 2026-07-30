@@ -13,6 +13,8 @@ namespace BotNexus.Extensions.Mcp.Transport;
 /// </summary>
 public sealed class HttpSseMcpTransport : IMcpTransport
 {
+    private const string SessionIdHeader = "Mcp-Session-Id";
+
     private readonly Uri _endpoint;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -21,6 +23,9 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     private readonly IReadOnlyDictionary<string, string>? _headers;
 
     private string? _sessionId;
+    private readonly SemaphoreSlim _reinitLock = new(1, 1);
+    private int _sessionEpoch;
+    private int _reinitRequestId;
     private CancellationTokenSource? _sseCts;
     private Task? _sseTask;
     private readonly Channel<JsonRpcResponse> _responseChannel =
@@ -109,13 +114,15 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         if (!_connected)
             throw new InvalidOperationException("Transport is not connected.");
 
-        var request = CreateRequest(HttpMethod.Post);
-        request.Content = JsonContent.Create(message, JsonContext.Default.JsonRpcRequest);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-
-        var response = await _httpClient.SendAsync(
-            request,
+        var response = await SendWithSessionRecoveryAsync(
+            () =>
+            {
+                var request = CreateRequest(HttpMethod.Post);
+                request.Content = JsonContent.Create(message, JsonContext.Default.JsonRpcRequest);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+                return request;
+            },
             HttpCompletionOption.ResponseHeadersRead,
             ct).ConfigureAwait(false);
 
@@ -149,10 +156,16 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         if (!_connected)
             throw new InvalidOperationException("Transport is not connected.");
 
-        var request = CreateRequest(HttpMethod.Post);
-        request.Content = JsonContent.Create(message, JsonContext.Default.JsonRpcNotification);
+        using var response = await SendWithSessionRecoveryAsync(
+            () =>
+            {
+                var request = CreateRequest(HttpMethod.Post);
+                request.Content = JsonContent.Create(message, JsonContext.Default.JsonRpcNotification);
+                return request;
+            },
+            HttpCompletionOption.ResponseContentRead,
+            ct).ConfigureAwait(false);
 
-        var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         CaptureSessionId(response);
     }
@@ -225,10 +238,121 @@ public sealed class HttpSseMcpTransport : IMcpTransport
 
         _responseChannel.Writer.TryComplete();
         _sseCts?.Dispose();
+        _reinitLock.Dispose();
 
         if (_ownsHttpClient)
         {
             _httpClient.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Sends a request, recovering from an expired MCP session.
+    /// Per the MCP Streamable HTTP spec, HTTP 404 in response to a request that carried an
+    /// <c>Mcp-Session-Id</c> means the session expired; the client MUST start a new session by
+    /// re-sending <c>InitializeRequest</c> without a session id. The original request is then
+    /// replayed exactly once. Any other status code is returned unchanged to the caller so that
+    /// existing behaviour (EnsureSuccessStatusCode) is preserved.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithSessionRecoveryAsync(
+        Func<HttpRequestMessage> requestFactory,
+        HttpCompletionOption completionOption,
+        CancellationToken ct)
+    {
+        var epoch = Volatile.Read(ref _sessionEpoch);
+        var request = requestFactory();
+        var carriedSessionId = request.Headers.Contains(SessionIdHeader);
+
+        var response = await _httpClient.SendAsync(request, completionOption, ct).ConfigureAwait(false);
+
+        // Fail closed: only an expired-session 404 is special-cased.
+        if (response.StatusCode != HttpStatusCode.NotFound || !carriedSessionId)
+        {
+            return response;
+        }
+
+        response.Dispose();
+
+        if (!await TryReinitializeSessionAsync(epoch, ct).ConfigureAwait(false))
+        {
+            throw new HttpRequestException(
+                $"MCP session expired at {_endpoint} and re-initialization failed.",
+                inner: null,
+                statusCode: HttpStatusCode.NotFound);
+        }
+
+        // Exactly one replay. Whatever comes back - including another 404 - is returned
+        // verbatim, so a server that keeps 404ing surfaces an error instead of looping.
+        return await _httpClient.SendAsync(requestFactory(), completionOption, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears the expired session and performs a fresh <c>initialize</c> handshake.
+    /// Serialised so concurrent in-flight requests cannot race two initializes; a caller whose
+    /// epoch is stale simply adopts the session another caller already established.
+    /// </summary>
+    private async Task<bool> TryReinitializeSessionAsync(int epoch, CancellationToken ct)
+    {
+        await _reinitLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (Volatile.Read(ref _sessionEpoch) != epoch)
+            {
+                // Another request already re-initialized while we waited.
+                return true;
+            }
+
+            _sessionId = null;
+
+            var initRequest = new JsonRpcRequest
+            {
+                Id = Interlocked.Decrement(ref _reinitRequestId),
+                Method = "initialize",
+                Params = JsonSerializer.SerializeToElement(
+                    new McpInitializeParams(), JsonContext.Default.McpInitializeParams),
+            };
+
+            var request = CreateRequest(HttpMethod.Post);
+            request.Content = JsonContent.Create(initRequest, JsonContext.Default.JsonRpcRequest);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+            using var response = await _httpClient.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            CaptureSessionId(response);
+
+            // Drain the initialize result. It is deliberately NOT enqueued on the response
+            // channel - the caller is waiting for the reply to its own request id.
+            await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            Interlocked.Increment(ref _sessionEpoch);
+
+            // notifications/initialized per MCP spec. Best-effort: a failure here must not
+            // mask the recovered session.
+            try
+            {
+                var notifyRequest = CreateRequest(HttpMethod.Post);
+                notifyRequest.Content = JsonContent.Create(
+                    new JsonRpcNotification { Method = "notifications/initialized" },
+                    JsonContext.Default.JsonRpcNotification);
+                using var notifyResponse = await _httpClient.SendAsync(notifyRequest, ct).ConfigureAwait(false);
+            }
+            catch (HttpRequestException)
+            {
+                // Best-effort.
+            }
+
+            return true;
+        }
+        finally
+        {
+            _reinitLock.Release();
         }
     }
 
@@ -240,9 +364,10 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         // over HTTP/2, causing .NET's response stream to hang indefinitely.
         request.Version = HttpVersion.Version11;
 
-        if (_sessionId is not null)
+        var sessionId = _sessionId;
+        if (sessionId is not null)
         {
-            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId);
+            request.Headers.TryAddWithoutValidation(SessionIdHeader, sessionId);
         }
 
         if (_headers is not null)
@@ -258,7 +383,7 @@ public sealed class HttpSseMcpTransport : IMcpTransport
 
     private void CaptureSessionId(HttpResponseMessage response)
     {
-        if (response.Headers.TryGetValues("Mcp-Session-Id", out var values))
+        if (response.Headers.TryGetValues(SessionIdHeader, out var values))
         {
             var id = values.FirstOrDefault();
             if (!string.IsNullOrEmpty(id))

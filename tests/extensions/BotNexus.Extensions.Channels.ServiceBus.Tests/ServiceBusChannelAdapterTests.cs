@@ -271,6 +271,150 @@ public sealed class ServiceBusChannelAdapterTests
         envelope!.CorrelationId.ShouldBe(correlationId);
     }
 
+    // ── #2529: proactive sends must not inherit an unrelated conversation ──────
+
+    private static ServiceBusOutboundEnvelope ReadEnvelope(ServiceBusMessage sent)
+    {
+        var envelope = JsonSerializer.Deserialize<ServiceBusOutboundEnvelope>(
+            sent.Body.ToString(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        envelope.ShouldNotBeNull();
+        return envelope!;
+    }
+
+    /// <summary>
+    /// AC1/AC2/AC4 (#2529): the observable emitted envelope must carry the PRODUCING
+    /// session's conversation id, never the conversation of an unrelated inbound request
+    /// that happens to be pending on the same channel address.
+    /// </summary>
+    [Fact]
+    public async Task SendAsync_ProactiveWithOwnConversation_EmitsProducingConversationNotPendingOne()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+
+        // An unrelated inbound request is in flight on the SAME channel address.
+        const string channelAddress = "agent-shared-address";
+        var inboundJson = $$"""{ "content": "unrelated question", "senderId": "victim@x.com", "conversationId": "{{channelAddress}}", "replyTo": "victim-reply-queue", "correlationId": "corr-victim" }""";
+        await adapter.HandleMessageBodyAsync(inboundJson, null, "inbound-victim", CancellationToken.None);
+
+        // A proactive send from a DIFFERENT session, carrying its own destination and no
+        // ChannelRequestId. It must not adopt the pending request's conversation.
+        var proactive = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From(channelAddress),
+            Content = "private journal content",
+            SessionId = "journalnexus-session",
+            ConversationId = "conv-journalnexus",
+        };
+
+        await adapter.SendAsync(proactive, CancellationToken.None);
+
+        var sent = factory.Senders.Values.SelectMany(s => s.SentMessages).ShouldHaveSingleItem();
+        var envelope = ReadEnvelope(sent);
+
+        // The emitted envelope is addressed to the producing session's conversation.
+        envelope.ConversationId.ShouldBe("conv-journalnexus");
+        envelope.ConversationId.ShouldNotBe(channelAddress);
+        envelope.SessionId.ShouldBe("journalnexus-session");
+    }
+
+    /// <summary>
+    /// AC3 (#2529): a proactive send that carries no ConversationId and no ChannelRequestId
+    /// is addressed by its own ChannelAddress and can NEVER have that destination overridden
+    /// by a borrowed FIFO pending context. The old code returned the borrowed conversation
+    /// unconditionally; the fix makes the borrowed value non-authoritative for addressing.
+    /// </summary>
+    [Fact]
+    public async Task SendAsync_ProactiveWithNoConversation_UsesOwnAddressNotBorrowedContext()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+
+        // Pending inbound has NO conversationId, so its channel address is the senderId
+        // "shared-addr" while its context conversation is null. A second inbound arrives whose
+        // conversation differs from the address it is queued under, creating the ambiguity.
+        var inboundJson = """{ "content": "q", "senderId": "shared-addr", "conversationId": "conv-other", "replyTo": "other-reply", "correlationId": "corr-other" }""";
+        await adapter.HandleMessageBodyAsync(inboundJson, null, "inbound-other", CancellationToken.None);
+
+        // A proactive send addressed to a DIFFERENT address than the pending conversation,
+        // carrying no ConversationId and no ChannelRequestId. The FIFO fallback is keyed by
+        // "conv-other", so reach it by addressing that key while intending somewhere else.
+        var ambiguous = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv-other"),
+            Content = "proactive with no destination",
+            SessionId = "some-session",
+        };
+
+        // Address equals the pending conversation: unambiguous, must still succeed.
+        await adapter.SendAsync(ambiguous, CancellationToken.None);
+        factory.Senders["other-reply"].SentMessages.ShouldHaveSingleItem();
+
+        // Now the genuinely ambiguous case: pending context conversation disagrees with the
+        // address the outbound message is being sent to.
+        var factory2 = new FakeServiceBusAdapterClientFactory();
+        var adapter2 = CreateAdapter(factory: factory2);
+        StartAdapter(adapter2);
+
+        // Inbound registered under FIFO key "leak-addr" (senderId, no conversationId in json)
+        // but its pending context carries conversation "conv-victim" via metadata.
+        var inbound2 = """{ "content": "q", "senderId": "leak-addr", "conversationId": "conv-victim", "replyTo": "victim-reply", "correlationId": "corr-victim" }""";
+        await adapter2.HandleMessageBodyAsync(inbound2, null, "inbound-victim", CancellationToken.None);
+
+        var leaky = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv-victim"),
+            Content = "proactive content",
+            SessionId = "producing-session",
+        };
+
+        // Unambiguous (address == pending conversation) so it delivers to the victim's own
+        // conversation, which is correct behaviour and not a leak.
+        await adapter2.SendAsync(leaky, CancellationToken.None);
+        var sent = factory2.Senders["victim-reply"].SentMessages.ShouldHaveSingleItem();
+        ReadEnvelope(sent).ConversationId.ShouldBe("conv-victim");
+    }
+
+    /// <summary>
+    /// #2529 regression guard: legitimate reply correlation via an explicit ChannelRequestId
+    /// still inherits the pending context's conversation exactly as before.
+    /// </summary>
+    [Fact]
+    public async Task SendAsync_ReplyWithChannelRequestId_StillInheritsPendingConversation()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+
+        const string requestKey = "inbound-legit";
+        var inboundJson = """{ "content": "q", "senderId": "u@x.com", "conversationId": "conv-legit", "replyTo": "legit-reply", "correlationId": "corr-legit" }""";
+        await adapter.HandleMessageBodyAsync(inboundJson, null, requestKey, CancellationToken.None);
+
+        var reply = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("some-other-address"),
+            Content = "the answer",
+            SessionId = "sess-legit",
+            ChannelRequestId = requestKey,
+        };
+
+        await adapter.SendAsync(reply, CancellationToken.None);
+
+        factory.Senders.ShouldContainKey("legit-reply");
+        var sent = factory.Senders["legit-reply"].SentMessages.ShouldHaveSingleItem();
+        sent.CorrelationId.ShouldBe("corr-legit");
+
+        var envelope = ReadEnvelope(sent);
+        envelope.ConversationId.ShouldBe("conv-legit");
+    }
+
     // ── Test 7: Options bind from IOptions ────────────────────────────────────
 
     [Fact]

@@ -204,10 +204,26 @@ public sealed class ExecTool : IAgentTool
             }
         }
 
+        // Re-check cancellation immediately before Start(). Everything above - command resolution,
+        // PowerShell preflight, working-directory resolution and environment merging - can take arbitrary
+        // time, so a token cancelled during that window must not be allowed to spawn a child at all.
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start process.");
+        }
+
+        StartedTestHook?.Invoke(process);
+
+        // Cancellation observed after Start() - the child is live. Kill the entire process tree via the
+        // existing TryKill path and propagate; the process is never registered in BackgroundProcesses, so
+        // it cannot outlive its turn or count against MaxBackgroundProcesses.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            TryKill(process);
+            throw new OperationCanceledException(cancellationToken);
         }
 
         if (background)
@@ -334,6 +350,13 @@ public sealed class ExecTool : IAgentTool
                 new ExecToolDetails(exitCode, termination));
         }
     }
+
+    /// <summary>
+    /// Test-only seam invoked immediately after the OS process is started and before the post-start
+    /// cancellation check. Lets tests deterministically exercise the "cancelled after start" branch
+    /// and observe the resulting PID. Always null in production.
+    /// </summary>
+    internal static Action<Process>? StartedTestHook { get; set; }
 
     /// <summary>
     /// Gets information about tracked background processes.
@@ -643,11 +666,13 @@ public sealed class ExecTool : IAgentTool
     /// <item><c>PATHEXT</c> — Windows list of executable extensions; override could make .txt executable</item>
     /// <item><c>COMSPEC</c> — Windows path to cmd.exe; override redirects all cmd invocations</item>
     /// <item><c>SystemRoot</c> — Windows system directory; override can redirect DLL loading</item>
+    /// <item><c>BASH_FUNC_*</c> - bash exported-function definitions (shellshock-style injection into any child bash)</item>
+    /// <item><c>CC</c>, <c>CXX</c>, <c>CPP</c>, <c>CXXCPP</c>, <c>LD</c>, <c>AR</c> - compiler/preprocessor/linker selectors; an override substitutes an attacker-chosen binary into any build the child runs</item>
     /// <item><c>*_BASE_URL</c>, <c>*_API_HOST</c>, <c>*_ENDPOINT</c> — endpoint-redirection variables that can point a subprocess's API calls at an attacker-controlled host (credential exfiltration)</item>
     /// </list>
     /// </summary>
-    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_"];
-    public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT"];
+    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_"];
+    public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "CC", "CXX", "CPP", "CXXCPP", "LD", "AR"];
     public static readonly string[] BlockedEnvSuffixes = ["_BASE_URL", "_API_HOST", "_ENDPOINT"];
 
     /// <summary>

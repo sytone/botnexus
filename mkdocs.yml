@@ -109,11 +109,14 @@ nav:
       - API Reference: api-reference.md
       - REST API Reference:
           - Overview: api/README.md
+          - Agents: api/agents.md
           - Conversations: api/conversations.md
           - Cron: api/cron.md
           - Satellites: api/satellites.md
+          - Sessions: api/sessions.md
           - Webhooks: api/webhooks.md
           - Tools: api/tools.md
+      - SignalR Hub Reference: api/signalr.md
       - WebSocket Protocol: websocket-protocol.md
   - Architecture:
       - arc42 Overview: architecture/README.md
@@ -142,6 +145,7 @@ nav:
       - Triggers and Federation: development/triggers-and-federation.md
       - WebUI Connection: development/webui-connection.md
       - Debugging: development/debugging.md
+      - Code Standards: development/code-standards.md
       - PR and Commit Conventions: development/pr-and-commit-conventions.md
   - Guides:
       - Audio Recording: guides/audio-recording.md

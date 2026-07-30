@@ -1,4 +1,6 @@
-﻿using System.IO.Abstractions;
+using System.IO.Abstractions;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -103,19 +105,123 @@ public sealed class PlatformConfigWriter
             ct);
 
     /// <summary>
+    /// Reads the current platform configuration together with the revision token it was read at.
+    /// </summary>
+    /// <remarks>
+    /// Issue #2134. A caller that intends to replace the <em>whole</em> document later must be able
+    /// to prove nothing else committed in between. The revision is a content digest of the exact
+    /// bytes-equivalent document this snapshot was materialised from; pass it back to
+    /// <see cref="UpdatePlatformConfigAsync"/> to get a compare-and-swap instead of a blind
+    /// last-writer-wins overwrite.
+    /// </remarks>
+    public async Task<(PlatformConfig Config, string Revision)> ReadPlatformConfigWithRevisionAsync(CancellationToken ct = default)
+    {
+        var root = await ReadRootAsync(ct);
+        var json = root.ToJsonString();
+        var config = JsonSerializer.Deserialize<PlatformConfig>(json, PlatformReadOptions) ?? new PlatformConfig();
+        return (config, ComputeRevision(root));
+    }
+
+    /// <summary>
     /// Replaces the entire platform configuration document.
     /// </summary>
-    public async Task UpdatePlatformConfigAsync(PlatformConfig config, string reason, CancellationToken ct = default)
+    /// <param name="config">The complete replacement document.</param>
+    /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="expectedRevision">
+    /// Optional compare-and-swap guard (#2134). When supplied, the write is rejected with a
+    /// <see cref="PlatformConfigConcurrencyException"/> if the document on disk no longer matches
+    /// the revision the caller's snapshot was read at - i.e. another writer committed in between
+    /// and this whole-document replace would silently discard their changes. When
+    /// <see langword="null"/> the historical last-writer-wins behaviour is preserved, so existing
+    /// callers are unaffected.
+    /// </param>
+    public async Task UpdatePlatformConfigAsync(
+        PlatformConfig config,
+        string reason,
+        CancellationToken ct = default,
+        string? expectedRevision = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         await MutateAsync(root =>
         {
+            // The check runs inside the writer lock, against the root that was read inside the
+            // same lock, so no writer can interleave between the comparison and the replace.
+            if (expectedRevision is not null)
+            {
+                var actual = ComputeRevision(root);
+                if (!string.Equals(actual, expectedRevision, StringComparison.Ordinal))
+                    throw new PlatformConfigConcurrencyException(_configPath, expectedRevision, actual);
+            }
+
             var serialized = JsonSerializer.Serialize(config, PlatformWriteOptions);
             var next = JsonNode.Parse(serialized)?.AsObject() ?? new JsonObject();
             root.Clear();
             foreach (var kvp in next)
                 root[kvp.Key] = kvp.Value?.DeepClone();
         }, reason, ct);
+    }
+
+    /// <summary>
+    /// Mutates a single named section <em>inside</em> the writer lock and persists the result only
+    /// when the resulting complete candidate document validates.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Issue #2134. The pre-existing shape of the config write path was:
+    /// <c>read snapshot -&gt; modify it -&gt; hand the finished snapshot to UpdateSectionAsync</c>.
+    /// Only the last step took the writer lock, so the read-modify-window sat entirely
+    /// <em>outside</em> mutual exclusion and two concurrent callers each replaced the section with
+    /// their own stale-plus-one view; whichever wrote second erased the other's entry.
+    /// </para>
+    /// <para>
+    /// This API closes that window by inverting the control flow: the caller supplies the
+    /// modification, not the finished snapshot, and the writer reads the section, applies the
+    /// modification, validates and writes all under the one lock. Adding more locking around the
+    /// old shape would not have helped - the defect was what the lock <em>spanned</em>.
+    /// </para>
+    /// </remarks>
+    /// <param name="sectionName">The root section to mutate (created when absent).</param>
+    /// <param name="mutation">
+    /// Mutates the live section object in place and returns <see langword="null"/> on success, or a
+    /// caller-presentable message to abort the write (for example a duplicate-name conflict).
+    /// When the mutation aborts, nothing is written and the file is left untouched.
+    /// </param>
+    /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The rejection messages; empty when the mutation was validated and persisted.</returns>
+    public async Task<IReadOnlyList<string>> MutateSectionAsync(
+        string sectionName,
+        Func<JsonObject, string?> mutation,
+        string reason,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sectionName);
+        ArgumentNullException.ThrowIfNull(mutation);
+
+        return await MutateValidatedAsync(
+            root =>
+            {
+                if (root[sectionName] is not JsonObject section)
+                {
+                    section = new JsonObject();
+                    root[sectionName] = section;
+                }
+
+                return mutation(section);
+            },
+            reason,
+            ct);
+    }
+
+    /// <summary>
+    /// Computes the revision token for a configuration document: a stable content digest of its
+    /// canonical serialization, used as the compare-and-swap token for whole-document replaces.
+    /// </summary>
+    private static string ComputeRevision(JsonObject root)
+    {
+        var canonical = root.ToJsonString(PlatformPersistOptions);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
     /// <summary>

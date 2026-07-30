@@ -1,6 +1,6 @@
-# Conversation Provenance: Kind, Source, Initiator, Status
+# Conversation Provenance: Kind, Source, Visibility, Initiator, Status
 
-Every conversation in BotNexus carries four **orthogonal** pieces of provenance. Each
+Every conversation in BotNexus carries five **orthogonal** pieces of provenance. Each
 answers a different question, and none of them is derivable from the others. Together
 they are the complete, authoritative answer to "what is this conversation?" — and they
 replace every form of per-surface inference that used to guess at it.
@@ -9,10 +9,11 @@ replace every form of per-surface inference that used to guess at it.
 |---|---|---|---|
 | **Topology** | `Conversation.Kind` | *who is talking to whom* | `ConversationKind` |
 | **Trigger** | `Conversation.Source` | *why does it exist* | `ConversationSource` |
+| **Visibility** | `Conversation.Visibility` | *who may see it* | `ConversationVisibility` |
 | **Identity** | `Conversation.Initiator` | *which citizen opened it* | `CitizenRef` |
 | **Lifecycle** | `Conversation.Status` | *active or archived* | `ConversationStatus` |
 
-## Why four axes and not one
+## Why five axes and not one
 
 The temptation is always to collapse these into a single "type" field. Doing so loses
 information, because the axes genuinely vary independently:
@@ -50,6 +51,34 @@ value: every conversation row persisted before the field existed deserializes to
 
 `Source` is stamped **once**, at creation, by whichever origin path mints the
 conversation, and is `init`-only thereafter.
+
+## `ConversationVisibility`
+
+```csharp
+public enum ConversationVisibility
+{
+    UserFacing          = 0,   // shown in the user's list and fully interactive — back-compat default
+    InspectableReadOnly = 1,   // visible but never writable: an observer/audit view
+    InternalHidden      = 2,   // runtime bookkeeping, filtered out of user-facing listings entirely
+}
+```
+
+Visibility (issue #2340) is a genuinely separate axis: a runtime bookkeeping thread and a
+user's own DM can share identical `Kind`, `Source`, `Initiator` and `Status` values and
+still differ on whether the sidebar should render them.
+
+`UserFacing = 0` is first so the enum's default-value contract makes it the back-compat
+value — every row persisted before the field existed deserializes to `UserFacing` and
+stays visible, the same contract `Source = Channel` already uses. Like `Source`, it is
+stamped once by `ConversationFactory` and is `init`-only thereafter, so no inbound event
+can re-stamp it and make a hidden bookkeeping thread appear (or a user's conversation
+disappear).
+
+`InspectableReadOnly` is deliberately distinct from both neighbours: distinct from
+`UserFacing` so a surface can render the row while suppressing every write affordance, and
+distinct from `InternalHidden` so the row is not silently dropped from the list. It is
+independent of the read-only gating derived from `Source`/`Kind` — a conversation can be
+read-only for either reason.
 
 ## The contract
 
@@ -113,15 +142,20 @@ Prefix sniffing is per-surface: the portal, the mobile client, and any future
 rich-rendering chat channel each reimplement their own version, and they drift apart
 silently. The typed signal is shared, so they cannot.
 
-Two things that look similar but are **not** origin inference, and remain legitimate:
+One thing that looks similar but is **not** origin inference, and remains legitimate:
 
-- **`internal:` id namespacing.** Hiding runtime-internal bookkeeping threads is an
-  explicit namespace reservation on the conversation id. It answers "is this row a
-  runtime artefact?", never "why does this conversation exist?".
 - **`cron:` *session* ids inside the cron subsystem.** `SessionId.IsCron`,
   `CronScheduler`, and `CronTrigger` mint and match their own session ids. That is a
   naming convention the cron subsystem owns for its own sessions, not an unrelated
   surface re-deriving a conversation's origin.
+
+> **Superseded:** the portal formerly hid runtime bookkeeping threads by probing the
+> conversation id for an `internal:` prefix. That was tolerated as a namespace reservation
+> rather than origin inference, but it was still behaviour keyed on the *text* of an opaque
+> identifier — a hidden coupling between id-minting code and rendering code, failing
+> silently in both directions. Issue #2340 replaced it with the typed
+> `ConversationVisibility` field, removing the last allowlisted exception from the
+> origin-inference fence.
 
 ## The single enum declaration
 
@@ -173,6 +207,8 @@ matches nothing is not a fence.
 
 ## History
 
+- Issue #2340 added `ConversationVisibility` as a fifth axis, replacing the client-side
+  `internal:` conversation-id prefix probe with a typed, server-stamped field.
 - Epic #2300 introduced `ConversationSource`, stamped it at every origin path, exposed it
   on the DTOs and SignalR payloads, projected it client-side, deleted the inference, and
   fenced the result.

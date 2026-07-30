@@ -48,20 +48,20 @@ public interface IGatewayRestClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// GET /api/sessions?agentId={agentId}&amp;limit={limit}&amp;offset={offset}
+    /// GET /api/sessions?agentId={agentId}&amp;limit={limit}&amp;offset={offset}&amp;conversationId={conversationId}
     /// </summary>
     /// <remarks>
-    /// The server-side endpoint pages this collection (default 50, max 200 per #2411/#2468) and
-    /// returns a bare JSON array, so a caller that ignores <paramref name="limit"/> /
-    /// <paramref name="offset"/> silently receives a truncated roster with no error signal (#2499).
-    /// Callers that need the complete set must page until a short page is returned.
-    /// Both paging arguments are optional so existing call sites stay source-compatible; when
-    /// <paramref name="limit"/> is null no <c>limit</c> query argument is sent and the server default applies.
+    /// #2532: agent/conversation/status filtering happens in the store, so <paramref name="offset"/>
+    /// addresses the FILTERED set and the response carries an explicit
+    /// <see cref="SessionPageDto.HasMore"/>. Callers must terminate on that flag - never on a short
+    /// page, since the server clamps <paramref name="limit"/> to its own maximum (#2499).
+    /// Prefer <see cref="SessionRosterLoader"/> over hand-rolling the walk.
     /// </remarks>
-    Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
+    Task<SessionPageDto> GetSessionsAsync(
         string? agentId = null,
         int? limit = null,
         int offset = 0,
+        string? conversationId = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>GET /api/sessions/{sessionId}/history?limit={limit}&amp;offset={offset}</summary>

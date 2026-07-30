@@ -182,36 +182,41 @@ Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
 
 ### 3.1 Top-Level Cron Config
 
-**Section:** `BotNexus.Cron`
+**Section:** `cron` (in `config.json`)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Enabled` | bool | `true` | Enable/disable the cron service globally |
-| `TickIntervalSeconds` | int | `10` | How often the scheduler checks for due jobs (seconds) |
-| `ExecutionHistorySize` | int | `100` | Max execution history entries per job (in-memory queue) |
-| `Jobs` | dict | `{}` | Centralized job registry (key → `CronJobConfig`) |
+| `enabled` | bool | `true` | Enable/disable the cron service globally |
+| `tickIntervalSeconds` | int | `60` | How often the scheduler wakes to evaluate due jobs (seconds) |
+| `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none |
+| `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
+| `jobs` | dict | `{}` | Config-defined job registry (key → job descriptor, see §3.2) |
+
+> Only `enabled`, `tickIntervalSeconds` and `jobs` are settable from `config.json`'s `cron`
+> section; `defaultJobTimeoutSeconds` and `orphanedRunThresholdSeconds` are scheduler options
+> bound in code and are documented here because they govern observable scheduler behaviour.
 
 ### 3.2 Per-Job Configuration
 
-**Type:** `CronJobConfig`
+**Type:** `CronJobConfig` (each entry under `cron.jobs`)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Name` | string | (inferred) | Optional explicit job name override |
-| `Type` | string | `"agent"` | Job type: `agent`, `system`, or `maintenance` |
-| `Schedule` | string | (required) | Cron expression (5- or 6-field) |
-| `Enabled` | bool | `true` | Whether the job is active |
-| `Timezone` | string | `null` | Timezone ID for schedule evaluation (IANA format) |
-| `Agent` | string | (agent jobs only) | Name of agent to run |
-| `Prompt` | string | (agent jobs only) | Prompt to execute |
-| `Session` | string | (agent jobs only) | Session mode: `new`, `persistent`, or `named:<key>` |
-| `DeleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
-| `Action` | string | (system/maintenance jobs) | Action name to execute |
-| `Agents` | list | `[]` | Agent names for `consolidate-memory` |
-| `OutputChannels` | list | `[]` | Channels to route output to |
-| `SessionCleanupDays` | int | `30` | Session retention days for cleanup |
-| `LogRetentionDays` | int | `30` | Log retention days for rotation |
-| `LogsPath` | string | `null` | Override logs directory path |
+| `name` | string | (inferred) | Display name for the job |
+| `schedule` | string | (required) | Cron expression (5- or 6-field) |
+| `actionType` | string | `agent-prompt` | What the job does when it fires — e.g. `agent-prompt`, `webhook`, `command` |
+| `agentId` | string | (agent jobs only) | Agent to run the prompt against |
+| `message` | string | (agent jobs only) | Prompt message sent to the agent |
+| `templateName` | string | `null` | Named prompt template to use instead of a literal `message` |
+| `templateParameters` | dict | `{}` | Parameter values for `templateName` |
+| `model` | string | `null` | Model override for agent-prompt jobs |
+| `webhookUrl` | string | (webhook jobs only) | URL invoked by a webhook job |
+| `shellCommand` | string | (command jobs only) | Script run by a `command` job. Firing is gated through the `exec` tool policy — see [Shell Execution](./features/shell-execution.md). |
+| `enabled` | bool | `true` | Whether the job is active |
+| `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
+| `createdBy` | string | `null` | Provenance marker for who created the job |
+| `metadata` | dict | `{}` | Free-form metadata carried with the job |
+| `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 
 ### 3.3 Complete Configuration Example
 
@@ -758,7 +763,8 @@ Missed runs appear in `cron history` output and via `GET /api/cron/{jobId}/runs`
 
 ## 9. CronTool — Runtime Job Management
 
-Agents can schedule, remove, or list cron jobs at runtime using the **`cron` tool**.
+Agents can create, update, delete, run, list, and inspect cron jobs at runtime using the
+**`cron` tool**.
 
 ### 9.1 Tool Definition
 
@@ -780,6 +786,12 @@ allowed to be created with nothing to do.
 `shellCommand` is an arbitrary-execution surface. Creating or editing a `command` job
 should be treated as a dangerous operation and carry the same authorization posture as
 the `exec` path.
+
+The action set is defined by the tool's input schema in
+`src/gateway/BotNexus.Cron/Tools/CronTool.cs` and is exactly:
+`list`, `create`, `update`, `delete`, `run`, `history`. There is no `schedule` action and no
+`remove` action — use `create` and `delete`. Jobs are addressed by `jobId` (the server-generated
+identifier returned by `create` and listed by `list`), not by name.
 
 ### 9.2 Actions
 
@@ -811,9 +823,12 @@ Creates a new job.
 }
 ```
 
+Returns the created job serialized as JSON, including its generated `id`.
+
 #### `update`
 
-Updates an existing job. Every field is optional; an omitted field keeps its current value.
+Updates an existing job. Every field except `jobId` is optional; an omitted field keeps its
+current value.
 
 **Arguments:**
 - `action` = `"update"`
@@ -830,6 +845,49 @@ other action type, so a job is never left as a `command` job holding a stale pro
 validation in the same call - e.g. switching to `agent-prompt` requires a `message` or
 `templateName`.
 
+**Example:**
+```json
+{
+  "action": "update",
+  "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c",
+  "schedule": "0 9 * * MON-FRI",
+  "enabled": false
+}
+```
+
+Returns the saved job serialized as JSON.
+
+#### `delete`
+
+Deletes a cron job.
+
+**Arguments:**
+- `action` = `"delete"`
+- `jobId`: Job identifier (required)
+
+**Example:**
+```json
+{
+  "action": "delete",
+  "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c"
+}
+```
+
+**Response:**
+```text
+Deleted cron job '3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c'.
+```
+
+#### `run`
+
+Triggers an immediate, out-of-schedule execution of a job.
+
+**Arguments:**
+- `action` = `"run"`
+- `jobId`: Job identifier (required)
+
+Returns the resulting run record serialized as JSON.
+
 #### `history`
 
 Retrieves execution history for a specific job.
@@ -843,24 +901,16 @@ Retrieves execution history for a specific job.
 ```json
 {
   "action": "history",
-  "jobId": "morning-briefing",
+  "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c",
   "limit": 10
 }
 ```
 
-**Response:**
-```text
-Run History for 'morning-briefing' (last 10 runs):
-
-| # | Started | Duration | Status | Result |
-|---|---------|----------|--------|--------|
-| 1 | 2026-06-10 09:00:05Z | 12.3s | Completed | Success |
-| 2 | 2026-06-09 09:00:03Z | 8.1s | Completed | Success |
-```
+Returns the matching run records serialized as JSON, newest first.
 
 #### `list`
 
-Lists all registered cron job names.
+Lists the cron jobs visible to the calling agent, serialized as JSON.
 
 **Arguments:**
 - `action` = `"list"`
@@ -872,68 +922,7 @@ Lists all registered cron job names.
 }
 ```
 
-**Response:**
-```text
-morning-briefing
-weekly-health-check
-nightly-consolidation
-```
-
-#### `remove`
-
-Removes a cron job by name.
-
-**Arguments:**
-- `action` = `"remove"`
-- `name`: Job name to remove (required)
-
-**Example:**
-```json
-{
-  "action": "remove",
-  "name": "morning-briefing"
-}
-```
-
-**Response:**
-```text
-Cron job 'morning-briefing' removed
-```
-
-#### `schedule`
-
-Schedules a new agent job.
-
-**Arguments:**
-- `action` = `"schedule"`
-- `name`: Job name (optional; auto-generated if omitted)
-- `agent`: Agent name to run (required)
-- `prompt`: Prompt text (required)
-- `schedule` or `expression`: Cron expression (required)
-- `session`: Session mode: `new`, `persistent`, or `named:<key>` (optional)
-- `timezone`: Timezone ID (optional)
-- `enabled`: Whether job is enabled (optional; default: `true`)
-- `output_channels`: List of channel names (optional)
-
-**Example:**
-```json
-{
-  "action": "schedule",
-  "name": "dynamic-report",
-  "agent": "analyst",
-  "prompt": "Generate a real-time report on active incidents.",
-  "schedule": "*/30 * * * *",
-  "session": "persistent",
-  "timezone": "America/Los_Angeles",
-  "output_channels": ["slack"],
-  "enabled": true
-}
-```
-
-**Response:**
-```text
-Agent cron job 'dynamic-report' scheduled with expression '*/30 * * * *'
-```
+Returns the visible job definitions serialized as JSON.
 
 ---
 
@@ -976,7 +965,7 @@ Manually trigger a job outside its schedule. Returns `404` if not found.
 ```json
 {
   "id": "run-id",
-  "jobId": "morning-briefing",
+  "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c",
   "status": "accepted"
 }
 ```
@@ -1314,31 +1303,27 @@ for the next 4 hours. Use the cron tool to schedule it.
 {
   "tool": "cron",
   "arguments": {
-    "action": "schedule",
+    "action": "create",
     "name": "incident-status-check",
-    "agent": "responder",
-    "prompt": "Check current incident status and alert if anything changed.",
+    "agentId": "responder",
+    "message": "Check current incident status and alert if anything changed.",
     "schedule": "*/15 * * * *",
-    "session": "new",
-    "timezone": "America/Los_Angeles",
-    "output_channels": ["slack"],
+    "timeZone": "America/Los_Angeles",
     "enabled": true
   }
 }
 ```
 
-**Response:**
-```text
-Agent cron job 'incident-status-check' scheduled with expression '*/15 * * * *'
-```
+**Response:** the created job as JSON, including the generated `id` used for later
+`update`, `run`, `history`, and `delete` calls.
 
-**Later, clean up:**
+**Later, clean up** (jobs are deleted by `jobId`, not by name):
 ```json
 {
   "tool": "cron",
   "arguments": {
-    "action": "remove",
-    "name": "incident-status-check"
+    "action": "delete",
+    "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c"
   }
 }
 ```

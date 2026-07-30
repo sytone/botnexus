@@ -96,7 +96,9 @@ public interface IAgentHandle : IAsyncDisposable
     /// handles that own a real steering queue MUST override it to inject the typed message intact.
     /// </remarks>
     Task SteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
-        => SteerAsync(message.Content, cancellationToken);
+        => SteerAsync(
+            AgentHandleImageDropGuard.DegradeToText(this, message, AgentHandleImageDropGuard.SteerSite),
+            cancellationToken);
 
     /// <summary>
     /// Steers the running agent with a system-injected side turn (#1845) that must only be
@@ -198,5 +200,7 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task that completes when the abort is issued and the steer is queued.</returns>
     Task InterruptAndSteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
-        => InterruptAndSteerAsync(message.Content, cancellationToken);
+        => InterruptAndSteerAsync(
+            AgentHandleImageDropGuard.DegradeToText(this, message, AgentHandleImageDropGuard.RedirectSite),
+            cancellationToken);
 }

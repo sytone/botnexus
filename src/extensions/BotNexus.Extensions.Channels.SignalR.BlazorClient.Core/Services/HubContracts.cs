@@ -188,6 +188,21 @@ public sealed record SessionSummary(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null,
     [property: JsonPropertyName("conversationId")] string? ConversationId = null);
 
+/// <summary>
+/// One page of <c>GET /api/sessions</c> plus the explicit exhaustion signal (#2532 AC5).
+/// </summary>
+/// <remarks>
+/// The endpoint used to return a bare JSON array with no total, so a client could only discover
+/// it was done by requesting another page and getting nothing back - and it could not use "shorter
+/// than requested" as the signal either, because the server clamps <c>limit</c> to its own maximum
+/// (#2499). <see cref="HasMore"/> is now authoritative and is the only thing a paging walk should
+/// terminate on.
+/// </remarks>
+public sealed record SessionPageDto(
+    [property: JsonPropertyName("sessions")] IReadOnlyList<SessionSummary> Sessions,
+    [property: JsonPropertyName("totalCount")] int TotalCount,
+    [property: JsonPropertyName("hasMore")] bool HasMore);
+
 /// <summary>Result returned by <c>CompactSession</c>.</summary>
 public sealed record CompactSessionResult(
     [property: JsonPropertyName("succeeded")] bool Succeeded,

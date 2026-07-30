@@ -1,4 +1,4 @@
-﻿using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Security;
 
@@ -38,6 +38,24 @@ public sealed record AgentDescriptor : ICitizen
     /// that addresses users and agents uniformly without losing the typed <see cref="AgentId"/>.
     /// </summary>
     CitizenId ICitizen.Id => CitizenId.Of(AgentId);
+
+    /// <summary>
+    /// The stable, opaque pseudonym for this agent, for use in security-event payloads and any
+    /// other correlation surface that must not carry the raw <see cref="AgentId"/> (#2442).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Computed, never stored or settable: it is a pure function of <see cref="AgentId"/>, so two
+    /// independently constructed descriptors for the same agent - in the same process, or in
+    /// different processes across a restart - always agree. A settable property would reopen
+    /// exactly the drift this centralisation closes, and would let a caller inject a raw id.
+    /// </para>
+    /// <para>
+    /// Delegates to <see cref="ActorPseudonym.For"/>, the single source of truth. The digest form
+    /// is a compatibility contract with already-emitted security events - see that type.
+    /// </para>
+    /// </remarks>
+    public string Pseudonym => ActorPseudonym.For(AgentId.Value);
 
     /// <summary>Optional emoji that visually identifies this agent in user interfaces.</summary>
     public string? Emoji { get; init; }

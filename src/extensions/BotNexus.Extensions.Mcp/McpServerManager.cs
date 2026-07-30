@@ -44,7 +44,7 @@ public sealed class McpServerManager : IAsyncDisposable
                 if (transport is null)
                     continue;
 
-                var client = new McpClient(transport, serverId);
+                var client = new McpClient(transport, serverId, _logger);
 
                 using var initCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 initCts.CancelAfter(serverConfig.InitTimeoutMs);
@@ -120,7 +120,7 @@ public sealed class McpServerManager : IAsyncDisposable
         if (transport is null)
             return [];
 
-        var client = new McpClient(transport, serverId);
+        var client = new McpClient(transport, serverId, _logger);
 
         using var initCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         initCts.CancelAfter(serverConfig.InitTimeoutMs);

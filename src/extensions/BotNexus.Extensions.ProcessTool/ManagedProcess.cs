@@ -30,6 +30,63 @@ public sealed class ManagedProcess : IDisposable
         _process.BeginErrorReadLine();
     }
 
+    /// <summary>
+    /// Starts a process from <paramref name="startInfo"/> honouring <paramref name="cancellationToken"/>.
+    /// Cancellation is re-checked <em>immediately</em> before <see cref="Process.Start()"/> so a token that
+    /// was cancelled while arguments, workspace paths, environment variables or background slots were being
+    /// validated cannot spawn a child at all. If cancellation is observed <em>after</em> the child started,
+    /// the entire process tree is killed and the caller receives an <see cref="OperationCanceledException"/>;
+    /// no <see cref="ManagedProcess"/> is produced, so callers never register a live orphan.
+    /// </summary>
+    internal static ManagedProcess Start(
+        ProcessStartInfo startInfo,
+        string command,
+        CancellationToken cancellationToken = default)
+        => Start(startInfo, command, cancellationToken, onStarted: null);
+
+    /// <summary>
+    /// Test seam for <see cref="Start(ProcessStartInfo, string, CancellationToken)"/>. <paramref name="onStarted"/>
+    /// runs after the OS process exists but before the post-start cancellation check, letting tests
+    /// deterministically exercise the "cancelled after start" branch and observe the resulting PID.
+    /// </summary>
+    internal static ManagedProcess Start(
+        ProcessStartInfo startInfo,
+        string command,
+        CancellationToken cancellationToken,
+        Action<Process>? onStarted)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+
+        // Re-check immediately before Start(): everything between the caller's entry check and here
+        // (argument construction, path/env validation, slot acquisition) can take arbitrary time.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var process = new Process { StartInfo = startInfo };
+        try
+        {
+            if (!process.Start())
+                throw new InvalidOperationException("Failed to start process.");
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+
+        onStarted?.Invoke(process);
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            // Lost the race: the child is live. Tear down the whole tree via the existing kill-tree path
+            // and do NOT hand back a ManagedProcess, so nothing is registered and no slot stays consumed.
+            KillTree(process);
+            process.Dispose();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        return new ManagedProcess(process, command, DateTimeOffset.UtcNow);
+    }
+
     public int Pid { get; }
     public string Command { get; }
     public DateTimeOffset StartedAt { get; }
@@ -131,9 +188,15 @@ public sealed class ManagedProcess : IDisposable
         _process.OutputDataReceived -= OnData;
         _process.ErrorDataReceived -= OnData;
 
-        try { _process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-        try { _process.WaitForExit(2_000); } catch { /* best effort */ }
+        KillTree(_process);
         _process.Dispose();
+    }
+
+    /// <summary>Best-effort force-kill of a process and its entire child tree.</summary>
+    private static void KillTree(Process process)
+    {
+        try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        try { process.WaitForExit(2_000); } catch { /* best effort */ }
     }
 
     private void OnData(object sender, DataReceivedEventArgs e)

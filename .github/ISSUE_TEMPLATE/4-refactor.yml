@@ -1,0 +1,84 @@
+name: 'Refactor'
+description: 'Restructuring that PRESERVES behaviour. If behaviour changes, it is an improvement or a fix.'
+labels: [type:refactor]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Refactor** — Restructuring that PRESERVES behaviour. If behaviour changes, it is an improvement or a fix.
+        Fields marked required are enforced. Agents: use `New-BotNexusIssue.ps1 -Action template -Type type:refactor` instead of this form.
+  - type: textarea
+    id: summary
+    attributes:
+      label: 'Summary'
+      description: 'Two or three sentences: what is wrong or missing, and the outcome you want. Not a title restatement.'
+    validations:
+      required: true
+  - type: textarea
+    id: current_shape
+    attributes:
+      label: 'Current shape'
+      description: 'The structure today and where it hurts: duplication, coupling, a seam in the wrong place. Quantify - ''five byte-identical copies'' beats ''lots of duplication''.'
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_shape
+    attributes:
+      label: 'Proposed shape'
+      description: 'The structure afterwards. Name the primitive or seam that becomes the single owner.'
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour_parity
+    attributes:
+      label: 'Behaviour parity'
+      description: 'How you will PROVE nothing changed: which existing suite pins the behaviour, and whether a characterisation test is needed first. A refactor with no parity evidence is a rewrite.'
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: 'Out of scope'
+      description: 'Call sites or modules deliberately left alone.'
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: 'Acceptance criteria'
+      description: 'Numbered, independently checkable clauses. Each one must be provable by a test, a command, or a file that exists. This is the close gate: the issue closes only when every clause is met.'
+      placeholder: |
+        1. First independently checkable clause
+        2. Second clause
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: 'Files'
+      description: 'Known-relevant paths, one per line. Saves an agent a discovery pass.'
+    validations:
+      required: false
+  - type: textarea
+    id: related
+    attributes:
+      label: 'Related'
+      description: 'Issue/PR numbers and links. Parent epic goes here.'
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: 'Leave blank if unsure - triage will set it.'
+      options: [priority:critical, priority:high, priority:medium, priority:low]
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling]
+    validations:
+      required: false

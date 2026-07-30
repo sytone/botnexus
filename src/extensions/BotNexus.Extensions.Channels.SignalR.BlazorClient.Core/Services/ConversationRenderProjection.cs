@@ -67,9 +67,18 @@ public readonly record struct ConversationRenderProjection(
     /// ever be delivered into it. Derived from the immutable pair only — the selection source is
     /// deliberately excluded so this stays a property of the conversation itself.
     /// </summary>
+    /// <remarks>
+    /// <see cref="ConversationSource.Agent"/> is deliberately <em>not</em> a disjunct here (#2526).
+    /// That source only records <em>who pulled the trigger</em>, not who participates: the
+    /// <c>conversation_new</c> tool mints <c>(HumanAgent, Agent)</c> — a conversation an agent
+    /// created expressly <em>for the user to talk in</em>. Genuine unattended agent threads are
+    /// already caught by the <see cref="ConversationKind.AgentAgent"/> /
+    /// <see cref="ConversationKind.AgentSubAgent"/> pairings above, which is the axis that actually
+    /// encodes participation.
+    /// </remarks>
     public bool IsUnattended =>
         Kind is ConversationKind.AgentAgent or ConversationKind.AgentSubAgent
-        || Source is ConversationSource.Cron or ConversationSource.Webhook or ConversationSource.Agent;
+        || Source is ConversationSource.Cron or ConversationSource.Webhook;
 
     /// <summary>
     /// True when the conversation must render read-only. That is the case for any unattended
@@ -98,7 +107,9 @@ public readonly record struct ConversationRenderProjection(
             {
                 ConversationSource.Cron => ConversationListGroup.Scheduled,
                 ConversationSource.Webhook => ConversationListGroup.Automated,
-                ConversationSource.Agent => ConversationListGroup.AgentInitiated,
+                // ConversationSource.Agent alone does not make an observer row (#2526): with a
+                // HumanAgent pairing it is a normal, writable conversation an agent opened for the
+                // user. The Kind-based branch above already claims the genuine peer/sub-agent cases.
                 _ => ConversationListGroup.Normal
             };
 
