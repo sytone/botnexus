@@ -346,6 +346,110 @@ public sealed class CronControllerTests
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
 
+    // #2552 AC2: a credential-bearing webhook URL is rejected with a 400 AND nothing is persisted.
+    // Asserting only the 400 would still pass while the row landed in the store.
+    [Theory]
+    [InlineData("https://u:p@example.com/hook")]
+    [InlineData("http://user@example.com/hook")]
+    public async Task Create_WithCredentialBearingWebhookUrl_ReturnsBadRequest_AndPersistsNothing(string webhookUrl)
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var result = await controller.Create(
+            new CronJobCreateRequest
+            {
+                Id = "job-webhook",
+                Name = "Webhook job",
+                Schedule = "0 * * * *",
+                ActionType = "webhook",
+                WebhookUrl = webhookUrl
+            },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        (await store.GetAsync(JobId.From("job-webhook"))).ShouldBeNull();
+        (await store.ListAsync()).ShouldBeEmpty();
+    }
+
+    // #2552 AC4: non-http(s) schemes.
+    [Theory]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("ftp://example.com/hook")]
+    [InlineData("javascript:alert(1)")]
+    public async Task Create_WithNonHttpWebhookScheme_ReturnsBadRequest_AndPersistsNothing(string webhookUrl)
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var result = await controller.Create(
+            new CronJobCreateRequest
+            {
+                Id = "job-webhook",
+                Name = "Webhook job",
+                Schedule = "0 * * * *",
+                ActionType = "webhook",
+                WebhookUrl = webhookUrl
+            },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        (await store.ListAsync()).ShouldBeEmpty();
+    }
+
+    // #2552 AC2 on the update path: PUT must be closed too, otherwise a valid job can be edited
+    // into a credential-bearing target after creation.
+    [Fact]
+    public async Task Update_WithCredentialBearingWebhookUrl_ReturnsBadRequest_AndLeavesStoredValueIntact()
+    {
+        var store = new FakeCronStore();
+        await store.CreateAsync(CreateJob("job-1", actionType: "webhook") with { WebhookUrl = "https://example.com/hook" });
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var result = await controller.Update(
+            "job-1",
+            CreateJob("job-1", actionType: "webhook") with { WebhookUrl = "https://u:p@example.com/hook" },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        (await store.GetAsync(JobId.From("job-1")))!.WebhookUrl.ShouldBe("https://example.com/hook");
+    }
+
+    // #2552 AC5: a valid https URL round-trips unchanged through create, list and update.
+    [Fact]
+    public async Task ValidWebhookUrl_RoundTripsUnchanged_ThroughCreateListAndUpdate()
+    {
+        const string Url = "https://example.com/hook";
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+
+        var createResult = await controller.Create(
+            new CronJobCreateRequest
+            {
+                Id = "job-1",
+                Name = "Webhook job",
+                Schedule = "0 * * * *",
+                ActionType = "webhook",
+                WebhookUrl = Url
+            },
+            CancellationToken.None);
+
+        var created = (createResult.Result as CreatedAtActionResult)?.Value as CronJob;
+        created.ShouldNotBeNull();
+        created!.WebhookUrl.ShouldBe(Url);
+
+        var listResult = await controller.List(CancellationToken.None);
+        var listed = ((listResult.Result as OkObjectResult)?.Value as IReadOnlyList<CronJob>)!
+            .Single(j => j.Id.Value == "job-1");
+        listed.WebhookUrl.ShouldBe(Url);
+
+        var updateResult = await controller.Update("job-1", listed with { Name = "Renamed" }, CancellationToken.None);
+        var updated = (updateResult.Result as OkObjectResult)?.Value as CronJob;
+        updated.ShouldNotBeNull();
+        updated!.WebhookUrl.ShouldBe(Url);
+        (await store.GetAsync(JobId.From("job-1")))!.WebhookUrl.ShouldBe(Url);
+    }
+
     // #2389: POST /api/cron now binds CronJobCreateRequest (id optional) rather than the domain
     // record. Existing cases still express their intent as a CronJob and project it here, so the
     // scenarios they assert are unchanged.
