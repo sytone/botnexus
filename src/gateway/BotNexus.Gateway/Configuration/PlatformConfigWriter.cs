@@ -277,9 +277,15 @@ public sealed class PlatformConfigWriter
     public async Task MutateAsync(Func<JsonObject, Task> mutation, string reason, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(mutation);
+
+        // Lock order is always semaphore -> cross-process file lock (#2134). See
+        // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
+        // process's own threads from queueing on the OS lock, and the file lock extends the same
+        // critical section across the CLI/gateway process boundary.
         await WriteLock.WaitAsync(ct);
         try
         {
+            using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
             var root = await ReadRootAsync(ct);
             await mutation(root);
             await WriteRootAsync(root, reason, ct);
@@ -325,9 +331,11 @@ public sealed class PlatformConfigWriter
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
+        // Same lock order as MutateAsync: semaphore first, then the cross-process file lock (#2134).
         await WriteLock.WaitAsync(ct);
         try
         {
+            using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
             var root = await ReadRootAsync(ct);
 
             var mutationError = mutation(root);

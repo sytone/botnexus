@@ -1,0 +1,103 @@
+using System.IO.Abstractions;
+
+namespace BotNexus.Gateway.Configuration;
+
+/// <summary>
+/// An OS-level advisory lock over the configuration document, held for the duration of a
+/// read-modify-write critical section.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Issue #2134 (residual). <see cref="PlatformConfigWriter"/> serialises writers with a
+/// <c>static SemaphoreSlim</c>. A static semaphore only ever coordinates threads inside <em>one</em>
+/// process, and the CLI and the gateway are separate OS processes that both write
+/// <c>~/.botnexus/config.json</c>. Two concurrent processes could therefore interleave
+/// read-modify-write and silently drop one side's change - reproduced directly: two
+/// <c>botnexus config set</c> processes on disjoint keys both reported success while only one key
+/// reached disk.
+/// </para>
+/// <para>
+/// The whole-document compare-and-swap already on main does <em>not</em> close this: it is opt-in
+/// (the caller must pass <c>expectedRevision</c>) and only applies to
+/// <see cref="PlatformConfigWriter.UpdatePlatformConfigAsync"/>. The CLI mutation path uses
+/// <c>MutateValidatedAsync</c>, which never supplied a revision, so nothing constrained the second
+/// process.
+/// </para>
+/// <para><b>Mechanism.</b> A sidecar file <c>config.json.lock</c> is opened with
+/// <see cref="FileShare.None"/>. Exclusive-open semantics are honoured cross-process on every
+/// platform .NET targets, unlike a named <see cref="Mutex"/>, which is process-local on Linux and
+/// would therefore be useless in CI. The sidecar - not <c>config.json</c> itself - is locked so the
+/// writer stays free to swap the config file atomically via <c>File.Replace</c>/<c>Move</c> while
+/// holding the lock.
+/// </para>
+/// <para><b>Lock ordering (deadlock argument).</b> Acquisition is always
+/// <c>SemaphoreSlim -&gt; file lock</c>, never the reverse, at every call site. With a single
+/// consistent global order and no other lock in the critical section, a cycle cannot form. The
+/// file lock is additionally bounded by a timeout, so even a foreign process holding the sidecar
+/// forever degrades to a loud failure rather than a hang.
+/// </para>
+/// <para><b>Fail-safe.</b> If the lock cannot be taken within the timeout the writer throws
+/// <see cref="PlatformConfigLockTimeoutException"/>. Proceeding without the lock would reinstate
+/// the silent lost update, which is the defect; an explicit conflict is an outcome the acceptance
+/// criterion permits.
+/// </para>
+/// </remarks>
+internal sealed class CrossProcessConfigLock : IDisposable
+{
+    /// <summary>
+    /// Environment override for the acquisition timeout, in milliseconds. Primarily a test seam so
+    /// a blocked write fails fast instead of waiting out the production budget.
+    /// </summary>
+    public const string TimeoutEnvironmentVariable = "BOTNEXUS_CONFIG_LOCK_TIMEOUT_MS";
+
+    private const int DefaultTimeoutMs = 10_000;
+
+    private readonly Stream? _stream;
+
+    private CrossProcessConfigLock(Stream? stream) => _stream = stream;
+
+    /// <summary>
+    /// Acquires the cross-process lock guarding <paramref name="configPath"/>, retrying with
+    /// bounded backoff until the timeout elapses.
+    /// </summary>
+    /// <exception cref="PlatformConfigLockTimeoutException">The lock was still held at timeout.</exception>
+    public static async Task<CrossProcessConfigLock> AcquireAsync(
+        string configPath, IFileSystem fileSystem, CancellationToken ct)
+    {
+        var lockPath = configPath + ".lock";
+        var timeoutMs = ResolveTimeoutMs();
+
+        var directory = fileSystem.Path.GetDirectoryName(lockPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            fileSystem.Directory.CreateDirectory(directory);
+
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var delayMs = 5;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var stream = fileSystem.FileStream.New(
+                    lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                return new CrossProcessConfigLock(stream);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (DateTime.UtcNow >= deadline)
+                    throw new PlatformConfigLockTimeoutException(configPath, timeoutMs, ex);
+            }
+
+            await Task.Delay(delayMs, ct);
+            delayMs = Math.Min(delayMs * 2, 100);
+        }
+    }
+
+    private static int ResolveTimeoutMs()
+    {
+        var raw = Environment.GetEnvironmentVariable(TimeoutEnvironmentVariable);
+        return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : DefaultTimeoutMs;
+    }
+
+    public void Dispose() => _stream?.Dispose();
+}
