@@ -85,6 +85,18 @@
             <option value="@ActivityRecencyWindow.Week">Last 7 days</option>
             <option value="@ActivityRecencyWindow.Month">Last 30 days</option>
         </select>
+        <select class="activity-filter-select" data-testid="activity-filter-origin"
+                aria-label="Filter by origin"
+                value="@_filter.Origin"
+                @onchange="OnOriginFilterChanged">
+            <option value="@ActivityOriginFilter.All">Any origin</option>
+            <option value="@ActivityOriginFilter.Human">Human</option>
+            <option value="@ActivityOriginFilter.Scheduled">Scheduled</option>
+            <option value="@ActivityOriginFilter.Webhook">Webhook</option>
+            <option value="@ActivityOriginFilter.Agent">Agent-initiated</option>
+            <option value="@ActivityOriginFilter.SubAgent">Sub-agent</option>
+            <option value="@ActivityOriginFilter.AgentToAgent">Agent-to-agent</option>
+        </select>
     </div>
 
     @if (_isLoading && _rows is null)
@@ -274,6 +286,18 @@
     {
         if (Enum.TryParse<ActivityRecencyWindow>(e.Value?.ToString(), out var window))
             return ApplyFilterAsync(_filter with { Recency = window });
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Applies the origin facet (#2385). Mirrors the status/recency handlers exactly - it swaps one
+    /// facet on the existing immutable filter and re-projects, rather than introducing a second
+    /// query path. An unparseable value is ignored so a stale DOM value cannot blank the table.
+    /// </summary>
+    private Task OnOriginFilterChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<ActivityOriginFilter>(e.Value?.ToString(), out var origin))
+            return ApplyFilterAsync(_filter with { Origin = origin });
         return Task.CompletedTask;
     }
 

@@ -38,6 +38,39 @@ public enum ActivityStatusFilter
 }
 
 /// <summary>
+/// Origin facet for the dashboard filter (#2385). Selects rows by <em>why the conversation
+/// exists</em>, keyed off the same <c>(Source, Kind)</c> classification the row badge renders, so
+/// the filter can never disagree with what the reader sees on screen.
+/// </summary>
+/// <remarks>
+/// Deliberately its own enum rather than a reuse of <see cref="ConversationSource"/>: the
+/// user-visible origins are not one-to-one with the wire source. <c>Source=Agent</c> fans out into
+/// three distinct badges (sub-agent, agent-to-agent, agent-initiated) via
+/// <see cref="ConversationKind"/>, and the unbadged human/channel case is a single choice.
+/// Filtering on the raw source would offer facets that match no badge on screen.
+/// </remarks>
+public enum ActivityOriginFilter
+{
+    /// <summary>
+    /// No origin constraint - every row matches. The default, so the facet is inert until the user
+    /// opts in and the existing landing view is unchanged.
+    /// </summary>
+    All,
+    /// <summary>Only ordinary human-on-a-channel conversations - the deliberately unbadged rows.</summary>
+    Human,
+    /// <summary>Only cron/scheduled runs. Composes with, and does not override, the cron toggle.</summary>
+    Scheduled,
+    /// <summary>Only conversations triggered by an inbound webhook.</summary>
+    Webhook,
+    /// <summary>Only agent-minted conversations with no more specific pairing.</summary>
+    Agent,
+    /// <summary>Only agent-supervising-sub-agent conversations.</summary>
+    SubAgent,
+    /// <summary>Only peer agent-to-agent exchanges.</summary>
+    AgentToAgent
+}
+
+/// <summary>
 /// Immutable, composable filter for the Home / Activity dashboard. Each facet is independent so new
 /// facets can be added without changing existing call sites, and the whole record is cheap to copy
 /// with <c>with</c> when a single facet changes from the filter bar.
@@ -53,11 +86,18 @@ public enum ActivityStatusFilter
 /// </param>
 /// <param name="Status">Which lifecycle statuses to include.</param>
 /// <param name="Recency">Recency window applied to the last-activity timestamp.</param>
+/// <param name="Origin">
+/// Which origination case to include (#2385). Defaults to <see cref="ActivityOriginFilter.All"/>,
+/// so the facet is inert unless the user selects one. It <em>composes</em> with the other facets -
+/// notably it does not override <paramref name="IncludeCron"/>, so selecting
+/// <see cref="ActivityOriginFilter.Scheduled"/> still shows nothing until cron is revealed.
+/// </param>
 public sealed record ActivityDashboardFilter(
     bool IncludeCron = false,
     string? AgentId = null,
     ActivityStatusFilter Status = ActivityStatusFilter.Active,
-    ActivityRecencyWindow Recency = ActivityRecencyWindow.Any);
+    ActivityRecencyWindow Recency = ActivityRecencyWindow.Any,
+    ActivityOriginFilter Origin = ActivityOriginFilter.All);
 
 /// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
@@ -209,6 +249,7 @@ public static class ActivityDashboardProjection
             .Where(x => filter.AgentId is null ||
                         x.Agents.Contains(filter.AgentId, StringComparer.Ordinal))
             .Where(x => MatchesRecency(x.Dto.UpdatedAt, filter.Recency, now))
+            .Where(x => MatchesOrigin(x.Source, x.Kind, filter.Origin))
             .OrderByDescending(x => x.Dto.UpdatedAt)
             .ThenBy(x => x.Dto.ConversationId, StringComparer.Ordinal)
             .Select(x => new ActivityRow(
@@ -280,15 +321,13 @@ public static class ActivityDashboardProjection
     {
         ArgumentNullException.ThrowIfNull(row);
 
-        return (row.Source, row.Kind) switch
+        return ClassifyOrigin(row.Source, row.Kind) switch
         {
-            (ConversationSource.Cron, _) => "Scheduled",
-            (ConversationSource.Webhook, _) => "Webhook",
-            (ConversationSource.Agent, ConversationKind.AgentSubAgent) => "Sub-agent",
-            (ConversationSource.Agent, ConversationKind.AgentAgent) => "Agent-to-agent",
-            (ConversationSource.Agent, _) => "Agent-initiated",
-            (ConversationSource.Channel, ConversationKind.AgentSubAgent) => "Sub-agent",
-            (ConversationSource.Channel, ConversationKind.AgentAgent) => "Agent-to-agent",
+            ActivityOriginFilter.Scheduled => "Scheduled",
+            ActivityOriginFilter.Webhook => "Webhook",
+            ActivityOriginFilter.SubAgent => "Sub-agent",
+            ActivityOriginFilter.AgentToAgent => "Agent-to-agent",
+            ActivityOriginFilter.Agent => "Agent-initiated",
             _ => null
         };
     }
@@ -313,6 +352,37 @@ public static class ActivityDashboardProjection
             _ => null
         };
     }
+
+    /// <summary>
+    /// Classifies a <c>(source, kind)</c> pair into the user-visible origin facet (#2385). This is
+    /// the single classification the badge label, the badge colour modifier and the Origin filter
+    /// all read from, so a facet and the badge on the row it selected cannot drift apart - the same
+    /// duplicated-rule defect class epic #2300 exists to remove.
+    /// </summary>
+    /// <remarks>
+    /// Never returns <see cref="ActivityOriginFilter.All"/>: <c>All</c> is a filter choice ("do not
+    /// constrain"), not a property a row can have.
+    /// </remarks>
+    /// <param name="source">The parsed origination trigger.</param>
+    /// <param name="kind">The parsed citizen pairing.</param>
+    /// <returns>The facet this row belongs to.</returns>
+    public static ActivityOriginFilter ClassifyOrigin(ConversationSource source, ConversationKind kind) =>
+        (source, kind) switch
+        {
+            (ConversationSource.Cron, _) => ActivityOriginFilter.Scheduled,
+            (ConversationSource.Webhook, _) => ActivityOriginFilter.Webhook,
+            (ConversationSource.Agent, ConversationKind.AgentSubAgent) => ActivityOriginFilter.SubAgent,
+            (ConversationSource.Agent, ConversationKind.AgentAgent) => ActivityOriginFilter.AgentToAgent,
+            (ConversationSource.Agent, _) => ActivityOriginFilter.Agent,
+            (ConversationSource.Channel, ConversationKind.AgentSubAgent) => ActivityOriginFilter.SubAgent,
+            (ConversationSource.Channel, ConversationKind.AgentAgent) => ActivityOriginFilter.AgentToAgent,
+            _ => ActivityOriginFilter.Human
+        };
+
+    // The All choice short-circuits rather than falling through the classifier, so the default
+    // filter costs nothing per row on the common unfiltered landing view.
+    private static bool MatchesOrigin(ConversationSource source, ConversationKind kind, ActivityOriginFilter filter) =>
+        filter == ActivityOriginFilter.All || ClassifyOrigin(source, kind) == filter;
 
     private static bool MatchesStatus(string status, ActivityStatusFilter filter) => filter switch
     {

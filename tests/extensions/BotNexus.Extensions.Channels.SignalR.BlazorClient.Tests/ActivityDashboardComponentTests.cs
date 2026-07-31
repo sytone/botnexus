@@ -94,6 +94,16 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         Assert.Contains("Beta chat", cut.Markup);
     }
 
+    // The cron assertions below are scoped to the rendered ROWS rather than the whole component
+    // markup. The filter bar legitimately contains the word "Scheduled" (it is an origin choice,
+    // #2385), so a whole-markup scan would answer a question about the chrome instead of the
+    // question under test. Keying on the row's conversation id is also strictly stronger than
+    // substring-matching a title, which any unrelated copy change could satisfy by accident.
+    private static IReadOnlyList<string> RowIds(IRenderedComponent<ActivityDashboard> cut) =>
+        cut.FindAll("[data-testid='activity-row']")
+            .Select(r => r.GetAttribute("data-conversation-id")!)
+            .ToList();
+
     [Fact]
     public void Cron_conversation_excluded_by_default()
     {
@@ -104,8 +114,9 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         var cut = _ctx.Render<ActivityDashboard>();
 
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
-        Assert.Contains("Normal", cut.Markup);
-        Assert.DoesNotContain("Scheduled", cut.Markup);
+        Assert.Equal(new[] { "c1" }, RowIds(cut));
+        Assert.Contains("Normal", cut.Find("[data-testid='activity-table']").TextContent);
+        Assert.DoesNotContain("Scheduled", cut.Find("[data-testid='activity-table']").TextContent);
     }
 
     [Fact]
@@ -121,7 +132,8 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.Find("[data-testid='activity-filter-cron']").Click();
 
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
-        Assert.Contains("Scheduled", cut.Markup);
+        Assert.Equal(new[] { "c1", "c2" }, RowIds(cut).OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Contains("Scheduled", cut.Find("[data-testid='activity-table']").TextContent);
     }
 
     [Fact]
@@ -424,5 +436,132 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         var cell = cut.Find(".activity-cell-title");
         Assert.NotNull(cell.QuerySelector(".activity-conversation-title"));
         Assert.Equal("Webhook", cell.QuerySelector("[data-testid='activity-origin-badge']")!.TextContent);
+    }
+    // ── Origin facet interaction (#2385) ───────────────────────────────────
+
+    private void SetupOriginMix() =>
+        SetupConversations(
+            Conv("c1", title: "Jon DM"),
+            Conv("c2", title: "Inbound hook", source: "Webhook"),
+            Conv("c3", title: "Worker", source: "Agent", kind: "AgentSubAgent"),
+            Conv("c4", title: "Peer", source: "Agent", kind: "AgentAgent"),
+            Conv("c5", title: "Self start", source: "Agent"));
+
+    [Fact]
+    public void Origin_filter_control_is_rendered_and_defaults_to_all()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        var select = cut.Find("[data-testid='activity-filter-origin']");
+        Assert.Equal(nameof(ActivityOriginFilter.All), select.GetAttribute("value"));
+    }
+
+    [Fact]
+    public void Selecting_an_origin_narrows_the_table_to_that_origin_only()
+    {
+        SetupOriginMix();
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.Webhook));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+        var row = cut.Find("[data-testid='activity-row']");
+        Assert.Equal("c2", row.GetAttribute("data-conversation-id"));
+        Assert.Equal("webhook", row.QuerySelector("[data-testid='activity-origin-badge']")!.GetAttribute("data-origin"));
+        Assert.DoesNotContain("Jon DM", cut.Markup);
+    }
+
+    [Fact]
+    public void Selecting_the_sub_agent_origin_excludes_the_peer_agent_row()
+    {
+        SetupOriginMix();
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.SubAgent));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+        Assert.Equal("c3", cut.Find("[data-testid='activity-row']").GetAttribute("data-conversation-id"));
+        Assert.DoesNotContain("Peer", cut.Markup);
+    }
+
+    /// <summary>
+    /// The unbadged human/channel origin is still selectable: "no badge" is a real origin, not an
+    /// absence the filter bar cannot express.
+    /// </summary>
+    [Fact]
+    public void Selecting_the_human_origin_keeps_only_the_unbadged_rows()
+    {
+        SetupOriginMix();
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.Human));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+        Assert.Empty(cut.FindAll("[data-testid='activity-origin-badge']"));
+        Assert.Contains("Jon DM", cut.Markup);
+    }
+
+    [Fact]
+    public void Origin_filter_with_no_matches_shows_the_empty_state()
+    {
+        SetupConversations(Conv("c1", title: "Jon DM"));
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.Webhook));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-empty']"));
+        Assert.Empty(cut.FindAll("[data-testid='activity-row']"));
+    }
+
+    /// <summary>
+    /// Origin composes with the cron toggle rather than overriding it: the scheduled origin shows
+    /// nothing until cron is revealed, mirroring the projection contract.
+    /// </summary>
+    [Fact]
+    public void Origin_scheduled_composes_with_the_cron_toggle()
+    {
+        SetupConversations(
+            Conv("c1", title: "Jon DM"),
+            Conv("c2", title: "Nightly run", source: "Cron"));
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.Scheduled));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+        Assert.Equal("c2", cut.Find("[data-testid='activity-row']").GetAttribute("data-conversation-id"));
+    }
+
+    /// <summary>
+    /// The conversations stat card resets every facet, including the new one - a filter the reset
+    /// affordance cannot clear is a trap.
+    /// </summary>
+    [Fact]
+    public void Clearing_filters_resets_the_origin_facet_too()
+    {
+        SetupOriginMix();
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-origin']")
+           .Change(nameof(ActivityOriginFilter.Webhook));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
+        Assert.Equal(nameof(ActivityOriginFilter.All),
+            cut.Find("[data-testid='activity-filter-origin']").GetAttribute("value"));
     }
 }
