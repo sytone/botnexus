@@ -687,7 +687,7 @@ public class ExecToolTests : IDisposable
     public void BlockedEnvSets_MatchPinnedBaseline()
     {
         ExecTool.BlockedEnvPrefixes.ShouldBe(
-            new[] { "LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_" },
+            new[] { "LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_", "AWS_", "BOTNEXUS_" },
             ignoreOrder: true);
 
         ExecTool.BlockedEnvExact.ShouldBe(
