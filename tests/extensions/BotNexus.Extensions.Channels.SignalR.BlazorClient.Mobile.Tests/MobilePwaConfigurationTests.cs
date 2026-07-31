@@ -78,7 +78,13 @@ public sealed class MobilePwaConfigurationTests
         var path = Path.Combine(WwwrootPath, "index.html");
         var content = File.ReadAllText(path);
 
-        Assert.Contains("navigator.serviceWorker.register", content);
+        // #2591: registration now goes through BotNexusSwUpdate rather than a bare
+        // navigator.serviceWorker.register(...) call, because bare registration let a cached
+        // worker pin a stale bundle forever. The intent of this test (#1780 - the PWA must
+        // register a service worker so it is installable) is UNCHANGED; only the call site moved.
+        // The guarantees the helper adds are pinned by ServiceWorkerCacheStrategyTests.
+        Assert.Contains("js/swUpdate.js", content);
+        Assert.Contains("BotNexusSwUpdate.register('service-worker.js')", content);
     }
 
     [Fact]
