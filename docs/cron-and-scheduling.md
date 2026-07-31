@@ -19,6 +19,7 @@
 9. [CronTool — Runtime Job Management](#crontool--runtime-job-management)
 10. [REST API Endpoints](#rest-api-endpoints)
 11. [Migration from HeartbeatService](#migration-from-heartbeatservice)
+11a. [Failure Alerts](#11a-failure-alerts-2557)
 12. [Observability](#observability)
 13. [Examples](#examples)
 
@@ -1092,6 +1093,97 @@ AgentConfig.CronJobs is deprecated. Migrate to Cron.Jobs in config.json.
 ```
 
 This maintains backwards compatibility while encouraging migration.
+
+---
+
+## 11a. Failure Alerts (#2557)
+
+A cron job that starts failing every night at 02:00 is otherwise invisible until somebody reads
+the run history or the log. **Failure alerts** deliver a message to a configured conversation when
+a run terminates as `error`.
+
+### Opt-in setting
+
+Failure alerts are **opt-in per job and off by default**. Existing jobs -- including rows written
+before this feature existed -- read as disabled and behave exactly as they did before.
+
+Two job fields control it:
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `failureAlertsEnabled` | bool | `false` | Master opt-in for this job. |
+| `failureAlertConversationId` | string \| null | `null` | Conversation the alert is delivered to. |
+
+Both must be set: enabling alerts without a conversation id delivers nothing and logs a warning.
+There is deliberately **no** implicit fallback to the job's own `conversationId`, so turning alerts
+on can never accidentally retarget a job's long-lived run conversation.
+
+Configuration example:
+
+```json
+{
+  "cron": {
+    "jobs": {
+      "nightly-report": {
+        "name": "Nightly Report",
+        "schedule": "0 2 * * *",
+        "actionType": "agent-prompt",
+        "agentId": "reporter",
+        "message": "Produce the nightly report.",
+        "failureAlertsEnabled": true,
+        "failureAlertConversationId": "c_ops_alerts"
+      }
+    }
+  }
+}
+```
+
+### Backoff
+
+Alerting on *every* failed run would turn a job failing each minute into the noise the alert was
+meant to detect. Instead, alerts fire on the **first** failure of an error streak and thereafter
+only at streak positions that are exact powers of two:
+
+```
+streak position: 1  2  3  4  5  6  7  8  9 ...
+alert delivered: Y  Y  .  Y  .  .  .  Y  . ...
+```
+
+The streak is derived from the job's run history (consecutive `error` rows, newest first); a
+non-error terminal outcome resets it. Concurrent in-flight (`running`) rows are skipped rather
+than treated as a reset, so a parallel run cannot silently restart the backoff.
+
+### Alert payload
+
+| Field | Notes |
+| --- | --- |
+| `JobId` | Identifier of the failing job. |
+| `JobName` | Human-readable job name. |
+| `ScheduledRunTime` | **The occurrence the run was triggered for.** Without it the recipient cannot tell *which* occurrence broke -- this is the point of the alert. |
+| `AttemptedAt` | Wall-clock instant the failure was observed. |
+| `ConsecutiveErrorCount` | Length of the current error streak (1 on the first failure). |
+| `Error` | Error text, passed through `CronExternalDeliveryRedactor.RedactSummary` before it leaves the box. |
+
+Rendered message shape:
+
+```
+Cron job failed: Nightly Report (nightly-report)
+Scheduled run time: 2026-07-31T02:00:00.0000000+00:00
+Attempted at: 2026-07-31T02:00:04.1173920+00:00
+Consecutive errors: 1
+Error: <redacted error text>
+```
+
+### Delivery and failure semantics
+
+Delivery reuses the existing conversation-message seam (`IConversationRouter` ->
+`IInboundMessageOrchestrator`), the same path the `conversation` tool's `message` action takes.
+Webhook delivery and per-channel / per-account routing are **out of scope**; so are recovery
+("healthy again") notifications.
+
+An alert-delivery failure **never fails the cron run**. The run's terminal state is persisted
+before the alert is attempted, and every exception out of the delivery sink is caught and logged
+at `Error` level.
 
 ---
 

@@ -239,6 +239,10 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
+        // #2557: opt-in cron failure alerts delivered into a configured conversation. Registered
+        // here (not in AddBotNexusCron) because the delivery seam lives in the gateway assembly.
+        services.TryAddSingleton<BotNexus.Cron.ICronFailureAlertSink, BotNexus.Gateway.Cron.ConversationCronFailureAlertSink>();
+
         // Trusted security-event sink (#1532, #1645): captures approval/auth/tool boundary
         // decisions for the future trusted diagnostics surface. Deliberately a separate bounded
         // ring buffer so these never leak onto the public diagnostic stream.

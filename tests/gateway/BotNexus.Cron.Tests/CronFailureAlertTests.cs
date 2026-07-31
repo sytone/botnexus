@@ -296,6 +296,13 @@ public sealed class CronFailureAlertTests
             => throw new InvalidOperationException(message);
     }
 
+    private sealed class StaticOptionsMonitor<T>(T currentValue) : Microsoft.Extensions.Options.IOptionsMonitor<T>
+    {
+        public T CurrentValue => currentValue;
+        public T Get(string? name) => currentValue;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
     private sealed class CapturingLogger : ILogger<CronScheduler>
     {
         private readonly List<string> _messages = [];
