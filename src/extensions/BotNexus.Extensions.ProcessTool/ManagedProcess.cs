@@ -8,7 +8,7 @@ namespace BotNexus.Extensions.ProcessTool;
 /// Wraps a <see cref="Process"/> with bounded output capture and lifecycle management.
 /// Stdout and stderr are interleaved into a single circular buffer capped at <see cref="MaxOutputBytes"/>.
 /// </summary>
-public sealed class ManagedProcess : IDisposable
+public class ManagedProcess : IDisposable
 {
     internal const int MaxOutputBytes = 100 * 1024; // 100 KB
 
@@ -17,12 +17,23 @@ public sealed class ManagedProcess : IDisposable
     private readonly object _lock = new();
     private bool _disposed;
 
+    /// <summary>
+    /// Whether a termination request has been issued and, if so, whether the process was actually
+    /// observed to exit. An <see cref="ProcessKillState.Unconfirmed"/> entry may still have live
+    /// descendants, so callers must keep it tracked and re-killable rather than releasing its slot.
+    /// </summary>
+    public ProcessKillState KillState { get; private set; } = ProcessKillState.NotRequested;
+
+    /// <summary>OS process name captured at start, so it stays readable after the process exits.</summary>
+    public string ProcessName { get; }
+
     internal ManagedProcess(Process process, string command, DateTimeOffset startedAt)
     {
         _process = process ?? throw new ArgumentNullException(nameof(process));
         Command = command;
         StartedAt = startedAt;
         Pid = process.Id;
+        ProcessName = SafeProcessName(process);
 
         _process.OutputDataReceived += OnData;
         _process.ErrorDataReceived += OnData;
@@ -154,33 +165,57 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Sends a graceful termination request, waits up to 5 seconds, then force-kills.
+    /// Sends a graceful termination request, waits up to 5 seconds, then force-kills the whole tree.
+    /// Returns <c>true</c> only when exit was actually <em>observed</em>; <c>false</c> means the wait
+    /// timed out and part of the tree may still be alive. Callers must not treat <c>false</c> as
+    /// success - see <see cref="KillState"/>.
     /// </summary>
-    public void Kill()
+    public bool Kill()
     {
-        if (_disposed) return;
+        if (_disposed) return false;
 
+        var confirmed = KillCore();
+        KillState = confirmed ? ProcessKillState.Confirmed : ProcessKillState.Unconfirmed;
+        return confirmed;
+    }
+
+    /// <summary>
+    /// Performs the actual termination and reports whether exit was observed. Virtual so tests can
+    /// substitute a deterministic outcome for the inherently timing-dependent OS behaviour.
+    /// </summary>
+    protected virtual bool KillCore()
+    {
         try
         {
-            if (_process.HasExited) return;
+            if (_process.HasExited) return true;
 
             _process.Kill(entireProcessTree: false);
-            if (!_process.WaitForExit(5_000))
-            {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit(2_000);
-            }
+            if (_process.WaitForExit(5_000))
+                return true;
+
+            _process.Kill(entireProcessTree: true);
+
+            // The return value of this wait is the ONLY signal that the tree actually died.
+            // Discarding it is what let orphaned descendants be reported as terminated.
+            return _process.WaitForExit(2_000);
         }
         catch (InvalidOperationException)
         {
-            // Process already exited between our check and kill — safe to ignore.
+            // Process already exited between our check and kill - that IS a confirmed exit.
+            return true;
         }
+    }
+
+    private static string SafeProcessName(Process process)
+    {
+        try { return process.ProcessName; }
+        catch { return "unknown"; }
     }
 
     /// <summary>Waits for the process to exit, with an optional timeout in milliseconds.</summary>
     internal bool WaitForExit(int milliseconds) => _process.WaitForExit(milliseconds);
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed) return;
         _disposed = true;

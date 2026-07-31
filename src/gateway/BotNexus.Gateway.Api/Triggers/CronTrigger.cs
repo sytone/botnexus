@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 
@@ -306,8 +307,12 @@ public sealed class CronTrigger(
         // No pin (first run) or pinned conversation was hard-deleted out from under us.
         // Create a fresh per-run conversation; the scheduler's CAS decides whether ours wins.
         var initiator = ResolveInitiator(request?.CreatedBy, agentId);
-        var title = !string.IsNullOrWhiteSpace(request?.JobName)
-            ? request!.JobName!
+        // #2553: the job name is operator/agent-supplied. Normalise it at the render seam too,
+        // not just at the four producers, so any future caller of InternalTriggerRequest cannot
+        // put a multi-line or control-character-bearing title on a conversation.
+        var sanitizedJobName = ExternalText.Sanitize(request?.JobName, ExternalText.DefaultDisplayLength);
+        var title = !string.IsNullOrWhiteSpace(sanitizedJobName)
+            ? sanitizedJobName
             : "Cron";
 
         // Schedule-driven origination (#2302). Minted through the single creation seam (#2310)

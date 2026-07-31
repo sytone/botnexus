@@ -1,0 +1,16 @@
+<!--
+  Root traversal project: "build everything".
+
+  Composes the per-directory traversals rather than re-globbing, so there is exactly one
+  definition of each graph and the root can never drift from `src/dirs.proj` + `tests/dirs.proj`.
+  `botnexus build` / `update` / `serve` target `src/dirs.proj` (the deployment closure); this
+  file exists for humans and CI that want the whole tree.
+-->
+<Project Sdk="Microsoft.Build.Traversal">
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src\dirs.proj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tests\dirs.proj" />
+  </ItemGroup>
+
+</Project>

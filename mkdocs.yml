@@ -150,8 +150,10 @@ nav:
   - Guides:
       - Audio Recording: guides/audio-recording.md
       - Watchdog Setup: guides/watchdog-setup.md
+      - Offline Install (no nuget.org): guides/offline-install.md
   - Features:
-      - Sub-Agent Spawning: features/sub-agent-spawning.md`n      - Session Consistency Monitor: features/session-consistency.md
+      - Sub-Agent Spawning: features/sub-agent-spawning.md
+      - Session Consistency Monitor: features/session-consistency.md
       - Hybrid Memory Retrieval: features/hybrid-memory-retrieval.md
   - Extensions:
       - Extension Development: extension-development.md

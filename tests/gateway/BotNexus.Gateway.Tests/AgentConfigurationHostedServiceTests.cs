@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Configuration;
@@ -245,6 +247,153 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
 
         registry.RegisterOperations.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OnSourceChange_FileAccessChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = ["/srv/extra"] }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_FileAccessAllowedWritePathAdded_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            FileAccess = new FileAccessPolicy { AllowedWritePaths = ["/srv/out"] }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_FileAccessDeniedPathAdded_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            FileAccess = new FileAccessPolicy { DeniedPaths = ["/etc/secrets"] }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_MetadataChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            Metadata = new Dictionary<string, object?> { ["role"] = "reviewer" }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_MemoryConfigChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            Memory = new MemoryAgentConfig { Enabled = true, Path = "memory" }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_SoulConfigChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            Soul = new SoulAgentConfig { Enabled = true, Timezone = "Europe/London" }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_HeartbeatConfigChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 5 }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_IsolationOptionsChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            IsolationOptions = new Dictionary<string, object?> { ["image"] = "custom:2" }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_ExtensionConfigChanged_ReRegistersAgent()
+    {
+        using var document = JsonDocument.Parse("""{"enabled":true}""");
+        var element = document.RootElement.Clone();
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            ExtensionConfig = new Dictionary<string, JsonElement> { ["botnexus-skills"] = element }
+        });
+    }
+
+    /// <summary>
+    /// Applies <paramref name="mutate"/> to a baseline descriptor and asserts that the hosted service
+    /// treats the mutated descriptor as changed: it unregisters and re-registers the agent so the
+    /// downstream runtime (e.g. the agent's IPathValidator) is rebuilt from the new descriptor.
+    /// </summary>
+    private static async Task AssertReRegistersOnChangeAsync(Func<AgentDescriptor, AgentDescriptor> mutate)
+    {
+        var baseline = CreateDescriptor("agent-a");
+        var mutated = mutate(baseline);
+
+        var source = new Mock<IAgentConfigurationSource>();
+        Action<IReadOnlyList<AgentDescriptor>>? callback = null;
+        source.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([baseline]);
+        source.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
+            .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
+            .Returns(Mock.Of<IDisposable>());
+        var registry = new RecordingAgentRegistry();
+        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        registry.RegisterOperations.Clear();
+        registry.UnregisterOperations.Clear();
+        callback.ShouldNotBeNull();
+
+        callback!([mutated]);
+
+        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-a"));
+
+        registry.UnregisterOperations.ShouldContain("agent-a");
+        registry.RegisterOperations.ShouldContain("agent-a");
+        registry.Get(AgentId.From("agent-a")).ShouldBe(mutated);
+    }
+
+    [Fact]
+    public async Task OnSourceChange_ConversationRetentionChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            ConversationRetention = new AgentConversationRetentionConfig { AutoArchiveAfterDays = 7 }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_DateTimeInjectionChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with
+        {
+            DateTimeInjection = new DateTimeInjectionConfig { Enabled = true, Timezone = "Europe/London" }
+        });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_OrderChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with { Order = 42 });
+    }
+
+    [Fact]
+    public async Task OnSourceChange_SystemPromptChanged_ReRegistersAgent()
+    {
+        await AssertReRegistersOnChangeAsync(d => d with { SystemPrompt = "you are new" });
     }
 
     /// <summary>

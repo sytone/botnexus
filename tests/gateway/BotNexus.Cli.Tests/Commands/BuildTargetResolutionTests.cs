@@ -27,6 +27,7 @@ public sealed class BuildTargetResolutionTests
         try
         {
             var deploy = Path.Combine(root, BuildCommand.DeployProjectFileName);
+            Directory.CreateDirectory(Path.GetDirectoryName(deploy)!);
             File.WriteAllText(deploy, "<Project />");
             File.WriteAllText(Path.Combine(root, BuildCommand.SolutionFileName), "<Solution />");
 
@@ -74,7 +75,7 @@ public sealed class BuildTargetResolutionTests
     [Fact]
     public void DeployProject_NameAndSolutionName_AreTheExpectedFiles()
     {
-        BuildCommand.DeployProjectFileName.ShouldBe("BotNexus.Deploy.proj");
+        BuildCommand.DeployProjectFileName.ShouldBe("src/dirs.proj");
         BuildCommand.SolutionFileName.ShouldBe("BotNexus.slnx");
     }
 
@@ -150,7 +151,7 @@ public sealed class BuildTargetResolutionTests
         File.Exists(deployProject).ShouldBeTrue($"{deployProject} must exist at the repo root");
 
         var text = File.ReadAllText(deployProject);
-        text.ShouldContain(@"src\**\*.csproj");
+        text.ShouldContain(@"**\*.csproj");
 
         var srcProjects = Directory
             .GetFiles(Path.Combine(repoRoot, "src"), "*.csproj", SearchOption.AllDirectories);
@@ -188,7 +189,7 @@ public sealed class BuildTargetResolutionTests
             .ToList();
 
         outside.ShouldBeEmpty(
-            "a deployed project outside src/ would never be built by BotNexus.Deploy.proj: "
+            "a deployed project outside src/ would never be built by src/dirs.proj: "
             + string.Join(", ", outside));
     }
 

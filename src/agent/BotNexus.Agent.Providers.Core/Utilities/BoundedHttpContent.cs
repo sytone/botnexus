@@ -36,6 +36,16 @@ public static class BoundedHttpContent
     public const long DefaultMaxResponseBytes = 16L * 1024 * 1024;
 
     /// <summary>
+    /// Default maximum time allowed between two successive body chunks (30s). The total-byte cap
+    /// bounds volume but not time: a provider (or middlebox) that opens a response and then trickles
+    /// or wedges forever satisfies the byte cap indefinitely and holds the agent turn's slot open.
+    /// This window is a <em>default</em> rather than opt-in precisely because an opt-in idle cap only
+    /// protects the call sites that remember to pass it. Pass <see cref="Timeout.InfiniteTimeSpan"/>
+    /// to deliberately opt out.
+    /// </summary>
+    public static readonly TimeSpan DefaultIdleChunkTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Mirrors the implicit options used by <c>System.Net.Http.Json.HttpContent.ReadFromJsonAsync</c>
     /// (case-insensitive property matching) so swapping callers onto the bounded reader does not
     /// change deserialization semantics.
@@ -48,16 +58,23 @@ public static class BoundedHttpContent
     /// <param name="content">The HTTP response content (untrusted external body).</param>
     /// <param name="maxBytes">Maximum number of bytes to read before aborting. Defaults to <see cref="DefaultMaxResponseBytes"/>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="idleTimeout">
+    /// Maximum time allowed between two successive body chunks. Defaults to
+    /// <see cref="DefaultIdleChunkTimeout"/>; pass <see cref="Timeout.InfiniteTimeSpan"/> to disable.
+    /// </param>
     /// <returns>The decoded body as a string.</returns>
     /// <exception cref="ResponseContentTooLargeException">The body exceeds <paramref name="maxBytes"/>.</exception>
+    /// <exception cref="ResponseBodyStalledException">No bytes arrived within <paramref name="idleTimeout"/>.</exception>
     public static async Task<string> ReadStringWithLimitAsync(
         HttpContent content,
         long maxBytes = DefaultMaxResponseBytes,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? idleTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (maxBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxBytes), maxBytes, "maxBytes must be positive.");
+        var idle = ResolveIdleTimeout(idleTimeout);
 
         // Cheap rejection: a declared Content-Length over the cap never needs a body byte pulled.
         var declaredLength = content.Headers.ContentLength;
@@ -65,7 +82,7 @@ public static class BoundedHttpContent
             throw new ResponseContentTooLargeException(maxBytes, length);
 
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        var buffer = await ReadBoundedAsync(stream, maxBytes, cancellationToken).ConfigureAwait(false);
+        var buffer = await ReadBoundedAsync(stream, maxBytes, idle, cancellationToken).ConfigureAwait(false);
 
         // Honour a declared charset if present; default to UTF-8 (the JSON default).
         var charSet = content.Headers.ContentType?.CharSet;
@@ -82,24 +99,31 @@ public static class BoundedHttpContent
     /// <param name="options">Optional JSON serializer options.</param>
     /// <param name="maxBytes">Maximum number of bytes to read before aborting. Defaults to <see cref="DefaultMaxResponseBytes"/>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="idleTimeout">
+    /// Maximum time allowed between two successive body chunks. Defaults to
+    /// <see cref="DefaultIdleChunkTimeout"/>; pass <see cref="Timeout.InfiniteTimeSpan"/> to disable.
+    /// </param>
     /// <returns>The deserialized value, or <c>null</c> when the body is empty / JSON null.</returns>
     /// <exception cref="ResponseContentTooLargeException">The body exceeds <paramref name="maxBytes"/>.</exception>
+    /// <exception cref="ResponseBodyStalledException">No bytes arrived within <paramref name="idleTimeout"/>.</exception>
     public static async Task<T?> ReadFromJsonWithLimitAsync<T>(
         HttpContent content,
         JsonSerializerOptions? options = null,
         long maxBytes = DefaultMaxResponseBytes,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? idleTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (maxBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxBytes), maxBytes, "maxBytes must be positive.");
+        var idle = ResolveIdleTimeout(idleTimeout);
 
         var declaredLength = content.Headers.ContentLength;
         if (declaredLength is { } length && length > maxBytes)
             throw new ResponseContentTooLargeException(maxBytes, length);
 
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        var buffer = await ReadBoundedAsync(stream, maxBytes, cancellationToken).ConfigureAwait(false);
+        var buffer = await ReadBoundedAsync(stream, maxBytes, idle, cancellationToken).ConfigureAwait(false);
 
         if (buffer.Length == 0)
             return default;
@@ -118,6 +142,7 @@ public static class BoundedHttpContent
     private static async Task<byte[]> ReadBoundedAsync(
         Stream stream,
         long maxBytes,
+        TimeSpan idleTimeout,
         CancellationToken cancellationToken)
     {
         // 81920 == the default Stream.CopyToAsync buffer size.
@@ -125,10 +150,42 @@ public static class BoundedHttpContent
         var rented = new byte[chunkSize];
         using var accumulator = new MemoryStream();
         long total = 0;
+        var idleEnabled = idleTimeout != Timeout.InfiniteTimeSpan;
 
         while (true)
         {
-            var read = await stream.ReadAsync(rented.AsMemory(0, chunkSize), cancellationToken).ConfigureAwait(false);
+            int read;
+
+            // The deadline is PER CHUNK: a fresh linked source each iteration, so a slow-but-
+            // progressing body never accumulates toward a whole-response budget. Mirrors the
+            // linked-CTS idiom established by the bounded BeforeToolCall hook (#2547).
+            using var idleCts = idleEnabled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            idleCts?.CancelAfter(idleTimeout);
+
+            var readToken = idleCts?.Token ?? cancellationToken;
+            try
+            {
+                read = await stream.ReadAsync(rented.AsMemory(0, chunkSize), readToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                idleCts is not null &&
+                idleCts.IsCancellationRequested &&
+                !cancellationToken.IsCancellationRequested)
+            {
+                // Idle-window breach, not caller cancellation. The caller's token is untouched, so
+                // this is unambiguously the body going quiet rather than the turn being cancelled.
+                throw new ResponseBodyStalledException(idleTimeout, total);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Caller cancellation must surface on the CALLER's token, not the linked one, so
+                // upstream `when (ex.CancellationToken == myToken)` filters keep working.
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+
             if (read == 0)
                 break;
 
@@ -140,6 +197,24 @@ public static class BoundedHttpContent
         }
 
         return accumulator.ToArray();
+    }
+
+    /// <summary>
+    /// Applies the non-null default and rejects a non-positive window, which would otherwise
+    /// silently disable the guard - the exact failure mode this bound exists to prevent.
+    /// </summary>
+    private static TimeSpan ResolveIdleTimeout(TimeSpan? idleTimeout)
+    {
+        var idle = idleTimeout ?? DefaultIdleChunkTimeout;
+        if (idle != Timeout.InfiniteTimeSpan && idle <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(idleTimeout),
+                idle,
+                "idleTimeout must be positive, or Timeout.InfiniteTimeSpan to disable the idle deadline.");
+        }
+
+        return idle;
     }
 
     private static Encoding ResolveEncoding(string? charSet)
@@ -180,5 +255,31 @@ public sealed class ResponseContentTooLargeException : Exception
     {
         MaxBytes = maxBytes;
         ObservedBytes = observedBytes;
+    }
+}
+
+/// <summary>
+/// Thrown when an HTTP response body produced no further bytes within the per-chunk idle window.
+/// Distinct from <see cref="ResponseContentTooLargeException"/> (volume) and from caller
+/// cancellation (an <see cref="OperationCanceledException"/> carrying the caller's token), so a
+/// stalled provider is diagnosable rather than indistinguishable from a slow but healthy one.
+/// </summary>
+public sealed class ResponseBodyStalledException : Exception
+{
+    /// <summary>The idle window that elapsed with no bytes received.</summary>
+    public TimeSpan IdleTimeout { get; }
+
+    /// <summary>
+    /// Bytes successfully received before the stall. Zero distinguishes a body that never started
+    /// from one that trickled and then wedged mid-flight.
+    /// </summary>
+    public long BytesReceived { get; }
+
+    /// <summary>Initializes a new instance of the <see cref="ResponseBodyStalledException"/> class.</summary>
+    public ResponseBodyStalledException(TimeSpan idleTimeout, long bytesReceived)
+        : base($"HTTP response body stalled for {idleTimeout.TotalMilliseconds:0}ms with no further bytes (received {bytesReceived} bytes). The read was aborted to avoid holding the caller open indefinitely.")
+    {
+        IdleTimeout = idleTimeout;
+        BytesReceived = bytesReceived;
     }
 }

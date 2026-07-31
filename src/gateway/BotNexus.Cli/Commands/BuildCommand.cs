@@ -35,11 +35,11 @@ internal sealed class BuildCommand
     }
 
     /// <summary>
-    /// Traversal project covering the deployment closure - every project under <c>src/</c>.
-    /// Built instead of the full solution so the 55 projects under <c>tests/</c> are not
-    /// evaluated at all. See <c>BotNexus.Deploy.proj</c> for why the set is a wildcard.
+    /// Microsoft.Build.Traversal project covering the deployment closure - every project under
+    /// <c>src/</c>. Built instead of the full solution so the 55 projects under <c>tests/</c> are
+    /// not evaluated at all. See <c>src/dirs.proj</c> for why the set is a wildcard.
     /// </summary>
-    internal const string DeployProjectFileName = "BotNexus.Deploy.proj";
+    internal const string DeployProjectFileName = "src/dirs.proj";
 
     /// <summary>Full-solution fallback used when the deployment project is absent.</summary>
     internal const string SolutionFileName = "BotNexus.slnx";

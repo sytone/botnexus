@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -243,20 +244,130 @@ public sealed class AskUserTool(
         };
     }
 
+    /// <summary>
+    /// Reads an optional <see cref="int"/> tool argument regardless of how the provider boxed the
+    /// underlying JSON number. Streaming tool-call parsing boxes JSON integers as CLR
+    /// <see cref="long"/> and any number carrying a decimal point as <see cref="double"/>, so the
+    /// previous switch - which handled only <see cref="JsonElement"/>/<see cref="int"/>/
+    /// <see cref="long"/>/<see cref="string"/> - rejected a schema-valid <c>timeout_seconds</c> with
+    /// a message asserting the very requirement the payload already met (issue #2415). It also cast
+    /// <see cref="long"/> to <see cref="int"/> unchecked, silently turning an out-of-range value into
+    /// a plausible one.
+    /// <para>
+    /// This mirrors <c>AgentConverseTool.TryReadInt32</c>: a value is accepted only when it
+    /// round-trips to <see cref="int"/> without loss. The duplication is deliberate - the two tools
+    /// live in assemblies with no shared dependency, and introducing one to host a helper is a
+    /// dependency decision that does not belong in a bug fix.
+    /// </para>
+    /// </summary>
     private static int? ReadInt(IReadOnlyDictionary<string, object?> args, string key)
     {
         if (!args.TryGetValue(key, out var value) || value is null)
             return null;
 
-        return value switch
+        if (TryReadInt32(value, out var parsed))
+            return parsed;
+
+        throw new ArgumentException(
+            $"Argument '{key}' must be a whole number that fits in a 32-bit integer. " +
+            $"Received {DescribeValue(value)}; expected an integer such as 300 (a JSON number, or a " +
+            "string containing only digits). Fractional, non-finite and out-of-range values are rejected " +
+            "because they cannot be represented without loss.");
+    }
+
+    private static bool TryReadInt32(object value, out int result)
+    {
+        switch (value)
         {
-            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var number) => number,
-            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var parsed) => parsed,
-            int number => number,
-            long number => (int)number,
-            string text when int.TryParse(text, out var parsed) => parsed,
-            _ => throw new ArgumentException($"Argument '{key}' must be an integer.")
-        };
+            case int i:
+                result = i;
+                return true;
+            case sbyte or byte or short or ushort:
+                result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                return true;
+            case long l when l is >= int.MinValue and <= int.MaxValue:
+                result = (int)l;
+                return true;
+            case uint u when u <= int.MaxValue:
+                result = (int)u;
+                return true;
+            case ulong u when u <= int.MaxValue:
+                result = (int)u;
+                return true;
+            case double d when IsIntegralInt32(d):
+                result = (int)d;
+                return true;
+            case float f when IsIntegralInt32(f):
+                result = (int)f;
+                return true;
+            case decimal m when IsIntegralInt32(m):
+                result = (int)m;
+                return true;
+            case JsonElement { ValueKind: JsonValueKind.Number } element:
+                return TryReadJsonNumber(element, out result);
+            case JsonElement { ValueKind: JsonValueKind.String } element:
+                return TryParseInt32(element.GetString(), out result);
+            case string text:
+                return TryParseInt32(text, out result);
+            default:
+                result = 0;
+                return false;
+        }
+    }
+
+    private static bool TryReadJsonNumber(JsonElement element, out int result)
+    {
+        if (element.TryGetInt32(out result))
+            return true;
+
+        if (element.TryGetInt64(out var l) && l is >= int.MinValue and <= int.MaxValue)
+        {
+            result = (int)l;
+            return true;
+        }
+
+        if (element.TryGetDouble(out var d) && IsIntegralInt32(d))
+        {
+            result = (int)d;
+            return true;
+        }
+
+        result = 0;
+        return false;
+    }
+
+    private static bool IsIntegralInt32(double value)
+        => double.IsFinite(value)
+           && value % 1d == 0d
+           && value is >= int.MinValue and <= int.MaxValue;
+
+    private static bool IsIntegralInt32(decimal value)
+        => value % 1m == 0m
+           && value is >= int.MinValue and <= int.MaxValue;
+
+    private static bool TryParseInt32(string? text, out int result)
+        => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
+
+    /// <summary>
+    /// Renders the value the caller actually sent so a rejection diagnoses rather than merely
+    /// asserts. #2415's core complaint was messages that restated a requirement without saying what
+    /// was received, leaving the model to retry blindly.
+    /// </summary>
+    private static string DescribeValue(object value)
+    {
+        if (value is JsonElement element)
+        {
+            var rendered = element.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                ? element.ValueKind.ToString().ToLowerInvariant()
+                : element.ToString();
+            return $"JSON {element.ValueKind.ToString().ToLowerInvariant()} '{rendered}'";
+        }
+
+        var text = value is IFormattable formattable
+            ? formattable.ToString(null, CultureInfo.InvariantCulture)
+            : value.ToString();
+
+        return $"{value.GetType().Name} '{text}'";
     }
 
     private static AskUserInputType ReadInputType(IReadOnlyDictionary<string, object?> arguments)

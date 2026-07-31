@@ -200,7 +200,14 @@ public sealed class ProcessTool : IAgentTool
             return TextResult($"Process {pid} already exited (code {code}).");
         }
 
-        process.Kill();
+        // Only report termination when exit was actually observed; an unconfirmed kill may have
+        // left descendants running, and the entry deliberately stays tracked so it can be retried.
+        if (!process.Kill())
+        {
+            return TextResult(
+                $"Process {pid} ({process.ProcessName}) did NOT confirm termination within the grace period. " +
+                "Part of its process tree may still be running; the process remains tracked and can be killed again.");
+        }
 
         var exitCode = process.ExitCode;
         return TextResult($"Process {pid} terminated (exit code {exitCode}).");

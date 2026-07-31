@@ -107,6 +107,43 @@ public sealed class MissedRunDetectionService(
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
+    /// The single floor from which a missed-run scan may replay occurrences: the later of the
+    /// job's last run and the instant its current schedule took effect.
+    ///
+    /// <para>#2554: <c>LastRunAt</c> alone is a property of the job's <b>previous</b> schedule.
+    /// Walking the <b>current</b> cron expression forward from it manufactures occurrences that
+    /// never existed under the retired schedule - written to history as missed and, for
+    /// <c>catchUp: true</c> jobs, fired immediately.</para>
+    ///
+    /// <para>A null <see cref="CronJob.ScheduleActivatedAt"/> means "unknown" (a row written
+    /// before the column existed, or one whose scheduling inputs were never edited). Unknown
+    /// deliberately yields no clamp, so jobs whose schedule never changed behave exactly as
+    /// before - suppressing a legitimate missed run is worse than the bug being fixed.</para>
+    ///
+    /// <para>This is the one predicate shared by <see cref="GetMissedRuns"/> and
+    /// <see cref="WasTruncated"/>; neither computes its own floor, so the scan and the truncation
+    /// warning cannot drift apart.</para>
+    /// </summary>
+    internal static DateTime? GetScanFloorUtc(CronJob job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+
+        if (job.LastRunAt is null)
+        {
+            return null;
+        }
+
+        var floor = job.LastRunAt.Value.UtcDateTime;
+        var activated = job.ScheduleActivatedAt;
+        if (activated is not null && activated.Value.UtcDateTime > floor)
+        {
+            floor = activated.Value.UtcDateTime;
+        }
+
+        return floor;
+    }
+
+    /// <summary>
     /// Calculates the scheduled run times that were missed between the job's last run and now.
     /// </summary>
     internal static IReadOnlyList<DateTimeOffset> GetMissedRuns(CronJob job, DateTimeOffset now)
@@ -129,8 +166,14 @@ public sealed class MissedRunDetectionService(
         var tz = TimeZoneHelper.Resolve(job.TimeZone);
         var missedRuns = new List<DateTimeOffset>();
 
-        // Start scanning from lastRunAt; find all occurrences between then and now.
-        var cursor = job.LastRunAt.Value.UtcDateTime;
+        // Scan from the shared floor (#2554): max(lastRunAt, scheduleActivatedAt).
+        var floor = GetScanFloorUtc(job);
+        if (floor is null)
+        {
+            return [];
+        }
+
+        var cursor = floor.Value;
         var limit = now.UtcDateTime;
 
         // Cap missed runs to avoid runaway iteration for very frequent schedules after long downtime.
@@ -172,6 +215,9 @@ public sealed class MissedRunDetectionService(
         }
 
         var tz = TimeZoneHelper.Resolve(job.TimeZone);
+
+        // Continue from the last recorded occurrence, which the shared floor already bounded
+        // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan.
         var next = expression.GetNextOccurrence(missed[^1].UtcDateTime, tz);
         return next is not null && next.Value < now.UtcDateTime;
     }

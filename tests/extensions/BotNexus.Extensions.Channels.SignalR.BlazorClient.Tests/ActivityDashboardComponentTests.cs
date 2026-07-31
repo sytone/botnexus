@@ -367,4 +367,62 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         var badge = cut.Find("[data-testid='activity-origin-badge']");
         Assert.Equal("Source: Agent \u00b7 Kind: AgentSubAgent", badge.GetAttribute("title"));
     }
+
+    // ── Title truncation and derived labels (#2528) ────────────────────────
+
+    private const string RoutingId =
+        "servicebus:a:1lexPcP4_GMPlgVVbjGrdGzyqu_vhKl8pYMbpdTsQtXOvY1lWpznwGCftUS0BRbXu4Bu3TbCzOO5xGw7E4sRVj9w1J1";
+
+    [Fact]
+    public void Table_is_wrapped_in_a_horizontally_scrollable_container()
+    {
+        SetupConversations(Conv("c1", title: "Chat"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-row']"));
+
+        var scroller = cut.Find("[data-testid='activity-table-scroll']");
+        Assert.NotNull(scroller.QuerySelector("[data-testid='activity-table']"));
+    }
+
+    [Fact]
+    public void Row_with_a_raw_routing_id_as_title_renders_a_derived_label_not_the_raw_token()
+    {
+        SetupConversations(Conv("c1", agentId: "farnsworth", title: RoutingId));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-row']"));
+
+        var title = cut.Find(".activity-conversation-title");
+        Assert.NotEqual(RoutingId, title.TextContent);
+        Assert.Contains("farnsworth", title.TextContent, StringComparison.Ordinal);
+        Assert.StartsWith("servicebus", title.TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Long_title_is_length_bounded_in_the_dom_and_the_full_value_is_available_on_hover()
+    {
+        var longTitle = string.Join(" ", Enumerable.Repeat("verbose", 200));
+        SetupConversations(Conv("c1", title: longTitle));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-row']"));
+
+        var title = cut.Find(".activity-conversation-title");
+        Assert.True(title.TextContent.Length <= ConversationLabel.MaxTitleLength);
+        Assert.Equal(longTitle, title.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void Origin_badge_survives_alongside_a_truncated_title()
+    {
+        SetupConversations(Conv("c1", agentId: "farnsworth", title: RoutingId, source: "Webhook"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-row']"));
+
+        var cell = cut.Find(".activity-cell-title");
+        Assert.NotNull(cell.QuerySelector(".activity-conversation-title"));
+        Assert.Equal("Webhook", cell.QuerySelector("[data-testid='activity-origin-badge']")!.TextContent);
+    }
 }
