@@ -975,5 +975,30 @@ public sealed class AgentInteractionServiceTests
         Assert.False(conv.StreamState.IsTurnActive);
         Assert.False(agent.IsStreaming);
     }
+
+    // ---- #2439: Stop also clears the pending Steer/Follow-up chip ----
+
+    [Fact]
+    public async Task AbortAsync_clears_pending_steering_chip()
+    {
+        // #2439 AC2: the chip must not survive an abort. Once the run is torn down nothing will
+        // ever inject the queued follow-up, so a pending indicator that cannot be verified must
+        // not persist.
+        var agent = _store.GetAgent("agent-1")!;
+        agent.ActiveConversationId = "conv-1";
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Test conv",
+            ActiveSessionId = "sess-1"
+        };
+        _store.AddSteeringEntry("conv-1",
+            new SteeringEntry("f1", "queued follow-up", SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending));
+        Assert.Single(_store.GetSteeringQueue("conv-1"));
+
+        await _service.AbortAsync("agent-1");
+
+        Assert.Empty(_store.GetSteeringQueue("conv-1"));
+    }
 }
 

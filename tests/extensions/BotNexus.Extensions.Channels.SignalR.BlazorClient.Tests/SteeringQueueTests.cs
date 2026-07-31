@@ -261,4 +261,38 @@ public sealed class SteeringQueueTests : IDisposable
 
         Assert.DoesNotContain("steering-queue-panel", cut.Markup);
     }
+
+    // ---- #2439: the FOLLOW-UP chip must disappear from the rendered DOM once the run settles ----
+
+    [Fact]
+    public void FollowUp_chip_disappears_from_the_DOM_when_the_run_ends()
+    {
+        SetupAgentWithConversation();
+        _store.RegisterSession("agent-1", "session-1");
+
+        var cut = _ctx.Render<SteeringQueuePanel>(p => p.Add(c => c.ConversationId, "conv-1"));
+
+        _store.AddSteeringEntry("conv-1",
+            new SteeringEntry("f1", "for the portal profiling are you using live LLM models",
+                SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("steering-queue-panel", cut.Markup);
+            Assert.Single(cut.FindAll("[data-testid='steering-queue-item']"));
+            Assert.Contains("Follow-up", cut.Markup);
+        });
+
+        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        handler.HandleRunEnded(new AgentStreamEvent { SessionId = "session-1", ConversationId = "conv-1" });
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll("[data-testid='steering-queue-item']"));
+            Assert.DoesNotContain("steering-queue-panel", cut.Markup);
+        });
+
+        handler.Dispose();
+    }
 }

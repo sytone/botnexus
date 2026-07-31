@@ -504,6 +504,16 @@ public sealed class ClientStateStore : IClientStateStore
         return conv?.PendingSteeringQueue ?? (IReadOnlyList<SteeringEntry>)[];
     }
 
+    /// <inheritdoc />
+    public void ClearSteeringQueue(string conversationId)
+    {
+        var conv = GetConversation(conversationId);
+        if (conv is null || conv.PendingSteeringQueue.Count == 0) return;
+
+        conv.PendingSteeringQueue.Clear();
+        NotifyChanged();
+    }
+
     // ── Session resolution ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
