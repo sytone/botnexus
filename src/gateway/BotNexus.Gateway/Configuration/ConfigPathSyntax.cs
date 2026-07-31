@@ -40,32 +40,32 @@ internal static class ConfigPathSyntax
             return true;
 
         var trimmed = path.Trim();
-        var depth = 0;
-        var lastOpenPosition = 0;
+        var openPositions = new Stack<int>();
 
         for (var i = 0; i < trimmed.Length; i++)
         {
             var ch = trimmed[i];
             if (ch == '[')
             {
-                depth++;
-                lastOpenPosition = i + 1;
+                openPositions.Push(i + 1);
             }
             else if (ch == ']')
             {
-                if (depth == 0)
+                if (openPositions.Count == 0)
                 {
                     error = $"Invalid key path '{trimmed}': unmatched ']' at position {i + 1}.";
                     return false;
                 }
 
-                depth--;
+                openPositions.Pop();
             }
         }
 
-        if (depth > 0)
+        if (openPositions.Count > 0)
         {
-            error = $"Invalid key path '{trimmed}': unclosed '[' at position {lastOpenPosition}.";
+            // Report the outermost unmatched '[' - that is the one the operator failed to close.
+            var position = openPositions.ToArray()[^1];
+            error = $"Invalid key path '{trimmed}': unclosed '[' at position {position}.";
             return false;
         }
 
