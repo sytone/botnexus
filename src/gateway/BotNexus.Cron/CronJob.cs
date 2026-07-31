@@ -100,4 +100,54 @@ public sealed record CronJob
     /// long-lived run conversation by accident.
     /// </summary>
     public ConversationId? FailureAlertConversationId { get; init; }
+
+    /// <summary>
+    /// Opt-in <b>job-level</b> one-shot disposition (#2634). When <c>true</c>, the scheduler deletes
+    /// the <b>job itself</b> after its first terminal run - success, timeout, error, or host abort
+    /// alike - from the same post-run <c>finally</c> that already owns run teardown.
+    ///
+    /// <para>
+    /// This is deliberately <b>not</b> <see cref="DeleteAfterRun"/>, which deletes the run's ephemeral
+    /// <i>session</i> and leaves the job scheduled forever (#1561). The two coexist and compose: a job
+    /// may set both, neither, or either.
+    /// </para>
+    /// <para>
+    /// The whole point is that removal is <b>scheduler-driven, not prompt-driven</b>. The defect behind
+    /// #2634 was a job whose prompt said "delete this cron job after running": the agent ended its turn
+    /// without doing so and the job stayed scheduled for another year. An instruction in prose has no
+    /// enforcement and no retry; this flag does.
+    /// </para>
+    /// <para>
+    /// <b>Off by default.</b> Rows written before this column existed read as <c>false</c>, which is
+    /// byte-identical to today's behaviour: nothing is ever removed. There is no path by which an
+    /// existing job is silently deleted without an explicit opt-in.
+    /// </para>
+    /// </summary>
+    public bool DeleteJobAfterRun { get; init; }
+
+    /// <summary>
+    /// Optional hard expiry instant (#2634). Once <c>now &gt;= ExpiresAt</c> the job <b>stops executing</b>:
+    /// the scheduler suppresses the fire and never invokes the action.
+    ///
+    /// <para>
+    /// Expiry <b>suppresses</b>; it does not delete or disable the row. The job stays visible in
+    /// <c>cron list</c> with its history intact so a human can see what expired and extend it, and
+    /// nothing about the stored job is silently mutated (#2634 out-of-scope: never disable or delete
+    /// an existing job implicitly). Pair <see cref="ExpiresAt"/> with <see cref="DeleteJobAfterRun"/>
+    /// if removal is actually wanted.
+    /// </para>
+    /// <para>
+    /// The check is applied at BOTH schedule time (the due-scan skips an expired job) and fire time
+    /// (immediately before the run is stamped, inside <c>RunActionAsync</c>). Schedule time alone would
+    /// leak: a job already past due, a manual <c>RunNowAsync</c>, or an expiry that elapses between the
+    /// due-scan and execution would all still fire. Fire time is therefore the authoritative gate and
+    /// schedule time is the cheap early-out.
+    /// </para>
+    /// <para>
+    /// <c>null</c> means <i>no expiry</i> - exactly today's behaviour, no clamp and no suppression -
+    /// mirroring the <see cref="ScheduleActivatedAt"/> (#2554) NULL-means-unknown rule. A row written
+    /// before this column existed reads NULL and is therefore untouched.
+    /// </para>
+    /// </summary>
+    public DateTimeOffset? ExpiresAt { get; init; }
 }

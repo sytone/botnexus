@@ -77,6 +77,9 @@ public sealed class CronTool(
                 },
                 "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id. Validated against the model registry at create/update time; an unknown id is rejected with the available models." },
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
+                "deleteJobAfterRun": { "type": "boolean", "description": "One-shot lifecycle. When true, the SCHEDULER deletes this job itself after its first terminal run (success, timeout, error, or abort alike). Use this instead of writing 'delete this cron job after running' into the prompt - a prompt instruction has no enforcement and no retry if the turn ends early. Distinct from 'deleteAfterRun'; this removes the JOB. Default: false." },
+                "expiresAt": { "type": "string", "description": "Optional hard expiry instant (ISO-8601, e.g. '2026-12-31T00:00:00Z'). From that instant on the job stops executing: the scheduler suppresses the fire and never invokes the action. The job is NOT deleted or disabled, so it stays visible for a human to extend. Omit for no expiry (the default, identical to today's behaviour); pass an empty string on update to clear an existing expiry." },
+                "deleteAfterRun": { "type": "boolean", "description": "Ephemeral run-SESSION cleanup. When true, the run's cron-scoped session and transcript are deleted after each run. This does NOT delete the job - for that use 'deleteJobAfterRun'. Default: false." },
                 "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." }
               },
               "required": ["action"]
@@ -112,6 +115,18 @@ public sealed class CronTool(
 
         if (arguments.TryGetValue("enabled", out var enabled) && enabled is not null)
             prepared["enabled"] = ReadBool(enabled, "enabled");
+
+        // #2634: lifecycle fields. Booleans are normalized here like 'enabled'; expiresAt is copied
+        // through ContainsKey (not CopyString) so an explicit empty string -- which means "clear the
+        // expiry" on update -- survives instead of being swallowed as blank.
+        if (arguments.TryGetValue("deleteJobAfterRun", out var deleteJobAfterRun) && deleteJobAfterRun is not null)
+            prepared["deleteJobAfterRun"] = ReadBool(deleteJobAfterRun, "deleteJobAfterRun");
+
+        if (arguments.TryGetValue("deleteAfterRun", out var deleteAfterRun) && deleteAfterRun is not null)
+            prepared["deleteAfterRun"] = ReadBool(deleteAfterRun, "deleteAfterRun");
+
+        if (arguments.ContainsKey("expiresAt"))
+            prepared["expiresAt"] = ReadString(arguments, "expiresAt") ?? string.Empty;
 
         if (arguments.TryGetValue("limit", out var limitVal) && limitVal is not null)
             prepared["limit"] = limitVal;
@@ -201,6 +216,11 @@ public sealed class CronTool(
             ShellCommand = shellCommand,
             Model = model,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
+            // #2634: both default to the inert state, so a create that omits them is byte-identical
+            // to a create today.
+            DeleteJobAfterRun = arguments.TryGetValue("deleteJobAfterRun", out var djar) && djar is bool b1 && b1,
+            DeleteAfterRun = arguments.TryGetValue("deleteAfterRun", out var dar) && dar is bool b2 && b2,
+            ExpiresAt = ParseExpiresAt(ReadString(arguments, "expiresAt")),
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
             CreatedAt = now,
@@ -283,7 +303,18 @@ public sealed class CronTool(
             TemplateParameters = newTemplateParameters,
             Model = requestedModel ?? existing.Model,
             AgentId = newAgentId,
-            Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
+            Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled,
+            // #2634: an omitted lifecycle field leaves the stored value alone, so an unrelated edit
+            // (schedule / name / enabled) can never accidentally clear a one-shot or an expiry.
+            DeleteJobAfterRun = arguments.TryGetValue("deleteJobAfterRun", out var djar) && djar is bool b1
+                ? b1
+                : existing.DeleteJobAfterRun,
+            DeleteAfterRun = arguments.TryGetValue("deleteAfterRun", out var dar) && dar is bool b2
+                ? b2
+                : existing.DeleteAfterRun,
+            ExpiresAt = arguments.ContainsKey("expiresAt")
+                ? ParseExpiresAt(ReadString(arguments, "expiresAt"))
+                : existing.ExpiresAt
         };
 
         // #2133: a tool definition update is a narrow write that never touches scheduler-owned
@@ -355,6 +386,28 @@ public sealed class CronTool(
 
         var runs = await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+    }
+
+    // #2634: parses the caller-supplied expiry. Null/blank means "no expiry" (and on update, an
+    // explicit empty string clears an existing one). An unparseable value is REJECTED rather than
+    // silently dropped: quietly discarding a bad expiry would leave the agent believing the job
+    // will stop firing when it never will - the exact failure this issue is about.
+    private static DateTimeOffset? ParseExpiresAt(string? expiresAt)
+    {
+        if (string.IsNullOrWhiteSpace(expiresAt))
+            return null;
+
+        if (DateTimeOffset.TryParse(
+                expiresAt,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException(
+            $"Argument 'expiresAt' must be an ISO-8601 instant (e.g. '2026-12-31T00:00:00Z'); got '{expiresAt}'.");
     }
 
     // #2373: reject an unresolvable model override at create/update time rather than letting the

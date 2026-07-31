@@ -34,6 +34,13 @@ public sealed record ConfiguredCronJob
     public bool Enabled { get; init; } = true;
     public bool System { get; init; }
     public bool DeleteAfterRun { get; init; }
+    /// <summary>#2634: opt-in scheduler-driven one-shot job removal. Off by default.</summary>
+    public bool DeleteJobAfterRun { get; init; }
+    /// <summary>
+    /// #2634: optional hard expiry instant (ISO-8601). Null/absent means no expiry, which is
+    /// exactly today's behaviour. An unparseable value degrades to no expiry with a warning.
+    /// </summary>
+    public string? ExpiresAt { get; init; }
     /// <summary>#2557: opt-in failure alerting. Off by default.</summary>
     public bool FailureAlertsEnabled { get; init; }
     /// <summary>#2557: conversation id that failure alerts for this job are delivered to.</summary>

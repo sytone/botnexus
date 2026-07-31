@@ -17,12 +17,18 @@ public sealed class CronScheduler(
     IEnumerable<ICronAction> actions,
     IServiceScopeFactory scopeFactory,
     IOptionsMonitor<CronOptions> optionsMonitor,
-    ILogger<CronScheduler> logger) : BackgroundService
+    ILogger<CronScheduler> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
     private readonly ICronStore _cronStore = cronStore;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly IOptionsMonitor<CronOptions> _optionsMonitor = optionsMonitor;
     private readonly ILogger<CronScheduler> _logger = logger;
+
+    // #2634: the lifecycle checks (notably expiry) must be assertable without wall-clock waits, so
+    // the scheduler reads "now" through an injectable TimeProvider. Optional and defaulting to the
+    // system clock, so every existing registration and call site is unaffected.
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IReadOnlyDictionary<string, ICronAction> _actions = actions
         .GroupBy(action => action.ActionType, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
@@ -50,7 +56,7 @@ public sealed class CronScheduler(
         var job = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
 
-        return await RunActionAsync(job, CronTriggerType.Manual, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+        return await RunActionAsync(job, CronTriggerType.Manual, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -164,13 +170,28 @@ public sealed class CronScheduler(
         }
 
         var jobs = await _cronStore.ListAsync(ct: ct).ConfigureAwait(false);
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         // Phase 1 (sequential): resolve NextRunAt for uninitialised or stale jobs.
         // These are cheap store-only operations with no agent I/O.
         var dueJobs = new List<(CronJob Job, CronExpression Expression)>();
         foreach (var job in jobs.Where(j => j.Enabled))
         {
+            // #2634 (schedule time): an expired job is dropped from the due scan entirely, so it
+            // never even reaches the execute phase. This is the cheap early-out; it is NOT the
+            // authoritative gate (see IsExpired's call site in RunActionAsync) because a manual
+            // RunNowAsync bypasses this loop and an expiry can elapse between this scan and the
+            // actual fire. NextRunAt is deliberately left as-is: expiry suppresses execution, it
+            // does not mutate the stored job.
+            if (IsExpired(job))
+            {
+                _logger.LogDebug(
+                    "Cron job '{JobId}' is past its expiry ({ExpiresAt:o}); skipping in the due scan.",
+                    job.Id,
+                    job.ExpiresAt);
+                continue;
+            }
+
             if (!TryGetSchedule(job, out var expression))
                 continue;
 
@@ -223,6 +244,35 @@ public sealed class CronScheduler(
 
     private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
     {
+        // #2634 (fire time -- the AUTHORITATIVE expiry gate). Checked BEFORE the run row is stamped
+        // so an expired job produces no run at all and, critically, never invokes its action.
+        //
+        // The schedule-time check in ProcessTickAsync alone is not sufficient: a manual RunNowAsync
+        // never passes through the due scan, and a job that was already due can have its expiry
+        // elapse between the scan and this call. Both would slip through. AC3 says the job "stops
+        // executing after that instant", so the gate lives where execution actually begins.
+        //
+        // Suppression only. The stored job is not disabled, not deleted, and not rewritten -- #2634
+        // explicitly rules out mutating an existing job implicitly.
+        if (IsExpired(job))
+        {
+            _logger.LogInformation(
+                "Cron job '{JobId}' ('{JobName}') is past its expiry ({ExpiresAt:o}); the fire was suppressed and the action was not invoked.",
+                job.Id,
+                job.Name,
+                job.ExpiresAt);
+
+            return new CronRun
+            {
+                Id = RunId.From(Guid.NewGuid().ToString("N")),
+                JobId = job.Id,
+                StartedAt = triggeredAt,
+                CompletedAt = triggeredAt,
+                Status = CronRunStatus.Skipped,
+                Error = $"Job expired at {job.ExpiresAt:o}; execution suppressed."
+            };
+        }
+
         var run = await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
         var action = ResolveAction(NormalizeActionType(job.ActionType));
 
@@ -240,6 +290,10 @@ public sealed class CronScheduler(
             // so record the abort here too - otherwise it stays stuck Running. CancellationToken.None
             // for the write since `ct` is cancelled.
             await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+            // #2634 (AC2): a one-shot aborted before it even acquired the lock is still terminal --
+            // it will never run again on its own -- so the job is removed here too. Leaving it out
+            // would rebuild exactly the bug: an early-ending turn leaving the job scheduled forever.
+            await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
             throw;
         }
 
@@ -328,7 +382,86 @@ public sealed class CronScheduler(
         }
         finally
         {
+            // #2634 (AC1/AC2): scheduler-driven one-shot removal. This sits in the SAME outermost
+            // finally that releases the per-job lock -- one level up from the finally that hosts
+            // MaybeDeleteEphemeralRunSessionAsync -- so it runs on EVERY terminal path: success,
+            // timeout, an action that threw, and a host cancellation that rethrows past the outer
+            // catch. Removal driven from the success path only would reproduce the original defect,
+            // where a job whose agent turn ended early was never cleaned up.
+            //
+            // Ordering: the lock is released first so the delete cannot deadlock against a
+            // same-job waiter, and the delete is best-effort (never throws out of the finally).
             jobLock.Release();
+            await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="job"/> is past its <see cref="CronJob.ExpiresAt"/> instant (#2634).
+    /// </summary>
+    /// <remarks>
+    /// A <c>null</c> expiry is <b>never</b> expired: NULL means "no expiry", so a job that does not
+    /// carry the field behaves exactly as it does today (AC4). The comparison is inclusive
+    /// (<c>&gt;=</c>) so the expiry instant itself is already past -- "stops executing after that
+    /// instant" must not leave a one-tick window where a fire still lands.
+    /// </remarks>
+    private bool IsExpired(CronJob job)
+        => job.ExpiresAt is { } expiresAt && _timeProvider.GetUtcNow() >= expiresAt;
+
+    /// <summary>
+    /// Opt-in scheduler-driven one-shot removal (#2634): deletes the <b>job</b> after its first
+    /// terminal run when <see cref="CronJob.DeleteJobAfterRun"/> is set.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the job-scoped analogue of <see cref="MaybeDeleteEphemeralRunSessionAsync"/>
+    /// (#1561), which deletes the run's <i>session</i>. The two are independent and compose; neither
+    /// changes the other's semantics.
+    /// </para>
+    /// <para>
+    /// The job is re-read first, so an opt-in toggled off between trigger and completion is honoured
+    /// and a job already deleted mid-run is a no-op. Deletion goes through
+    /// <see cref="DeleteJobAsync"/> so the job's pinned conversation is archived exactly as it is for
+    /// a manual delete.
+    /// </para>
+    /// <para>
+    /// Best-effort and <see cref="CancellationToken.None"/>: this runs from a <c>finally</c> that is
+    /// frequently reached during host shutdown (where the caller's token is already cancelled) and on
+    /// the rethrow path of a cancelled run. A failure here is logged and swallowed so it can never
+    /// mask the run's real outcome or escape the finally.
+    /// </para>
+    /// </remarks>
+    private async Task MaybeDeleteOneShotJobAsync(CronJob job)
+    {
+        if (!job.DeleteJobAfterRun)
+            return;
+
+        try
+        {
+            var latest = await _cronStore.GetAsync(job.Id, CancellationToken.None).ConfigureAwait(false);
+            if (latest is null)
+                return;
+
+            if (!latest.DeleteJobAfterRun)
+            {
+                _logger.LogDebug(
+                    "One-shot removal skipped for job '{JobId}': deleteJobAfterRun was cleared while the run was in flight.",
+                    job.Id);
+                return;
+            }
+
+            await DeleteJobAsync(job.Id, CancellationToken.None).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Deleted one-shot cron job '{JobId}' ('{JobName}') after its terminal run (deleteJobAfterRun).",
+                job.Id,
+                job.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to delete one-shot cron job '{JobId}' after its run. The run outcome is unaffected; removal will be retried after the next run.",
+                job.Id);
         }
     }
 
@@ -1073,6 +1206,8 @@ public sealed class CronScheduler(
                     Enabled = configuredJob.Enabled,
                     System = configuredJob.System,
                     DeleteAfterRun = configuredJob.DeleteAfterRun,
+                    DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
+                    ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobIdString),
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null
@@ -1101,6 +1236,8 @@ public sealed class CronScheduler(
                 Enabled = configuredJob.Enabled,
                 System = configuredJob.System,
                 DeleteAfterRun = configuredJob.DeleteAfterRun,
+                DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
+                ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobIdString),
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null
@@ -1114,6 +1251,32 @@ public sealed class CronScheduler(
             // are scheduler/CAS-owned and must not be round-tripped here.
             await _cronStore.UpdateDefinitionAsync(merged, ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Parses a config-declared expiresAt string (#2634). An unparseable value degrades to null
+    /// (no expiry) with a warning rather than throwing or guessing: a typo in config must never
+    /// silently suppress a job the operator still wants running.
+    /// </summary>
+    private DateTimeOffset? ParseConfiguredExpiry(string? expiresAt, string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(expiresAt))
+            return null;
+
+        if (DateTimeOffset.TryParse(
+                expiresAt,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        _logger.LogWarning(
+            "Configured cron job '{JobId}' has an unparseable expiresAt value '{ExpiresAt}'; treating it as no expiry.",
+            jobId,
+            expiresAt);
+        return null;
     }
 
     private static string NormalizeActionType(string? actionType)

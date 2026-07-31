@@ -70,8 +70,10 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     delete_after_run INTEGER NOT NULL DEFAULT 0,
                     schedule_activated_at TEXT NULL,
                     failure_alerts_enabled INTEGER NOT NULL DEFAULT 0,
-                    failure_alert_conversation_id TEXT NULL
-                );
+                     failure_alert_conversation_id TEXT NULL,
+                     delete_job_after_run INTEGER NOT NULL DEFAULT 0,
+                     expires_at TEXT NULL
+                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
                 ON cron_jobs(enabled, next_run_at);
@@ -194,6 +196,27 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateFailureAlertConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add the #2634 lifecycle columns if missing.
+            // Both default to the inert state so a row predating them behaves exactly as today:
+            // delete_job_after_run = 0 (no scheduler-driven job removal) and expires_at = NULL
+            // (no expiry, no suppression). This mirrors the #2554 NULL-means-unknown rule -- a new
+            // column that the read path trusts but existing rows never wrote is a recurring defect
+            // family here, and for THIS pair the failure mode would be deleting or silencing a job
+            // a human still wants.
+            await using var migrateDeleteJobAfterRun = connection.CreateCommand();
+            migrateDeleteJobAfterRun.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN delete_job_after_run INTEGER NOT NULL DEFAULT 0;
+                """;
+            try { await migrateDeleteJobAfterRun.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
+            await using var migrateExpiresAt = connection.CreateCommand();
+            migrateExpiresAt.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN expires_at TEXT NULL;
+                """;
+            try { await migrateExpiresAt.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -233,12 +256,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                    failure_alerts_enabled, failure_alert_conversation_id
+                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt,
-                    $failureAlertsEnabled, $failureAlertConversationId
+                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt
                 )
                 """;
             BindJob(command, created);
@@ -267,7 +290,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -289,7 +312,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -346,6 +369,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     delete_after_run = $deleteAfterRun,
                     failure_alerts_enabled = $failureAlertsEnabled,
                     failure_alert_conversation_id = $failureAlertConversationId,
+                    delete_job_after_run = $deleteJobAfterRun,
+                    expires_at = $expiresAt,
                     metadata_json = $metadataJson,
                     -- #2554: schedule_activated_at is STORE-owned. The inbound record's value is
                     -- never bound; instead it is re-stamped in SQL, atomically with the write,
@@ -719,6 +744,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue(
             "$failureAlertConversationId",
             job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$deleteJobAfterRun", job.DeleteJobAfterRun ? 1 : 0);
+        command.Parameters.AddWithValue("$expiresAt", ToNullableString(job.ExpiresAt));
         command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
     }
 
@@ -752,6 +779,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue(
             "$failureAlertConversationId",
             job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$deleteJobAfterRun", job.DeleteJobAfterRun ? 1 : 0);
+        command.Parameters.AddWithValue("$expiresAt", ToNullableString(job.ExpiresAt));
     }
 
     private CronJob ReadJob(SqliteDataReader reader)
@@ -795,7 +824,14 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             // must never read as opt-in, or upgrading would start delivering alerts nobody asked
             // for (to a conversation that is also NULL). Both defaults are the disabled state.
             FailureAlertsEnabled = !reader.IsDBNull(24) && reader.GetInt32(24) != 0,
-            FailureAlertConversationId = reader.IsDBNull(25) ? null : ConversationId.From(reader.GetString(25))
+            FailureAlertConversationId = reader.IsDBNull(25) ? null : ConversationId.From(reader.GetString(25)),
+
+            // #2634: both lifecycle columns read as "inert" when absent. delete_job_after_run
+            // false means no scheduler-driven removal; expires_at NULL means no expiry and no
+            // suppression. A row written before these columns existed therefore schedules and
+            // executes byte-identically to today - the safety property that makes this shippable.
+            DeleteJobAfterRun = !reader.IsDBNull(26) && reader.GetInt32(26) != 0,
+            ExpiresAt = reader.IsDBNull(27) ? null : ParseDate(reader.GetString(27))
         };
     }
 
