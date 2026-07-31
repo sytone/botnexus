@@ -103,6 +103,7 @@
     }
     else if (_rows is { } rows)
     {
+        <div class="activity-table-scroll" data-testid="activity-table-scroll" tabindex="0" role="region" aria-label="Activity table">
         <table class="activity-table" data-testid="activity-table">
             <thead>
                 <tr>
@@ -124,7 +125,7 @@
                         @onclick="() => NavigateToConversation(row)"
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
-                            <span class="activity-conversation-title">@row.Title</span>
+                            <span class="activity-conversation-title" title="@row.Title">@DisplayTitle(row)</span>
                             @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
                             {
                                 <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
@@ -150,6 +151,7 @@
                 }
             </tbody>
         </table>
+        </div>
     }
 </div>
 
@@ -284,6 +286,16 @@
         if (e.Key is "Enter" or " ")
             NavigateToConversation(row);
     }
+
+    /// <summary>
+    /// The bounded, human-meaningful label rendered in the title cell (#2528). A conversation whose
+    /// title is a raw routing/session token gets a derived label instead; every title is length
+    /// capped so a pathological id can never grow the row. The <c>title</c> attribute on the same
+    /// span keeps the full untruncated value available on hover, mirroring the existing
+    /// last-activity pattern.
+    /// </summary>
+    private static string DisplayTitle(ActivityRow row) =>
+        ConversationLabel.DisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
 
     /// <summary>Resolve an agent id to its display name via the store, falling back to a title-cased id.</summary>
     private string AgentLabel(string agentId)

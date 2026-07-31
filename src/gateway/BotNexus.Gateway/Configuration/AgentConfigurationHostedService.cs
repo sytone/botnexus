@@ -231,71 +231,19 @@ internal sealed class AgentConfigurationHostedService(
     }
 
     /// <summary>
-    /// Compares two descriptors for semantic equality. Records use value equality for
-    /// value-type properties and reference equality for collections, so we need a
-    /// deeper comparison for the collection properties that matter.
+    /// Compares two descriptors for semantic equality. Record equality is unusable here because
+    /// the config sources mint fresh instances (and collection properties compare by reference)
+    /// on every load, so <c>==</c> would report "changed" on every reload.
+    /// <para>
+    /// Delegates to <see cref="AgentDescriptorFingerprint"/> - the same primitive the config
+    /// source uses to suppress no-op reloads. A hand-maintained field list here drifted from the
+    /// source's list and silently omitted <c>FileAccess</c>, so edited file-access policies were
+    /// never re-registered and agents kept a stale path validator for the process lifetime
+    /// (#2383). Do not reintroduce a local field-by-field comparison.
+    /// </para>
     /// </summary>
     private static bool DescriptorsEqual(AgentDescriptor a, AgentDescriptor b)
-    {
-        // Record equality handles simple value types, but we need to verify it's correct
-        // for our case since collections (arrays, dictionaries) use reference equality.
-        // However, since PlatformConfigAgentSource creates fresh instances on every load,
-        // record == will always be false even when nothing changed.
-        // We compare the fields that are most likely to change during config reload.
-
-        if (a.AgentId != b.AgentId) return false;
-        if (a.DisplayName != b.DisplayName) return false;
-        if (a.ModelId != b.ModelId) return false;
-        if (a.ApiProvider != b.ApiProvider) return false;
-        if (a.Emoji != b.Emoji) return false;
-        if (a.Description != b.Description) return false;
-        if (a.SystemPromptFile != b.SystemPromptFile) return false;
-        if (a.IsolationStrategy != b.IsolationStrategy) return false;
-        if (a.CacheRetentionMode != b.CacheRetentionMode) return false;
-        if (a.Thinking != b.Thinking) return false;
-        if (a.ContextWindow != b.ContextWindow) return false;
-        if (a.MaxConcurrentSessions != b.MaxConcurrentSessions) return false;
-        if (a.SessionAccessLevel != b.SessionAccessLevel) return false;
-        if (a.ConversationAccessLevel != b.ConversationAccessLevel) return false;
-        if (a.Kind != b.Kind) return false;
-        if (!SequenceEqual(a.ToolIds, b.ToolIds)) return false;
-        if (!SequenceEqual(a.AllowedModelIds, b.AllowedModelIds)) return false;
-        if (!SequenceEqual(a.SubAgentIds, b.SubAgentIds)) return false;
-        if (!SequenceEqual(a.SubAgentRoles, b.SubAgentRoles)) return false;
-        if (!SequenceEqual(a.SystemPromptFiles, b.SystemPromptFiles)) return false;
-        if (!SequenceEqual(a.SessionAllowedAgents, b.SessionAllowedAgents)) return false;
-        if (!SequenceEqual(a.ConversationAllowedAgents, b.ConversationAllowedAgents)) return false;
-        if (!ShellCommandEqual(a.ShellCommand, b.ShellCommand)) return false;
-
-        return true;
-    }
-
-    private static bool SequenceEqual(IReadOnlyList<string>? a, IReadOnlyList<string>? b)
-    {
-        if (ReferenceEquals(a, b)) return true;
-        if (a is null || b is null) return false;
-        if (a.Count != b.Count) return false;
-        for (int i = 0; i < a.Count; i++)
-        {
-            if (!string.Equals(a[i], b[i], StringComparison.Ordinal))
-                return false;
-        }
-        return true;
-    }
-
-    private static bool ShellCommandEqual(string[]? a, string[]? b)
-    {
-        if (ReferenceEquals(a, b)) return true;
-        if (a is null || b is null) return false;
-        if (a.Length != b.Length) return false;
-        for (int i = 0; i < a.Length; i++)
-        {
-            if (!string.Equals(a[i], b[i], StringComparison.Ordinal))
-                return false;
-        }
-        return true;
-    }
-
+        => AgentDescriptorFingerprint.AreEquivalent(a, b);
     private void CancelDebounce()
     {
         _debounceCts?.Cancel();

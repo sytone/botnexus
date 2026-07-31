@@ -33,6 +33,11 @@
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationVisibility" Alias="ConversationVisibility" />
+    <!-- #2568: the SINGLE shared "is this MIME type textual enough to inline?" predicate, declared
+         in the zero-dependency BotNexus.Domain.Wire assembly referenced above and used by BOTH this
+         client's part builder and the server-side AgentUserMessageComposer. Two independent copies
+         of that predicate are exactly how #2294 -> #2484 -> #2568 recurred. -->
+    <Using Include="BotNexus.Gateway.Abstractions.Models.TextualMimeType" Alias="TextualMimeType" />
   </ItemGroup>
 
   <ItemGroup>

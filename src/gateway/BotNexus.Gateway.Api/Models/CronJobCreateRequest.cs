@@ -73,6 +73,12 @@ public sealed record CronJobCreateRequest
     /// <summary>Arbitrary job metadata.</summary>
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 
+    // #2554: deliberately NO ScheduleActivatedAt member. That stamp is store-owned; accepting it
+    // from a create payload would let an import or a crafted POST /api/cron spoof catch-up
+    // ownership and force an immediate agent-prompt / shell execution on the next gateway start.
+    // ToCronJob() therefore cannot project one, and SqliteCronStore.CreateAsync overwrites the
+    // field unconditionally. Do not add it here.
+
     /// <summary>
     /// Projects this request onto the domain record, generating an id when none was supplied.
     /// </summary>

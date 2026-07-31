@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
@@ -89,7 +90,7 @@ public sealed class HeartbeatAction : ICronAction
                 new InternalTriggerRequest
                 {
                     CronJobId = context.Job.Id,
-                    JobName = context.Job.Name,
+                    JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
                     ModelOverride = context.Job.Model,
                     ConversationId = context.Job.ConversationId,
                     CreatedBy = context.Job.CreatedBy

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Memory;
@@ -105,7 +106,7 @@ public sealed class MemoryDreamingCronAction : ICronAction
         var triggerRequest = new InternalTriggerRequest
         {
             CronJobId = context.Job.Id,
-            JobName = context.Job.Name,
+            JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
             ModelOverride = context.Job.Model,
             ConversationId = context.Job.ConversationId,
             CreatedBy = context.Job.CreatedBy

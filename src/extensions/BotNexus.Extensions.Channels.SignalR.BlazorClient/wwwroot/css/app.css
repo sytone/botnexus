@@ -5574,11 +5574,31 @@ h3.conversation-title.editable:hover {
     color: var(--danger, #c0392b);
 }
 
+/* #2528: the table lives inside a scroller so content can never be clipped-and-unreachable.
+   Narrow viewports degrade to a horizontal scroll rather than bursting the layout. */
+.activity-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .activity-table {
     width: 100%;
+    /* #2528: fixed layout stops one long unbroken token from forcing the table wider than its
+       container; the declared column widths below then hold every column visible. */
+    table-layout: fixed;
+    min-width: 640px;
     border-collapse: collapse;
     font-size: 0.9rem;
 }
+
+/* #2528: explicit column allocation - the title column gives way, the signal columns do not. */
+.activity-table th:nth-child(1), .activity-table td:nth-child(1) { width: auto; }
+.activity-table th:nth-child(2), .activity-table td:nth-child(2) { width: 20%; }
+.activity-table th:nth-child(3), .activity-table td:nth-child(3) { width: 9%; }
+.activity-table th:nth-child(4), .activity-table td:nth-child(4) { width: 9%; }
+.activity-table th:nth-child(5), .activity-table td:nth-child(5) { width: 12%; }
 
 .activity-table thead th {
     text-align: left;
@@ -5603,10 +5623,29 @@ h3.conversation-title.editable:hover {
     padding: 0.6rem 0.75rem;
     border-bottom: 1px solid var(--border-color-subtle, #333);
     vertical-align: middle;
+    /* #2528: every row is exactly one line tall regardless of title length. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* #2528: the title cell is a flex line so the fixed-width origin badge (#2496) survives while the
+   title itself is what gives way to the ellipsis. */
+.activity-cell-title {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    max-width: 0;
 }
 
 .activity-conversation-title {
     font-weight: 500;
+    /* #2528: the title is the only shrinkable part of the cell. */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .activity-agent-chip {
@@ -5620,6 +5659,8 @@ h3.conversation-title.editable:hover {
 
 .activity-badge {
     display: inline-block;
+    /* #2528: badge is fixed-width signal - it must not shrink or be pushed out by a long title. */
+    flex: 0 0 auto;
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
     border-radius: 8px;

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.ProcessTool;
 
@@ -26,16 +27,21 @@ public sealed class ProcessManager
 
     private readonly ConcurrentDictionary<int, ManagedProcess> _processes = new();
     private readonly int _maxExitedRetained;
+    private readonly ILogger? _logger;
 
     /// <summary>Creates a registry with the default exited-process retention cap.</summary>
-    public ProcessManager() : this(DefaultMaxExitedRetained) { }
+    public ProcessManager() : this(DefaultMaxExitedRetained, logger: null) { }
 
     /// <summary>Creates a registry with an explicit exited-process retention cap (primarily for tests).</summary>
     /// <param name="maxExitedRetained">Maximum number of exited processes to retain; must be &gt;= 0.</param>
-    internal ProcessManager(int maxExitedRetained)
+    internal ProcessManager(int maxExitedRetained) : this(maxExitedRetained, logger: null) { }
+
+    /// <summary>Creates a registry with an explicit retention cap and a logger for unconfirmed kills.</summary>
+    internal ProcessManager(int maxExitedRetained, ILogger? logger)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxExitedRetained);
         _maxExitedRetained = maxExitedRetained;
+        _logger = logger;
     }
 
     public void Register(int pid, ManagedProcess process)
@@ -60,12 +66,26 @@ public sealed class ProcessManager
             .ToList();
     }
 
+    /// <summary>
+    /// Requests termination of a tracked process. Returns <c>true</c> when the PID was tracked and a
+    /// kill was attempted. The registration is only released once termination is <em>confirmed</em>;
+    /// an unconfirmed kill keeps the entry visible and re-killable (and is logged at Warning), because
+    /// the process or its descendants may still be running.
+    /// </summary>
     public bool Kill(int pid)
     {
         if (!_processes.TryGetValue(pid, out var process))
             return false;
 
-        process.Kill();
+        if (!process.Kill())
+        {
+            _logger?.LogWarning(
+                "Tree kill of process {Pid} ({ProcessName}) was not confirmed within the grace period; " +
+                "descendants may still be running. Keeping the registration so it stays visible and re-killable.",
+                process.Pid,
+                process.ProcessName);
+        }
+
         return true;
     }
 
@@ -77,8 +97,10 @@ public sealed class ProcessManager
     internal void Reap()
     {
         // Snapshot the exited entries. ConcurrentDictionary enumeration is safe under concurrent mutation.
+        // An unconfirmed kill may have left live descendants behind, so those entries are pinned:
+        // evicting (and disposing) them would drop the only handle and make the orphan untrackable.
         var exited = _processes.Values
-            .Where(p => !p.IsRunning)
+            .Where(p => !p.IsRunning && p.KillState != ProcessKillState.Unconfirmed)
             .OrderBy(p => p.StartedAt)
             .ToList();
 

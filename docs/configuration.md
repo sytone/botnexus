@@ -1462,6 +1462,15 @@ BotNexus monitors `~/.botnexus/config.json` for changes and applies most configu
 | `Providers.*` | Provider registry is refreshed; new/changed provider configs take effect |
 | `Cron.*` | Cron jobs are reloaded (schedules, new jobs, removed jobs) |
 | `Gateway.ApiKey` | API key middleware uses the new key immediately |
+| `Agents.Named.*.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists |
+
+Agent re-registration compares the whole effective descriptor - identity, model, prompts, tools, metadata, isolation options, extension config, memory, soul, heartbeat, datetime injection, conversation retention and `fileAccess` - via a single stable fingerprint, so any per-agent field you edit takes effect on the next reload.
+| `Agents.Named.*.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists |
+
+Agent re-registration compares the whole effective descriptor - identity, model, prompts, tools,
+metadata, isolation options, extension config, memory, soul, heartbeat, datetime injection,
+conversation retention and `fileAccess` - via a single stable fingerprint, so any per-agent field
+you edit takes effect on the next reload.
 
 ### Nullable Parameters (Provider Defaults)
 

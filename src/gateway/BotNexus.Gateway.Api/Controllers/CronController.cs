@@ -164,7 +164,15 @@ public sealed class CronController(
             Id = typedJobId,
             ActionType = NormalizeActionType(request.ActionType),
             WebhookUrl = normalizedWebhookUrl,
-            CreatedAt = existing.CreatedAt
+            CreatedAt = existing.CreatedAt,
+
+            // #2554: PUT binds the domain record directly, so a caller can put a
+            // ScheduleActivatedAt in the body. Strip it explicitly here (the store also refuses
+            // to bind it, so this is belt-and-braces) - honouring it would let a crafted request
+            // or an import spoof catch-up ownership and force an immediate agent-prompt or shell
+            // execution on the next gateway start. The store re-stamps it iff Schedule/TimeZone
+            // actually changed.
+            ScheduleActivatedAt = existing.ScheduleActivatedAt
         };
 
         // #2133: a controller definition update is a narrow write that never touches
