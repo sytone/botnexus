@@ -1207,7 +1207,7 @@ public sealed class CronScheduler(
                     System = configuredJob.System,
                     DeleteAfterRun = configuredJob.DeleteAfterRun,
                     DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
-                    ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobIdString),
+                    ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobId),
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null
@@ -1237,7 +1237,7 @@ public sealed class CronScheduler(
                 System = configuredJob.System,
                 DeleteAfterRun = configuredJob.DeleteAfterRun,
                 DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
-                ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobIdString),
+                ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobId),
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null
@@ -1258,7 +1258,7 @@ public sealed class CronScheduler(
     /// (no expiry) with a warning rather than throwing or guessing: a typo in config must never
     /// silently suppress a job the operator still wants running.
     /// </summary>
-    private DateTimeOffset? ParseConfiguredExpiry(string? expiresAt, string jobId)
+    private DateTimeOffset? ParseConfiguredExpiry(string? expiresAt, JobId jobId)
     {
         if (string.IsNullOrWhiteSpace(expiresAt))
             return null;
