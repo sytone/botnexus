@@ -8,9 +8,28 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tools;
 
-public sealed class DelayTool(IOptions<DelayToolOptions> options) : IAgentTool
+/// <summary>
+/// Seam used by <see cref="DelayTool"/> to wait. Production uses <see cref="Task.Delay(TimeSpan, CancellationToken)"/>;
+/// tests substitute a recording delegate so the requested duration can be asserted deterministically
+/// instead of racing the scheduler on wall-clock time.
+/// </summary>
+public delegate Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken);
+
+public sealed class DelayTool : IAgentTool
 {
-    private readonly DelayToolOptions _options = options?.Value ?? new DelayToolOptions();
+    private readonly DelayToolOptions _options;
+    private readonly DelayAsync _delay;
+
+    public DelayTool(IOptions<DelayToolOptions> options)
+        : this(options, null)
+    {
+    }
+
+    public DelayTool(IOptions<DelayToolOptions> options, DelayAsync? delay)
+    {
+        _options = options?.Value ?? new DelayToolOptions();
+        _delay = delay ?? ((duration, token) => Task.Delay(duration, token));
+    }
 
     public string Name => "delay";
     public string Label => "Delay / Wait";
@@ -64,7 +83,7 @@ public sealed class DelayTool(IOptions<DelayToolOptions> options) : IAgentTool
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken).ConfigureAwait(false);
+            await _delay(TimeSpan.FromSeconds(seconds), cancellationToken).ConfigureAwait(false);
             var reasonSuffix = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason}";
             return TextResult($"Waited {seconds} seconds.{reasonSuffix} Ready to continue.");
         }
