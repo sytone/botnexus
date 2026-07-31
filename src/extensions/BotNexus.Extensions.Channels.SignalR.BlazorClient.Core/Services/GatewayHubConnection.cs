@@ -98,6 +98,13 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the connection is closed (after reconnect exhaustion or explicit stop).</summary>
     public event Action? OnDisconnected;
 
+    /// <summary>
+    /// Test seam (#2625): raises <see cref="OnDisconnected"/> without a live transport, so the
+    /// handler-accumulation behaviour of the rebuild path's wiring can be asserted without a
+    /// reachable gateway to negotiate against. Internal -- not part of the client surface.
+    /// </summary>
+    internal void RaiseOnDisconnectedForTest() => OnDisconnected?.Invoke();
+
     // ── State ───────────────────────────────────────────────────────────
 
     /// <summary>Whether the hub connection is currently in the <c>Connected</c> state.</summary>
