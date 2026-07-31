@@ -153,7 +153,7 @@ public sealed class CrossProcessConfigWriteTests : IDisposable
         SeedConfig();
         var before = await File.ReadAllTextAsync(ConfigPath);
 
-        var lockPath = ConfigPath + ".lock";
+        var lockPath = SidecarLockPath();
         int exitCode;
         string output;
 
@@ -187,7 +187,7 @@ public sealed class CrossProcessConfigWriteTests : IDisposable
     {
         SeedConfig();
 
-        var lockPath = ConfigPath + ".lock";
+        var lockPath = SidecarLockPath();
         using (var gatewayLock = new FileStream(
             lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
         {
@@ -203,6 +203,18 @@ public sealed class CrossProcessConfigWriteTests : IDisposable
         child.ExitCode.ShouldBe(0, stdout + stderr);
         var root = JsonNode.Parse(await File.ReadAllTextAsync(ConfigPath))!.AsObject();
         ReadDotted(root, "gateway.listenUrl")!.GetValue<string>().ShouldBe("http://localhost:5200");
+    }
+
+    /// <summary>
+    /// Mirrors <c>CrossProcessConfigLock.ResolveLockPath</c>: the sidecar lives in a
+    /// <c>locks/</c> subdirectory so the config directory keeps its "config.json and nothing else"
+    /// contract, which the ConfigDiskE2E durability suite pins.
+    /// </summary>
+    private string SidecarLockPath()
+    {
+        var lockDir = Path.Combine(Path.GetDirectoryName(ConfigPath)!, "locks");
+        Directory.CreateDirectory(lockDir);
+        return Path.Combine(lockDir, Path.GetFileName(ConfigPath) + ".lock");
     }
 
     private static JsonNode? ReadDotted(JsonObject root, string dotted)

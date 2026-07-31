@@ -64,7 +64,7 @@ internal sealed class CrossProcessConfigLock : IDisposable
     public static async Task<CrossProcessConfigLock> AcquireAsync(
         string configPath, IFileSystem fileSystem, CancellationToken ct)
     {
-        var lockPath = configPath + ".lock";
+        var lockPath = ResolveLockPath(configPath, fileSystem);
         var timeoutMs = ResolveTimeoutMs();
 
         var directory = fileSystem.Path.GetDirectoryName(lockPath);
@@ -91,6 +91,27 @@ internal sealed class CrossProcessConfigLock : IDisposable
             await Task.Delay(delayMs, ct);
             delayMs = Math.Min(delayMs * 2, 100);
         }
+    }
+
+    /// <summary>
+    /// Resolves the sidecar lock path for <paramref name="configPath"/>.
+    /// </summary>
+    /// <remarks>
+    /// The sidecar lives in a dedicated <c>locks/</c> subdirectory rather than beside
+    /// <c>config.json</c>. The config directory has a pinned contract - it holds the config document
+    /// and nothing else, asserted by the ConfigDiskE2E durability suite - and a lock file that
+    /// outlives every write is indistinguishable from crash residue to those tests and to a human
+    /// inspecting <c>~/.botnexus</c>. Keeping it on the same volume (rather than in %TEMP%)
+    /// preserves the exclusive-open semantics the lock depends on and scopes the lock to the same
+    /// home directory that owns the config.
+    /// </remarks>
+    internal static string ResolveLockPath(string configPath, IFileSystem fileSystem)
+    {
+        var directory = fileSystem.Path.GetDirectoryName(configPath);
+        var fileName = fileSystem.Path.GetFileName(configPath) + ".lock";
+        return string.IsNullOrWhiteSpace(directory)
+            ? fileSystem.Path.Combine("locks", fileName)
+            : fileSystem.Path.Combine(directory, "locks", fileName);
     }
 
     private static int ResolveTimeoutMs()
