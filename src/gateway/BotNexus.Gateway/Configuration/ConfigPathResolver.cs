@@ -790,6 +790,16 @@ public sealed class ConfigPathResolver : IConfigPathResolver
             return false;
         }
 
+        // Reject unbalanced brackets before splitting. SplitPath clamps an unbalanced ']' and
+        // never inspects a leftover open depth, so without this a malformed path splits into
+        // segments the caller never named and is then resolved - and on TrySetValue, written
+        // to - as if it were well-formed (#2605).
+        if (!ConfigPathSyntax.TryValidateBrackets(path, out error))
+        {
+            tokens = [];
+            return false;
+        }
+
         var rawSegments = SplitPath(path);
         var parsed = new List<PathToken>(rawSegments.Count);
         foreach (var segment in rawSegments)

@@ -363,6 +363,12 @@ public static class RawConfigPath
             return false;
         }
 
+        // See ConfigPathSyntax: Split clamps an unbalanced ']' and ignores a leftover open
+        // depth, so a malformed path would otherwise be written to the raw document under a key
+        // the operator never named (#2605).
+        if (!ConfigPathSyntax.TryValidateBrackets(dottedPath, out error))
+            return false;
+
         var parsed = new List<PathSegment>();
         foreach (var raw in Split(dottedPath))
         {
