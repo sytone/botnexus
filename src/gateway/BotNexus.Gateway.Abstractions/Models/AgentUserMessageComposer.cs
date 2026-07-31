@@ -1,5 +1,6 @@
 using System.Text;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Utilities;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Abstractions.Models;
@@ -27,6 +28,12 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </remarks>
 public static class AgentUserMessageComposer
 {
+    /// <summary>Drop-site identifier for the text-part inlining branch (#2568 reporting).</summary>
+    public const string TextDropSite = "composer.text";
+
+    /// <summary>Drop-site identifier for the binary-part branch (#2568 reporting).</summary>
+    public const string BinaryDropSite = "composer.binary";
+
     /// <summary>
     /// Composes an <see cref="AgentUserMessage"/> from message text and optional content parts,
     /// inlining non-image attachments into the text and routing image parts to the vision payload.
@@ -70,9 +77,50 @@ public static class AgentUserMessageComposer
                 case TextContentPart text:
                 {
                     sb ??= new StringBuilder();
+                    var bounded = TextualMimeType.BoundText(text.Text, out var textTruncated);
+                    if (textTruncated)
+                    {
+                        AttachmentPayloadGuard.ReportTruncated(
+                            fileName: null,
+                            text.MimeType,
+                            Encoding.UTF8.GetByteCount(text.Text ?? string.Empty),
+                            TextualMimeType.MaxInlineBytes,
+                            TextDropSite);
+                    }
+
                     sb.Append('\n');
                     sb.Append("<attachment mimeType=\"").Append(text.MimeType).Append("\">\n");
-                    sb.Append(text.Text);
+                    sb.Append(bounded);
+                    sb.Append("\n</attachment>");
+                    break;
+                }
+                // #2568: a binary part whose MIME type is TEXTUAL (application/json, +xml, ...) is
+                // decoded and inlined exactly like a TextContentPart, using the ONE shared
+                // TextualMimeType predicate so the client and this composer cannot disagree about
+                // what "textual" means. Genuinely opaque binaries fall through to the
+                // metadata-only branch below - base64-inlining a PDF would be worse than the bug.
+                case BinaryContentPart textualBin
+                    when TextualMimeType.IsTextual(textualBin.MimeType):
+                {
+                    sb ??= new StringBuilder();
+                    var name = string.IsNullOrWhiteSpace(textualBin.FileName) ? "(unnamed)" : textualBin.FileName;
+                    var decoded = TextualMimeType.DecodeBounded(textualBin.Data, out var binTruncated);
+                    if (binTruncated)
+                    {
+                        AttachmentPayloadGuard.ReportTruncated(
+                            name,
+                            textualBin.MimeType,
+                            textualBin.Data.Length,
+                            TextualMimeType.MaxInlineBytes,
+                            BinaryDropSite);
+                    }
+
+                    sb.Append('\n');
+                    sb.Append("<attachment fileName=\"").Append(name)
+                      .Append("\" mimeType=\"").Append(textualBin.MimeType)
+                      .Append("\" sizeBytes=\"").Append(textualBin.Data.Length)
+                      .Append("\">\n");
+                    sb.Append(decoded);
                     sb.Append("\n</attachment>");
                     break;
                 }
@@ -80,6 +128,15 @@ public static class AgentUserMessageComposer
                 {
                     sb ??= new StringBuilder();
                     var name = string.IsNullOrWhiteSpace(bin.FileName) ? "(unnamed)" : bin.FileName;
+
+                    // #2568 / AC5: the withholding is legitimate for an opaque binary, but the
+                    // SILENCE was the defect. Report it in the ImageModalityGuard (#2485) shape.
+                    AttachmentPayloadGuard.ReportWithheld(
+                        name,
+                        bin.MimeType,
+                        bin.Data.Length,
+                        BinaryDropSite);
+
                     sb.Append('\n');
                     sb.Append("<attachment fileName=\"").Append(name)
                       .Append("\" mimeType=\"").Append(bin.MimeType)

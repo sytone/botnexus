@@ -1,0 +1,14 @@
+<!--
+  Test graph. Wildcard over every project under `tests/`, never a hand-maintained list, so a
+  newly added test project is picked up the moment it exists on disk.
+
+  This traversal deliberately contains NOTHING from `src/`; the src projects still get built
+  because each test project references them, but the traversal set itself does not leak.
+-->
+<Project Sdk="Microsoft.Build.Traversal">
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)**\*.csproj" />
+  </ItemGroup>
+
+</Project>

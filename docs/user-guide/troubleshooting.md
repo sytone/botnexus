@@ -44,7 +44,7 @@ error : The SDK 'Microsoft.NET.Sdk' specified could not be found.
 error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json
 ```
 
-**Cause:** Network issue or NuGet offline.
+**Cause:** Network issue, NuGet offline, or a feed that is permanently blocked by network policy.
 
 **Solution:**
 1. Check network connectivity
@@ -57,6 +57,8 @@ error NU1301: Unable to load the service index for source https://api.nuget.org/
    dotnet restore
    dotnet build
    ```
+
+**If nuget.org is blocked by policy rather than temporarily unreachable**, none of the above will help — clearing the cache and retrying cannot reach a feed you are not permitted to contact. See [Installing Without nuget.org Access](../guides/offline-install.md) for building the CLI from source, using an internal mirror, and a `nuget.config` that clears inherited sources so the platform build restores successfully.
 
 ### Error: Missing Project Reference
 
