@@ -1,5 +1,7 @@
 using BotNexus.Agent.Core.Types;
+using BotNexus.Cron.Actions;
 using BotNexus.Cron.Tools;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,7 +25,7 @@ public sealed class CronToolCommandJobTests
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -49,7 +51,7 @@ public sealed class CronToolCommandJobTests
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -69,7 +71,7 @@ public sealed class CronToolCommandJobTests
     public async Task Create_CommandWithoutShellCommand_Throws()
     {
         var store = new Mock<ICronStore>();
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var ex = await Should.ThrowAsync<ArgumentException>(async () =>
             await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -88,7 +90,7 @@ public sealed class CronToolCommandJobTests
     public async Task Create_AgentPromptWithoutMessageOrTemplate_StillThrows()
     {
         var store = new Mock<ICronStore>();
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var ex = await Should.ThrowAsync<ArgumentException>(async () =>
             await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -107,7 +109,7 @@ public sealed class CronToolCommandJobTests
     public async Task Create_UnknownActionType_Throws()
     {
         var store = new Mock<ICronStore>();
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var ex = await Should.ThrowAsync<ArgumentException>(async () =>
             await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -130,7 +132,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreateCommandJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -152,7 +154,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreateCommandJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -176,7 +178,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreateCommandJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -195,7 +197,7 @@ public sealed class CronToolCommandJobTests
         var store = new Mock<ICronStore>();
         var existing = CreateCommandJob();
         SetupDefinitionWrites(store, existing, _ => { });
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var ex = await Should.ThrowAsync<ArgumentException>(async () =>
             await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -216,7 +218,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreatePromptJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -242,7 +244,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreatePromptJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -267,7 +269,7 @@ public sealed class CronToolCommandJobTests
         var existing = CreateCommandJob();
         CronJob? saved = null;
         SetupDefinitionWrites(store, existing, job => saved = job);
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -289,7 +291,7 @@ public sealed class CronToolCommandJobTests
         var store = new Mock<ICronStore>();
         var existing = CreateCommandJob();
         SetupDefinitionWrites(store, existing, _ => { });
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var ex = await Should.ThrowAsync<ArgumentException>(async () =>
             await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -307,12 +309,27 @@ public sealed class CronToolCommandJobTests
     public void Definition_SchemaDocumentsActionTypeAndShellCommand()
     {
         var store = new Mock<ICronStore>();
-        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"));
+        var tool = new CronTool(store.Object, CreateScheduler(), AgentId.From("agent-a"), commandAuthorizer: AllowingAuthorizer());
 
         var schema = tool.Definition.Parameters.GetProperty("properties");
         schema.TryGetProperty("actionType", out _).ShouldBeTrue();
         schema.TryGetProperty("shellCommand", out _).ShouldBeTrue();
         tool.Definition.Description.ShouldContain("command");
+    }
+
+    // #2462: these tests are about field plumbing, not authorization, so the command-authoring
+    // gate is satisfied with a policy that allows. A CronTool built without an authorizer now
+    // fails closed - that behaviour is covered by CommandCronAuthoringAuthorizationTests.
+    private static ICommandCronAuthorizer AllowingAuthorizer() =>
+        new ToolPolicyCommandCronAuthorizer(new AllowingToolPolicyProvider());
+
+    private sealed class AllowingToolPolicyProvider : IToolPolicyProvider
+    {
+        public ToolRiskLevel GetRiskLevel(string toolName) => ToolRiskLevel.Safe;
+        public bool RequiresApproval(string toolName, string? agentId = null) => false;
+        public ToolApprovalFallback GetApprovalFallback(string toolName, string? agentId = null)
+            => ToolApprovalFallback.Allow;
+        public IReadOnlyList<string> GetDeniedForHttp() => [];
     }
 
     private static void SetupDefinitionWrites(Mock<ICronStore> store, CronJob initial, Action<CronJob> onWrite)

@@ -783,9 +783,49 @@ exactly as before. Validation is per action type: an `agent-prompt` job still re
 prompt source, and a `command` job still requires a non-empty `shellCommand` - neither is
 allowed to be created with nothing to do.
 
-`shellCommand` is an arbitrary-execution surface. Creating or editing a `command` job
-should be treated as a dangerous operation and carry the same authorization posture as
-the `exec` path.
+`shellCommand` is an arbitrary-execution surface, so it carries the same authorization
+posture as the `exec` path. See [Command job authorization](#command-job-authorization).
+
+#### Command Job Authorization
+
+Command jobs are gated by `ICommandCronAuthorizer` (issue #2462). The default implementation,
+`ToolPolicyCommandCronAuthorizer`, does **not** define its own policy language: it delegates to
+the existing tool-boundary policy surface - `IToolPolicyProvider`, `ToolRiskLevel` and
+`ToolApprovalFallback` - classifying the command under the **`exec`** tool name. There is one
+policy vocabulary, not two, so setting `askFallback: deny` for an agent closes the interactive
+`exec` path and the unattended cron command path with a single switch. **No new configuration
+keys are introduced by command-job authorization.**
+
+Both lifecycle phases are gated, deliberately and distinctly:
+
+| Phase | Where | What happens on denial |
+|---|---|---|
+| **Authoring** - `create`/`update` carrying a `shellCommand` via the `cron` tool | `CronTool` | `UnauthorizedAccessException` with the reason. **Nothing is written to the store**, so a denied command never becomes a job. |
+| **Firing** - every scheduled or manual execution | `CommandCronAction`, immediately before `Process.Start()` | The reason is logged at `Error`, the run is recorded with status `error` carrying the reason, and **no subprocess is started**. |
+
+Firing is re-evaluated independently of authoring rather than trusting the stored job, because
+policy can be tightened after a job is created, and jobs can arrive through paths other than the
+`cron` tool (for example `POST /api/cron` or an imported store).
+
+The decision order, identical in both phases:
+
+1. Extract the leading executable token from the command. If none can be extracted - the command
+   opens with a shell operator, substitution, or is empty - it is **unclassifiable** and is
+   **denied**. This is fail-closed by design, matching the posture of `ChannelFailureClassifier`
+   (#2447): the gate never guesses.
+2. Resolve `IToolPolicyProvider`. If it is unavailable the policy cannot be evaluated, so the
+   command is **denied**. An unregistered dependency therefore fails closed rather than silently
+   disabling the gate.
+3. If the `exec` tool does not require approval, **allow**.
+4. If it does require approval, consult the agent's approval fallback. A cron firing is
+   unattended, so no approval workflow can ever service the request: `deny` refuses,
+   `allow` (the platform default, per #2391) permits with an audit log entry.
+
+Because `ToolApprovalFallback.Allow` remains the default, out of the box a command job still runs
+and simply records an audit line; blocking is opt-in via `askFallback: deny`. The unclassifiable
+and missing-provider paths deny unconditionally regardless of that setting.
+
+`agent-prompt` jobs are entirely unaffected: the gate is only consulted for `command` jobs.
 
 The action set is defined by the tool's input schema in
 `src/gateway/BotNexus.Cron/Tools/CronTool.cs` and is exactly:

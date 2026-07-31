@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Cron.Actions;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -12,9 +13,34 @@ public sealed class CronTool(
     CronScheduler scheduler,
     AgentId agentId,
     bool allowCrossAgentCron = false,
-    ModelRegistry? modelRegistry = null) : IAgentTool
+    ModelRegistry? modelRegistry = null,
+    ICommandCronAuthorizer? commandAuthorizer = null) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
+
+    /// <summary>
+    /// #2462 (AUTHORING half): every create/update that would persist a <c>shellCommand</c> is
+    /// checked here, using the same <see cref="ICommandCronAuthorizer"/> seam - and therefore the
+    /// same exec-tool policy vocabulary - that gates FIRING in <c>CommandCronAction</c>. Firing is
+    /// still gated independently: policy can tighten after a job is stored, and jobs can be created
+    /// through paths other than this tool.
+    ///
+    /// Fails CLOSED: when no authorizer was supplied the gate cannot be evaluated, so the write is
+    /// refused rather than silently allowed.
+    /// </summary>
+    private void EnsureCommandAuthorized(CronJob job, string command)
+    {
+        var decision = commandAuthorizer is null
+            ? CommandAuthorizationDecision.Deny(
+                $"no {nameof(ICommandCronAuthorizer)} is available, so the command cannot be classified; failing closed")
+            : commandAuthorizer.AuthorizeAuthoring(job, command);
+
+        if (!decision.Allowed)
+        {
+            throw new UnauthorizedAccessException(
+                $"Cron command job '{job.Name}' was denied by the command authorization policy: {decision.Reason}");
+        }
+    }
 
     public string Name => "cron";
     public string Label => "Cron Job Manager";
@@ -182,6 +208,10 @@ public sealed class CronTool(
             Metadata = new Dictionary<string, object?>()
         };
 
+        // AUTHORING gate (#2462) - before any store write, so a denied command leaves no row behind.
+        if (isCommand)
+            EnsureCommandAuthorized(job, shellCommand!);
+
         var created = await cronStore.CreateAsync(job, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(created, JsonOptions));
     }
@@ -259,6 +289,11 @@ public sealed class CronTool(
         // #2133: a tool definition update is a narrow write that never touches scheduler-owned
         // runtime bookkeeping (LastRun*/NextRunAt) or the CAS-pinned conversation, so it cannot
         // regress a concurrent run's status, timestamps, next run, or conversation pin.
+        // AUTHORING gate (#2462). A retained command is re-checked too, so a policy tightened after
+        // creation takes effect on the next edit instead of being grandfathered in.
+        if (string.Equals(updated.ActionType, "command", StringComparison.Ordinal))
+            EnsureCommandAuthorized(updated, newShellCommand!);
+
         var saved = await cronStore.UpdateDefinitionAsync(updated, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
