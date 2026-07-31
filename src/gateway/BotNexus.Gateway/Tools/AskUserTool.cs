@@ -177,8 +177,17 @@ public sealed class AskUserTool(
             if (conversation is null)
                 return;
 
-            conversation.PendingAskUserJson = JsonSerializer.Serialize(request, JsonOptions);
-            await conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            var pendingJson = JsonSerializer.Serialize(request, JsonOptions);
+
+            // SaveAsync is compare-and-swap guarded (#2471); a pin or canvas write landing between the
+            // read above and this save throws instead of clobbering. Retry through the shared helper,
+            // which re-reads and re-applies ONLY the pending-prompt field to the fresh aggregate (#2131).
+            _ = await ConversationSaveRetry.SaveWithRetryAsync(
+                conversationStore,
+                request.ConversationId,
+                conversation,
+                source => source with { PendingAskUserJson = pendingJson },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -197,8 +206,14 @@ public sealed class AskUserTool(
             if (stored is null || stored.PendingAskUserJson is null)
                 return;
 
-            stored.PendingAskUserJson = null;
-            await conversationStore.SaveAsync(stored, cancellationToken).ConfigureAwait(false);
+            // Same CAS concern as the register path: re-apply only the clear to fresh state so a
+            // concurrent writer's columns survive the retry (#2131).
+            _ = await ConversationSaveRetry.SaveWithRetryAsync(
+                conversationStore,
+                conversation,
+                stored,
+                source => source.PendingAskUserJson is null ? null : source with { PendingAskUserJson = null },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
