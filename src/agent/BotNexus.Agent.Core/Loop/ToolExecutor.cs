@@ -1,4 +1,4 @@
-﻿using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
