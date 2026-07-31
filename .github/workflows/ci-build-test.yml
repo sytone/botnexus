@@ -64,10 +64,10 @@ jobs:
       - name: Restore tools and packages
         run: |
           dotnet tool restore
-          dotnet restore
+          dotnet restore BotNexus.slnx
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build BotNexus.slnx --no-restore
 
       - name: Test (impacted only)
         shell: pwsh
@@ -86,17 +86,17 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore BotNexus.slnx
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build BotNexus.slnx --no-restore
 
       - name: Test
         # Excludes tests that require external infrastructure not present in CI:
         # - BotNexus.Integration.*  : CLI pack/install integration tests (not unit tests)
         # - BotNexus.Conversation.* : live-gateway SignalR tests (all SkippableFact; gateway not running)
         # - BotNexus.E2E.*          : Playwright end-to-end tests (browsers not installed)
-        run: dotnet test --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.&FullyQualifiedName!~BotNexus.Conversation.Tests.&FullyQualifiedName!~BotNexus.E2E.Tests."
+        run: dotnet test BotNexus.slnx --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.&FullyQualifiedName!~BotNexus.Conversation.Tests.&FullyQualifiedName!~BotNexus.E2E.Tests."
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -125,7 +125,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore BotNexus.slnx
       - name: Build e2e portal projects
         run: |
           dotnet build tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-restore
