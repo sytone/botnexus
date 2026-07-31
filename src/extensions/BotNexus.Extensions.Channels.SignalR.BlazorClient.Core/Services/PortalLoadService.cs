@@ -130,9 +130,9 @@ public sealed class PortalLoadService : IPortalLoadService
             await _hub.ConnectAsync(hubUrl, ClientKind, Tuning);
 
             // Track SignalR connection state for UI indicators and reconnect flows.
-            _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
-            _hub.OnReconnected += () => OnConnectionStateChanged?.Invoke();
-            _hub.OnDisconnected += () => OnConnectionStateChanged?.Invoke();
+            _hub.OnReconnecting += RaiseConnectionStateChanged;
+            _hub.OnReconnected += RaiseConnectionStateChanged;
+            _hub.OnDisconnected += RaiseConnectionStateChanged;
 
             var subscribeResult = await _hub.SubscribeAllAsync();
             foreach (var session in subscribeResult.Sessions)
@@ -322,11 +322,20 @@ public sealed class PortalLoadService : IPortalLoadService
         await _hub.StopAndDisposeAsync();
         await _hub.ConnectAsync(_hubUrl!, ClientKind, Tuning);
 
-        // Re-wire connection-state notifications on the fresh connection so the UI keeps
-        // reflecting reconnecting/reconnected/disconnected transitions after the reset.
-        _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
-        _hub.OnReconnected += () => OnConnectionStateChanged?.Invoke();
-        _hub.OnDisconnected += () => OnConnectionStateChanged?.Invoke();
+        // #2625: the handlers below are registered on the GatewayHubConnection *wrapper*, which the
+        // rebuild does NOT replace -- only the inner HubConnection is. Re-adding them each rebuild
+        // therefore accumulated: after N rebuilds a single connection-state transition raised
+        // OnConnectionStateChanged N times, driving N overlay re-renders, so a long outage got
+        // steadily more expensive. Unsubscribing the named handlers first makes the wiring
+        // idempotent (AC4). This is why the handlers are methods and not the previous inline
+        // lambdas -- a fresh lambda per rebuild can never be unsubscribed.
+        _hub.OnReconnecting -= RaiseConnectionStateChanged;
+        _hub.OnReconnected -= RaiseConnectionStateChanged;
+        _hub.OnDisconnected -= RaiseConnectionStateChanged;
+
+        _hub.OnReconnecting += RaiseConnectionStateChanged;
+        _hub.OnReconnected += RaiseConnectionStateChanged;
+        _hub.OnDisconnected += RaiseConnectionStateChanged;
 
         var subscribeResult = await _hub.SubscribeAllAsync();
         foreach (var session in subscribeResult.Sessions)
@@ -334,4 +343,10 @@ public sealed class PortalLoadService : IPortalLoadService
 
         OnConnectionStateChanged?.Invoke();
     }
+
+    /// <summary>
+    /// Named handler for hub connection-state transitions. A method rather than a lambda so the
+    /// rebuild path can unsubscribe it and avoid accumulating duplicate registrations (#2625).
+    /// </summary>
+    private void RaiseConnectionStateChanged() => OnConnectionStateChanged?.Invoke();
 }
