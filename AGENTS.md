@@ -131,11 +131,13 @@ Before every `git push` on a PR branch:
   cd ../botnexus-wt-N
   ```
 
-- **Local `main` must always be clean.** After a worktree is merged and the PR closes:
-  ```bash
-  git worktree remove ../botnexus-wt-N
-  cd ../botnexus && git checkout main && git pull origin main
+- **Local `main` must always be clean.** After a worktree is merged and the PR closes,
+  remove the worktree through the hardened helper - never with a raw `git worktree remove`:
+  ```powershell
+  pwsh -NoProfile -File scripts/repo/Remove-Worktree.ps1 -WorktreePath ../botnexus-wt-N -DeleteBranch
+  cd ../botnexus; git checkout main; git pull origin main
   ```
+  Use the hardened helper `scripts/repo/Remove-Worktree.ps1`: it retries boundedly, returns a structured `locked` outcome when Windows file locks hold the directory, and never deletes the branch unless removal succeeded (issue #2104). Never chain `git worktree remove ...` straight into `git branch -d/-D ...` - on a failed removal that orphans the directory and strands the commits.
 
 - **If you find local changes on `main`:** Move them to a worktree immediately before continuing work:
   1. `git worktree add ../botnexus-recover -b <type>/<recovery-slug>`

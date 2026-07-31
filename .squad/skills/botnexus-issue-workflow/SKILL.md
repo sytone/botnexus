@@ -132,13 +132,16 @@ gh pr create \
 
 After a PR merges:
 
-```bash
+```powershell
 cd ~/projects/botnexus
 git pull origin main --ff-only
-git worktree remove ../botnexus-wt-<N>
-git branch -d <branch>          # local branch in worktree
+# Helper: bounded retry, structured 'locked' outcome, deletes the local branch
+# only when the worktree removal actually succeeded.
+pwsh -NoProfile -File scripts/repo/Remove-Worktree.ps1 -WorktreePath ../botnexus-wt-<N> -DeleteBranch
 git push fork --delete <branch> # remote branch on fork
 ```
+
+Use the hardened helper `scripts/repo/Remove-Worktree.ps1`: it retries boundedly, returns a structured `locked` outcome when Windows file locks hold the directory, and never deletes the branch unless removal succeeded (issue #2104). Never chain `git worktree remove ...` straight into `git branch -d/-D ...` - on a failed removal that orphans the directory and strands the commits.
 
 ## Full Lifecycle Checklist
 

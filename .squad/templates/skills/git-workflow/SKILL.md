@@ -119,12 +119,19 @@ The `.squad/` directory exists in each worktree as a copy. This is safe because:
 
 After a worktree's PR is merged to dev:
 
-```bash
-# From the main clone
-git worktree remove ../squad-195
-git worktree prune          # clean stale metadata
-git branch -d squad/195-fix-stamp-bug
+```powershell
+# From the main clone. The helper prunes only after the directory is really gone
+# and deletes the branch only when removal succeeded.
+pwsh -NoProfile -File scripts/repo/Remove-Worktree.ps1 -WorktreePath ../squad-195 -DeleteBranch
 git push origin --delete squad/195-fix-stamp-bug
+```
+
+Use the hardened helper `scripts/repo/Remove-Worktree.ps1`: it retries boundedly, returns a structured `locked` outcome when Windows file locks hold the directory, and never deletes the branch unless removal succeeded (issue #2104). Never chain `git worktree remove ...` straight into `git branch -d/-D ...` - on a failed removal that orphans the directory and strands the commits. If you must do it by hand, check the
+exit code between the two steps:
+
+```powershell
+git worktree remove ../squad-195
+if ($LASTEXITCODE -eq 0) { git worktree prune; git branch -d squad/195-fix-stamp-bug }
 ```
 
 If a worktree was deleted manually (rm -rf), `git worktree prune` recovers the state.
