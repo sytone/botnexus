@@ -153,6 +153,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             conv.StreamState.EndRun();
+            // #2439: the run loop drains the follow-up queue BEFORE it can end (AgentLoopRunner
+            // seeds another turn from a drained follow-up and continues), so once RunEnded lands
+            // nothing can still be pending — whatever was queued was injected or discarded.
+            // RunEnded is therefore the honest, already-existing injection signal for the chip.
+            _store.ClearSteeringQueue(convId);
             cleared = convId == agent.ActiveConversationId;
         }
 
@@ -163,6 +168,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             && agent.Conversations.GetValueOrDefault(activeConvId) is { } activeConv)
         {
             activeConv.StreamState.EndRun();
+            // #2439: same defensive reasoning as the bracket — a misrouted hint must not strand
+            // a pending indicator the user can never clear.
+            _store.ClearSteeringQueue(activeConvId);
         }
 
         agent!.IsStreaming = false;
@@ -444,6 +452,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 DateTimeOffset.UtcNow));
             // A gateway restart terminates the run; clear the whole run bracket (no RunEnded will arrive).
             conv.StreamState.EndRun();
+            // #2439: no RunEnded will arrive, so nothing else would ever clear a pending chip.
+            _store.ClearSteeringQueue(convId);
         }
 
         if (agent is not null)
@@ -523,6 +533,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // prior messages with a visual divider marking the new session.
             conv.AppendMessage(new ChatMessage("System", "--- New session started ---", DateTimeOffset.UtcNow));
             _store.ClearPendingAskUser(conv.ConversationId);
+            // #2439: a reset context window cannot contain the queued follow-up. Clear the chip.
+            _store.ClearSteeringQueue(conv.ConversationId);
         }
 
         agent.ActiveToolCalls.Clear();
@@ -804,6 +816,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 }
             }
         }
+
+        // #2439: pending steering/follow-up entries are purely client-side optimism. After a
+        // reconnect the client cannot confirm whether the gateway still holds them, and there is
+        // no query that would tell it. A pending indicator that cannot be verified must not
+        // persist — fail toward clearing across every known conversation.
+        foreach (var agent in _store.Agents.Values)
+            foreach (var conversationId in agent.Conversations.Keys)
+                _store.ClearSteeringQueue(conversationId);
 
         _store.NotifyChanged();
     }

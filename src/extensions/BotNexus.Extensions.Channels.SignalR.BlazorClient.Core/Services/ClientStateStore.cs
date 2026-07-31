@@ -290,7 +290,17 @@ public sealed class ClientStateStore : IClientStateStore
         if (!_agents.TryGetValue(agentId, out var agent))
             return;
 
+        var previousConversationId = agent.ActiveConversationId;
         agent.ActiveConversationId = conversationId;
+
+        // #2439: a pending Steer/Follow-up chip belongs to the conversation the user is leaving
+        // and is purely client-side optimism. Once the view moves away nothing will report its
+        // fate back, so a chip that cannot be verified must not survive the switch.
+        if (previousConversationId is { Length: > 0 } leaving
+            && !string.Equals(leaving, conversationId, StringComparison.Ordinal))
+        {
+            ClearSteeringQueue(leaving);
+        }
 
         if (agent.Conversations.TryGetValue(conversationId, out var conv))
         {

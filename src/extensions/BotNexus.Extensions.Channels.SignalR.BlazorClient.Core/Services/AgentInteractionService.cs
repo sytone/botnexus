@@ -329,6 +329,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (agent.Conversations.GetValueOrDefault(conversationId) is { } conv)
             conv.StreamState.EndRun();
 
+        // #2439: the run is being torn down, so nothing will ever inject a queued follow-up or
+        // steer. Clear the pending chip alongside the run bracket rather than leaving a stale
+        // indicator the user cannot dismiss.
+        _store.ClearSteeringQueue(conversationId);
+
         _store.NotifyChanged();
     }
 
