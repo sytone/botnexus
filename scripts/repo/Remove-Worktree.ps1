@@ -11,11 +11,13 @@
          reports likely lockers where they can be discovered.
       2. Retries `git worktree remove` a bounded number of times with short
          exponential backoff.
-      3. On persistent failure returns a structured `locked` outcome that
+      3. Classifies the OWNER of a git worktree lock before giving up, reusing
+         the shared liveness helpers from ValidationSteps.psm1 (issue #2409).
+      4. On persistent failure returns a structured `locked` outcome that
          retains the path, branch, and metadata so callers can record-and-skip
          instead of retrying dozens of times.
-      4. NEVER deletes the branch when worktree removal failed.
-      5. Runs `git worktree prune` only AFTER the working directory is gone,
+      5. NEVER deletes the branch when worktree removal failed.
+      6. Runs `git worktree prune` only AFTER the working directory is gone,
          then verifies both the filesystem path and the
          `.git/worktrees/<name>` metadata have been removed.
 
@@ -24,14 +26,32 @@
 
 .OUTPUTS
     A hashtable describing the outcome. `outcome` is one of:
-      'removed'  - worktree and (optionally) branch removed cleanly
-      'locked'   - removal blocked by a lock after bounded retries; retained
-      'absent'   - nothing to remove
-      'error'    - a non-lock failure occurred
+      'removed'   - worktree and (optionally) branch removed cleanly
+      'reclaimed' - a STALE worktree lock (dead owner) was reclaimed and the
+                    removal then succeeded
+      'locked'    - removal blocked by a lock after bounded retries; retained
+      'absent'    - nothing to remove
+      'error'     - a non-lock failure occurred
+
+    Every record also carries `ownerState`, the classification of whoever holds
+    the git worktree lock: 'Alive', 'Dead', 'Reused', 'Unknown' or 'None'.
+    Issue #2409: without that classification a tombstone lock left by a killed
+    worker silently disabled the guard it was supposed to provide, and callers
+    could not tell "someone else is working on this" from "nobody is, but the
+    lock file outlived them".
 #>
 # Copyright (c) Microsoft Corporation. All rights reserved.
 
 Set-StrictMode -Version Latest
+
+# Reuse the single owner-liveness classifier that issue #2393 added for the
+# validation lock. A second, worktree-local classifier is exactly the drift that
+# issue #2409 describes, so this path deliberately imports rather than
+# reimplements Test-BotNexusLockOwnerAlive / Read-BotNexusLockOwner.
+$script:ValidationStepsModule = Join-Path $PSScriptRoot 'ValidationSteps.psm1'
+if (Test-Path -LiteralPath $script:ValidationStepsModule) {
+    Import-Module $script:ValidationStepsModule -Force -DisableNameChecking
+}
 
 function Test-WorktreeLockError {
     <#
@@ -50,7 +70,12 @@ function Test-WorktreeLockError {
         'unable to unlink',
         'unable to remove',
         'cannot remove',
-        'Directory not empty'
+        'Directory not empty',
+        # git's own worktree lock. Issue #2409: this was NOT recognised as a lock
+        # at all, so a locked worktree fell through to the generic 'error' path
+        # and the owner was never classified.
+        'is locked',
+        'contains a locked'
     )
     foreach ($p in $patterns) {
         if ($Output -match [regex]::Escape($p)) { return $true }
@@ -100,6 +125,89 @@ function Get-WorktreeMetadataName {
     }
     catch { }
     return $null
+}
+
+function Get-WorktreeLockFilePath {
+    <#
+      Resolves <repo>/.git/worktrees/<name>/locked - the file git itself creates
+      for `git worktree lock`, and the only durable place a worktree lock owner
+      can be recorded. Returns $null when the metadata name is unknown.
+    #>
+    param([string]$RepoRoot, [string]$MetadataName)
+    if ([string]::IsNullOrWhiteSpace($RepoRoot) -or [string]::IsNullOrWhiteSpace($MetadataName)) { return $null }
+    $gitDir = Join-Path $RepoRoot '.git'
+    # A repo root that is itself a linked worktree has .git as a FILE; only the
+    # real admin directory carries worktrees/.
+    if (-not (Test-Path -LiteralPath $gitDir -PathType Container)) { return $null }
+    return (Join-Path (Join-Path (Join-Path $gitDir 'worktrees') $MetadataName) 'locked')
+}
+
+function Write-WorktreeLockOwner {
+    <#
+      Stamps an owner record into a worktree lock file that BotNexus itself
+      writes. Issue #2409: git's `worktree lock --reason` is free text and our
+      callers wrote an empty reason, so the lock carried NO owner at all and
+      could never be classified - it could only be honoured forever or ignored
+      blindly. Both of those are the bug.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$LockFilePath)
+
+    if (-not (Get-Command ConvertTo-BotNexusLockOwnerRecord -ErrorAction SilentlyContinue)) { return $null }
+    $owner = ConvertTo-BotNexusLockOwnerRecord
+    $dir = Split-Path -Parent $LockFilePath
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    Set-Content -LiteralPath $LockFilePath -Value ($owner | ConvertTo-Json -Compress) -Encoding utf8 -NoNewline
+    return $owner
+}
+
+function Get-WorktreeLockOwnerState {
+    <#
+      Classifies the owner of a worktree lock as 'Alive', 'Dead', 'Reused',
+      'Unknown', or 'None' (no lock file at all), delegating entirely to the
+      shared helpers from ValidationSteps.psm1.
+
+      A lock file that exists but carries no readable owner record is 'Unknown',
+      never 'Dead': failing closed on an unclassifiable lock is the whole point
+      of the classification.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string]$LockFilePath)
+
+    if ([string]::IsNullOrWhiteSpace($LockFilePath)) { return 'None' }
+    if (-not (Test-Path -LiteralPath $LockFilePath -PathType Leaf)) { return 'None' }
+    if (-not (Get-Command Read-BotNexusLockOwner -ErrorAction SilentlyContinue) -or
+        -not (Get-Command Test-BotNexusLockOwnerAlive -ErrorAction SilentlyContinue)) {
+        return 'Unknown'
+    }
+    $owner = Read-BotNexusLockOwner -LockPath $LockFilePath
+    if ($null -eq $owner) { return 'Unknown' }
+    return (Test-BotNexusLockOwnerAlive -Owner $owner)
+}
+
+function Enter-WorktreeReclaimGuard {
+    <#
+      Single-winner guard for reclaiming a stale lock. Two processes can observe
+      the same dead owner at the same instant; whoever creates this file
+      exclusively (CreateNew fails when it already exists) is the one allowed to
+      reclaim. Returns a guard handle, or $null when another process already won.
+    #>
+    param([Parameter(Mandatory)][string]$LockFilePath)
+    $guardPath = "$LockFilePath.reclaim"
+    try {
+        $stream = [IO.File]::Open($guardPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        return @{ Path = $guardPath; Stream = $stream }
+    }
+    catch { return $null }
+}
+
+function Exit-WorktreeReclaimGuard {
+    param([AllowNull()][object]$Guard)
+    if ($null -eq $Guard) { return }
+    try { $Guard.Stream.Dispose() } catch { }
+    Remove-Item -LiteralPath $Guard.Path -Force -ErrorAction SilentlyContinue
 }
 
 function Remove-WorktreeSafely {
@@ -203,20 +311,58 @@ function Remove-WorktreeSafely {
         }
     }
 
+    # Issue #2409: before giving up, ask WHO holds the worktree lock and whether
+    # that owner is still alive. A tombstone left by a killed worker must not be
+    # honoured forever, and a live owner must NEVER be reclaimed.
+    $lockFilePath = Get-WorktreeLockFilePath -RepoRoot $RepoRoot -MetadataName $metadataName
+    $ownerState = 'None'
+    $reclaimed = $false
+    $reclaimAttempted = $false
+
+    if (-not $removed) {
+        $ownerState = Get-WorktreeLockOwnerState -LockFilePath $lockFilePath
+
+        # ONLY 'Dead' is reclaimable. 'Alive' names a real holder; 'Reused' and
+        # 'Unknown' cannot be trusted, so both fail CLOSED.
+        if ($ownerState -eq 'Dead') {
+            $guard = Enter-WorktreeReclaimGuard -LockFilePath $lockFilePath
+            if ($null -ne $guard) {
+                $reclaimAttempted = $true
+                try {
+                    Write-Host "[worktree] reclaiming STALE worktree lock $lockFilePath - its recorded owner process no longer exists (issue #2409)." -ForegroundColor Yellow
+                    & $GitInvoker @('-C', $RepoRoot, 'worktree', 'unlock', $WorktreePath) | Out-Null
+                    Remove-Item -LiteralPath $lockFilePath -Force -ErrorAction SilentlyContinue
+                    # Retry the removal exactly ONCE after a successful reclaim.
+                    $attempts++
+                    $retry = & $GitInvoker $gitArgs
+                    $lastOutput = ($retry.output).Trim()
+                    if ($retry.exitCode -eq 0) {
+                        $removed = $true
+                        $reclaimed = $true
+                    }
+                }
+                finally { Exit-WorktreeReclaimGuard -Guard $guard }
+            }
+        }
+    }
+
     if (-not $removed) {
         # Persistent lock. Return a structured, retained 'locked' record.
         # Critically: DO NOT delete the branch, DO NOT prune.
         $lockers = & $LockerProbe $WorktreePath
         return @{
-            outcome      = 'locked'
-            path         = $WorktreePath
-            branch       = $branch
-            metadataName = $metadataName
-            attempts     = $attempts
-            branchDeleted = $false
-            pruned       = $false
-            likelyLockers = @($lockers)
-            lastError    = $lastOutput
+            outcome          = 'locked'
+            path             = $WorktreePath
+            branch           = $branch
+            metadataName     = $metadataName
+            attempts         = $attempts
+            ownerState       = $ownerState
+            reclaimed        = $false
+            reclaimAttempted = $reclaimAttempted
+            branchDeleted    = $false
+            pruned           = $false
+            likelyLockers    = @($lockers)
+            lastError        = $lastOutput
         }
     }
 
@@ -232,15 +378,18 @@ function Remove-WorktreeSafely {
         # never prune, never delete the branch.
         $lockers = & $LockerProbe $WorktreePath
         return @{
-            outcome       = 'locked'
-            path          = $WorktreePath
-            branch        = $branch
-            metadataName  = $metadataName
-            attempts      = $attempts
-            branchDeleted = $false
-            pruned        = $false
-            likelyLockers = @($lockers)
-            lastError     = if ($dirRemoveError) { $dirRemoveError } else { 'Worktree directory still present after removal.' }
+            outcome          = 'locked'
+            path             = $WorktreePath
+            branch           = $branch
+            metadataName     = $metadataName
+            attempts         = $attempts
+            ownerState       = $ownerState
+            reclaimed        = $reclaimed
+            reclaimAttempted = $reclaimAttempted
+            branchDeleted    = $false
+            pruned           = $false
+            likelyLockers    = @($lockers)
+            lastError        = if ($dirRemoveError) { $dirRemoveError } else { 'Worktree directory still present after removal.' }
         }
     }
 
@@ -263,14 +412,17 @@ function Remove-WorktreeSafely {
     }
 
     return @{
-        outcome       = 'removed'
-        path          = $WorktreePath
-        branch        = $branch
-        metadataName  = $metadataName
-        attempts      = $attempts
-        pruned        = $pruned
-        metadataGone  = $metadataGone
-        branchDeleted = $branchDeleted
+        outcome          = if ($reclaimed) { 'reclaimed' } else { 'removed' }
+        path             = $WorktreePath
+        branch           = $branch
+        metadataName     = $metadataName
+        attempts         = $attempts
+        ownerState       = $ownerState
+        reclaimed        = $reclaimed
+        reclaimAttempted = $reclaimAttempted
+        pruned           = $pruned
+        metadataGone     = $metadataGone
+        branchDeleted    = $branchDeleted
     }
 }
 
@@ -280,5 +432,12 @@ if ($MyInvocation.InvocationName -ne '.' -and $MyInvocation.Line -notmatch '\.\s
     if ($args.Count -ge 2) {
         $result = Remove-WorktreeSafely -RepoRoot $args[0] -WorktreePath $args[1]
         $result | ConvertTo-Json -Depth 6
+        # Issue #2409: FAIL LOUDLY. The specific bug named in the issue is a
+        # caller that swallows non-acquisition and proceeds UNPROTECTED; a
+        # non-zero exit makes that impossible to miss.
+        if ($result.outcome -eq 'locked' -or $result.outcome -eq 'error') {
+            Write-Error "Remove-WorktreeSafely did not acquire the worktree: outcome='$($result.outcome)' ownerState='$(if ($result.ContainsKey('ownerState')) { $result.ownerState } else { 'None' })'."
+            exit 1
+        }
     }
 }
