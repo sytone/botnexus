@@ -294,6 +294,10 @@ public static class GatewayServiceCollectionExtensions
         // Singleton so GatewayHost shares one view of which sessions have a turn in flight.
         services.TryAddSingleton<Sessions.ISessionTurnTracker, Sessions.SessionTurnTracker>();
 
+        // #2447: startup outcomes are published into a singleton report so the API layer can
+        // answer "which configured adapters actually started" without reaching into the host.
+        services.TryAddSingleton<BotNexus.Gateway.Channels.Startup.ChannelStartupReport>();
+
         // Gateway host
         services.TryAddSingleton<GatewayHost>();
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());

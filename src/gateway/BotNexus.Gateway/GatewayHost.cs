@@ -70,6 +70,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly GatewayAuthManager? _authManager;
     private readonly IOutboundResponseDeliverer _deliverer;
     private readonly Sessions.ISessionTurnTracker _turnTracker;
+    private readonly ChannelStartupReport _startupReport;
 
     public GatewayHost(
         IAgentSupervisor supervisor,
@@ -97,7 +98,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IActiveLoopTracker? activeLoopTracker = null,
         GatewayAuthManager? authManager = null,
         IOutboundResponseDeliverer? outboundResponseDeliverer = null,
-        Sessions.ISessionTurnTracker? turnTracker = null)
+        Sessions.ISessionTurnTracker? turnTracker = null,
+        ChannelStartupReport? startupReport = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -123,6 +125,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         // Tests that construct GatewayHost directly may not supply one; a fresh tracker keeps
         // behaviour identical (no live turns tracked from other GatewayHost instances).
         _turnTracker = turnTracker ?? new Sessions.SessionTurnTracker();
+        _startupReport = startupReport ?? new ChannelStartupReport();
         // Outbound fan-out delivery is a focused collaborator (#1811). Tests that construct
         // GatewayHost directly may not provide one; build a fallback from the deps we already
         // have so behaviour matches production. When no conversation router is configured there
@@ -210,6 +213,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         var startOutcomes = await startupCoordinator.StartAllAsync(_channelManager.Adapters, this, stoppingToken);
 
         _channelStartOutcomes = startOutcomes;
+
+        // #2447 clause 4: publish the real per-adapter result so GET /api/channels/health can
+        // distinguish adapters configured from adapters started and name the ones that failed.
+        // Recording it only in a private field left a dead channel diagnosable solely from logs.
+        _startupReport.Record(startOutcomes);
 
         var degraded = startOutcomes.Any(o => !o.Started);
         if (degraded)
