@@ -74,6 +74,13 @@ public static class StreamingSessionHelper
                     break;
                 case AgentStreamEventType.MessageEnd:
                     hadMessageEnd = true;
+                    // #2522 producer seam: a MessageEnd carries the provider's reported usage for
+                    // the request that produced this assistant message, and the session is writable
+                    // and about to be persisted by the flush below. Stamp the prompt-token count
+                    // here so the compactor's measure-first diagnostic (which already reads this
+                    // key) stops rendering "unavailable". Diagnostic only - no compaction
+                    // behaviour is gated on it.
+                    ProviderTokenUsageRecorder.Record(session, evt.Usage);
                     break;
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
                     var startEntry = new SessionEntry
