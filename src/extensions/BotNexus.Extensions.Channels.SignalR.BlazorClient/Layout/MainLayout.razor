@@ -33,7 +33,7 @@
 
             @* #2441: connection state is a dot right after the logo; the full state text lives in
                the tooltip. This replaced the dedicated sidebar row that cost ~30px of nav height. *@
-            <ConnectionStatus Hub="@Hub" Dot="true" />
+            <ConnectionStatus Hub="@Hub" Dot="true" Reconnecting="@PortalLoad.IsReconnecting" />
 
             @* #2441: agent identity (emoji + name + description, id on hover) rides in the top bar
                rather than owning a row inside the agent panel. *@
@@ -554,6 +554,9 @@
         Nav.LocationChanged += OnLocationChanged;
         ToolsApi.Changed += HandleToolsChanged;
         PortalLoad.OnReadyChanged += HandleReadyChanged;
+        // #2624: the terminal-close re-dial loop raises this so the indicator can show
+        // "Reconnecting" during a gateway restart instead of a terminal "Disconnected".
+        PortalLoad.OnConnectionStateChanged += HandleStateChanged;
         UpdateStatus.StatusChanged += HandleStateChanged;
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
@@ -1111,6 +1114,7 @@
         Nav.LocationChanged -= OnLocationChanged;
         ToolsApi.Changed -= HandleToolsChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
+        PortalLoad.OnConnectionStateChanged -= HandleStateChanged;
         UpdateStatus.StatusChanged -= HandleStateChanged;
         ExtensionFeatures.OnChanged -= HandleStateChanged;
         Hub.OnAgentsChanged -= HandleSidebarAgentsChanged;

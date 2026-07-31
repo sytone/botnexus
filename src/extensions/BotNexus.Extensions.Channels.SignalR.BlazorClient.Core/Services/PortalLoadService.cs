@@ -14,6 +14,9 @@ public sealed class PortalLoadService : IPortalLoadService
     // Serialises app-resume resets and enforces the liveness-probe-then-rebuild algorithm (#1838).
     private readonly HubResumeCoordinator _resumeCoordinator = new();
 
+    // Re-dials from the terminal Closed state so a gateway restart does not strand the page (#2624).
+    private readonly DesktopReconnectLoop _reconnectLoop;
+
     private string? _hubUrl;
 
     public bool IsReady { get; private set; }
@@ -36,6 +39,21 @@ public sealed class PortalLoadService : IPortalLoadService
     /// <see cref="InitializeAsync"/>.
     /// </summary>
     public HubConnectionTuning? Tuning { get; set; }
+
+    /// <summary>
+    /// True while the post-terminal-close re-dial loop is actively retrying (#2624). Distinct from
+    /// <see cref="IsSignalRConnected"/> being false: it lets the UI show "Reconnecting" for an
+    /// outage that is being worked on, rather than a bare "Disconnected" on a page that -- before
+    /// this fix -- would never recover.
+    /// </summary>
+    public bool IsReconnecting => _reconnectLoop.IsReconnecting;
+
+    /// <summary>
+    /// Delay seam for the reconnect loop's backoff. Set by tests before <see cref="InitializeAsync"/>
+    /// so they can assert the requested durations without sleeping. Null uses the real clock.
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task>? ReconnectDelayOverride { get; set; }
+
     public event Action? OnReadyChanged;
     public event Action? OnConnectionStateChanged;
 
@@ -51,6 +69,14 @@ public sealed class PortalLoadService : IPortalLoadService
         _store = store;
         _eventHandler = eventHandler;
         _agentInteraction = agentInteraction;  // optional — null when not wired (e.g. in tests)
+
+        // The loop owns only the re-dial cadence; the actual reconnect work is ReconnectOnceAsync,
+        // which reuses the existing HandleReconnectedAsync recovery rather than forking a second
+        // state-restoration path.
+        _reconnectLoop = new DesktopReconnectLoop(
+            dialAsync: ReconnectOnceAsync,
+            delayAsync: (d, ct) => (ReconnectDelayOverride ?? Task.Delay)(d, ct));
+        _reconnectLoop.OnReconnectStateChanged += () => OnConnectionStateChanged?.Invoke();
     }
 
     public async Task InitializeAsync(string hubUrl, CancellationToken cancellationToken = default)
@@ -131,8 +157,8 @@ public sealed class PortalLoadService : IPortalLoadService
 
             // Track SignalR connection state for UI indicators and reconnect flows.
             _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
-            _hub.OnReconnected += () => OnConnectionStateChanged?.Invoke();
-            _hub.OnDisconnected += () => OnConnectionStateChanged?.Invoke();
+            _hub.OnReconnected += OnHubReconnected;
+            _hub.OnDisconnected += OnHubClosed;
 
             var subscribeResult = await _hub.SubscribeAllAsync();
             foreach (var session in subscribeResult.Sessions)
@@ -325,8 +351,8 @@ public sealed class PortalLoadService : IPortalLoadService
         // Re-wire connection-state notifications on the fresh connection so the UI keeps
         // reflecting reconnecting/reconnected/disconnected transitions after the reset.
         _hub.OnReconnecting += () => OnConnectionStateChanged?.Invoke();
-        _hub.OnReconnected += () => OnConnectionStateChanged?.Invoke();
-        _hub.OnDisconnected += () => OnConnectionStateChanged?.Invoke();
+        _hub.OnReconnected += OnHubReconnected;
+        _hub.OnDisconnected += OnHubClosed;
 
         var subscribeResult = await _hub.SubscribeAllAsync();
         foreach (var session in subscribeResult.Sessions)
@@ -334,4 +360,54 @@ public sealed class PortalLoadService : IPortalLoadService
 
         OnConnectionStateChanged?.Invoke();
     }
+
+    /// <summary>
+    /// SignalR raised <c>Closed</c>: the automatic-reconnect budget is spent and the connection is in
+    /// its terminal state, from which <c>Reconnected</c> can never fire again. Before #2624 this was
+    /// the end of the line -- the handler flagged everything offline and nothing re-dialled, so the
+    /// portal rendered stale state until a human pressed reload. Starting the loop here is the fix.
+    /// </summary>
+    private void OnHubClosed()
+    {
+        OnConnectionStateChanged?.Invoke();
+
+        // No hub URL means the initial load never completed, so there is nothing to re-dial to.
+        if (_hubUrl is not null)
+            _reconnectLoop.Start();
+    }
+
+    /// <summary>
+    /// SignalR's own automatic reconnect succeeded within its budget, so the terminal-close loop is
+    /// not needed for this outage. Stopping it keeps a stale loop from dialling over a live socket.
+    /// </summary>
+    private void OnHubReconnected()
+    {
+        _ = _reconnectLoop.StopAsync();
+        OnConnectionStateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// One re-dial attempt: rebuild the connection through the shared
+    /// <see cref="GatewayHubConnection.ConnectAsync"/> path, then run the EXISTING
+    /// <see cref="IGatewayEventHandler.HandleReconnectedAsync"/> recovery so agent, conversation and
+    /// session state are restored -- re-subscribing to all sessions and clearing stale streaming
+    /// indicators. Without that second half the page would be "connected" and receiving nothing,
+    /// which looks healthy and is therefore worse than a visible disconnect.
+    /// </summary>
+    /// <remarks>
+    /// Throws on failure by design: the loop's catch is what schedules the next backoff step.
+    /// </remarks>
+    internal async Task ReconnectOnceAsync(CancellationToken cancellationToken)
+    {
+        await _hub.StopAndDisposeAsync();
+        await _hub.ConnectAsync(_hubUrl!, ClientKind, Tuning);
+
+        // Existing recovery path -- SubscribeAll, session re-registration, stale-streaming clear.
+        await _eventHandler.HandleReconnectedAsync(cancellationToken);
+
+        OnConnectionStateChanged?.Invoke();
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync() => await _reconnectLoop.DisposeAsync();
 }
