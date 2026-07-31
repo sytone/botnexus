@@ -1,4 +1,16 @@
 <Project>
+  <!--
+    SourceRevisionId feeds generated AssemblyInfo, so setting it solution-wide invalidates the
+    incremental build of every project that generates assembly info - a fresh commit forces a
+    broad rebuild even where nothing changed (issue #2493). Only the gateway host actually
+    consumes the SHA (via an AssemblyMetadataAttribute), so the CLI passes the value as
+    BotNexusSourceRevisionId and only opting-in projects promote it to SourceRevisionId.
+
+    Projects that do NOT opt in keep SourceRevisionId at the stable literal "unknown", so their
+    generated assembly info is byte-identical across commits and MSBuild's own up-to-date check
+    can correctly skip them. Nothing here decides whether a project needs rebuilding - it only
+    stops a value that no consumer reads from perturbing every project's inputs.
+  -->
   <PropertyGroup>
     <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
   </PropertyGroup>
