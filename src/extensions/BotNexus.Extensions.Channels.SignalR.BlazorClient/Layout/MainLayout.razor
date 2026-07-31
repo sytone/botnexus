@@ -925,9 +925,9 @@
                     <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ? "active" : "")"
                             role="menuitem"
                             data-testid="conversation-section-menu-item"
-                            data-section-id="@section.SectionId"
+                            data-section-id="@(section.SectionId)"
                             @onclick:stopPropagation="true"
-                            @onclick="() => AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, section.SectionId)">@section.Name</button>
+                            @onclick="() => AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, section.SectionId)">@(section.Name)</button>
                 }
                 @if (sections.Count == 0)
                 {

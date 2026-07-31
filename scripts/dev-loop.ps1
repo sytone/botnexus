@@ -61,7 +61,7 @@ try {
     }
     else {
         Write-Host "🚀 Starting Gateway via CLI at http://localhost:$Port"
-        dotnet run --project $cliProject --no-launch-profile -- serve gateway --path $repoRoot --port $Port
+        dotnet run --project $cliProject --no-launch-profile -- serve --source $repoRoot --port $Port
     }
 }
 catch {
