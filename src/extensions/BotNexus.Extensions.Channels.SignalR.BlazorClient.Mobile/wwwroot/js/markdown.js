@@ -3,24 +3,56 @@ window.BotNexus = window.BotNexus || {};
 var codeCopyFeedbackDurationMs = 2000;
 
 /**
+ * HTML-escapes a string so it can never be interpreted as markup.
+ * Deliberately hand-written: this is the fallback used precisely when
+ * third-party libraries are missing, so it must not depend on any of them.
+ */
+window.BotNexus.escapeHtml = function (value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+};
+
+/**
  * Renders a markdown string to sanitized HTML.
- * Falls back to returning the raw markdown if libraries are not loaded.
+ * Fails CLOSED: if either `marked` or `DOMPurify` is unavailable the original
+ * text is returned HTML-escaped (readable, but inert) and a console warning
+ * names the missing dependency. Unsanitized HTML is never returned.
  */
 window.BotNexus.renderMarkdown = function (markdown) {
-    if (typeof marked !== 'undefined') {
-        var renderer = new marked.Renderer();
-        var linkRenderer = renderer.link.bind(renderer);
-        renderer.link = function (token) {
-            var html = linkRenderer(token);
-            return html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ');
-        };
+    var markedAvailable = typeof marked !== 'undefined';
+    var purifyAvailable = typeof DOMPurify !== 'undefined';
 
-        var html = marked.parse(markdown, { breaks: true, gfm: true, renderer: renderer });
-        return typeof DOMPurify !== 'undefined'
-            ? DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] })
-            : html;
+    if (!markedAvailable || !purifyAvailable) {
+        var missing = [];
+        if (!markedAvailable) { missing.push("marked"); }
+        if (!purifyAvailable) { missing.push("DOMPurify"); }
+
+        if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+            console.warn(
+                "[BotNexus] Markdown rendering degraded: missing " + missing.join(", ") +
+                ". Falling back to HTML-escaped plain text.");
+        }
+
+        return window.BotNexus.escapeHtml(markdown);
     }
-    return markdown;
+
+    var renderer = new marked.Renderer();
+    var linkRenderer = renderer.link.bind(renderer);
+    renderer.link = function (token) {
+        var html = linkRenderer(token);
+        return html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ');
+    };
+
+    var parsed = marked.parse(markdown, { breaks: true, gfm: true, renderer: renderer });
+    return DOMPurify.sanitize(parsed, { ADD_ATTR: ["target", "rel"] });
 };
 
 window.BotNexus.copyToClipboard = function (text) {
