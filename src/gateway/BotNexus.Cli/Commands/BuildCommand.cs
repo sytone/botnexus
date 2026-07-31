@@ -34,12 +34,39 @@ internal sealed class BuildCommand
         return command;
     }
 
+    /// <summary>
+    /// Traversal project covering the deployment closure - every project under <c>src/</c>.
+    /// Built instead of the full solution so the 55 projects under <c>tests/</c> are not
+    /// evaluated at all. See <c>BotNexus.Deploy.proj</c> for why the set is a wildcard.
+    /// </summary>
+    internal const string DeployProjectFileName = "BotNexus.Deploy.proj";
+
+    /// <summary>Full-solution fallback used when the deployment project is absent.</summary>
+    internal const string SolutionFileName = "BotNexus.slnx";
+
+    /// <summary>
+    /// Chooses what MSBuild is pointed at. Prefers the deployment traversal project, but falls
+    /// back to the full solution when it is missing - for example when an older deployment repo
+    /// is updated by a newer CLI, or the other way round. Falling back to building MORE than
+    /// necessary is the safe direction: a slow build is recoverable, a skipped one is not.
+    /// Returns <c>null</c> when neither file exists, which is a hard error.
+    /// </summary>
+    internal static string? ResolveBuildTarget(string repoRoot)
+    {
+        var deployProject = Path.Combine(repoRoot, DeployProjectFileName);
+        if (File.Exists(deployProject))
+            return deployProject;
+
+        var solution = Path.Combine(repoRoot, SolutionFileName);
+        return File.Exists(solution) ? solution : null;
+    }
+
     internal static async Task<int> BuildSolutionAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
-        var solution = Path.Combine(repoRoot, "BotNexus.slnx");
-        if (!File.Exists(solution))
+        var solution = ResolveBuildTarget(repoRoot);
+        if (solution is null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Solution file not found: {Markup.Escape(solution)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Neither {Markup.Escape(DeployProjectFileName)} nor {Markup.Escape(SolutionFileName)} found in {Markup.Escape(repoRoot)}");
             return 1;
         }
 
