@@ -440,6 +440,16 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
 
+        // #2635: additively reconcile the bundled agent catalog into config.json. Registered
+        // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
+        // startup is visible to the config agent source in the same startup rather than only
+        // after the next restart. Hosted services start in registration order, so this ordering
+        // is the mechanism, not a comment about one.
+        services.AddHostedService(serviceProvider => PlatformAgentReconciliationService.Create(
+            serviceProvider.GetRequiredService<BotNexusHome>(),
+            serviceProvider.GetRequiredService<IFileSystem>(),
+            serviceProvider.GetRequiredService<ILogger<PlatformAgentReconciliationService>>()));
+
         // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
         // are no longer registered as named conversational agents. They are resolved at spawn time
         // from BuiltInArchetypes, cloning the parent descriptor and applying the archetype tool set.
