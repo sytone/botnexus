@@ -11,11 +11,28 @@ namespace BotNexus.Cli.Commands;
 internal static partial class BuildOutputStreamer
 {
     /// <summary>
+    /// Exit code returned by an attempt that was aborted because MSBuild reported locked output
+    /// files. Deliberately distinct from a normal build failure (1) so <see cref="RunAsync"/> can
+    /// tell a lock apart from a real compile error and only spend a second build on the former.
+    /// </summary>
+    internal const int LockedFilesExitCode = 75;
+
+    /// <summary>
     /// Runs <c>dotnet build</c> with redirected output, parsing and rendering
     /// each line as it arrives so the user sees live progress without raw noise.
     /// When the terminal is interactive and not in verbose mode, wraps the build
     /// in a spinner and renders a summary Table on completion.
     /// </summary>
+    /// <remarks>
+    /// The first attempt leaves the Roslyn compiler server and MSBuild node reuse ENABLED.
+    /// They were previously disabled unconditionally to defend against Windows file locks, but
+    /// the update path now stops the gateway and waits for the port to drain before building,
+    /// and the locked-file monitor below still aborts the build the instant a lock is observed.
+    /// Rather than pay that defence on every build, a lock now TRIGGERS a retry with isolated
+    /// compilation. Locked-file detection keeps its full coverage - it changed from an
+    /// unconditional tax into a fallback trigger, and the user-facing guidance is still printed
+    /// if the isolated retry also hits locks.
+    /// </remarks>
     internal static async Task<int> RunAsync(
         string solution,
         string workingDirectory,
@@ -23,12 +40,59 @@ internal static partial class BuildOutputStreamer
         bool verbose,
         CancellationToken cancellationToken)
     {
+        var exitCode = await RunAttemptAsync(
+            solution, workingDirectory, commitSha, verbose,
+            isolatedCompilation: false, isFinalAttempt: false, cancellationToken);
+
+        if (exitCode != LockedFilesExitCode)
+            return exitCode;
+
+        AnsiConsole.MarkupLine("[yellow][[build]][/] File locks detected - retrying with isolated compilation (no compiler server, no node reuse)...");
+
+        var retryCode = await RunAttemptAsync(
+            solution, workingDirectory, commitSha, verbose,
+            isolatedCompilation: true, isFinalAttempt: true, cancellationToken);
+
+        // Never leak the internal sentinel to callers; a lock that survives the isolated retry is
+        // a plain build failure as far as the update/serve pipeline is concerned.
+        return retryCode == LockedFilesExitCode ? 1 : retryCode;
+    }
+
+    /// <summary>
+    /// Builds the MSBuild argument string for one attempt. Internal so tests can assert the exact
+    /// flag set for each attempt without spawning a real build.
+    /// </summary>
+    /// <remarks>
+    /// <c>SourceRevisionId</c> is deliberately NOT passed. Setting it solution-wide changes
+    /// generated <c>AssemblyInfo</c> for every project that produces assembly info, which
+    /// invalidates their incremental build on every new commit even when no source changed.
+    /// The SHA is passed as <c>BotNexusSourceRevisionId</c> instead and only the projects whose
+    /// version output is actually consumed (the gateway host and the CLI) opt in to it.
+    /// </remarks>
+    internal static string BuildArguments(string solution, string commitSha, bool isolatedCompilation)
+    {
+        var isolation = isolatedCompilation
+            ? " /nodeReuse:false /p:UseSharedCompilation=false"
+            : string.Empty;
+
+        return $"build \"{solution}\" -c Release --nologo --tl:off{isolation} /p:SkipTests=true /p:SkipCli=true /p:BotNexusSourceRevisionId={commitSha}";
+    }
+
+    private static async Task<int> RunAttemptAsync(
+        string solution,
+        string workingDirectory,
+        string commitSha,
+        bool verbose,
+        bool isolatedCompilation,
+        bool isFinalAttempt,
+        CancellationToken cancellationToken)
+    {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"build \"{solution}\" -c Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false /p:SkipTests=true /p:SkipCli=true /p:SourceRevisionId={commitSha}",
+            Arguments = BuildArguments(solution, commitSha, isolatedCompilation),
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -53,7 +117,7 @@ internal static partial class BuildOutputStreamer
         var stderrTask = ReadStreamAsync(process.StandardError, state, suppressLive ? false : verbose, isError: true);
 
         // Monitor for locked files and kill the build immediately if detected.
-        // MSBuild retries 10 times per file — without this we'd wait minutes.
+        // MSBuild retries 10 times per file - without this we'd wait minutes.
         var lockedFileMonitor = Task.Run(async () =>
         {
             while (!process.HasExited)
@@ -72,10 +136,14 @@ internal static partial class BuildOutputStreamer
 
         if (state.HasLockedFiles)
         {
-            AnsiConsole.MarkupLine("[red][[build]][/] [red]✗[/] Build aborted — file locks detected.");
-            AnsiConsole.MarkupLine("[yellow][[build]][/] The gateway must be fully stopped before building on Windows.");
-            AnsiConsole.MarkupLine("[yellow][[build]][/] Run [dim]botnexus gateway stop[/] and wait a few seconds, then retry.");
-            return 1;
+            if (isFinalAttempt)
+            {
+                AnsiConsole.MarkupLine("[red][[build]][/] [red]\u2717[/] Build aborted - file locks detected.");
+                AnsiConsole.MarkupLine("[yellow][[build]][/] The gateway must be fully stopped before building on Windows.");
+                AnsiConsole.MarkupLine("[yellow][[build]][/] Run [dim]botnexus gateway stop[/] and wait a few seconds, then retry.");
+            }
+
+            return LockedFilesExitCode;
         }
 
         RenderSummary(state, process.ExitCode, interactive);
@@ -135,7 +203,7 @@ internal static partial class BuildOutputStreamer
             if (!state.HasLockedFiles)
             {
                 state.HasLockedFiles = true;
-                AnsiConsole.MarkupLine("[red][[build]][/] [red]✗[/] File locked — the gateway is still running.");
+                AnsiConsole.MarkupLine("[red][[build]][/] [red]\u2717[/] File locked - the gateway is still running.");
                 AnsiConsole.MarkupLine("[yellow][[build]][/] Run [dim]botnexus gateway stop[/] first, then retry.");
             }
             state.ErrorCount++;
@@ -151,7 +219,7 @@ internal static partial class BuildOutputStreamer
             var code = errorMatch.Groups[2].Value;
             var message = errorMatch.Groups[3].Value;
             state.Diagnostics.Add(new DiagnosticEntry("error", code, message, file));
-            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]\u2717[/] {Markup.Escape(file)}: [red]{Markup.Escape(code)}[/] — {Markup.Escape(message)}");
+            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]\u2717[/] {Markup.Escape(file)}: [red]{Markup.Escape(code)}[/] - {Markup.Escape(message)}");
             return;
         }
 
@@ -168,7 +236,7 @@ internal static partial class BuildOutputStreamer
             // Show first few warnings inline; suppress the rest to avoid wall of text
             if (state.WarningCount <= 5)
             {
-                AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]\u26A0[/] {Markup.Escape(file)}: [yellow]{Markup.Escape(code)}[/] — {Markup.Escape(message)}");
+                AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]\u26A0[/] {Markup.Escape(file)}: [yellow]{Markup.Escape(code)}[/] - {Markup.Escape(message)}");
             }
             else if (state.WarningCount == 6)
             {
@@ -220,10 +288,10 @@ internal static partial class BuildOutputStreamer
 
                 var warnStr = state.WarningCount > 0 ? $"[yellow]{state.WarningCount}[/]" : $"[dim]{state.WarningCount}[/]";
                 table.AddRow(
-                    "[green]✓ Build succeeded[/]",
+                    "[green]\u2713 Build succeeded[/]",
                     $"[green]{state.ProjectsBuilt}[/]",
                     warnStr,
-                    state.Elapsed is not null ? $"[dim]{Markup.Escape(state.Elapsed)}[/]" : "[dim]—[/]");
+                    state.Elapsed is not null ? $"[dim]{Markup.Escape(state.Elapsed)}[/]" : "[dim]-[/]");
                 AnsiConsole.Write(table);
             }
             else
@@ -233,7 +301,7 @@ internal static partial class BuildOutputStreamer
                     parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
                 if (state.Elapsed is not null)
                     parts.Add($"[dim]{Markup.Escape(state.Elapsed)}[/]");
-                AnsiConsole.MarkupLine($"[blue][[build]][/] [green]Build succeeded[/] — {string.Join(", ", parts)}");
+                AnsiConsole.MarkupLine($"[blue][[build]][/] [green]Build succeeded[/] - {string.Join(", ", parts)}");
             }
         }
         else
@@ -241,14 +309,14 @@ internal static partial class BuildOutputStreamer
             var parts = new List<string> { $"[red]{state.ErrorCount}[/] error(s)" };
             if (state.WarningCount > 0)
                 parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
-            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]Build FAILED[/] — {string.Join(", ", parts)}");
+            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]Build FAILED[/] - {string.Join(", ", parts)}");
 
             var errors = state.Diagnostics.Where(d => d.Severity == "error").ToList();
             if (errors.Count > 0)
             {
                 AnsiConsole.WriteLine();
                 foreach (var err in errors)
-                    AnsiConsole.MarkupLine($"  [red]✗[/] {Markup.Escape(err.File)}: [red]{Markup.Escape(err.Code)}[/] — {Markup.Escape(err.Message)}");
+                    AnsiConsole.MarkupLine($"  [red]\u2717[/] {Markup.Escape(err.File)}: [red]{Markup.Escape(err.Code)}[/] - {Markup.Escape(err.Message)}");
             }
         }
 
@@ -259,7 +327,7 @@ internal static partial class BuildOutputStreamer
             var grouped = warnings.GroupBy(w => w.Code).OrderByDescending(g => g.Count());
             AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]Warning summary ({state.WarningCount} total):[/]");
             foreach (var group in grouped)
-                AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(group.Key)}[/] ×{group.Count()}: {Markup.Escape(group.First().Message)}");
+                AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(group.Key)}[/] x{group.Count()}: {Markup.Escape(group.First().Message)}");
         }
     }
 
