@@ -21,7 +21,7 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/SatellitesController.cs`.
 | `displayName` | string | Human-readable display name. |
 | `platform` | string | Platform (`windows`, `macos`, `linux`). |
 | `ownerUserId` | string | Owner user ID. |
-| `capabilities` | string[] | Advertised capabilities. |
+| `capabilities` | string[] | Advertised capabilities. **Display-only — not an authorization control (#2606).** The gateway never reads this list to permit or refuse an operation, and an empty list behaves identically to a populated one. |
 | `status` | string | Current status, lower-cased (`online`, `offline`, `stale`). |
 | `lastSeen` | timestamp \| null | Last heartbeat time. |
 | `connectionId` | string \| null | SignalR connection ID when online. |
