@@ -58,6 +58,9 @@ internal static class ConversationRowMapper
             Initiator = DeserializeInitiator(GetNullableString(reader, "initiator")),
             Kind = ParseConversationKind(GetNullableString(reader, "kind")),
             Source = ParseConversationSource(GetOptionalString(reader, "source")),
+            // #2121: NULL / absent (every row persisted before the column existed) means
+            // "originator not recorded"; it must hydrate as null rather than throw.
+            SourceId = GetOptionalString(reader, "source_id"),
             // #2338: NULL (the value for every pre-existing row) means "top-level conversation".
             ParentConversationId = ParseOptionalConversationId(GetOptionalString(reader, "parent_conversation_id")),
             SpawningToolCallId = GetOptionalString(reader, "spawning_tool_call_id"),
@@ -102,7 +105,10 @@ internal static class ConversationRowMapper
             GetOptionalString(reader, "visibility") ?? ConversationVisibility.UserFacing.ToString(),
             !reader.IsDBNull(reader.GetOrdinal("is_pinned")) && reader.GetInt64(reader.GetOrdinal("is_pinned")) != 0,
             GetNullableTimestamp(reader, "pinned_at"),
-            roster);
+            roster,
+            // #2121: carry the minting registration / job id into the summary so the portal can
+            // classify a conversation without an extra per-feature list call.
+            GetOptionalString(reader, "source_id"));
 
     /// <summary>
     /// Maps a <c>conversation_participants</c> row (<c>citizen_kind, citizen_id, role</c>) to a

@@ -186,6 +186,34 @@ public sealed record Conversation
     public ConversationSource Source { get; init; } = ConversationSource.Channel;
 
     /// <summary>
+    /// Gets the stable identity of the thing that <em>minted</em> this conversation: the webhook
+    /// registration id when <see cref="Source"/> is <see cref="ConversationSource.Webhook"/>, the
+    /// cron job id when it is <see cref="ConversationSource.Cron"/>, and <see langword="null"/>
+    /// otherwise (issue #2121).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Meaningful <em>only</em> in combination with <see cref="Source"/> - the value is an opaque
+    /// identifier drawn from whichever registry owns that origin, and the two fields are a pair.
+    /// A client reading <c>(Source, SourceId)</c> can attribute a conversation to the exact
+    /// registration or job that produced it without a second per-feature list call and without
+    /// parsing the title or the session id.
+    /// </para>
+    /// <para>
+    /// <c>init</c>-only for exactly the reason <see cref="Source"/> is: provenance is a
+    /// creation-time fact, and an inbound event must never be able to re-attribute a persisted
+    /// conversation to a different webhook registration or cron job. Splitting the pair across a
+    /// write-once discriminator and a mutable identifier would leave the poisoning hole open.
+    /// </para>
+    /// <para>
+    /// Defaults to <see langword="null"/>, which is also what every row persisted before this
+    /// column existed hydrates to. <c>null</c> means "originator not recorded", never "no origin":
+    /// <see cref="Source"/> remains authoritative for the origin itself.
+    /// </para>
+    /// </remarks>
+    public string? SourceId { get; init; }
+
+    /// <summary>
     /// Gets the conversation that spawned this one, when this conversation is a nested run rather
     /// than a top-level thread. <c>null</c> for every ordinary conversation (and for every row
     /// persisted before this field existed, which therefore deserializes unchanged).

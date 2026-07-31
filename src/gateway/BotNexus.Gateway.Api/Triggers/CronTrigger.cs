@@ -322,7 +322,11 @@ public sealed class CronTrigger(
             ConversationId.From($"conv:{Guid.NewGuid():N}"),
             agentId,
             title: title,
-            initiator: initiator);
+            initiator: initiator,
+            // #2121: the cron job that owns this run. Null only when the trigger request carried no
+            // job id (an internal trigger that is not a scheduled job), which is an honest gap
+            // rather than a fabricated identifier.
+            sourceId: request?.CronJobId?.Value);
 
         await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
         logger.LogInformation(

@@ -34,6 +34,14 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// Citizen participants in this conversation — enables the portal to render a participant
 /// roster (avatar chips) in the conversation header for multi-agent sessions.
 /// </param>
+/// <param name="SourceId">
+/// Stable identity of the thing that minted the conversation (#2121): the webhook registration id
+/// when <paramref name="Source"/> is <c>Webhook</c>, the cron job id when it is <c>Cron</c>, and
+/// <see langword="null"/> otherwise. Meaningful only paired with <paramref name="Source"/>.
+/// Carrying it on the summary is what lets a client attribute a listed conversation to a specific
+/// registration or job without issuing an extra per-feature list call. Defaults to
+/// <see langword="null"/> for back-compat with rows and payloads that predate the field.
+/// </param>
 public sealed record ConversationSummary(
     string ConversationId,
     string AgentId,
@@ -50,7 +58,8 @@ public sealed record ConversationSummary(
     string Visibility = "UserFacing",
     bool IsPinned = false,
     DateTimeOffset? PinnedAt = null,
-    IReadOnlyList<ParticipantSummary>? Participants = null);
+    IReadOnlyList<ParticipantSummary>? Participants = null,
+    string? SourceId = null);
 
 /// <summary>
 /// Lightweight participant identity for conversation summary rendering.

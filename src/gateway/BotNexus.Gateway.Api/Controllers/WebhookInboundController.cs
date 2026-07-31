@@ -116,6 +116,10 @@ public sealed class WebhookInboundController(
                 typedAgentId,
                 title: $"Webhook: {registration.Label}",
                 initiator: CitizenId.Of(typedAgentId),
+                // #2121: stamp the owning registration id onto the conversation itself so the
+                // portal (and source-specific retention) can attribute it from the summary rather
+                // than from the metadata bag or the title text.
+                sourceId: typedWebhookId.Value,
                 timestamp: now);
             // Stamp authoritative webhook provenance so source-specific retention (#2125) can
             // identify this conversation by its originating registration id, never by title.
