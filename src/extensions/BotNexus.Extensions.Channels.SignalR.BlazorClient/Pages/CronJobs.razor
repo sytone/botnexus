@@ -176,7 +176,7 @@
                                 {
                                     <select id="cron-edit-model" data-testid="cron-edit-model" value="@_editJob.Model" @onchange="OnModelChange">
                                         <option value="">(agent default)</option>
-                                        @foreach (var model in _models) { <option value="@model.ModelId">@model.Name</option> }
+                                        @foreach (var model in _models) { <option value="@(model.ModelId)">@(model.Name)</option> }
                                     </select>
                                 }
                                 else

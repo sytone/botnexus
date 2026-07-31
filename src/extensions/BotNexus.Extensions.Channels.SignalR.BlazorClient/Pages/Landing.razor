@@ -96,7 +96,7 @@ else
                                 @onchange="OnModelChanged">
                             @foreach (var model in _models)
                             {
-                                <option value="@model.ModelId" selected="@(model.ModelId == _selectedModel)">@model.Name</option>
+                                <option value="@(model.ModelId)" selected="@(model.ModelId == _selectedModel)">@(model.Name)</option>
                             }
                         </select>
                     </label>
