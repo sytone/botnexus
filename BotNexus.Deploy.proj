@@ -1,0 +1,64 @@
+<!--
+  Deployment closure for `botnexus build` / `botnexus update` / `botnexus serve`.
+
+  WHY THIS EXISTS
+
+  Building `BotNexus.slnx` builds 102 projects, 55 of which live under `tests/`. Even with
+  `SkipTests=true` (which strips their inputs so they emit empty assemblies) MSBuild still
+  evaluates, restores and target-walks all 55. Nothing that is deployed consumes them.
+
+  WHAT IS INCLUDED
+
+  EVERY project under `src/`, discovered by a wildcard, never a hand-maintained list.
+  This is deliberately conservative: the deployed artefacts are the gateway host plus the
+  extension assemblies that `DeployExtensionsSilent` copies, and both live under `src/`.
+  A hand-curated list would silently stop building a newly added extension the day someone
+  forgot to add it, and a stale deployed binary after a "successful" update is a far worse
+  failure than a slightly slower build. A wildcard cannot go stale.
+
+  This file only narrows the SET of projects handed to MSBuild. It never decides whether an
+  individual project is up to date; MSBuild's own incremental logic does that, using all of
+  its real inputs (sources, csproj, Directory.Build.props, global.json, NuGet assets, TFM).
+-->
+<Project DefaultTargets="Build">
+
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <DeploymentProject Include="$(MSBuildThisFileDirectory)src\**\*.csproj" />
+  </ItemGroup>
+
+  <!--
+    SkipCli=true excludes BotNexus.Cli from the build; it is the process running the build, so
+    its own output file is locked on Windows. The exclusion is implemented inside
+    BotNexus.Cli.csproj via IsExcludedFromBuild; the project set is narrowed here to match so
+    MSBuild does not even evaluate it.
+  -->
+  <ItemGroup Condition="'$(SkipCli)' == 'true'">
+    <DeploymentProject Remove="$(MSBuildThisFileDirectory)src\gateway\BotNexus.Cli\BotNexus.Cli.csproj" />
+  </ItemGroup>
+
+  <Target Name="Build">
+    <MSBuild Projects="@(DeploymentProject)"
+             Targets="Build"
+             BuildInParallel="true"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="Restore">
+    <MSBuild Projects="@(DeploymentProject)"
+             Targets="Restore"
+             BuildInParallel="true"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="Clean">
+    <MSBuild Projects="@(DeploymentProject)"
+             Targets="Clean"
+             BuildInParallel="true"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+</Project>
