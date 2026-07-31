@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Configuration;
+﻿using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -318,12 +318,14 @@ internal static class ToolExecutor
             // Genuine turn cancellation still propagates as cancellation, never as a hook timeout.
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (beforeResult?.Block == true)
+            // #2476: execution requires a positive, unambiguous allow. A null result means the
+            // hook registered no opinion at all and preserves the historical allow. Anything the
+            // hook DID return must clear IsUnambiguousAllow to proceed: an explicit block denies,
+            // and so does an indeterminate verdict, because "no decision was reached" is not an
+            // approval and treating it as one is precisely the auto-approve this gate prevents.
+            if (beforeResult is not null && !beforeResult.IsUnambiguousAllow)
             {
-                var reason = string.IsNullOrWhiteSpace(beforeResult.Reason)
-                    ? "Tool call was blocked by policy."
-                    : beforeResult.Reason!;
-                return new ToolPreparation(null, BuildErrorResult(reason), true);
+                return new ToolPreparation(null, BuildErrorResult(beforeResult.EffectiveBlockReason), true);
             }
         }
 
