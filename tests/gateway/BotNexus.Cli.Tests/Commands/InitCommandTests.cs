@@ -219,7 +219,15 @@ public sealed class InitCommandTests
         {
             var cmd = new InitCommand();
             await cmd.ExecuteAsync(home.Path, force: false, verbose: false, CancellationToken.None);
-            // Second run backs up the existing config before overwriting it.
+
+            // #2114 no-op detection means an identical rewrite is skipped entirely (no backup,
+            // no file touch). init is deterministic, so a second run alone would produce
+            // byte-identical JSON and prove nothing. Perturb the config first so the second run
+            // is a REAL write and the backup path is genuinely exercised.
+            await File.WriteAllTextAsync(
+                home.ConfigPath,
+                "{\"gateway\":{\"listenUrl\":\"http://0.0.0.0:9999\"}}");
+
             await cmd.ExecuteAsync(home.Path, force: true, verbose: false, CancellationToken.None);
 
             var dataBackups = Path.Combine(dataDir.Path, "backups");
