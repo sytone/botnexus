@@ -298,8 +298,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
         var timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
 
-        // Clamp the requested turn budget too. It is not yet wired to a live per-turn counter, but
-        // bounding it here keeps the request shape honest and prevents a latent runaway when it is.
+        // Clamp the requested turn budget too, then enforce it: the resolved value is threaded
+        // into the run alongside timeoutSeconds and bounds the live per-turn counter, so a run
+        // that exceeds it terminates as BudgetExhausted (#2656). The ceiling here remains the
+        // request-shape guard it has always been (#1344).
         var maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
         if (request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns)
         {
@@ -318,7 +320,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         record.TimeoutCts = timeoutCts;
 
-        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds), CancellationToken.None);
+        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds, maxTurns), CancellationToken.None);
 
         _logger.LogInformation(
             "Spawned sub-agent '{SubAgentId}' for parent session '{ParentSessionId}' in child session '{ChildSessionId}'.",
@@ -603,7 +605,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.ParentSessionId != requestingSessionId)
             return false;
 
-        if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut)
+        if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
             return false;
 
         record.CancelTimeout();
@@ -736,7 +738,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 parentAgentId.Value,
                 $"Sub-agent '{subAgentId}' completed.");
         }
-        else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut)
+        else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
         {
             await PublishLifecycleActivityAsync(
                 GatewayActivityType.SubAgentFailed,
@@ -846,15 +848,40 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
     }
 
-    private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds)
+    private async Task RunSubAgentAsync(
+        string subAgentId,
+        IAgentHandle handle,
+        string task,
+        int timeoutSeconds,
+        int maxTurns)
     {
         if (!_records.TryGetValue(subAgentId, out var record) || record.TimeoutCts is not { } timeoutCts)
             return;
 
+        // The single turn counter (#2656). Both the reported SubAgentInfo.TurnsUsed and the
+        // enforced budget read record.TurnsUsed, so the figure the parent sees and the bound that
+        // actually stopped the run can never drift apart. Incremented in exactly one place: the
+        // per-turn callback below.
+        using var turnSubscription = handle.ObserveTurns(() =>
+        {
+            var used = record.IncrementTurnsUsed();
+            TryUpdateSubAgent(subAgentId, current => current with { TurnsUsed = used });
+
+            // Budget enforcement is the same mechanism the timeout uses: cancel the run's token.
+            // BudgetExhausted is latched first so the terminal disposition is "ran out of turns"
+            // rather than the timeout the cancellation would otherwise look like.
+            if (used >= maxTurns && record.TryLatchBudgetExhausted())
+                record.CancelTimeoutForBudget();
+        });
+
         try
         {
             var response = await handle.PromptAsync(task, timeoutCts.Token);
-            if (timeoutCts.IsCancellationRequested)
+            if (record.BudgetExhausted)
+            {
+                await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);
+            }
+            else if (timeoutCts.IsCancellationRequested)
             {
                 await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
             }
@@ -868,6 +895,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 await OnCompletedAsync(subAgentId, response.Content);
             }
+        }
+        catch (Exception) when (record.BudgetExhausted)
+        {
+            // The budget latch wins over any cancellation-shaped exception: the run was stopped
+            // because it ran out of turns, not because the deadline elapsed.
+            await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
@@ -888,6 +921,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             record.DisposeTimeout();
         }
     }
+
+    private Task CompleteBudgetExhaustedAsync(string subAgentId, int maxTurns)
+        => CompleteTerminalAsync(
+            subAgentId,
+            SubAgentStatus.BudgetExhausted,
+            $"Sub-agent exhausted its turn budget after {maxTurns} {(maxTurns == 1 ? "turn" : "turns")}.");
 
     private Task CompleteTimedOutAsync(string subAgentId, int timeoutSeconds)
         => CompleteTerminalAsync(
@@ -925,6 +964,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentStatus.Completed => "completed",
             SubAgentStatus.Failed => "failed",
             SubAgentStatus.TimedOut => "timed out",
+            SubAgentStatus.BudgetExhausted => "exhausted its turn budget",
             SubAgentStatus.Killed => "was killed",
             _ => "updated"
         };
@@ -1270,6 +1310,42 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         {
             Interlocked.Exchange(ref _timeoutCts, null)?.Dispose();
         }
+
+        /// <summary>
+        /// The authoritative turn counter for this sub-agent (#2656). Incremented once per
+        /// completed agent-loop turn; both the reported <see cref="SubAgentInfo.TurnsUsed"/> and
+        /// the enforced turn budget read this one value, so they cannot drift apart.
+        /// </summary>
+        public int TurnsUsed => Volatile.Read(ref _turnsUsed);
+
+        /// <summary>Increments and returns the single turn counter.</summary>
+        public int IncrementTurnsUsed() => Interlocked.Increment(ref _turnsUsed);
+
+        /// <summary>
+        /// True once the turn budget has been exhausted, latching the terminal disposition as
+        /// <see cref="SubAgentStatus.BudgetExhausted"/> rather than
+        /// <see cref="SubAgentStatus.TimedOut"/>.
+        /// </summary>
+        public bool BudgetExhausted => Volatile.Read(ref _budgetExhausted) == 1;
+
+        /// <summary>Returns true exactly once — the first caller latches budget exhaustion.</summary>
+        public bool TryLatchBudgetExhausted()
+            => Interlocked.CompareExchange(ref _budgetExhausted, 1, 0) == 0;
+
+        /// <summary>
+        /// Cancels the run's token to stop a sub-agent that has spent its turn budget, without
+        /// disposing it: the run loop still needs to read the token's state to distinguish the
+        /// budget stop from a deadline stop. Reuses the same cancellation mechanism the timeout
+        /// uses so budget exhaustion is a sibling disposition, not a second stop path.
+        /// </summary>
+        public void CancelTimeoutForBudget()
+        {
+            try { Volatile.Read(ref _timeoutCts)?.Cancel(); }
+            catch (ObjectDisposedException) { /* run already settled */ }
+        }
+
+        private int _turnsUsed;
+        private int _budgetExhausted;
 
         // Backing field for TimeoutCts so set / read / Cancel / Dispose all touch one field and
         // Cancel/Dispose can clear it atomically, avoiding a double-dispose race between an

@@ -115,5 +115,13 @@ public enum SubAgentStatus
     /// <summary>
     /// The sub-agent timed out before completion.
     /// </summary>
-    TimedOut
+    TimedOut,
+
+    /// <summary>
+    /// The sub-agent exhausted its turn budget (<c>maxTurns</c>) before producing a final
+    /// response. Distinct from <see cref="TimedOut"/>: the run ran out of turns, not wall clock,
+    /// so the remedy is a larger turn budget or a narrower task rather than a longer deadline
+    /// (#2656).
+    /// </summary>
+    BudgetExhausted
 }
