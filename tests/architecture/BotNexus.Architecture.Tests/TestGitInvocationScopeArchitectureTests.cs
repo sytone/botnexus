@@ -82,6 +82,12 @@ public sealed class TestGitInvocationScopeArchitectureTests
         RegexOptions.Compiled);
 
     /// <summary>
+    /// How many lines either side of a mutating git call count as "the same code path" when
+    /// looking for a repo-root-derived working directory.
+    /// </summary>
+    private const int CorrelationWindow = 12;
+
+    /// <summary>
     /// Tokens that derive a path from the LIVE repository rather than creating a fresh one.
     /// </summary>
     private static readonly Regex RepoDerivedPath = new(
@@ -183,51 +189,38 @@ public sealed class TestGitInvocationScopeArchitectureTests
     /// </summary>
     internal static string? Inspect(string content)
     {
-        content = StripNonExecutableLines(content);
+        var lines = content.Replace("\r\n", "\n").Split('\n');
 
-        var pathMatch = RepoDerivedPath.Match(content);
-        if (!pathMatch.Success)
+        for (var i = 0; i < lines.Length; i++)
         {
-            return null;
-        }
-
-        var verbMatch = MutatingGitVerb.Match(content);
-        if (!verbMatch.Success)
-        {
-            verbMatch = AssigningGitConfig.Match(content);
-        }
-
-        if (!verbMatch.Success)
-        {
-            return null;
-        }
-
-        return $"derives a git path from '{pathMatch.Value}' and runs the mutating command " +
-               $"{Truncate(verbMatch.Value)}";
-    }
-
-    /// <summary>
-    /// Removes lines that cannot possibly BE a git invocation: comments (including XML doc
-    /// comments) and <c>[InlineData(...)]</c> attribute rows. Sibling architecture fences pin
-    /// their own detectors with literal command strings such as
-    /// <c>[InlineData("git worktree remove ... ; git branch -D ...")]</c>, and they locate the
-    /// repository root only to run a strictly read-only <c>git ls-files</c> sweep. Scanning those
-    /// rows as if they were call sites reports the fence's own test data as an offender. Only
-    /// executable statements can actually launch a process, so only those are inspected.
-    /// </summary>
-    private static string StripNonExecutableLines(string content)
-    {
-        var kept = content
-            .Split('\n')
-            .Where(line =>
+            var verbMatch = MutatingGitVerb.Match(lines[i]);
+            if (!verbMatch.Success)
             {
-                var trimmed = line.TrimStart();
-                return !trimmed.StartsWith("//", StringComparison.Ordinal)
-                    && !trimmed.StartsWith("*", StringComparison.Ordinal)
-                    && !trimmed.StartsWith("[InlineData", StringComparison.Ordinal);
-            });
+                verbMatch = AssigningGitConfig.Match(lines[i]);
+            }
+            if (!verbMatch.Success)
+            {
+                continue;
+            }
 
-        return string.Join('\n', kept);
+            // Correlate by PROXIMITY, not across the whole file. A file-wide correlation
+            // produces false positives whenever an unrelated repo-root helper happens to live
+            // in the same source as a detector sample or a doc comment mentioning a git verb.
+            var from = Math.Max(0, i - CorrelationWindow);
+            var to = Math.Min(lines.Length - 1, i + CorrelationWindow);
+
+            for (var j = from; j <= to; j++)
+            {
+                var pathMatch = RepoDerivedPath.Match(lines[j]);
+                if (pathMatch.Success)
+                {
+                    return $"line {i + 1}: derives a git path from '{pathMatch.Value}' (line {j + 1}) " +
+                           $"and runs the mutating command {Truncate(verbMatch.Value)}";
+                }
+            }
+        }
+
+        return null;
     }
 
     private static IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()
