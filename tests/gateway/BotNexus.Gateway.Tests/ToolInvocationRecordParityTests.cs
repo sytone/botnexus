@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Isolation;
