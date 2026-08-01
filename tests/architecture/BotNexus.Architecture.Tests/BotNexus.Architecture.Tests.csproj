@@ -15,6 +15,10 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The #2701 ConfigField coverage fence reads its baseline at runtime from the output dir. -->
+    <None Include="ConfigFieldCoverageBaseline.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
