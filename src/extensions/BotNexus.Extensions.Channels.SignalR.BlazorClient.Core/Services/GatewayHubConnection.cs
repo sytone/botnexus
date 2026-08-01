@@ -98,6 +98,13 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the connection is closed (after reconnect exhaustion or explicit stop).</summary>
     public event Action? OnDisconnected;
 
+    /// <summary>
+    /// Test seam (#2625): raises <see cref="OnDisconnected"/> without a live transport, so the
+    /// handler-accumulation behaviour of the rebuild path's wiring can be asserted without a
+    /// reachable gateway to negotiate against. Internal -- not part of the client surface.
+    /// </summary>
+    internal void RaiseOnDisconnectedForTest() => OnDisconnected?.Invoke();
+
     // ── State ───────────────────────────────────────────────────────────
 
     /// <summary>Whether the hub connection is currently in the <c>Connected</c> state.</summary>
@@ -181,7 +188,35 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.Reconnected += _ => { OnReconnected?.Invoke(); return Task.CompletedTask; };
         _connection.Closed += _ => { OnDisconnected?.Invoke(); return Task.CompletedTask; };
 
-        await _connection.StartAsync();
+        // #2625: a HubConnection whose StartAsync never succeeded is inert -- SignalR only runs
+        // automatic reconnect on a connection that reached Connected at least once, so a failed
+        // start leaves an object that reports Disconnected forever and re-dials nothing. Retaining
+        // it in _connection made every subsequent recovery attempt operate on a dead handle and
+        // leaked one un-disposed transport per attempt across a multi-minute outage. Discard it and
+        // restore the no-connection state so the NEXT ConnectAsync builds cleanly from scratch and
+        // IsConnected can become true again without a page reload (AC2).
+        var pending = _connection;
+        try
+        {
+            await pending.StartAsync();
+        }
+        catch
+        {
+            _connection = null;
+            try
+            {
+                await pending.DisposeAsync();
+            }
+            catch
+            {
+                // Disposing a connection that never started can itself throw; the start failure is
+                // the one the caller needs to see, so this secondary failure is swallowed.
+            }
+
+            // Rethrown so callers (the resume path, the mobile retry loop) still treat this as a
+            // failed attempt and back off, rather than believing a connection was established.
+            throw;
+        }
     }
 
     // ── Client → Server invocations ─────────────────────────────────────

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace BotNexus.Agent.Providers.Core.Validation;
 
@@ -209,7 +209,12 @@ public static class ToolCallValidator
         // whose content looks like a JSON array/object is excluded: it was either parsed
         // above or is malformed/oversized, in which case it must reach the reject path rather
         // than be silently wrapped into a 1-element array that masks the wrong shape.
-        if (allowedTypes.Contains("array") && IsScalar(value) && !LooksLikeJsonStructure(value, allowedTypes))
+        // A scalar is also NOT wrapped when the declared item type cannot be a scalar (e.g.
+        // edit.edits, whose items are objects). Wrapping "rename it" into ["rename it"] would
+        // manufacture a schema-valid array whose single element is the wrong shape, pushing the
+        // failure past validation into the tool where the diagnostic is far worse. (Issue #2415.)
+        if (allowedTypes.Contains("array") && IsScalar(value) && !LooksLikeJsonStructure(value, allowedTypes) &&
+            SchemaItemsAcceptScalars(propertySchema))
         {
             WriteScalarAsArray(value, propertySchema, writer);
             return true;
@@ -292,6 +297,35 @@ public static class ToolCallValidator
         writer.WriteEndArray();
     }
 
+    /// <summary>
+    /// True when the schema's declared item type could legitimately be satisfied by a scalar,
+    /// which is what the scalar to single-element array wrap produces. An <c>items</c> schema
+    /// declaring only <c>object</c> or <c>array</c> returns <c>false</c> so the wrap is skipped
+    /// and the caller rejects with the real type error instead. An absent or untyped
+    /// <c>items</c> schema is permissive so the many tools that declare a bare <c>array</c>
+    /// keep their historical behaviour. (Issue #2415.)
+    /// </summary>
+    private static bool SchemaItemsAcceptScalars(JsonElement propertySchema)
+    {
+        if (!propertySchema.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        if (!items.TryGetProperty("type", out var itemType))
+        {
+            return true;
+        }
+
+        var itemTypes = GetAllowedTypes(itemType);
+        if (itemTypes.Count == 0)
+        {
+            return true;
+        }
+
+        return itemTypes.Any(t => t is "string" or "integer" or "number" or "boolean");
+    }
+
     private static bool SchemaItemsAreStrings(JsonElement propertySchema)
     {
         if (!propertySchema.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Object)
@@ -358,9 +392,36 @@ public static class ToolCallValidator
 
             if (!arguments.TryGetProperty(name, out _))
             {
-                errors.Add($"Missing required property '{name}'.");
+                errors.Add($"Missing required property '{name}'.{DescribeRequiredSignature(arguments, requiredElement)}");
             }
         }
+    }
+
+    /// <summary>
+    /// Builds the trailing clause for a missing-required-property error naming the sibling
+    /// properties that WERE supplied and restating the full required signature. Issue #2415
+    /// observed 6 weekly <c>edit</c> failures where a bare "Missing required property 'path'"
+    /// left the model guessing whether its other arguments had also been rejected; naming both
+    /// halves makes the retry one-shot. The "supplied" clause is omitted entirely when nothing
+    /// was supplied rather than emitting an empty list.
+    /// </summary>
+    private static string DescribeRequiredSignature(JsonElement arguments, JsonElement requiredElement)
+    {
+        var required = requiredElement.EnumerateArray()
+            .Where(r => r.ValueKind == JsonValueKind.String)
+            .Select(r => r.GetString())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToArray();
+
+        var supplied = arguments.ValueKind == JsonValueKind.Object
+            ? arguments.EnumerateObject().Select(p => p.Name).ToArray()
+            : [];
+
+        var clause = supplied.Length > 0
+            ? $" You supplied: {string.Join(", ", supplied)}."
+            : string.Empty;
+
+        return $"{clause} This tool's required: {string.Join(", ", required)}.";
     }
 
     private static void ValidateTopLevelProperties(JsonElement arguments, JsonElement schema, ICollection<string> errors)
@@ -548,9 +609,21 @@ public static class ToolCallValidator
             return;
         }
 
-        errors.Add(
+        var message =
             $"Property '{argumentProperty.Name}' must be of type {string.Join(" or ", allowedTypes)} " +
-            $"(received {DescribeValue(argumentProperty.Value)}).");
+            $"(received {DescribeValue(argumentProperty.Value)}).";
+
+        // Issue #2415: 'edits' repeatedly arrived as a JSON string whose content was malformed
+        // (a '>' where a ':' belongs), so the coercion pass could not parse it. Reporting only
+        // the truncated payload tells the model nothing it can act on, so it retries blind.
+        // Surfacing the parser's own reason and position turns the retry into a targeted fix.
+        var parseFailure = DescribeJsonStringParseFailure(argumentProperty.Value, allowedTypes);
+        if (parseFailure is not null)
+        {
+            message += $" It was a string and is not valid JSON: {parseFailure}";
+        }
+
+        errors.Add(message);
     }
 
     /// <summary>
@@ -583,6 +656,32 @@ public static class ToolCallValidator
                 return "null";
             default:
                 return value.ValueKind.ToString().ToLowerInvariant();
+        }
+    }
+
+    /// <summary>
+    /// When the rejected value is a string that clearly ATTEMPTED to encode the expected
+    /// array/object (it starts with a bracket or brace), re-parses it purely to capture the
+    /// parser's own message and byte position. Returns <c>null</c> for a string that never
+    /// looked like JSON (claiming a parse failure there would be misleading) and for one that
+    /// parses fine, which the coercion pass would already have handled. (Issue #2415.)
+    /// </summary>
+    private static string? DescribeJsonStringParseFailure(JsonElement value, List<string> allowedTypes)
+    {
+        if (!LooksLikeJsonStructure(value, allowedTypes) || value.GetString() is not { } text)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var probe = JsonDocument.Parse(text);
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            var position = ex.BytePositionInLine ?? 0;
+            return $"{ex.Message} (position {position}).";
         }
     }
 

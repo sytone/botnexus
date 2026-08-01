@@ -19,6 +19,7 @@
 9. [CronTool — Runtime Job Management](#crontool--runtime-job-management)
 10. [REST API Endpoints](#rest-api-endpoints)
 11. [Migration from HeartbeatService](#migration-from-heartbeatservice)
+11a. [Failure Alerts](#11a-failure-alerts-2557)
 12. [Observability](#observability)
 13. [Examples](#examples)
 
@@ -566,9 +567,49 @@ exactly as before. Validation is per action type: an `agent-prompt` job still re
 prompt source, and a `command` job still requires a non-empty `shellCommand` - neither is
 allowed to be created with nothing to do.
 
-`shellCommand` is an arbitrary-execution surface. Creating or editing a `command` job
-should be treated as a dangerous operation and carry the same authorization posture as
-the `exec` path.
+`shellCommand` is an arbitrary-execution surface, so it carries the same authorization
+posture as the `exec` path. See [Command job authorization](#command-job-authorization).
+
+#### Command Job Authorization
+
+Command jobs are gated by `ICommandCronAuthorizer` (issue #2462). The default implementation,
+`ToolPolicyCommandCronAuthorizer`, does **not** define its own policy language: it delegates to
+the existing tool-boundary policy surface - `IToolPolicyProvider`, `ToolRiskLevel` and
+`ToolApprovalFallback` - classifying the command under the **`exec`** tool name. There is one
+policy vocabulary, not two, so setting `askFallback: deny` for an agent closes the interactive
+`exec` path and the unattended cron command path with a single switch. **No new configuration
+keys are introduced by command-job authorization.**
+
+Both lifecycle phases are gated, deliberately and distinctly:
+
+| Phase | Where | What happens on denial |
+|---|---|---|
+| **Authoring** - `create`/`update` carrying a `shellCommand` via the `cron` tool | `CronTool` | `UnauthorizedAccessException` with the reason. **Nothing is written to the store**, so a denied command never becomes a job. |
+| **Firing** - every scheduled or manual execution | `CommandCronAction`, immediately before `Process.Start()` | The reason is logged at `Error`, the run is recorded with status `error` carrying the reason, and **no subprocess is started**. |
+
+Firing is re-evaluated independently of authoring rather than trusting the stored job, because
+policy can be tightened after a job is created, and jobs can arrive through paths other than the
+`cron` tool (for example `POST /api/cron` or an imported store).
+
+The decision order, identical in both phases:
+
+1. Extract the leading executable token from the command. If none can be extracted - the command
+   opens with a shell operator, substitution, or is empty - it is **unclassifiable** and is
+   **denied**. This is fail-closed by design, matching the posture of `ChannelFailureClassifier`
+   (#2447): the gate never guesses.
+2. Resolve `IToolPolicyProvider`. If it is unavailable the policy cannot be evaluated, so the
+   command is **denied**. An unregistered dependency therefore fails closed rather than silently
+   disabling the gate.
+3. If the `exec` tool does not require approval, **allow**.
+4. If it does require approval, consult the agent's approval fallback. A cron firing is
+   unattended, so no approval workflow can ever service the request: `deny` refuses,
+   `allow` (the platform default, per #2391) permits with an audit log entry.
+
+Because `ToolApprovalFallback.Allow` remains the default, out of the box a command job still runs
+and simply records an audit line; blocking is opt-in via `askFallback: deny`. The unclassifiable
+and missing-provider paths deny unconditionally regardless of that setting.
+
+`agent-prompt` jobs are entirely unaffected: the gate is only consulted for `command` jobs.
 
 The action set is defined by the tool's input schema in
 `src/gateway/BotNexus.Cron/Tools/CronTool.cs` and is exactly:
@@ -876,6 +917,97 @@ AgentConfig.CronJobs is deprecated. Migrate to Cron.Jobs in config.json.
 ```
 
 This maintains backwards compatibility while encouraging migration.
+
+---
+
+## 11a. Failure Alerts (#2557)
+
+A cron job that starts failing every night at 02:00 is otherwise invisible until somebody reads
+the run history or the log. **Failure alerts** deliver a message to a configured conversation when
+a run terminates as `error`.
+
+### Opt-in setting
+
+Failure alerts are **opt-in per job and off by default**. Existing jobs -- including rows written
+before this feature existed -- read as disabled and behave exactly as they did before.
+
+Two job fields control it:
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `failureAlertsEnabled` | bool | `false` | Master opt-in for this job. |
+| `failureAlertConversationId` | string \| null | `null` | Conversation the alert is delivered to. |
+
+Both must be set: enabling alerts without a conversation id delivers nothing and logs a warning.
+There is deliberately **no** implicit fallback to the job's own `conversationId`, so turning alerts
+on can never accidentally retarget a job's long-lived run conversation.
+
+Configuration example:
+
+```json
+{
+  "cron": {
+    "jobs": {
+      "nightly-report": {
+        "name": "Nightly Report",
+        "schedule": "0 2 * * *",
+        "actionType": "agent-prompt",
+        "agentId": "reporter",
+        "message": "Produce the nightly report.",
+        "failureAlertsEnabled": true,
+        "failureAlertConversationId": "c_ops_alerts"
+      }
+    }
+  }
+}
+```
+
+### Backoff
+
+Alerting on *every* failed run would turn a job failing each minute into the noise the alert was
+meant to detect. Instead, alerts fire on the **first** failure of an error streak and thereafter
+only at streak positions that are exact powers of two:
+
+```
+streak position: 1  2  3  4  5  6  7  8  9 ...
+alert delivered: Y  Y  .  Y  .  .  .  Y  . ...
+```
+
+The streak is derived from the job's run history (consecutive `error` rows, newest first); a
+non-error terminal outcome resets it. Concurrent in-flight (`running`) rows are skipped rather
+than treated as a reset, so a parallel run cannot silently restart the backoff.
+
+### Alert payload
+
+| Field | Notes |
+| --- | --- |
+| `JobId` | Identifier of the failing job. |
+| `JobName` | Human-readable job name. |
+| `ScheduledRunTime` | **The occurrence the run was triggered for.** Without it the recipient cannot tell *which* occurrence broke -- this is the point of the alert. |
+| `AttemptedAt` | Wall-clock instant the failure was observed. |
+| `ConsecutiveErrorCount` | Length of the current error streak (1 on the first failure). |
+| `Error` | Error text, passed through `CronExternalDeliveryRedactor.RedactSummary` before it leaves the box. |
+
+Rendered message shape:
+
+```
+Cron job failed: Nightly Report (nightly-report)
+Scheduled run time: 2026-07-31T02:00:00.0000000+00:00
+Attempted at: 2026-07-31T02:00:04.1173920+00:00
+Consecutive errors: 1
+Error: <redacted error text>
+```
+
+### Delivery and failure semantics
+
+Delivery reuses the existing conversation-message seam (`IConversationRouter` ->
+`IInboundMessageOrchestrator`), the same path the `conversation` tool's `message` action takes.
+Webhook delivery and per-channel / per-account routing are **out of scope**; so are recovery
+("healthy again") notifications.
+
+An alert-delivery failure **never fails the cron run**. The run's terminal state is persisted
+before the alert is attempted, and every exception out of the delivery sink is caught and logged
+at `Error` level.
 
 ---
 

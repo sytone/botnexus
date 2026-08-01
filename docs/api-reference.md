@@ -632,6 +632,63 @@ X-Api-Key: your-api-key
 | `supportsThinking` | boolean | Whether the adapter renders thinking/progress output |
 | `supportsToolDisplay` | boolean | Whether the adapter renders tool call activity |
 
+### Channel Startup Health
+
+**Endpoint:** `GET /api/channels/health`
+
+**Description:** Reports how many *configured* channel adapters actually reached the *started*
+state, naming any that did not. Adapter startup is retried with bounded backoff for transient
+failures (5xx, timeout, socket) and abandoned immediately for terminal ones (invalid token,
+malformed config). Previously the gateway logged `Gateway started with N channel adapter(s)`
+using the configured count even after a failure, so a permanently dead channel was invisible to
+operators - the only symptom was silence on that channel. See issue #2447.
+
+**Request:**
+```http
+GET /api/channels/health
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK when every configured adapter started
+```json
+{
+  "status": "ok",
+  "configured": 5,
+  "started": 5,
+  "failed": []
+}
+```
+
+**Response:** 503 Service Unavailable when any configured adapter did not start
+```json
+{
+  "status": "degraded",
+  "configured": 5,
+  "started": 4,
+  "failed": [
+    {
+      "channelType": "telegram",
+      "failureKind": "Transient",
+      "error": "Telegram API call 'deleteWebhook' failed (502)",
+      "attempts": 4
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `"ok"` when every configured adapter started, otherwise `"degraded"` |
+| `configured` | integer | Number of channel adapters configured on this gateway |
+| `started` | integer | Number of those adapters that actually reached the started state |
+| `failed` | array | One entry per configured adapter that did not start |
+| `failed[].channelType` | string | The channel type identifier that failed |
+| `failed[].failureKind` | string | `Transient`, `Terminal`, or `NotAttempted` (startup pass incomplete) |
+| `failed[].error` | string | The final error message from the failed start |
+| `failed[].attempts` | integer | How many start attempts were made before giving up |
+
 ---
 
 ## Extensions Management

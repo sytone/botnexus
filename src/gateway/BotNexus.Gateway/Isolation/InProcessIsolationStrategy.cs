@@ -539,7 +539,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             new ToolProviders.CronToolProvider(
                 _serviceProvider.GetService<ICronStore>(),
                 _serviceProvider.GetService<CronScheduler>(),
-                _serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>()),
+                _serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
+                _serviceProvider.GetService<BotNexus.Cron.Actions.ICommandCronAuthorizer>()),
             new ToolProviders.SessionToolProvider(sessionStore),
             new ToolProviders.ConversationToolProvider(
                 conversationStore,
@@ -1266,6 +1267,36 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 // Expected when caller cancels stream.
             }
         }
+    }
+
+    /// <inheritdoc />
+    public IDisposable? ObserveTurns(Action onTurnCompleted)
+    {
+        ArgumentNullException.ThrowIfNull(onTurnCompleted);
+
+        // TurnEndEvent is the agent loop's own per-turn boundary (one model call plus its tool
+        // cycle) — the same event that drives RunMetricsAccumulator.IncrementTurns. Projecting it
+        // here means a turn-budget caller counts exactly what the loop counts (#2656).
+        return _agent.Subscribe((agentEvent, _) =>
+        {
+            if (agentEvent is TurnEndEvent)
+            {
+                try
+                {
+                    onTurnCompleted();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Turn observer threw for '{AgentId}' session '{SessionId}'.",
+                        AgentId,
+                        SessionId);
+                }
+            }
+
+            return Task.CompletedTask;
+        });
     }
 
     /// <inheritdoc />

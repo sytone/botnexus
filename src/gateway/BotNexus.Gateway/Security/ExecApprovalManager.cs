@@ -33,13 +33,46 @@ public sealed class ExecApprovalManager : IExecApprovalManager
     private const string ToolName = "exec";
 
     /// <summary>
-    /// Matches PowerShell <c>-EncodedCommand</c> or <c>-ec</c> (and legacy <c>-e</c> / <c>-en</c> / <c>-enc</c>)
-    /// anywhere in the command line so that inline flags like <c>-NoProfile</c> before the encoded flag
-    /// are handled correctly.
+    /// The canonical PowerShell parameter name whose unambiguous prefixes select encoded-command mode.
+    /// </summary>
+    private const string EncodedCommandParameter = "EncodedCommand";
+
+    /// <summary>
+    /// Every spelling of the encoded-command flag PowerShell itself accepts, longest first so the
+    /// regex alternation prefers the longest match.
+    /// <para>
+    /// PowerShell resolves a parameter from any unambiguous prefix of its name, so every prefix of
+    /// <c>EncodedCommand</c> from <c>e</c> through <c>EncodedCommand</c> selects it (verified
+    /// empirically against <c>pwsh</c> 7: <c>-e</c>, <c>-en</c>, <c>-enc</c>, <c>-enco</c>,
+    /// <c>-encod</c>, <c>-encode</c>, <c>-encoded</c>, <c>-encodedc</c> ... all execute the payload).
+    /// <c>-e</c> is not ambiguous with <c>-ExecutionPolicy</c> because PowerShell's own host parser
+    /// special-cases it; <c>-ex</c> and longer are ExecutionPolicy and are deliberately excluded.
+    /// <c>ec</c> is PowerShell's documented alias for the same parameter and is not a prefix of the
+    /// parameter name, so it is listed separately.
+    /// </para>
+    /// </summary>
+    private static readonly string[] EncodedCommandSpellings =
+        Enumerable.Range(1, EncodedCommandParameter.Length)
+            .Select(len => EncodedCommandParameter[..len])
+            .Reverse()
+            .Append("ec")
+            .ToArray();
+
+    /// <summary>
+    /// Matches PowerShell <c>-EncodedCommand</c>, its alias <c>-ec</c>, and every unambiguous prefix
+    /// of the parameter name (<c>-e</c> / <c>-en</c> / <c>-enc</c> / <c>-enco</c> ... ) anywhere in the
+    /// command line, so that inline flags like <c>-NoProfile</c> before the encoded flag are handled.
+    /// Matching is case-insensitive and accepts both <c>-</c> and <c>/</c> as the flag prefix.
+    /// <para>
+    /// The base64 run terminates at the first character that cannot appear in base64 (whitespace,
+    /// <c>|</c>, <c>;</c>, <c>&amp;</c>, redirection, quote ...) rather than at end-of-string, so a
+    /// payload followed by further command text is still decoded. The trailing negative lookahead
+    /// pins that boundary so a partial base64 run can never be captured.
+    /// </para>
     /// Group 1 captures the base64 payload.
     /// </summary>
     private static readonly Regex PowerShellEncodedPattern = new(
-        @"(?i)(?:^|\s)(?:-|/)(?:EncodedCommand|ec)\s+([A-Za-z0-9+/]+=*)\s*$",
+        $@"(?i)(?:^|\s)(?:-|/)(?:{string.Join('|', EncodedCommandSpellings)})\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private sealed record PendingApproval(string SessionId, string CanonicalCommand);
@@ -151,10 +184,16 @@ public sealed class ExecApprovalManager : IExecApprovalManager
 
 
     /// <summary>
-    /// Decodes a PowerShell <c>-EncodedCommand</c> / <c>-ec</c> payload to its plaintext form.
+    /// Decodes a PowerShell encoded-command payload (<c>-EncodedCommand</c>, <c>-ec</c>, or any
+    /// unambiguous prefix such as <c>-e</c> / <c>-en</c> / <c>-enc</c>) to its plaintext form.
     /// PowerShell encodes commands as UTF-16 LE base64, so that encoding is used for decoding.
     /// If the command does not match the encoded-command pattern, it is returned unchanged.
     /// If the base64 payload is malformed, the original command is returned unchanged.
+    /// <para>
+    /// Any command text following the payload (a pipe, <c>;</c>, <c>&amp;&amp;</c>, redirection or a
+    /// further argument) is preserved verbatim after the decoded plaintext so nothing an operator
+    /// would be approving is silently dropped.
+    /// </para>
     /// </summary>
     internal static string DecodeIfPowerShellEncoded(string command)
     {
@@ -167,7 +206,9 @@ public sealed class ExecApprovalManager : IExecApprovalManager
         {
             var bytes = Convert.FromBase64String(base64);
             // PowerShell -EncodedCommand always uses UTF-16 LE (Unicode).
-            return Encoding.Unicode.GetString(bytes);
+            var decoded = Encoding.Unicode.GetString(bytes);
+            var trailing = command[(match.Index + match.Length)..];
+            return decoded + trailing;
         }
         catch (FormatException)
         {

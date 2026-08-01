@@ -67,7 +67,10 @@ public sealed class SatelliteStatusDto
     /// <summary>Owner user ID.</summary>
     public required string OwnerUserId { get; init; }
 
-    /// <summary>Capabilities.</summary>
+    /// <summary>
+    /// Capabilities advertised by the satellite. <b>Display-only: not an authorization control
+    /// (#2606).</b> This list does not restrict what the satellite may be asked to do.
+    /// </summary>
     public IReadOnlyList<string> Capabilities { get; init; } = [];
 
     /// <summary>Current status (online, offline, stale).</summary>

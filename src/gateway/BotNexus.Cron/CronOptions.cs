@@ -34,6 +34,10 @@ public sealed record ConfiguredCronJob
     public bool Enabled { get; init; } = true;
     public bool System { get; init; }
     public bool DeleteAfterRun { get; init; }
+    /// <summary>#2557: opt-in failure alerting. Off by default.</summary>
+    public bool FailureAlertsEnabled { get; init; }
+    /// <summary>#2557: conversation id that failure alerts for this job are delivered to.</summary>
+    public string? FailureAlertConversationId { get; init; }
     public string? TimeZone { get; init; }
     public string? CreatedBy { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }

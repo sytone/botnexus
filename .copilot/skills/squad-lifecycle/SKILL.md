@@ -282,7 +282,9 @@ When worktree mode is enabled, the coordinator creates dedicated worktrees for i
 
 **Cleanup:**
 - After a PR is merged, the worktree should be removed
-- `git worktree remove {path}` + `git branch -d {branch}`
+- Use `pwsh -NoProfile -File scripts/repo/Remove-Worktree.ps1 -WorktreePath {path} -DeleteBranch`
+  (never a raw removal followed by an unconditional `branch -d`: on a failed
+  removal that orphans the directory and strands the commits - issue #2104)
 - Ralph heartbeat can trigger cleanup checks for merged branches
 
 ### Pre-Spawn: Worktree Setup

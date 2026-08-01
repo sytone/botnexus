@@ -98,7 +98,8 @@ internal interface IToolProvider
 internal sealed class CronToolProvider(
     ICronStore? cronStore,
     CronScheduler? cronScheduler,
-    BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null) : IToolProvider
+    BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null,
+    BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -113,7 +114,10 @@ internal sealed class CronToolProvider(
     {
         var allowCrossAgentCron = ResolveAllowCrossAgentCron(context.Descriptor);
         IReadOnlyList<IAgentTool> tools =
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry)];
+            // #2462: the command-authoring gate is threaded in here so the model-facing cron tool
+            // refuses to persist a shellCommand the exec-tool policy would deny. A null authorizer
+            // fails closed inside CronTool.
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer)];
         return Task.FromResult(tools);
     }
 

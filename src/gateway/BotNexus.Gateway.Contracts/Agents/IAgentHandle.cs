@@ -68,6 +68,26 @@ public interface IAgentHandle : IAsyncDisposable
     IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Subscribes to per-turn completion notifications for runs executed through this handle, so a
+    /// blocking caller can observe and bound the number of turns a run consumes (#2656).
+    /// </summary>
+    /// <param name="onTurnCompleted">
+    /// Invoked once each time the agent loop finishes a turn (one model call plus its tool cycle).
+    /// Called on the agent's event-dispatch path, so it must be fast and must not throw.
+    /// </param>
+    /// <returns>
+    /// A subscription to dispose when the caller no longer wants notifications, or <c>null</c> when
+    /// this handle has no per-turn visibility.
+    /// </returns>
+    /// <remarks>
+    /// The default implementation returns <c>null</c>: a handle with no insight into its own loop
+    /// must report that honestly rather than fabricate turn boundaries. Callers that enforce a turn
+    /// budget must treat <c>null</c> as "budget not enforceable on this handle" instead of assuming
+    /// zero turns were used. Handles that own a real agent loop MUST override this.
+    /// </remarks>
+    IDisposable? ObserveTurns(Action onTurnCompleted) => null;
+
+    /// <summary>
     /// Aborts the current agent execution, if any.
     /// </summary>
     Task AbortAsync(CancellationToken cancellationToken = default);
