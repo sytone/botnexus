@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Dispatching;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Services;
@@ -18,15 +19,32 @@ namespace BotNexus.Gateway.Services;
 /// resolves/creates the active session and the orchestrator serialises it behind any in-flight work.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The checkpoint service has already atomically claimed and cleared the checkpoint before calling
 /// this, so this type never needs to re-check idempotency - it is only ever handed a single,
 /// deduplicated continuation. The posted message carries the originating agent as its typed sender so
 /// participant tracking and role derivation stay correct, and is stamped as an internal channel so it
 /// does not echo back to a specific transport binding.
+/// </para>
+/// <para>
+/// The orchestrator is resolved LAZILY through <see cref="IServiceProvider"/> rather than injected,
+/// and that indirection is load-bearing (issue #2628). <c>IInboundMessageOrchestrator</c>'s DI
+/// factory is <c>GetRequiredService&lt;GatewayHost&gt;().Orchestrator</c>, while <c>GatewayHost</c>'s
+/// own constructor takes <c>PendingAskUserInterceptor</c>, which (as of #2047) takes
+/// <c>IAskUserCheckpointService</c>, which takes this type. Injecting the orchestrator directly
+/// therefore closed a re-entrant singleton cycle -
+/// <c>GatewayHost -&gt; PendingAskUserInterceptor -&gt; IAskUserCheckpointService -&gt;
+/// AskUserCheckpointResumer -&gt; IInboundMessageOrchestrator -&gt; GatewayHost</c>. The DI container
+/// takes a per-singleton lock during activation, so the recursion deadlocked every resolution that
+/// touched the hub: SignalR connections never completed their handshake and the client timed out.
+/// Resolving inside <see cref="ResumeAsync"/> defers the lookup until after activation has
+/// completed, breaking the cycle without weakening the resume path. Do NOT convert this back to a
+/// constructor parameter.
+/// </para>
 /// </remarks>
 public sealed class AskUserCheckpointResumer(
     IConversationRouter conversationRouter,
-    IInboundMessageOrchestrator messageOrchestrator,
+    IServiceProvider serviceProvider,
     ILogger<AskUserCheckpointResumer> logger) : IAskUserCheckpointResumer
 {
     private const string InternalChannel = "internal";
@@ -49,6 +67,10 @@ public sealed class AskUserCheckpointResumer(
             request.ConversationId,
             cancellationToken,
             CitizenId.Of(request.AgentId)).ConfigureAwait(false);
+
+        // Resolved here, not injected: see the class remarks. An eager constructor dependency on
+        // IInboundMessageOrchestrator closes a re-entrant GatewayHost activation cycle (#2628).
+        var messageOrchestrator = serviceProvider.GetRequiredService<IInboundMessageOrchestrator>();
 
         var accepted = messageOrchestrator.Post(new InboundMessage
         {
