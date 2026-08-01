@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Deliberately NOT a dynamically loaded extension yet. This slice ships the plugin on-disk
+      contract and its parser only - there is no runtime wiring, so the assembly is never loaded
+      into the gateway's isolated AssemblyLoadContext and needs neither EnableDynamicLoading,
+      CopyLocalLockFileAssemblies, nor a botnexus-extension.json loader manifest. A later slice
+      that actually wires plugins into discovery adds all three together.
+    -->
+    <RootNamespace>BotNexus.Extensions.Plugins</RootNamespace>
+    <Description>Plugin manifest and marketplace schema definitions with a schema-driven validating parser.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The schema files are the single source of truth for field names and requiredness.
+      They are embedded so the parser can never load a stale or divergent copy, and they
+      remain checked in as plain .json so external tooling can consume them directly.
+    -->
+    <EmbeddedResource Include="Schemas\plugin-manifest.schema.json" LogicalName="BotNexus.Extensions.Plugins.Schemas.plugin-manifest.schema.json" />
+    <EmbeddedResource Include="Schemas\marketplace.schema.json" LogicalName="BotNexus.Extensions.Plugins.Schemas.marketplace.schema.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NJsonSchema" />
+  </ItemGroup>
+</Project>

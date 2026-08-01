@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://botnexus.dev/schemas/plugin-manifest.schema.json",
+  "title": "BotNexus plugin manifest",
+  "description": "On-disk contract for .botnexus-plugin/plugin.json. This file is the single source of truth for plugin manifest field names and requiredness; the C# parser loads it rather than duplicating the field list in code.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique plugin identifier. Lowercase kebab-case so it is safe in paths, URLs and config keys.",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "description": "Human readable summary shown in marketplace listings."
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the plugin release.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-.]+)?(?:\\+[0-9A-Za-z-.]+)?$"
+    },
+    "author": {
+      "type": "object",
+      "description": "Attribution for the plugin author.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    },
+    "homepage": {
+      "type": "string",
+      "description": "Project or documentation URL."
+    },
+    "repository": {
+      "type": "string",
+      "description": "Source repository URL."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX licence identifier."
+    },
+    "keywords": {
+      "type": "array",
+      "description": "Search keywords for marketplace discovery.",
+      "items": { "type": "string" }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Explicit skill paths. Omit to rely on convention-based discovery at the plugin root.",
+      "items": { "type": "string" }
+    },
+    "agents": {
+      "type": "array",
+      "description": "Explicit agent definition paths. Omit to rely on convention-based discovery.",
+      "items": { "type": "string" }
+    },
+    "commands": {
+      "type": "array",
+      "description": "Explicit command paths. Omit to rely on convention-based discovery.",
+      "items": { "type": "string" }
+    },
+    "hooks": {
+      "type": "string",
+      "description": "Explicit hooks configuration path. Omit to rely on convention-based discovery."
+    },
+    "mcpServers": {
+      "type": "string",
+      "description": "Explicit MCP server configuration path. Omit to rely on convention-based discovery."
+    }
+  }
+}
