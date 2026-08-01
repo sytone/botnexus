@@ -1,0 +1,212 @@
+using System.Text.RegularExpressions;
+using BotNexus.Gateway.Abstractions.Models;
+using Shouldly;
+
+namespace BotNexus.Architecture.Tests;
+
+/// <summary>
+/// Architecture fitness function for <c>#2677</c>: there must be exactly <b>one</b> definition of
+/// "which <see cref="SubAgentStatus"/> values are terminal", namely
+/// <see cref="SubAgentStatusPolicy"/>.
+/// <para>
+/// The defect this fence guards was not a missing value, it was a duplicated decision.
+/// <c>SubAgentWorkspaceReaper</c> held a four-element <c>HashSet&lt;string&gt;</c> and
+/// <c>DefaultSubAgentManager</c> held a five-value <c>or</c>-pattern. #2656 added
+/// <c>BudgetExhausted</c> and updated only the second, so budget-exhausted workspaces were
+/// classified <c>Running</c> forever and no prune path reclaimed them. Because the reaper's copy
+/// was keyed on <i>strings</i>, no compiler diagnostic could ever have caught it.
+/// </para>
+/// <para>
+/// This fence fails if a second such list is reintroduced anywhere under <c>src/</c>: any file
+/// other than the policy itself that enumerates three or more terminal status names in one
+/// place - whether as string literals or as <c>SubAgentStatus.X</c> members - is a re-emerging
+/// hand-maintained list and must call <see cref="SubAgentStatusPolicy.IsTerminal"/> instead.
+/// </para>
+/// <para>
+/// <b>Vacuity.</b> The scan is asserted to have found a plausible number of files, the policy
+/// file itself is asserted to exist and to be the sole exemption, and the detector is pinned with
+/// positive and negative samples so a regex that matches nothing cannot masquerade as coverage.
+/// </para>
+/// </summary>
+public sealed class SubAgentTerminalStatusFenceArchitectureTests
+{
+    /// <summary>
+    /// The one file permitted to enumerate terminal sub-agent statuses: the shared predicate.
+    /// Anything else that does so is by definition a second, drift-prone copy.
+    /// </summary>
+    private const string PolicySource =
+        "src/domain/BotNexus.Domain/Gateway/Models/SubAgentStatusPolicy.cs";
+
+    /// <summary>
+    /// The status names whose co-occurrence marks a terminal-status list. Deliberately excludes
+    /// <c>Running</c>: a file mentioning only the live state is not making a terminal decision.
+    /// </summary>
+    private static readonly string[] TerminalNames =
+    [
+        "Completed",
+        "Failed",
+        "Killed",
+        "TimedOut",
+        "BudgetExhausted"
+    ];
+
+    /// <summary>
+    /// How many distinct terminal names in a single file constitute a "list". Two can be an
+    /// ordinary two-way branch; three or more in one file is a hand-maintained enumeration.
+    /// </summary>
+    private const int ListThreshold = 3;
+
+    /// <summary>
+    /// The primary fence. Scans every C# file under <c>src/</c> and fails if any file other than
+    /// the policy enumerates <see cref="ListThreshold"/> or more terminal status names.
+    /// </summary>
+    [Fact]
+    public void NoSecondTerminalSubAgentStatusList_ExistsUnderSrc()
+    {
+        var sourceFiles = EnumerateSourceFiles();
+
+        // Anti-vacuity: a scan that walked an empty or wrong tree is green for the wrong reason.
+        sourceFiles.Count.ShouldBeGreaterThan(
+            200,
+            $"Only {sourceFiles.Count} C# files were found under src/. The fence is scanning the "
+            + "wrong tree and cannot be trusted.");
+
+        var policyPath = ResolvePath(PolicySource);
+        File.Exists(policyPath).ShouldBeTrue(
+            $"{PolicySource} not found. The #2677 fence exempts exactly one file - the shared "
+            + "predicate. If it moved, update PolicySource so the fence keeps guarding something.");
+
+        var offenders = new List<string>();
+        foreach (var file in sourceFiles)
+        {
+            if (string.Equals(file, policyPath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var found = FindTerminalNames(File.ReadAllText(file));
+            if (found.Count >= ListThreshold)
+                offenders.Add($"{Relative(file)} ({string.Join(", ", found.Order(StringComparer.Ordinal))})");
+        }
+
+        offenders.ShouldBeEmpty(
+            "A second hand-maintained list of terminal SubAgentStatus values has been "
+            + "reintroduced. This is the exact defect of #2677: two independent definitions "
+            + "drifted when #2656 added BudgetExhausted, and the reaper silently stopped "
+            + "reclaiming budget-exhausted workspaces. Call "
+            + "SubAgentStatusPolicy.IsTerminal(SubAgentStatus) (or IsTerminalStatusName for "
+            + "persisted text) instead of re-enumerating the values.\n"
+            + "Offending files:\n  " + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// Anti-vacuity self-test: the policy file itself must contain a full enumeration, otherwise
+    /// the detector is broken and the primary fence would pass trivially for every file.
+    /// </summary>
+    [Fact]
+    public void Detector_Recognises_TheEnumerationInsideThePolicyItself()
+    {
+        var found = FindTerminalNames(File.ReadAllText(ResolvePath(PolicySource)));
+
+        found.Count.ShouldBe(
+            TerminalNames.Length,
+            "The shared predicate must enumerate every terminal status. If the detector cannot "
+            + "find them there, it cannot find a reintroduced copy anywhere else either.");
+    }
+
+    /// <summary>
+    /// Anti-vacuity self-test (positive): both shapes the two original lists used - bare string
+    /// literals and <c>SubAgentStatus.X</c> member access - must be detected.
+    /// </summary>
+    [Fact]
+    public void Detector_Recognises_BothStringAndEnumListShapes()
+    {
+        const string stringShape = """
+            new(StringComparer.OrdinalIgnoreCase) { "Completed", "Failed", "Killed", "TimedOut" };
+            """;
+        const string enumShape = """
+            if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed)
+            """;
+
+        FindTerminalNames(stringShape).Count.ShouldBeGreaterThanOrEqualTo(ListThreshold);
+        FindTerminalNames(enumShape).Count.ShouldBeGreaterThanOrEqualTo(ListThreshold);
+    }
+
+    /// <summary>
+    /// Anti-vacuity self-test (negative): a file that simply calls the shared predicate, or
+    /// mentions one status in passing, must not be reported. A detector that over-matches would
+    /// make the fence unshippable and it would be deleted rather than fixed.
+    /// </summary>
+    [Fact]
+    public void Detector_DoesNotReport_CallersOfTheSharedPredicate()
+    {
+        const string goodCaller = """
+            if (SubAgentStatusPolicy.IsTerminal(info.Status))
+                return false;
+            record.Status = SubAgentStatus.Completed;
+            """;
+
+        FindTerminalNames(goodCaller).Count.ShouldBeLessThan(
+            ListThreshold,
+            "Consuming the shared predicate must never trip the fence.");
+    }
+
+    /// <summary>
+    /// Pins that the two sites named in #2677 actually consume the shared predicate, so the
+    /// fence cannot pass merely because both lists were deleted and nothing replaced them.
+    /// </summary>
+    [Theory]
+    [InlineData("src/gateway/BotNexus.Cli/Commands/SubAgentWorkspaceReaper.cs")]
+    [InlineData("src/gateway/BotNexus.Gateway/Agents/DefaultSubAgentManager.cs")]
+    public void BothOriginalSites_ConsumeTheSharedPredicate(string relativePath)
+    {
+        var path = ResolvePath(relativePath);
+        File.Exists(path).ShouldBeTrue($"{relativePath} not found; update this fence.");
+
+        File.ReadAllText(path).ShouldContain(
+            "SubAgentStatusPolicy.IsTerminal",
+            Case.Sensitive,
+            $"{relativePath} was one of the two sites that independently defined 'terminal "
+            + "SubAgentStatus' (#2677). It must consume the shared predicate.");
+    }
+
+    /// <summary>
+    /// Finds the distinct terminal status names named in <paramref name="text"/>, matching either
+    /// a bare string literal (<c>"Completed"</c>) or an enum member access
+    /// (<c>SubAgentStatus.Completed</c>). Word-boundary anchored so <c>CompletedAt</c> or
+    /// <c>OnFailedAsync</c> cannot produce a false positive.
+    /// </summary>
+    private static IReadOnlyCollection<string> FindTerminalNames(string text)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in TerminalNames)
+        {
+            var pattern = $@"(""{name}""|SubAgentStatus\.{name})\b";
+            if (Regex.IsMatch(text, pattern))
+                found.Add(name);
+        }
+
+        return found;
+    }
+
+    private static IReadOnlyList<string> EnumerateSourceFiles() =>
+        Directory.EnumerateFiles(Path.Combine(FindRepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToArray();
+
+    private static string Relative(string absolute) =>
+        Path.GetRelativePath(FindRepoRoot(), absolute).Replace('\\', '/');
+
+    private static string ResolvePath(string relative) =>
+        Path.Combine(FindRepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar));
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+            current = current.Parent;
+
+        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
+        return current!.FullName;
+    }
+}
