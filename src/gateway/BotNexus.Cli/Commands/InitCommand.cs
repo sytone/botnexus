@@ -55,7 +55,7 @@ internal sealed class InitCommand
             Gateway = new GatewaySettingsConfig
             {
                 ListenUrl = "http://0.0.0.0:5005",
-                DefaultAgentId = "assistant",
+                DefaultAgentId = FreshInstallAgentDefaults.DefaultAgentId,
                 SessionStore = new SessionStoreConfig
                 {
                     Type = "Sqlite",
@@ -75,12 +75,15 @@ internal sealed class InitCommand
                 Enabled = true,
                 TickIntervalSeconds = 60
             },
+            // #2636: the generic assistant's provider/model comes from the same shared
+            // fresh-install source the bundled agents (below) are built from, so the two can
+            // never drift apart.
             Agents = new Dictionary<string, AgentDefinitionConfig>(StringComparer.OrdinalIgnoreCase)
             {
-                ["assistant"] = new()
+                [FreshInstallAgentDefaults.DefaultAgentId] = new()
                 {
-                    Provider = "github-copilot",
-                    Model = "gpt-4.1",
+                    Provider = FreshInstallAgentDefaults.DefaultProvider,
+                    Model = FreshInstallAgentDefaults.DefaultModel,
                     Enabled = true
                 }
             }
@@ -128,7 +131,12 @@ internal sealed class InitCommand
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
         var json = SerializeWithAgentDefaults(config);
         var fileSystem = new System.IO.Abstractions.FileSystem();
-        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        // #2636 AC6: backups belong under the writable data directory BOTNEXUS_DATA_DIR
+        // designates, exactly as PlatformAgentReconciliationService resolves it - not blindly
+        // beside config.json, which may be a read-only mount.
+        var homeRoot = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
+        var backupsDir = PlatformAgentReconciliationService.ResolveBackupDirectory(
+            new BotNexusHome(fileSystem, homeRoot));
         var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
         await writer.MutateAsync(root =>
         {
@@ -179,6 +187,14 @@ internal sealed class InitCommand
             var newAgents = new System.Text.Json.Nodes.JsonObject { ["defaults"] = defaultsBlock };
             foreach (var kv in agentsNode)
                 newAgents[kv.Key] = kv.Value?.DeepClone();
+
+            // #2636: emit the bundled platform agents (Nexus Trailguide) as complete, editable
+            // entries produced by the same builder the startup reconciler uses. A fresh install
+            // must look finished in config.json without waiting for a startup pass, and the
+            // reconciler must then find nothing to do.
+            foreach (var kv in FreshInstallAgentDefaults.CreateBundledAgents())
+                newAgents[kv.Key] = kv.Value?.DeepClone();
+
             root["agents"] = newAgents;
         }
 
