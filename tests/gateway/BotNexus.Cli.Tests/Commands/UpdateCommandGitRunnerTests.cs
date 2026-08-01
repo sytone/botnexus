@@ -143,20 +143,10 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
 
     /// <summary>
     /// Guard (#2632): a repo-creating harness must never stage or commit outside its sandbox root.
-    /// A harness interrupted mid-flight previously left an `add --all` / `commit` pointed at a live
-    /// worktree and corrupted the caller's branch. Every git call that can author a commit asserts
-    /// its target path is under <see cref="Path.GetTempPath"/> first.
+    /// Delegates to the single shared definition so the two harnesses in this assembly cannot drift.
     /// </summary>
     internal static string AssertSandboxRepoPath(string repo)
-    {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
-        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo));
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (!full.StartsWith(root + Path.DirectorySeparatorChar, comparison))
-            throw new InvalidOperationException(
-                $"Sandbox guard: refusing git write against '{full}' because it is not under the temp sandbox root '{root}'.");
-        return full;
-    }
+        => GitSandboxGuard.AssertSandboxRepoPath(repo);
 
     private bool TryInitRepoWithTwoCommits(string repo)
     {

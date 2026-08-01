@@ -96,39 +96,12 @@ public sealed class UpdateNoOpRebuildSkipTests
         return data;
     }
 
-    /// <summary>
-    /// Guard (#2632): a repo-creating harness must never stage or commit outside its sandbox root.
-    /// When this suite runs under the pre-commit hook, git exports GIT_DIR / GIT_WORK_TREE for the
-    /// caller's live worktree. A harness that locates its repo only via <c>WorkingDirectory</c>
-    /// therefore had its `add -A` / `commit` retargeted at the developer's branch, producing the
-    /// tree-deleting "initial" commit reported in #2632. Every git call that can author a commit
-    /// asserts its target path is under <see cref="Path.GetTempPath"/> first.
-    /// </summary>
-    internal static string AssertSandboxRepoPath(string repoRoot)
-    {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
-        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoRoot));
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (!full.StartsWith(root + Path.DirectorySeparatorChar, comparison))
-            throw new InvalidOperationException(
-                $"Sandbox guard: refusing git write against '{full}' because it is not under the temp sandbox root '{root}'.");
-        return full;
-    }
-
     private static string RunGit(string repoRoot, string arguments)
     {
-        AssertSandboxRepoPath(repoRoot);
-        // `-C` is the only repo locator, and the inherited GIT_DIR / GIT_WORK_TREE / identity
-        // vars are stripped, so an ambient hook environment cannot redirect this at a real repo.
-        var psi = new ProcessStartInfo("git", $"-C \"{repoRoot}\" {arguments}")
-        {
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var leak in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL" })
-            psi.Environment.Remove(leak);
+        // Guard + ambient-redirect stripping both live in GitSandboxGuard so the invariant has one
+        // definition. See #2632: the hook environment exports GIT_DIR / GIT_WORK_TREE for the
+        // caller's live worktree, which silently retargeted this harness at the developer's branch.
+        var psi = GitSandboxGuard.CreateSandboxedGit(repoRoot, arguments);
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
@@ -163,7 +136,7 @@ public sealed class UpdateNoOpRebuildSkipTests
             File.WriteAllText(full, "original\n");
         }
 
-        AssertSandboxRepoPath(root);
+        GitSandboxGuard.AssertSandboxRepoPath(root);
         RunGit(root, "add -A");
         RunGit(root, "-c user.name=botnexus-test -c user.email=botnexus-test@invalid.local commit -m initial");
 
