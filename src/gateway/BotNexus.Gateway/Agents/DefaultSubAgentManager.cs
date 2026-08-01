@@ -738,7 +738,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 parentAgentId.Value,
                 $"Sub-agent '{subAgentId}' completed.");
         }
-        else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
+        else if (SubAgentStatusPolicy.IsUnsuccessfulTermination(updated.Status))
         {
             await PublishLifecycleActivityAsync(
                 GatewayActivityType.SubAgentFailed,

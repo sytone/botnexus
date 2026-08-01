@@ -37,6 +37,59 @@ public sealed class SubAgentStatusPolicyTests
         SubAgentStatusPolicy.IsTerminal(status).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The second hand-maintained decision promoted by #2677: <c>DefaultSubAgentManager</c> chose
+    /// between the SubAgentCompleted and SubAgentFailed lifecycle activities with its own
+    /// <c>is Failed or TimedOut or BudgetExhausted</c> chain. Same drift exposure, same fix.
+    /// </summary>
+    [Theory]
+    [InlineData(SubAgentStatus.Failed)]
+    [InlineData(SubAgentStatus.TimedOut)]
+    [InlineData(SubAgentStatus.BudgetExhausted)]
+    public void IsUnsuccessfulTermination_EveryFaultStatus_IsUnsuccessful(SubAgentStatus status)
+    {
+        SubAgentStatusPolicy.IsUnsuccessfulTermination(status).ShouldBeTrue(
+            "A run that ended in this state did not complete its work, so the parent must be "
+            + "told it failed rather than silently seeing no lifecycle activity at all.");
+    }
+
+    /// <summary>
+    /// Negative space for the fault predicate. <c>Completed</c> is a success, <c>Killed</c> is a
+    /// deliberate operator action rather than a fault, and <c>Running</c> is not terminal at all
+    /// - callers gate on <see cref="SubAgentStatusPolicy.IsTerminal"/> first. Pinned separately
+    /// so widening the fault predicate cannot pass unnoticed.
+    /// </summary>
+    [Theory]
+    [InlineData(SubAgentStatus.Running)]
+    [InlineData(SubAgentStatus.Completed)]
+    [InlineData(SubAgentStatus.Killed)]
+    public void IsUnsuccessfulTermination_SuccessKilledAndRunning_AreNotFaults(SubAgentStatus status)
+    {
+        SubAgentStatusPolicy.IsUnsuccessfulTermination(status).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The two predicates answer different questions and must not be conflated: every
+    /// unsuccessful termination is terminal, but not every terminal status is a fault.
+    /// </summary>
+    [Fact]
+    public void UnsuccessfulTermination_IsAlwaysAStrictSubsetOfTerminal()
+    {
+        foreach (var status in Enum.GetValues<SubAgentStatus>())
+        {
+            if (SubAgentStatusPolicy.IsUnsuccessfulTermination(status))
+            {
+                SubAgentStatusPolicy.IsTerminal(status).ShouldBeTrue(
+                    $"{status} is classified a fault but not terminal, which is incoherent.");
+            }
+        }
+
+        SubAgentStatusPolicy.IsTerminal(SubAgentStatus.Completed).ShouldBeTrue();
+        SubAgentStatusPolicy.IsUnsuccessfulTermination(SubAgentStatus.Completed).ShouldBeFalse(
+            "Completed proves the subset is strict - if these two predicates ever agree on "
+            + "every value, one of them is redundant and the seam has collapsed.");
+    }
+
     [Fact]
     public void IsTerminal_Running_IsNotTerminal()
     {

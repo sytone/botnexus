@@ -47,6 +47,37 @@ public static class SubAgentStatusPolicy
 #pragma warning restore CS8524
 
     /// <summary>
+    /// Returns <c>true</c> when <paramref name="status"/> is a terminal state the run did NOT
+    /// reach successfully - i.e. it ended, but not by completing its work.
+    /// <para>
+    /// This is the second decision that was being hand-maintained. <c>DefaultSubAgentManager</c>
+    /// carried an <c>is Failed or TimedOut or BudgetExhausted</c> chain to choose between the
+    /// <c>SubAgentCompleted</c> and <c>SubAgentFailed</c> lifecycle activities. It has the same
+    /// drift exposure as the terminal list did: a future failure-ish status silently falls to the
+    /// success branch, or to no branch at all, and the parent is never told the child failed.
+    /// Written with the same exhaustive-switch discipline for the same reason.
+    /// </para>
+    /// <para>
+    /// <c>Running</c> is <c>false</c> here because it is not terminal at all - callers must gate
+    /// on <see cref="IsTerminal"/> first. <c>Killed</c> is <c>false</c> because a deliberate kill
+    /// is an operator action, not a fault, and it was excluded from the original chain.
+    /// </para>
+    /// </summary>
+    /// <param name="status">The sub-agent lifecycle status.</param>
+    public static bool IsUnsuccessfulTermination(SubAgentStatus status)
+#pragma warning disable CS8524
+        => status switch
+        {
+            SubAgentStatus.Running => false,
+            SubAgentStatus.Completed => false,
+            SubAgentStatus.Killed => false,
+            SubAgentStatus.Failed => true,
+            SubAgentStatus.TimedOut => true,
+            SubAgentStatus.BudgetExhausted => true,
+        };
+#pragma warning restore CS8524
+
+    /// <summary>
     /// Parses a <b>persisted</b> status string and reports whether it is terminal. Used by the
     /// workspace reaper, whose input is the raw <c>sub_agent_sessions.status</c> text rather than
     /// the enum.

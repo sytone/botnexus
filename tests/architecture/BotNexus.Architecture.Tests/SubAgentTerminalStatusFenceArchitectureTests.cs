@@ -98,18 +98,30 @@ public sealed class SubAgentTerminalStatusFenceArchitectureTests
     }
 
     /// <summary>
-    /// Anti-vacuity self-test: the policy file itself must contain a full enumeration, otherwise
-    /// the detector is broken and the primary fence would pass trivially for every file.
+    /// Anti-vacuity self-test: the shared predicate must classify <b>every</b> declared
+    /// <see cref="SubAgentStatus"/> member explicitly. If it did not, the fence would be
+    /// guarding a predicate that itself silently defaults some state.
+    /// <para>
+    /// Checked by name rather than through <c>FindTerminalNames</c>, because the policy is a
+    /// switch expression with one arm per member - deliberately NOT the <c>or</c>-chain or
+    /// string-collection shape the detector hunts for. That is the point: the one permitted
+    /// definition does not look like a hand-maintained list.
+    /// </para>
     /// </summary>
     [Fact]
-    public void Detector_Recognises_TheEnumerationInsideThePolicyItself()
+    public void ThePolicy_ClassifiesEveryDeclaredStatusExplicitly()
     {
-        var found = FindTerminalNames(File.ReadAllText(ResolvePath(PolicySource)));
+        var policy = File.ReadAllText(ResolvePath(PolicySource));
 
-        found.Count.ShouldBe(
-            TerminalNames.Length,
-            "The shared predicate must enumerate every terminal status. If the detector cannot "
-            + "find them there, it cannot find a reintroduced copy anywhere else either.");
+        foreach (var name in Enum.GetNames<SubAgentStatus>())
+        {
+            policy.ShouldContain(
+                $"SubAgentStatus.{name}",
+                Case.Sensitive,
+                $"{name} is a declared SubAgentStatus but the shared predicate does not name it. "
+                + "Every member must be classified explicitly - a status that falls through is "
+                + "exactly how #2656's BudgetExhausted went unnoticed.");
+        }
     }
 
     /// <summary>
@@ -150,6 +162,47 @@ public sealed class SubAgentTerminalStatusFenceArchitectureTests
     }
 
     /// <summary>
+    /// Anti-vacuity self-test (negative, and the reason this detector keys on decision SHAPE):
+    /// naming several statuses without deciding terminality must NOT be reported.
+    /// <para>
+    /// The first version of this fence counted distinct names anywhere in a file. It flagged
+    /// <c>DefaultSubAgentManager</c> even after that file had been correctly converted to call
+    /// the shared predicate, because its <c>DescribeStatus</c> display mapping and its
+    /// per-status assignment sites name five statuses between them. Both samples below are drawn
+    /// from that real false positive.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Detector_DoesNotReport_DisplayMappingOrAssignmentSites()
+    {
+        const string displayMapping = """
+            private static string DescribeStatus(SubAgentStatus status)
+                => status switch
+                {
+                    SubAgentStatus.Completed => "completed",
+                    SubAgentStatus.Failed => "failed",
+                    SubAgentStatus.TimedOut => "timed out",
+                    SubAgentStatus.BudgetExhausted => "exhausted its turn budget",
+                    SubAgentStatus.Killed => "was killed",
+                    _ => "updated"
+                };
+            """;
+
+        const string assignmentSites = """
+            => CompleteTerminalAsync(subAgentId, SubAgentStatus.BudgetExhausted, diagnostic);
+            => CompleteTerminalAsync(subAgentId, SubAgentStatus.TimedOut, diagnostic);
+            => CompleteTerminalAsync(subAgentId, SubAgentStatus.Failed, diagnostic);
+            Status = SubAgentStatus.Killed,
+            if (updated.Status == SubAgentStatus.Completed)
+            """;
+
+        FindTerminalNames(displayMapping).ShouldBeEmpty(
+            "Mapping each status to a display string is not a terminality decision.");
+        FindTerminalNames(assignmentSites).ShouldBeEmpty(
+            "Setting or comparing an individual status is not a terminality decision.");
+    }
+
+    /// <summary>
     /// Pins that the two sites named in #2677 actually consume the shared predicate, so the
     /// fence cannot pass merely because both lists were deleted and nothing replaced them.
     /// </summary>
@@ -169,21 +222,45 @@ public sealed class SubAgentTerminalStatusFenceArchitectureTests
     }
 
     /// <summary>
-    /// Finds the distinct terminal status names named in <paramref name="text"/>, matching either
-    /// a bare string literal (<c>"Completed"</c>) or an enum member access
-    /// (<c>SubAgentStatus.Completed</c>). Word-boundary anchored so <c>CompletedAt</c> or
-    /// <c>OnFailedAsync</c> cannot produce a false positive.
+    /// Finds the terminal status names participating in a <b>terminality decision</b> in
+    /// <paramref name="text"/>. Returns empty when no such decision is present, even if the text
+    /// names every status individually.
+    /// <para>
+    /// Two shapes are recognised, being exactly the two the original duplicated definitions used:
+    /// an <c>is</c>/<c>or</c> pattern chain over <c>SubAgentStatus</c> members (as
+    /// <c>DefaultSubAgentManager</c> had), and a run of bare status string literals in one
+    /// collection (as <c>SubAgentWorkspaceReaper</c>'s <c>HashSet&lt;string&gt;</c> had).
+    /// </para>
+    /// <para>
+    /// Keying on decision SHAPE rather than on file-wide co-occurrence is load-bearing. The first
+    /// version of this fence counted distinct names anywhere in a file and reported
+    /// <c>DefaultSubAgentManager</c> even after it had been converted to call the shared
+    /// predicate - its <c>DescribeStatus</c> display mapping and its per-status assignment sites
+    /// name five statuses between them. A fence that flags a file for correctly consuming the
+    /// predicate gets deleted rather than fixed.
+    /// </para>
+    /// <para>
+    /// The string alternative is deliberately NOT <c>\b</c>-anchored after the closing quote: a
+    /// quote and a following comma are both non-word characters, so <c>\b</c> there can never
+    /// match and would silently disable the entire string-literal branch.
+    /// </para>
     /// </summary>
     private static IReadOnlyCollection<string> FindTerminalNames(string text)
     {
+        var names = string.Join("|", TerminalNames);
         var found = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in TerminalNames)
+        var chain = $@"SubAgentStatus\.({names})\b(?:\s+or\s+SubAgentStatus\.({names})\b){{{ListThreshold - 1}}}";
+        var literalRun = $@"""({names})""(?:\s*,\s*""({names})""){{{ListThreshold - 1}}}";
+        foreach (var pattern in new[] { chain, literalRun })
         {
-            var pattern = $@"(""{name}""|SubAgentStatus\.{name})\b";
-            if (Regex.IsMatch(text, pattern))
-                found.Add(name);
+            foreach (Match match in Regex.Matches(text, pattern))
+            {
+                foreach (Capture capture in match.Groups[1].Captures)
+                    found.Add(capture.Value);
+                foreach (Capture capture in match.Groups[2].Captures)
+                    found.Add(capture.Value);
+            }
         }
-
         return found;
     }
 
