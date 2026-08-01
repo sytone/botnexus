@@ -255,7 +255,162 @@ public class ProviderLoggingHandlerTests
         Assert.Contains("truncated", requestLog.msg);
     }
 
+    // ----- URL query-string credential redaction (issue #2669) -----
+
+    [Fact]
+    public async Task RequestUrl_SasSignature_IsRedacted_SchemeHostPathPreserved()
+    {
+        var (handler, logs) = CreateHandler();
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://acct.blob.core.windows.net/c/blob.txt?sv=2021-08-06&sig=abc123SIGVALUE%3D&se=2030-01-01");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.DoesNotContain("abc123SIGVALUE", requestLog.msg);
+        Assert.Contains("sig=[REDACTED]", requestLog.msg);
+        // Scheme, host and path must survive verbatim so the log stays diagnostic.
+        Assert.Contains("https://acct.blob.core.windows.net/c/blob.txt?", requestLog.msg);
+        // Non-sensitive params keep their values.
+        Assert.Contains("sv=2021-08-06", requestLog.msg);
+        Assert.Contains("se=2030-01-01", requestLog.msg);
+    }
+
+    [Theory]
+    [InlineData("sig")]
+    [InlineData("key")]
+    [InlineData("api_key")]
+    [InlineData("apikey")]
+    [InlineData("access_token")]
+    [InlineData("token")]
+    [InlineData("password")]
+    [InlineData("secret")]
+    [InlineData("SIG")]
+    [InlineData("Api_Key")]
+    [InlineData("x-goog-api-key")]
+    [InlineData("X-Custom-Auth")]
+    public async Task RequestUrl_SensitiveQueryParameterNames_AreRedacted(string paramName)
+    {
+        const string secretValue = "zzTOPSECRETvalue99";
+        var (handler, logs) = CreateHandler();
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: $"https://api.example.com/v1/models?{paramName}={secretValue}");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.DoesNotContain(secretValue, requestLog.msg);
+        Assert.Contains($"{paramName}=[REDACTED]", requestLog.msg);
+        Assert.Contains("https://api.example.com/v1/models", requestLog.msg);
+    }
+
+    [Fact]
+    public async Task RequestUrl_NonSensitiveQueryParameter_IsPreserved()
+    {
+        var (handler, logs) = CreateHandler();
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.example.com/v1/models?model=gpt-4o&stream=true");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.Contains("model=gpt-4o", requestLog.msg);
+        Assert.Contains("stream=true", requestLog.msg);
+        Assert.DoesNotContain("[REDACTED]", requestLog.msg);
+    }
+
+    [Fact]
+    public async Task RequestUrl_WithNoQueryString_RoundTripsUnchanged()
+    {
+        var (handler, logs) = CreateHandler();
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.anthropic.com/v1/messages");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.Contains("https://api.anthropic.com/v1/messages", requestLog.msg);
+        Assert.DoesNotContain("[REDACTED]", requestLog.msg);
+    }
+
+    [Fact]
+    public async Task RequestUrl_Null_DoesNotThrow_AndLogsRequest()
+    {
+        var (handler, logs) = CreateHandler();
+        var invoker = new HttpMessageInvoker(handler);
+        var req = new HttpRequestMessage { Method = HttpMethod.Post, RequestUri = null };
+
+        var response = await invoker.SendAsync(req, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(logs, l => l.msg.Contains("request"));
+    }
+
+    [Fact]
+    public async Task ErrorLog_RedactsUrlCredentials()
+    {
+        var (handler, logs) = CreateHandler(inner: new ThrowingHandler());
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.example.com/v1/models?sig=errorPathSECRET77");
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => invoker.SendAsync(req, CancellationToken.None));
+
+        var errorLog = logs.First(l => l.msg.Contains("error"));
+        Assert.DoesNotContain("errorPathSECRET77", errorLog.msg);
+        Assert.Contains("sig=[REDACTED]", errorLog.msg);
+    }
+
+    [Fact]
+    public async Task StreamingResponseLog_RedactsUrlCredentials()
+    {
+        var (handler, logs) = CreateHandler(inner: new SseHandler("data: {}\n\n"));
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.example.com/v1/stream?access_token=streamSECRET55");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var responseLog = logs.First(l => l.msg.Contains("response"));
+        Assert.Contains("Streaming", responseLog.msg);
+        Assert.DoesNotContain("streamSECRET55", responseLog.msg);
+        Assert.Contains("access_token=[REDACTED]", responseLog.msg);
+    }
+
+    [Fact]
+    public async Task BufferedResponseLog_RedactsUrlCredentials()
+    {
+        var (handler, logs) = CreateHandler(inner: new BodyHandler("{\"content\":[]}"));
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.example.com/v1/models?api_key=bufferedSECRET33");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var responseLog = logs.First(l => l.msg.Contains("response"));
+        Assert.DoesNotContain("bufferedSECRET33", responseLog.msg);
+        Assert.Contains("api_key=[REDACTED]", responseLog.msg);
+    }
+
+    [Fact]
+    public async Task RequestUrl_NonSensitiveParamValue_StillPassesThroughSecretRedactor()
+    {
+        var (handler, logs) = CreateHandler(secretRedactor: StubRedact);
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest(url: "https://api.example.com/v1/models?note=sk-ant-abcdef");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.DoesNotContain("sk-ant-abcdef", requestLog.msg);
+        Assert.Contains("note=[REDACTED]", requestLog.msg);
+    }
+
     // ----- inner handler stubs -----
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new HttpRequestException("boom");
+    }
 
     private sealed class OkHandler : HttpMessageHandler
     {

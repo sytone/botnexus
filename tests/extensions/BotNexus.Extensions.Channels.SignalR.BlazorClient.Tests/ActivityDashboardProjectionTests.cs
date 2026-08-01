@@ -642,4 +642,247 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Empty(ActivityDashboardProjection.Project(
             conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.Agent), Now));
     }
+
+    // ---- Pin state (#2619) ------------------------------------------------
+
+    /// <summary>
+    /// Fixture for the pin facet: the pin state is server-stamped on the DTO, so the fixture sets
+    /// <c>isPinned</c>/<c>pinnedAt</c> explicitly rather than letting the projection infer it.
+    /// </summary>
+    private static ConversationSummaryDto PinConv(
+        string id,
+        bool isPinned = false,
+        DateTimeOffset? pinnedAt = null,
+        DateTimeOffset? updatedAt = null,
+        string agentId = "alpha",
+        string status = "Active",
+        string source = "Channel") =>
+        new(
+            ConversationId: id,
+            AgentId: agentId,
+            Title: id,
+            IsDefault: false,
+            Status: status,
+            ActiveSessionId: null,
+            BindingCount: 0,
+            CreatedAt: (updatedAt ?? Now).AddMinutes(-5),
+            UpdatedAt: updatedAt ?? Now,
+            Source: source,
+            Kind: "HumanAgent",
+            IsPinned: isPinned,
+            PinnedAt: pinnedAt,
+            Participants: null);
+
+    /// <summary>
+    /// AC1: the row carries the server-stamped pin state straight through from the DTO. A pinned DTO
+    /// produces a pinned row and an unpinned DTO does not - no inference, no derived rule.
+    /// </summary>
+    [Fact]
+    public void Project_carries_pin_state_from_the_dto()
+    {
+        var pinnedAt = Now.AddHours(-3);
+        var conversations = new[]
+        {
+            PinConv("pinned", isPinned: true, pinnedAt: pinnedAt, updatedAt: Now),
+            PinConv("loose", isPinned: false, updatedAt: Now.AddMinutes(-1))
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+
+        var pinned = rows.Single(r => r.ConversationId == "pinned");
+        var loose = rows.Single(r => r.ConversationId == "loose");
+
+        Assert.True(pinned.IsPinned);
+        Assert.Equal(pinnedAt, pinned.PinnedAt);
+        Assert.False(loose.IsPinned);
+        Assert.Null(loose.PinnedAt);
+    }
+
+    /// <summary>
+    /// AC2: pinned rows sort ahead of unpinned rows even when the pinned row is staler. This is the
+    /// whole point of the feature - the user's explicit signal outranks machine-derived recency.
+    /// </summary>
+    [Fact]
+    public void Project_orders_pinned_rows_ahead_of_newer_unpinned_rows()
+    {
+        var conversations = new[]
+        {
+            PinConv("fresh-unpinned", isPinned: false, updatedAt: Now),
+            PinConv("stale-pinned", isPinned: true, pinnedAt: Now, updatedAt: Now.AddDays(-9))
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Any), Now);
+
+        Assert.Equal(new[] { "stale-pinned", "fresh-unpinned" }, rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC3: the pre-existing ordering contract inside the unpinned group is untouched -
+    /// <c>UpdatedAt</c> descending, then <c>ConversationId</c> ordinal on a tie.
+    /// </summary>
+    [Fact]
+    public void Project_preserves_existing_ordering_within_the_unpinned_group()
+    {
+        var tie = Now.AddHours(-1);
+        var conversations = new[]
+        {
+            PinConv("b-tie", updatedAt: tie),
+            PinConv("older", updatedAt: Now.AddHours(-5)),
+            PinConv("a-tie", updatedAt: tie),
+            PinConv("newest", updatedAt: Now)
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+
+        Assert.Equal(
+            new[] { "newest", "a-tie", "b-tie", "older" },
+            rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC3 (pinned half): the same <c>UpdatedAt</c> descending / <c>ConversationId</c> ordinal rule
+    /// applies inside the pinned group. Pinned-first is a grouping, not a second ordering rule.
+    /// </summary>
+    [Fact]
+    public void Project_preserves_existing_ordering_within_the_pinned_group()
+    {
+        var tie = Now.AddHours(-1);
+        var conversations = new[]
+        {
+            PinConv("p-b-tie", isPinned: true, updatedAt: tie),
+            PinConv("p-older", isPinned: true, updatedAt: Now.AddHours(-5)),
+            PinConv("p-a-tie", isPinned: true, updatedAt: tie),
+            PinConv("p-newest", isPinned: true, updatedAt: Now),
+            PinConv("unpinned", updatedAt: Now)
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+
+        Assert.Equal(
+            new[] { "p-newest", "p-a-tie", "p-b-tie", "p-older", "unpinned" },
+            rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>The pin facet is inert by default, so the existing landing view is unchanged.</summary>
+    [Fact]
+    public void Pin_facet_defaults_to_all_and_shows_both_pinned_and_unpinned()
+    {
+        var conversations = new[]
+        {
+            PinConv("pinned", isPinned: true),
+            PinConv("loose")
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+
+        Assert.Equal(ActivityPinFilter.All, new ActivityDashboardFilter().Pinned);
+        Assert.Equal(2, rows.Count);
+    }
+
+    /// <summary>The pinned-only facet selects exactly the pinned rows.</summary>
+    [Fact]
+    public void Pin_facet_pinned_only_selects_pinned_rows()
+    {
+        var conversations = new[]
+        {
+            PinConv("pinned", isPinned: true),
+            PinConv("loose")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Pinned: ActivityPinFilter.Pinned), Now);
+
+        Assert.Equal(new[] { "pinned" }, rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>The unpinned facet is the exact complement - a tri-state, not a one-way toggle.</summary>
+    [Fact]
+    public void Pin_facet_unpinned_only_selects_unpinned_rows()
+    {
+        var conversations = new[]
+        {
+            PinConv("pinned", isPinned: true),
+            PinConv("loose")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Pinned: ActivityPinFilter.Unpinned), Now);
+
+        Assert.Equal(new[] { "loose" }, rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC5: the pin facet composes with the agent facet - the result is the intersection, proving
+    /// neither facet was reworked to accommodate the other.
+    /// </summary>
+    [Fact]
+    public void Pin_facet_composes_with_the_agent_facet()
+    {
+        var conversations = new[]
+        {
+            PinConv("alpha-pinned", isPinned: true, agentId: "alpha"),
+            PinConv("beta-pinned", isPinned: true, agentId: "beta"),
+            PinConv("alpha-loose", agentId: "alpha")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(AgentId: "alpha", Pinned: ActivityPinFilter.Pinned),
+            Now);
+
+        Assert.Equal(new[] { "alpha-pinned" }, rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC5: the pin facet composes with the cron default-exclude and the status facet. A pinned
+    /// cron conversation stays hidden until cron is revealed - pin must not become an override.
+    /// </summary>
+    [Fact]
+    public void Pin_facet_composes_with_the_cron_and_status_facets()
+    {
+        var conversations = new[]
+        {
+            PinConv("pinned-cron", isPinned: true, source: "Cron"),
+            PinConv("pinned-archived", isPinned: true, status: "Archived"),
+            PinConv("pinned-active", isPinned: true)
+        };
+
+        var hidden = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Pinned: ActivityPinFilter.Pinned), Now);
+        Assert.Equal(new[] { "pinned-active" }, hidden.Select(r => r.ConversationId));
+
+        var withCron = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(IncludeCron: true, Pinned: ActivityPinFilter.Pinned),
+            Now);
+        Assert.Contains("pinned-cron", withCron.Select(r => r.ConversationId));
+
+        var archivedOnly = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(Status: ActivityStatusFilter.Archived, Pinned: ActivityPinFilter.Pinned),
+            Now);
+        Assert.Equal(new[] { "pinned-archived" }, archivedOnly.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC5: the pin facet composes with the recency window. A pinned but stale row is still excluded
+    /// by a Today window - pinning changes ordering and selection, not the meaning of recency.
+    /// </summary>
+    [Fact]
+    public void Pin_facet_composes_with_the_recency_facet()
+    {
+        var conversations = new[]
+        {
+            PinConv("pinned-stale", isPinned: true, updatedAt: Now.AddDays(-20)),
+            PinConv("pinned-today", isPinned: true, updatedAt: Now)
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Week, Pinned: ActivityPinFilter.Pinned),
+            Now);
+
+        Assert.Equal(new[] { "pinned-today" }, rows.Select(r => r.ConversationId));
+    }
 }

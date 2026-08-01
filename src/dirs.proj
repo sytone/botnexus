@@ -23,7 +23,16 @@
 <Project Sdk="Microsoft.Build.Traversal">
 
   <ItemGroup>
-    <ProjectReference Include="$(MSBuildThisFileDirectory)**\*.csproj" />
+    <!--
+      The bin/obj exclude is #2666. `ProjectReference` is an explicit item, so `DefaultItemExcludes`
+      does not apply and MSBuild would otherwise recursively walk every `bin/` and `obj/` directory
+      under `src/` - directories the build itself is concurrently creating and deleting. A walk
+      racing with that churn is what intermittently produced an EMPTY traversal set on Linux CI.
+      No `.csproj` is ever emitted into bin/obj, so this is a strict-subset narrowing that cannot
+      change the evaluated set; `SrcTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet` pins it.
+    -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)**\*.csproj"
+                      Exclude="$(MSBuildThisFileDirectory)**\bin\**\*.csproj;$(MSBuildThisFileDirectory)**\obj\**\*.csproj" />
   </ItemGroup>
 
   <!--

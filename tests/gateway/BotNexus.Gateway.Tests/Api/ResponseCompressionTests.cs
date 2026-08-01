@@ -13,6 +13,7 @@ namespace BotNexus.Gateway.Tests.Api;
 /// <c>Vary: Accept-Encoding</c> and leaves requests without Accept-Encoding
 /// uncompressed (identity). Covers issue #1781.
 /// </summary>
+[Collection("IntegrationTests")]
 public sealed class ResponseCompressionTests
 {
     [Fact]

@@ -4,11 +4,26 @@
 
   This traversal deliberately contains NOTHING from `src/`; the src projects still get built
   because each test project references them, but the traversal set itself does not leak.
+
+  WHY THE bin/obj EXCLUDE (#2666)
+  `ProjectReference` is an EXPLICIT item, so `DefaultItemExcludes` (which is what normally keeps
+  `bin/` and `obj/` out of globs) does NOT apply to it. Without the exclude below MSBuild walks
+  every directory under `tests/`, which on a build/test agent means thousands of `obj/` and `bin/`
+  directories that the very job doing the evaluation is creating and deleting CONCURRENTLY.
+  A recursive directory walk racing with that churn is how #2666 intermittently evaluated to an
+  EMPTY project set on Linux CI (all 55 projects reported missing while the `leaked` assertion
+  still passed - only possible with zero items), while `src/` - which is not the tree being
+  churned at evaluation time - passed on the same run.
+
+  The exclude is a strict-subset narrowing that CANNOT change the result: no `.csproj` is ever
+  emitted into `bin/` or `obj/`. It only removes the racing directories from the walk.
+  `TestsTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet` pins that invariant.
 -->
 <Project Sdk="Microsoft.Build.Traversal">
 
   <ItemGroup>
-    <ProjectReference Include="$(MSBuildThisFileDirectory)**\*.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)**\*.csproj"
+                      Exclude="$(MSBuildThisFileDirectory)**\bin\**\*.csproj;$(MSBuildThisFileDirectory)**\obj\**\*.csproj" />
   </ItemGroup>
 
 </Project>

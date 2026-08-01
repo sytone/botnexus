@@ -102,7 +102,7 @@ Parent Session (agent: my-agent, model: claude-opus-4.6)
 | `ISubAgentManager` | `BotNexus.Gateway.Abstractions` | Core orchestration contract — `SpawnAsync`, `ListAsync`, `GetAsync`, `KillAsync`, `OnCompletedAsync` |
 | `SubAgentSpawnRequest` | `BotNexus.Gateway.Abstractions` | Parameters for spawning a sub-agent |
 | `SubAgentInfo` | `BotNexus.Gateway.Abstractions` | Status and metadata for a running or completed sub-agent |
-| `SubAgentStatus` | `BotNexus.Gateway.Abstractions` | Enum: `Running`, `Completed`, `Failed`, `Killed`, `TimedOut` |
+| `SubAgentStatus` | `BotNexus.Gateway.Abstractions` | Enum: `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted` |
 | `DefaultSubAgentManager` | `BotNexus.Gateway` | In-memory orchestrator with session supervisor, activity broadcasting, and timeout management |
 | `SubAgentSpawnTool` | `BotNexus.Gateway` | `IAgentTool` implementation for `spawn_subagent` |
 | `SubAgentListTool` | `BotNexus.Gateway` | `IAgentTool` implementation for `list_subagents` |
@@ -316,10 +316,17 @@ When a sub-agent finishes its work, results are automatically delivered to the p
 | `TimedOut` | `timeout` seconds elapsed | Last assistant message before timeout |
 | `Failed` | Unrecoverable error during execution | Error description |
 | `Killed` | Parent called `manage_subagent` with `action: "kill"` | `null` |
+| `BudgetExhausted` | `maxTurns` reached before a final response | Last assistant message before the budget ran out |
 
 ### First-Limit-Wins
 
 If both `maxTurns` and `timeout` are set, whichever limit is hit first terminates the sub-agent. A `CancellationToken` from the timeout and a turn counter are both checked at the start of each loop iteration.
+
+The two limits report **different terminal statuses** so the cause is never ambiguous: running
+out of wall clock is `TimedOut`, running out of turns is `BudgetExhausted`. The remedy differs
+accordingly - a longer `timeoutSeconds` for the former, a larger `maxTurns` or a narrower task
+for the latter. `BudgetExhausted` is latched before cancellation, so a budget stop is never
+misreported as a timeout.
 
 ---
 

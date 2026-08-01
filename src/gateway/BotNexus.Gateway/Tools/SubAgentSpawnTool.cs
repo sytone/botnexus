@@ -116,7 +116,30 @@ public sealed class SubAgentSpawnTool(
             GrantedPaths = grantedPaths
         };
 
-        var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
+        SubAgentInfo spawned;
+        try
+        {
+            spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // #2633: cancellation is turn control flow, not a tool error. It must keep propagating
+            // so the executor can unwind the turn rather than reporting a spurious failure.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // #2633: a spawn that fails for a configuration reason (e.g. the descriptor names a
+            // model that is not registered for its provider) is the caller's problem to correct,
+            // not a host fault. Return it as a tool error carrying the underlying message - which
+            // names the model and the provider - so the requesting agent can act on it, and so the
+            // exception never escapes to become an unobserved task fault.
+            return TextResult(JsonSerializer.Serialize(new
+            {
+                error = ex.Message,
+                Status = "failed"
+            }, JsonOptions));
+        }
         var result = JsonSerializer.Serialize(new
         {
             spawned.SubAgentId,

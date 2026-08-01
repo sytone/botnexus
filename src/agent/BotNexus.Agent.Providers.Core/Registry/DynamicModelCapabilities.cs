@@ -15,11 +15,22 @@ namespace BotNexus.Agent.Providers.Core.Registry;
 /// <param name="Reasoning">Whether the model supports a thinking/reasoning override at all.</param>
 /// <param name="SupportsExtraHighThinking">Whether the model supports the ExtraHigh / Max thinking tiers.</param>
 /// <param name="SupportsExtendedContextWindow">Whether the model can be driven with the extended (1M) context window.</param>
+/// <param name="Input">
+/// The declared input modalities to stamp onto the model (for example <c>["text","image"]</c>).
+/// Never empty - a model that accepts nothing at all is not a model.
+/// </param>
 public readonly record struct DynamicModelCapabilities(
     bool Reasoning,
     bool SupportsExtraHighThinking,
-    bool SupportsExtendedContextWindow)
+    bool SupportsExtendedContextWindow,
+    IReadOnlyList<string> Input)
 {
+    /// <summary>The text input modality token.</summary>
+    public const string TextModality = "text";
+
+    /// <summary>The image (vision) input modality token.</summary>
+    public const string ImageModality = "image";
+
     /// <summary>
     /// Infers the capability set for a dynamic model from its id, honouring any explicitly declared
     /// values first and falling back to model-family heuristics when a value is omitted
@@ -32,12 +43,18 @@ public readonly record struct DynamicModelCapabilities(
     /// <param name="declaredReasoning">An explicit reasoning declaration, or <see langword="null"/> to infer from the family.</param>
     /// <param name="declaredExtraHighThinking">An explicit extra-high declaration, or <see langword="null"/> to infer from the family.</param>
     /// <param name="declaredExtendedContext">An explicit extended-context declaration, or <see langword="null"/> to infer from the family.</param>
+    /// <param name="declaredInput">
+    /// An explicit input-modality declaration from config, or <see langword="null"/>/empty to infer
+    /// from the family. An explicit declaration always wins - a config author who says
+    /// <c>["text"]</c> for a vision family gets exactly that (#2485).
+    /// </param>
     /// <returns>The resolved capability flags to stamp onto the dynamic model.</returns>
     public static DynamicModelCapabilities Infer(
         string modelId,
         bool? declaredReasoning = null,
         bool? declaredExtraHighThinking = null,
-        bool? declaredExtendedContext = null)
+        bool? declaredExtendedContext = null,
+        IReadOnlyList<string>? declaredInput = null)
     {
         ArgumentNullException.ThrowIfNull(modelId);
 
@@ -48,7 +65,86 @@ public readonly record struct DynamicModelCapabilities(
         var extraHigh = (declaredExtraHighThinking ?? InferExtraHighThinking(modelId)) && reasoning;
         var extendedContext = declaredExtendedContext ?? InferExtendedContext(modelId);
 
-        return new DynamicModelCapabilities(reasoning, extraHigh, extendedContext);
+        var input = declaredInput is { Count: > 0 }
+            ? NormaliseModalities(declaredInput)
+            : InferInputModalities(modelId);
+
+        return new DynamicModelCapabilities(reasoning, extraHigh, extendedContext, input);
+    }
+
+    /// <summary>
+    /// Family heuristic for input modalities. Config-declared models were previously hardcoded to
+    /// <c>["text"]</c> at the gateway composition root, so a vision-capable model reached through a
+    /// config-declared provider silently lost every image part it was handed (#2485). Recognised
+    /// vision families get <c>["text","image"]</c>; everything else keeps the text-only default.
+    /// </summary>
+    /// <param name="modelId">The model id.</param>
+    /// <returns>The inferred input modality list; always contains <c>text</c>.</returns>
+    public static IReadOnlyList<string> InferInputModalities(string modelId)
+    {
+        ArgumentNullException.ThrowIfNull(modelId);
+
+        return SupportsVision(modelId)
+            ? [TextModality, ImageModality]
+            : [TextModality];
+    }
+
+    /// <summary>
+    /// Family heuristic for vision (image input) support. Kept deliberately conservative: only
+    /// families that are known to accept image parts are widened, because widening a model that
+    /// cannot actually see would turn a reported drop into a provider-side request rejection.
+    /// </summary>
+    /// <param name="modelId">The model id.</param>
+    /// <returns>True when the family is known to accept image input.</returns>
+    public static bool SupportsVision(string modelId)
+    {
+        ArgumentNullException.ThrowIfNull(modelId);
+
+        // Explicit "-vision" / "vision-" name hints first - a local Ollama/LM Studio tag such as
+        // "llava:13b" or "qwen2.5-vl" is the common config-declared case.
+        string[] visionHints =
+        [
+            "vision", "llava", "-vl", "vl-", "bakllava", "moondream", "pixtral", "internvl", "minicpm-v"
+        ];
+        foreach (var hint in visionHints)
+        {
+            if (modelId.Contains(hint, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        // Known multimodal hosted families.
+        string[] visionFamilies = ["claude-", "gpt-4o", "gpt-4.1", "gpt-5", "gemini-", "grok-2-image", "o3", "o4-mini"];
+        foreach (var family in visionFamilies)
+        {
+            if (modelId.StartsWith(family, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Trims, lowercases and de-duplicates an explicitly declared modality list, guaranteeing that
+    /// <c>text</c> is present so no code path ever sees a model that accepts nothing.
+    /// </summary>
+    private static IReadOnlyList<string> NormaliseModalities(IReadOnlyList<string> declared)
+    {
+        var result = new List<string>(declared.Count + 1);
+        foreach (var raw in declared)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            var token = raw.Trim().ToLowerInvariant();
+            if (!result.Contains(token, StringComparer.Ordinal))
+                result.Add(token);
+        }
+
+        if (result.Count == 0)
+            result.Add(TextModality);
+        else if (!result.Contains(TextModality, StringComparer.Ordinal))
+            result.Insert(0, TextModality);
+
+        return result;
     }
 
     /// <summary>
