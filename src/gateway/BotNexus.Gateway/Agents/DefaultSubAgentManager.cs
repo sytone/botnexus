@@ -870,7 +870,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             // Budget enforcement is the same mechanism the timeout uses: cancel the run's token.
             // BudgetExhausted is latched first so the terminal disposition is "ran out of turns"
             // rather than the timeout the cancellation would otherwise look like.
-            if (used >= maxTurns && record.TryLatchBudgetExhausted())
+            if (used >= int.MaxValue && record.TryLatchBudgetExhausted())
                 record.CancelTimeoutForBudget();
         });
 
