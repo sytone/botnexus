@@ -1349,7 +1349,7 @@ X-Api-Key: your-api-key
 ]
 ```
 
-A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`.
+A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`.
 
 **Error Responses:**
 - `404 Not Found` — Session does not exist
@@ -1566,7 +1566,7 @@ X-Api-Key: your-api-key
 **Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session.
 
 **Query Parameters:**
-- `status` (string, optional) — Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`). When omitted, runs of every status are returned.
+- `status` (string, optional) - Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`). When omitted, runs of every status are returned.
 - `limit` (int, optional, default `200`) — Maximum number of rows to return. Bounded to `1`–`500`; values above `500` are clamped.
 
 **Request:**

@@ -587,6 +587,54 @@ curl http://localhost:5005/api/agents
 
 ---
 
+## Bundled Agents
+
+BotNexus ships a small catalog of **bundled agents** and reconciles them into your
+`config.json` at gateway startup. Today the catalog contains one entry: **Nexus Trailguide**
+(`nexus-trailguide`), a guided onboarding agent that explains the platform, its concepts and
+how to get started.
+
+Reconciliation exists because neither `install` (clone and build) nor `update` (pull and
+restart) is a migration point, so an *existing* installation would otherwise never receive a
+newly shipped agent.
+
+### Insert-only, never overwrite
+
+The contract is deliberately narrow:
+
+- **Insert-only.** If `agents.nexus-trailguide` already exists in any form — enabled,
+  disabled, edited or half-filled — the gateway performs **no write at all**. It does not
+  merge, top up missing fields or "repair" the entry. From the moment the key exists it is
+  yours, and disabling the agent keeps it disabled across restarts.
+- **Non-fatal.** Unparseable JSON or a read-only config file produces a single bounded
+  warning and startup continues. A bundled onboarding agent is never worth failing a boot
+  over.
+- **Ordered before agent registration**, so an inserted entry is live in the same startup
+  rather than only after a further restart.
+
+A `definitionVersion` field is stamped on the inserted entry so a future release can tell
+"never seen this agent" apart from "has an older shipped shape" without diffing free-form
+JSON.
+
+### Which provider and model it adopts
+
+A newly inserted entry copies provider and model from your own configuration, in order:
+
+1. The `gateway.defaultAgentId` agent, when it declares a valid provider and model — this is
+   the installation's own answer to "which model do I use".
+2. Otherwise, the first **enabled** config agent with a valid provider and model.
+3. Otherwise nothing is guessed: the entry is inserted **disabled**, with a description
+   telling you to set `provider` and `model` on `agents.nexus-trailguide` and flip
+   `enabled` to `true`.
+
+### Removing it
+
+Deleting the key is not permanent — the next startup sees a missing entry and re-inserts it.
+To keep the agent out of the way, set `"enabled": false` on it instead; the insert-only rule
+guarantees that choice is never overwritten.
+
+---
+
 ## Agent Lifecycle
 
 ### Registration
